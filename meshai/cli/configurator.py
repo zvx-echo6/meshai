@@ -73,9 +73,10 @@ class Configurator:
             table.add_row("5", "Channels", f"{self.config.channels.mode}")
             table.add_row("6", "History & Memory", f"{self.config.history.max_messages_per_user} msgs")
             table.add_row("7", "Rate Limits", f"{self.config.rate_limits.messages_per_minute}/min")
-            table.add_row("8", "Web Status Page", self._status_icon(self.config.web_status.enabled))
-            table.add_row("9", "Announcements", self._status_icon(self.config.announcements.enabled))
-            table.add_row("10", "Setup Wizard", "[dim]First-time setup[/dim]")
+            table.add_row("8", "Weather", f"{self.config.weather.primary}")
+            table.add_row("9", "Web Status Page", self._status_icon(self.config.web_status.enabled))
+            table.add_row("10", "Announcements", self._status_icon(self.config.announcements.enabled))
+            table.add_row("11", "Setup Wizard", "[dim]First-time setup[/dim]")
 
             console.print(table)
             console.print()
@@ -84,13 +85,13 @@ class Configurator:
             if self.modified:
                 console.print("[yellow]* Unsaved changes[/yellow]")
                 console.print()
-            console.print("[white]11. Save[/white]                 [dim]Save config, stay in menu[/dim]")
-            console.print("[green]12. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
-            console.print("[white]13. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
-            console.print("[white]14. Exit without Saving[/white]")
+            console.print("[white]12. Save[/white]                 [dim]Save config, stay in menu[/dim]")
+            console.print("[green]13. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
+            console.print("[white]14. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
+            console.print("[white]15. Exit without Saving[/white]")
             console.print()
 
-            choice = IntPrompt.ask("Select option", default=12)
+            choice = IntPrompt.ask("Select option", default=13)
 
             if choice == 1:
                 self._bot_settings()
@@ -107,19 +108,21 @@ class Configurator:
             elif choice == 7:
                 self._rate_limits_settings()
             elif choice == 8:
-                self._web_status_settings()
+                self._weather_settings()
             elif choice == 9:
-                self._announcements_settings()
+                self._web_status_settings()
             elif choice == 10:
-                self._setup_wizard()
+                self._announcements_settings()
             elif choice == 11:
-                self._save_only()
+                self._setup_wizard()
             elif choice == 12:
-                self._save_and_restart()
+                self._save_only()
             elif choice == 13:
+                self._save_and_restart()
+            elif choice == 14:
                 self._save_restart_exit()
                 break
-            elif choice == 14:
+            elif choice == 15:
                 break
 
     def _show_header(self) -> None:
