@@ -38,92 +38,6 @@ rate_limits:
   cooldown_seconds: 5.0          # Min time between responses to same user
   burst_allowance: 3             # Allow short bursts before limiting
 
-# === LOGGING ===
-logging:
-  level: INFO                    # DEBUG | INFO | WARNING | ERROR
-  file: ""                       # Log file path (empty = console only)
-  max_size_mb: 10                # Max log file size
-  backup_count: 3                # Number of backup log files
-  log_messages: true             # Log incoming messages
-  log_responses: true            # Log outgoing responses
-  log_api_calls: false           # Log raw LLM API requests (verbose)
-
-# === LLM BACKEND ===
-llm:
-  backend: openai                # openai | anthropic | google
-  api_key: ""                    # API key (or use LLM_API_KEY env var)
-  base_url: https://api.openai.com/v1  # API base URL
-  model: gpt-4o-mini             # Model name
-  timeout: 30                    # Request timeout (seconds)
-  system_prompt: >-
-    You are a helpful assistant on a Meshtastic mesh network.
-    Keep responses VERY brief - under 250 characters total.
-    Be concise but friendly. No markdown formatting.
-
-  # Fallback backend (optional) - used if primary fails
-  # fallback:
-  #   backend: openai
-  #   api_key: ""
-  #   base_url: https://api.openai.com/v1
-  #   model: gpt-4o-mini
-  #   timeout: 30
-
-  retry_attempts: 2              # Retries before fallback
-  fallback_on_error: true        # Use fallback on errors
-  fallback_on_timeout: true      # Use fallback on timeouts
-
-# === SAFETY & FILTERING ===
-safety:
-  max_response_length: 250       # Hard cap on response length
-  filter_profanity: false        # Basic profanity filter
-  blocked_phrases: []            # Phrases to filter out of responses
-  require_mention: true          # Only respond when name is mentioned
-  ignore_self: true              # Don't respond to own messages
-  emergency_keywords:            # Always respond to these (bypass rate limits)
-    - emergency
-    - help
-    - sos
-
-# === USER MANAGEMENT ===
-users:
-  blocklist: []                  # Never respond to these node IDs
-  # - "!abc12345"
-  allowlist_only: false          # If true, only respond to allowlist
-  allowlist: []                  # Exclusive users (if allowlist_only=true)
-  admin_nodes: []                # Nodes with admin command access
-  vip_nodes: []                  # Nodes that bypass rate limits
-
-# === COMMANDS ===
-commands:
-  enabled: true
-  prefix: "!"                    # Command prefix (e.g., !weather, !help)
-  disabled_commands: []          # Built-in commands to disable
-  # - reset                      # Disable !reset command
-  custom_commands: {}            # User-defined static response commands
-  # Example custom commands:
-  # custom_commands:
-  #   ping:
-  #     response: "Pong! MeshAI online."
-  #   rules:
-  #     response: "Be respectful. Keep it brief. No spam."
-  #   freq:
-  #     response: "Primary: 906.875 MHz | Alt: 903.125 MHz"
-
-# === PERSONALITY ===
-personality:
-  system_prompt: ""              # Override llm.system_prompt if set
-  context_injection: ""          # Template with {time}, {sender_name}, {channel}
-  # Example: "Current time: {time}. Speaking with {sender_name}."
-  personas: {}                   # Named personality variants
-  # Example personas:
-  # personas:
-  #   serious:
-  #     trigger: "!serious"
-  #     prompt: "Respond formally and technically. No jokes."
-  #   casual:
-  #     trigger: "!casual"
-  #     prompt: "Be casual and use humor when appropriate."
-
 # === CONVERSATION HISTORY ===
 history:
   database: /data/conversations.db
@@ -138,6 +52,18 @@ memory:
   enabled: true                  # Enable rolling summary memory
   window_size: 4                 # Recent message pairs to keep in full
   summarize_threshold: 8         # Messages before re-summarizing
+
+# === LLM BACKEND ===
+llm:
+  backend: openai                # openai | anthropic | google
+  api_key: ""                    # API key (or use LLM_API_KEY env var)
+  base_url: https://api.openai.com/v1  # API base URL
+  model: gpt-4o-mini             # Model name
+  timeout: 30                    # Request timeout (seconds)
+  system_prompt: >-
+    You are a helpful assistant on a Meshtastic mesh network.
+    Keep responses VERY brief - under 250 characters total.
+    Be concise but friendly. No markdown formatting.
 
 # === WEB STATUS PAGE ===
 web_status:
@@ -161,31 +87,3 @@ announcements:
   #   - "MeshAI online. Mention 'ai' for help!"
   #   - "Type !help for available commands."
   random_order: true             # Randomize message order
-
-# === WEATHER ===
-weather:
-  primary: openmeteo             # openmeteo | wttr | llm
-  fallback: llm                  # Fallback provider
-  default_location: ""           # Default location if none specified
-  openmeteo:
-    url: https://api.open-meteo.com/v1
-  wttr:
-    url: https://wttr.in
-
-# === INTEGRATIONS ===
-integrations:
-  weather:                       # Duplicate of top-level weather (for nesting)
-    primary: openmeteo
-    fallback: llm
-    default_location: ""
-    openmeteo:
-      url: https://api.open-meteo.com/v1
-    wttr:
-      url: https://wttr.in
-  webhook:
-    enabled: false               # Enable webhook notifications
-    url: ""                      # Webhook URL
-    events:                      # Events to send
-      - message_received
-      - response_sent
-      - error

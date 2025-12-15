@@ -1,9 +1,5 @@
 """Rich-based TUI configurator for MeshAI."""
 
-import os
-import signal
-import subprocess
-import sys
 from pathlib import Path
 from typing import Optional
 
@@ -65,8 +61,7 @@ class Configurator:
             self._clear()
             self._show_header()
 
-            # Page 1 - Core Settings
-            table = Table(box=box.ROUNDED, show_header=False, title="[bold]Core Settings[/bold]")
+            table = Table(box=box.ROUNDED, show_header=False)
             table.add_column("Option", style="cyan", width=4)
             table.add_column("Description", style="white")
             table.add_column("Status", style="dim")
@@ -75,51 +70,29 @@ class Configurator:
             table.add_row("2", "Connection", f"{self.config.connection.type}")
             table.add_row("3", "LLM Backend", f"{self.config.llm.backend}/{self.config.llm.model}")
             table.add_row("4", "Response Settings", f"{self.config.response.max_length}ch max")
-            table.add_row("5", "Channel Filtering", f"{self.config.channels.mode}")
+            table.add_row("5", "Channels", f"{self.config.channels.mode}")
             table.add_row("6", "History & Memory", f"{self.config.history.max_messages_per_user} msgs")
+            table.add_row("7", "Rate Limits", f"{self.config.rate_limits.messages_per_minute}/min")
+            table.add_row("8", "Web Status Page", self._status_icon(self.config.web_status.enabled))
+            table.add_row("9", "Announcements", self._status_icon(self.config.announcements.enabled))
+            table.add_row("10", "Setup Wizard", "[dim]First-time setup[/dim]")
 
             console.print(table)
             console.print()
 
-            # Page 2 - Advanced Settings
-            table2 = Table(box=box.ROUNDED, show_header=False, title="[bold]Advanced Settings[/bold]")
-            table2.add_column("Option", style="cyan", width=4)
-            table2.add_column("Description", style="white")
-            table2.add_column("Status", style="dim")
-
-            table2.add_row("7", "Rate Limits", f"{self.config.rate_limits.messages_per_minute}/min")
-            table2.add_row("8", "Safety & Filtering", self._status_icon(self.config.safety.filter_profanity))
-            table2.add_row("9", "User Management", f"{len(self.config.users.blocklist)} blocked")
-            table2.add_row("10", "Commands", f"prefix: {self.config.commands.prefix}")
-            table2.add_row("11", "Personality", f"{len(self.config.personality.personas)} personas")
-            table2.add_row("12", "Logging", f"{self.config.logging.level}")
-
-            console.print(table2)
+            # Exit options
+            if self.modified:
+                console.print("[yellow]* Unsaved changes[/yellow]")
+                console.print()
+            console.print("[white]11. Save[/white]                 [dim]Save config, stay in menu[/dim]")
+            console.print("[green]12. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
+            console.print("[white]13. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
+            console.print("[white]14. Exit without Saving[/white]")
             console.print()
 
-            # Page 3 - Features
-            table3 = Table(box=box.ROUNDED, show_header=False, title="[bold]Features[/bold]")
-            table3.add_column("Option", style="cyan", width=4)
-            table3.add_column("Description", style="white")
-            table3.add_column("Status", style="dim")
+            choice = IntPrompt.ask("Select option", default=12)
 
-            table3.add_row("13", "Weather", f"{self.config.weather.primary}")
-            table3.add_row("14", "Web Status Page", self._status_icon(self.config.web_status.enabled))
-            table3.add_row("15", "Announcements", self._status_icon(self.config.announcements.enabled))
-            table3.add_row("16", "Webhooks", self._status_icon(self.config.integrations.webhook.enabled))
-            table3.add_row("", "", "")
-            table3.add_row("20", "Setup Wizard", "[dim]First-time setup[/dim]")
-            table3.add_row("0", "Save & Exit", self._get_modified_indicator())
-
-            console.print(table3)
-            console.print()
-
-            choice = IntPrompt.ask("Select option", default=0)
-
-            if choice == 0:
-                self._handle_exit()
-                break
-            elif choice == 1:
+            if choice == 1:
                 self._bot_settings()
             elif choice == 2:
                 self._connection_settings()
@@ -134,25 +107,20 @@ class Configurator:
             elif choice == 7:
                 self._rate_limits_settings()
             elif choice == 8:
-                self._safety_settings()
-            elif choice == 9:
-                self._users_settings()
-            elif choice == 10:
-                self._commands_settings()
-            elif choice == 11:
-                self._personality_settings()
-            elif choice == 12:
-                self._logging_settings()
-            elif choice == 13:
-                self._weather_settings()
-            elif choice == 14:
                 self._web_status_settings()
-            elif choice == 15:
+            elif choice == 9:
                 self._announcements_settings()
-            elif choice == 16:
-                self._webhook_settings()
-            elif choice == 20:
+            elif choice == 10:
                 self._setup_wizard()
+            elif choice == 11:
+                self._save_only()
+            elif choice == 12:
+                self._save_and_restart()
+            elif choice == 13:
+                self._save_restart_exit()
+                break
+            elif choice == 14:
+                break
 
     def _show_header(self) -> None:
         """Show compact header with modified indicator."""
@@ -598,370 +566,6 @@ class Configurator:
                     self.config.rate_limits.burst_allowance = value
                     self.modified = True
 
-    def _safety_settings(self) -> None:
-        """Safety and filtering settings submenu."""
-        while True:
-            self._clear()
-            console.print("[bold]Safety & Filtering[/bold]\n")
-
-            table = Table(box=box.ROUNDED)
-            table.add_column("Option", style="cyan", width=4)
-            table.add_column("Setting", style="white")
-            table.add_column("Value", style="green")
-
-            blocked_str = ", ".join(self.config.safety.blocked_phrases[:3])
-            if len(self.config.safety.blocked_phrases) > 3:
-                blocked_str += f"... (+{len(self.config.safety.blocked_phrases) - 3})"
-            emergency_str = ", ".join(self.config.safety.emergency_keywords[:3])
-
-            table.add_row("1", "Max Response Length", str(self.config.safety.max_response_length))
-            table.add_row("2", "Filter Profanity", self._status_icon(self.config.safety.filter_profanity))
-            table.add_row("3", "Blocked Phrases", blocked_str or "[dim]none[/dim]")
-            table.add_row("4", "Require @mention", self._status_icon(self.config.safety.require_mention))
-            table.add_row("5", "Ignore Self", self._status_icon(self.config.safety.ignore_self))
-            table.add_row("6", "Emergency Keywords", emergency_str)
-            table.add_row("0", "Back", "")
-
-            console.print(table)
-            console.print()
-
-            choice = IntPrompt.ask("Select option", default=0)
-
-            if choice == 0:
-                return
-            elif choice == 1:
-                value = IntPrompt.ask("Max response length", default=self.config.safety.max_response_length)
-                if value != self.config.safety.max_response_length:
-                    self.config.safety.max_response_length = value
-                    self.modified = True
-            elif choice == 2:
-                value = Confirm.ask("Filter profanity?", default=self.config.safety.filter_profanity)
-                if value != self.config.safety.filter_profanity:
-                    self.config.safety.filter_profanity = value
-                    self.modified = True
-            elif choice == 3:
-                console.print("\n[dim]Current:[/dim]", ", ".join(self.config.safety.blocked_phrases) or "none")
-                value = Prompt.ask("Blocked phrases (comma-separated)", default=",".join(self.config.safety.blocked_phrases))
-                phrases = [p.strip() for p in value.split(",") if p.strip()]
-                if phrases != self.config.safety.blocked_phrases:
-                    self.config.safety.blocked_phrases = phrases
-                    self.modified = True
-            elif choice == 4:
-                value = Confirm.ask("Require @mention?", default=self.config.safety.require_mention)
-                if value != self.config.safety.require_mention:
-                    self.config.safety.require_mention = value
-                    self.modified = True
-            elif choice == 5:
-                value = Confirm.ask("Ignore self messages?", default=self.config.safety.ignore_self)
-                if value != self.config.safety.ignore_self:
-                    self.config.safety.ignore_self = value
-                    self.modified = True
-            elif choice == 6:
-                value = Prompt.ask("Emergency keywords (comma-separated)", default=",".join(self.config.safety.emergency_keywords))
-                keywords = [k.strip() for k in value.split(",") if k.strip()]
-                if keywords != self.config.safety.emergency_keywords:
-                    self.config.safety.emergency_keywords = keywords
-                    self.modified = True
-
-    def _users_settings(self) -> None:
-        """User management settings submenu."""
-        while True:
-            self._clear()
-            console.print("[bold]User Management[/bold]\n")
-
-            table = Table(box=box.ROUNDED)
-            table.add_column("Option", style="cyan", width=4)
-            table.add_column("Setting", style="white")
-            table.add_column("Value", style="green")
-
-            table.add_row("1", "Blocklist", f"{len(self.config.users.blocklist)} users")
-            table.add_row("2", "Allowlist Only Mode", self._status_icon(self.config.users.allowlist_only))
-            table.add_row("3", "Allowlist", f"{len(self.config.users.allowlist)} users")
-            table.add_row("4", "Admin Nodes", f"{len(self.config.users.admin_nodes)} users")
-            table.add_row("5", "VIP Nodes (bypass limits)", f"{len(self.config.users.vip_nodes)} users")
-            table.add_row("0", "Back", "")
-
-            console.print(table)
-            console.print()
-
-            choice = IntPrompt.ask("Select option", default=0)
-
-            if choice == 0:
-                return
-            elif choice == 1:
-                self._edit_node_list("Blocklist", self.config.users.blocklist)
-            elif choice == 2:
-                value = Confirm.ask("Allowlist only mode?", default=self.config.users.allowlist_only)
-                if value != self.config.users.allowlist_only:
-                    self.config.users.allowlist_only = value
-                    self.modified = True
-            elif choice == 3:
-                self._edit_node_list("Allowlist", self.config.users.allowlist)
-            elif choice == 4:
-                self._edit_node_list("Admin Nodes", self.config.users.admin_nodes)
-            elif choice == 5:
-                self._edit_node_list("VIP Nodes", self.config.users.vip_nodes)
-
-    def _edit_node_list(self, name: str, node_list: list) -> None:
-        """Edit a list of node IDs."""
-        while True:
-            self._clear()
-            console.print(f"[bold]{name}[/bold]\n")
-
-            if node_list:
-                for i, node in enumerate(node_list, 1):
-                    console.print(f"  {i}. {node}")
-            else:
-                console.print("  [dim]No nodes[/dim]")
-
-            console.print("\n[cyan]a[/cyan] Add node")
-            console.print("[cyan]r[/cyan] Remove node")
-            console.print("[cyan]0[/cyan] Back")
-            console.print()
-
-            choice = Prompt.ask("Select", default="0")
-
-            if choice == "0":
-                return
-            elif choice.lower() == "a":
-                value = Prompt.ask("Node ID (e.g., !abc12345)")
-                if value and value not in node_list:
-                    node_list.append(value)
-                    self.modified = True
-            elif choice.lower() == "r":
-                if node_list:
-                    idx = IntPrompt.ask("Remove which number", default=1)
-                    if 1 <= idx <= len(node_list):
-                        node_list.pop(idx - 1)
-                        self.modified = True
-
-    def _commands_settings(self) -> None:
-        """Commands settings submenu."""
-        while True:
-            self._clear()
-            console.print("[bold]Commands[/bold]\n")
-
-            table = Table(box=box.ROUNDED)
-            table.add_column("Option", style="cyan", width=4)
-            table.add_column("Setting", style="white")
-            table.add_column("Value", style="green")
-
-            table.add_row("1", "Commands Enabled", self._status_icon(self.config.commands.enabled))
-            table.add_row("2", "Prefix", self.config.commands.prefix)
-            table.add_row("3", "Disabled Commands", ", ".join(self.config.commands.disabled_commands) or "[dim]none[/dim]")
-            table.add_row("4", "Custom Commands", f"{len(self.config.commands.custom_commands)} defined")
-            table.add_row("0", "Back", "")
-
-            console.print(table)
-            console.print()
-
-            choice = IntPrompt.ask("Select option", default=0)
-
-            if choice == 0:
-                return
-            elif choice == 1:
-                value = Confirm.ask("Enable commands?", default=self.config.commands.enabled)
-                if value != self.config.commands.enabled:
-                    self.config.commands.enabled = value
-                    self.modified = True
-            elif choice == 2:
-                value = Prompt.ask("Command prefix", default=self.config.commands.prefix)
-                if value != self.config.commands.prefix:
-                    self.config.commands.prefix = value
-                    self.modified = True
-            elif choice == 3:
-                console.print("\n[dim]Built-in: help, ping, reset, status, weather[/dim]")
-                value = Prompt.ask("Disabled commands (comma-separated)", default=",".join(self.config.commands.disabled_commands))
-                commands = [c.strip() for c in value.split(",") if c.strip()]
-                if commands != self.config.commands.disabled_commands:
-                    self.config.commands.disabled_commands = commands
-                    self.modified = True
-            elif choice == 4:
-                self._custom_commands_editor()
-
-    def _custom_commands_editor(self) -> None:
-        """Edit custom commands."""
-        while True:
-            self._clear()
-            console.print("[bold]Custom Commands[/bold]\n")
-
-            if self.config.commands.custom_commands:
-                for name, data in self.config.commands.custom_commands.items():
-                    response = data.get("response", data) if isinstance(data, dict) else data
-                    console.print(f"  [cyan]{self.config.commands.prefix}{name}[/cyan] → {response[:50]}...")
-            else:
-                console.print("  [dim]No custom commands[/dim]")
-
-            console.print("\n[cyan]a[/cyan] Add command")
-            console.print("[cyan]r[/cyan] Remove command")
-            console.print("[cyan]0[/cyan] Back")
-            console.print()
-
-            choice = Prompt.ask("Select", default="0")
-
-            if choice == "0":
-                return
-            elif choice.lower() == "a":
-                name = Prompt.ask("Command name (without prefix)")
-                if name:
-                    response = Prompt.ask("Response text")
-                    if response:
-                        self.config.commands.custom_commands[name] = {"response": response}
-                        self.modified = True
-            elif choice.lower() == "r":
-                if self.config.commands.custom_commands:
-                    name = Prompt.ask("Command name to remove")
-                    if name in self.config.commands.custom_commands:
-                        del self.config.commands.custom_commands[name]
-                        self.modified = True
-
-    def _personality_settings(self) -> None:
-        """Personality settings submenu."""
-        while True:
-            self._clear()
-            console.print("[bold]Personality[/bold]\n")
-
-            table = Table(box=box.ROUNDED)
-            table.add_column("Option", style="cyan", width=4)
-            table.add_column("Setting", style="white")
-            table.add_column("Value", style="green")
-
-            prompt_preview = self.config.personality.system_prompt[:40] + "..." if self.config.personality.system_prompt else "[dim]using LLM default[/dim]"
-            table.add_row("1", "System Prompt Override", prompt_preview)
-            table.add_row("2", "Context Injection", self.config.personality.context_injection[:30] + "..." if self.config.personality.context_injection else "[dim]none[/dim]")
-            table.add_row("3", "Personas", f"{len(self.config.personality.personas)} defined")
-            table.add_row("0", "Back", "")
-
-            console.print(table)
-            console.print()
-
-            choice = IntPrompt.ask("Select option", default=0)
-
-            if choice == 0:
-                return
-            elif choice == 1:
-                console.print("\n[dim]Current:[/dim]")
-                console.print(self.config.personality.system_prompt or "(none)")
-                if Confirm.ask("\nEdit system prompt?", default=False):
-                    value = Prompt.ask("New system prompt (empty to clear)")
-                    if value != self.config.personality.system_prompt:
-                        self.config.personality.system_prompt = value
-                        self.modified = True
-            elif choice == 2:
-                console.print("\n[dim]Variables: {time}, {sender_name}, {channel}[/dim]")
-                value = Prompt.ask("Context injection template", default=self.config.personality.context_injection)
-                if value != self.config.personality.context_injection:
-                    self.config.personality.context_injection = value
-                    self.modified = True
-            elif choice == 3:
-                self._personas_editor()
-
-    def _personas_editor(self) -> None:
-        """Edit personas."""
-        while True:
-            self._clear()
-            console.print("[bold]Personas[/bold]\n")
-
-            if self.config.personality.personas:
-                for name, data in self.config.personality.personas.items():
-                    trigger = data.get("trigger", f"!{name}") if isinstance(data, dict) else f"!{name}"
-                    console.print(f"  [cyan]{name}[/cyan] (trigger: {trigger})")
-            else:
-                console.print("  [dim]No personas defined[/dim]")
-
-            console.print("\n[cyan]a[/cyan] Add persona")
-            console.print("[cyan]r[/cyan] Remove persona")
-            console.print("[cyan]0[/cyan] Back")
-            console.print()
-
-            choice = Prompt.ask("Select", default="0")
-
-            if choice == "0":
-                return
-            elif choice.lower() == "a":
-                name = Prompt.ask("Persona name")
-                if name:
-                    trigger = Prompt.ask("Trigger command", default=f"!{name}")
-                    prompt = Prompt.ask("System prompt for this persona")
-                    if prompt:
-                        self.config.personality.personas[name] = {"trigger": trigger, "prompt": prompt}
-                        self.modified = True
-            elif choice.lower() == "r":
-                if self.config.personality.personas:
-                    name = Prompt.ask("Persona name to remove")
-                    if name in self.config.personality.personas:
-                        del self.config.personality.personas[name]
-                        self.modified = True
-
-    def _logging_settings(self) -> None:
-        """Logging settings submenu."""
-        while True:
-            self._clear()
-            console.print("[bold]Logging[/bold]\n")
-
-            table = Table(box=box.ROUNDED)
-            table.add_column("Option", style="cyan", width=4)
-            table.add_column("Setting", style="white")
-            table.add_column("Value", style="green")
-
-            table.add_row("1", "Log Level", self.config.logging.level)
-            table.add_row("2", "Log File", self.config.logging.file or "[dim]console only[/dim]")
-            table.add_row("3", "Max File Size (MB)", str(self.config.logging.max_size_mb))
-            table.add_row("4", "Backup Count", str(self.config.logging.backup_count))
-            table.add_row("5", "Log Messages", self._status_icon(self.config.logging.log_messages))
-            table.add_row("6", "Log Responses", self._status_icon(self.config.logging.log_responses))
-            table.add_row("7", "Log API Calls", self._status_icon(self.config.logging.log_api_calls))
-            table.add_row("0", "Back", "")
-
-            console.print(table)
-            console.print()
-
-            choice = IntPrompt.ask("Select option", default=0)
-
-            if choice == 0:
-                return
-            elif choice == 1:
-                console.print("\n[cyan]1.[/cyan] DEBUG")
-                console.print("[cyan]2.[/cyan] INFO")
-                console.print("[cyan]3.[/cyan] WARNING")
-                console.print("[cyan]4.[/cyan] ERROR")
-                sel = IntPrompt.ask("Select", default=2)
-                levels = {1: "DEBUG", 2: "INFO", 3: "WARNING", 4: "ERROR"}
-                value = levels.get(sel, "INFO")
-                if value != self.config.logging.level:
-                    self.config.logging.level = value
-                    self.modified = True
-            elif choice == 2:
-                value = Prompt.ask("Log file path (empty for console only)", default=self.config.logging.file)
-                if value != self.config.logging.file:
-                    self.config.logging.file = value
-                    self.modified = True
-            elif choice == 3:
-                value = IntPrompt.ask("Max file size (MB)", default=self.config.logging.max_size_mb)
-                if value != self.config.logging.max_size_mb:
-                    self.config.logging.max_size_mb = value
-                    self.modified = True
-            elif choice == 4:
-                value = IntPrompt.ask("Backup count", default=self.config.logging.backup_count)
-                if value != self.config.logging.backup_count:
-                    self.config.logging.backup_count = value
-                    self.modified = True
-            elif choice == 5:
-                value = Confirm.ask("Log messages?", default=self.config.logging.log_messages)
-                if value != self.config.logging.log_messages:
-                    self.config.logging.log_messages = value
-                    self.modified = True
-            elif choice == 6:
-                value = Confirm.ask("Log responses?", default=self.config.logging.log_responses)
-                if value != self.config.logging.log_responses:
-                    self.config.logging.log_responses = value
-                    self.modified = True
-            elif choice == 7:
-                value = Confirm.ask("Log API calls?", default=self.config.logging.log_api_calls)
-                if value != self.config.logging.log_api_calls:
-                    self.config.logging.log_api_calls = value
-                    self.modified = True
-
     def _web_status_settings(self) -> None:
         """Web status page settings submenu."""
         while True:
@@ -1112,47 +716,6 @@ class Configurator:
                         self.config.announcements.messages.pop(idx - 1)
                         self.modified = True
 
-    def _webhook_settings(self) -> None:
-        """Webhook settings submenu."""
-        while True:
-            self._clear()
-            console.print("[bold]Webhooks[/bold]\n")
-
-            table = Table(box=box.ROUNDED)
-            table.add_column("Option", style="cyan", width=4)
-            table.add_column("Setting", style="white")
-            table.add_column("Value", style="green")
-
-            table.add_row("1", "Enabled", self._status_icon(self.config.integrations.webhook.enabled))
-            table.add_row("2", "URL", self.config.integrations.webhook.url or "[dim]not set[/dim]")
-            table.add_row("3", "Events", ", ".join(self.config.integrations.webhook.events))
-            table.add_row("0", "Back", "")
-
-            console.print(table)
-            console.print()
-
-            choice = IntPrompt.ask("Select option", default=0)
-
-            if choice == 0:
-                return
-            elif choice == 1:
-                value = Confirm.ask("Enable webhooks?", default=self.config.integrations.webhook.enabled)
-                if value != self.config.integrations.webhook.enabled:
-                    self.config.integrations.webhook.enabled = value
-                    self.modified = True
-            elif choice == 2:
-                value = Prompt.ask("Webhook URL", default=self.config.integrations.webhook.url)
-                if value != self.config.integrations.webhook.url:
-                    self.config.integrations.webhook.url = value
-                    self.modified = True
-            elif choice == 3:
-                console.print("\n[dim]Available: message_received, response_sent, error, startup, shutdown[/dim]")
-                value = Prompt.ask("Events (comma-separated)", default=",".join(self.config.integrations.webhook.events))
-                events = [e.strip() for e in value.split(",") if e.strip()]
-                if events != self.config.integrations.webhook.events:
-                    self.config.integrations.webhook.events = events
-                    self.modified = True
-
     def _setup_wizard(self) -> None:
         """First-time setup wizard."""
         self._clear()
@@ -1215,75 +778,50 @@ class Configurator:
         console.print("Press Enter to return to main menu...")
         input()
 
-    def _handle_exit(self) -> None:
-        """Handle exit with save prompt."""
-        if self.modified:
-            if Confirm.ask("\n[yellow]Save changes before exit?[/yellow]", default=True):
-                self._save_and_restart()
-        console.print("\nGoodbye!")
-
-    def _save_and_restart(self) -> None:
-        """Save config and optionally restart the bot."""
+    def _save_only(self) -> None:
+        """Save config and stay in menu."""
         save_config(self.config, self.config_path)
         console.print(f"[green]Configuration saved to {self.config_path}[/green]")
         self.modified = False
+        input("Press Enter to continue...")
 
-        # Check if bot is running and offer restart
-        if self._is_bot_running():
-            if Confirm.ask("Restart bot with new config?", default=True):
-                self._restart_bot()
+    def _save_and_restart(self) -> None:
+        """Save config and signal bot to restart, stay in menu."""
+        self._clear()
+        console.print("[cyan]Saving configuration...[/cyan]")
+        save_config(self.config, self.config_path)
+        console.print("[green]Configuration saved![/green]")
+        self.modified = False
+        console.print()
 
-    def _is_bot_running(self) -> bool:
-        """Check if meshai bot is running."""
-        pid_file = Path("/tmp/meshai.pid")
-        if pid_file.exists():
-            try:
-                pid = int(pid_file.read_text().strip())
-                os.kill(pid, 0)  # Check if process exists
-                return True
-            except (ValueError, OSError):
-                pass
-
-        # Also check systemd
+        # Write restart signal file (docker-entrypoint watches for this)
+        restart_file = Path("/tmp/meshai_restart")
         try:
-            result = subprocess.run(
-                ["systemctl", "is-active", "meshai"],
-                capture_output=True,
-                text=True,
-            )
-            return result.stdout.strip() == "active"
-        except FileNotFoundError:
-            pass
+            restart_file.touch()
+            console.print("[cyan]Bot restart signal sent.[/cyan]")
+            console.print()
+            console.print("The bot will restart momentarily to apply changes.")
+        except Exception as e:
+            console.print(f"[yellow]Could not signal restart: {e}[/yellow]")
 
-        return False
+        input("\nPress Enter to continue...")
 
-    def _restart_bot(self) -> None:
-        """Restart the bot."""
-        # Try systemd first
+    def _save_restart_exit(self) -> None:
+        """Save config, signal bot restart, and exit config tool."""
+        console.print("[cyan]Saving configuration...[/cyan]")
+        save_config(self.config, self.config_path)
+        console.print("[green]Configuration saved![/green]")
+        self.modified = False
+
+        # Write restart signal file
+        restart_file = Path("/tmp/meshai_restart")
         try:
-            result = subprocess.run(
-                ["systemctl", "restart", "meshai"],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0:
-                console.print("[green]Bot restarted via systemd[/green]")
-                return
-        except FileNotFoundError:
-            pass
+            restart_file.touch()
+            console.print("[cyan]Bot restart signal sent.[/cyan]")
+        except Exception as e:
+            console.print(f"[yellow]Could not signal restart: {e}[/yellow]")
 
-        # Try SIGHUP to running process
-        pid_file = Path("/tmp/meshai.pid")
-        if pid_file.exists():
-            try:
-                pid = int(pid_file.read_text().strip())
-                os.kill(pid, signal.SIGHUP)
-                console.print("[green]Sent reload signal to bot[/green]")
-                return
-            except (ValueError, OSError) as e:
-                console.print(f"[yellow]Could not signal bot: {e}[/yellow]")
-
-        console.print("[yellow]Could not restart bot automatically. Please restart manually.[/yellow]")
+        console.print("\nGoodbye!")
 
 
 def run_configurator(config_path: Optional[Path] = None) -> None:

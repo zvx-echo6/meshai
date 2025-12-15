@@ -41,15 +41,6 @@ rate_limits:
   cooldown_seconds: 5.0
   burst_allowance: 3
 
-logging:
-  level: INFO
-  file: /data/meshai.log
-  max_size_mb: 10
-  backup_count: 3
-  log_messages: true
-  log_responses: true
-  log_api_calls: false
-
 history:
   database: /data/conversations.db
   max_messages_per_user: 50
@@ -73,38 +64,6 @@ llm:
     You are a helpful assistant on a Meshtastic mesh network.
     Keep responses VERY brief - under 250 characters total.
     Be concise but friendly. No markdown formatting.
-  retry_attempts: 2
-  fallback_on_error: true
-  fallback_on_timeout: true
-
-safety:
-  max_response_length: 250
-  filter_profanity: false
-  blocked_phrases: []
-  require_mention: true
-  ignore_self: true
-  emergency_keywords:
-    - emergency
-    - help
-    - sos
-
-users:
-  blocklist: []
-  allowlist_only: false
-  allowlist: []
-  admin_nodes: []
-  vip_nodes: []
-
-commands:
-  enabled: true
-  prefix: "!"
-  disabled_commands: []
-  custom_commands: {}
-
-personality:
-  system_prompt: ""
-  context_injection: ""
-  personas: {}
 
 web_status:
   enabled: false
@@ -122,28 +81,6 @@ announcements:
   channel: 0
   messages: []
   random_order: true
-
-weather:
-  primary: openmeteo
-  fallback: llm
-  default_location: ""
-  openmeteo:
-    url: https://api.open-meteo.com/v1
-  wttr:
-    url: https://wttr.in
-
-integrations:
-  weather:
-    primary: openmeteo
-    fallback: llm
-    default_location: ""
-  webhook:
-    enabled: false
-    url: ""
-    events:
-      - message_received
-      - response_sent
-      - error
 EOF
     echo "Default config created. Configure via http://localhost:7682"
 fi
