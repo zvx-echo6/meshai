@@ -98,14 +98,22 @@ ttyd -W -p 7682 \
 trap "kill %1 2>/dev/null; kill %2 2>/dev/null" EXIT
 
 # Restart watcher - monitors for restart signal from config tool
+BOT_PID_FILE="/tmp/meshai_bot.pid"
 (
     while true; do
         if [ -f /tmp/meshai_restart ]; then
             rm -f /tmp/meshai_restart
             echo "Restart signal received, restarting bot..."
-            pkill -f "python.*meshai.*--config" --signal 0 2>/dev/null || true  # Don't kill config tool
-            pkill -f "python -m meshai --config-file" || true
-            sleep 1
+            # Kill bot using PID file
+            if [ -f "$BOT_PID_FILE" ]; then
+                BOT_PID=$(cat "$BOT_PID_FILE")
+                if kill -0 "$BOT_PID" 2>/dev/null; then
+                    kill "$BOT_PID" 2>/dev/null || true
+                    echo "Sent TERM to bot (PID $BOT_PID)"
+                fi
+            fi
+            # Debounce - wait before checking for more signals
+            sleep 3
         fi
         sleep 2
     done
@@ -114,7 +122,11 @@ trap "kill %1 2>/dev/null; kill %2 2>/dev/null" EXIT
 # Start the bot in a loop - retry on failure
 echo "Starting MeshAI..."
 while true; do
-    python -m meshai --config-file "$MESHAI_CONFIG" || true
+    python -m meshai --config-file "$MESHAI_CONFIG" &
+    BOT_PID=$!
+    echo "$BOT_PID" > "$BOT_PID_FILE"
+    wait $BOT_PID || true
+    rm -f "$BOT_PID_FILE"
     echo "Bot exited. Check config at http://localhost:7682. Retrying in 5s..."
     sleep 5
 done
