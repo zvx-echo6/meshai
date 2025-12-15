@@ -65,22 +65,53 @@ class Configurator:
             self._clear()
             self._show_header()
 
-            table = Table(box=box.ROUNDED, show_header=False)
+            # Page 1 - Core Settings
+            table = Table(box=box.ROUNDED, show_header=False, title="[bold]Core Settings[/bold]")
             table.add_column("Option", style="cyan", width=4)
             table.add_column("Description", style="white")
             table.add_column("Status", style="dim")
 
             table.add_row("1", "Bot Settings", f"@{self.config.bot.name}")
             table.add_row("2", "Connection", f"{self.config.connection.type}")
-            table.add_row("3", "LLM Backend", f"{self.config.llm.backend}")
-            table.add_row("4", "Weather", f"{self.config.weather.primary}")
-            table.add_row("5", "Response Settings", f"{self.config.response.max_length}ch")
-            table.add_row("6", "Channel Filtering", f"{self.config.channels.mode}")
-            table.add_row("7", "History Settings", f"{self.config.history.max_messages_per_user} msgs")
-            table.add_row("8", "Run Setup Wizard", "[dim]First-time setup[/dim]")
-            table.add_row("0", "Save & Exit", self._get_modified_indicator())
+            table.add_row("3", "LLM Backend", f"{self.config.llm.backend}/{self.config.llm.model}")
+            table.add_row("4", "Response Settings", f"{self.config.response.max_length}ch max")
+            table.add_row("5", "Channel Filtering", f"{self.config.channels.mode}")
+            table.add_row("6", "History & Memory", f"{self.config.history.max_messages_per_user} msgs")
 
             console.print(table)
+            console.print()
+
+            # Page 2 - Advanced Settings
+            table2 = Table(box=box.ROUNDED, show_header=False, title="[bold]Advanced Settings[/bold]")
+            table2.add_column("Option", style="cyan", width=4)
+            table2.add_column("Description", style="white")
+            table2.add_column("Status", style="dim")
+
+            table2.add_row("7", "Rate Limits", f"{self.config.rate_limits.messages_per_minute}/min")
+            table2.add_row("8", "Safety & Filtering", self._status_icon(self.config.safety.filter_profanity))
+            table2.add_row("9", "User Management", f"{len(self.config.users.blocklist)} blocked")
+            table2.add_row("10", "Commands", f"prefix: {self.config.commands.prefix}")
+            table2.add_row("11", "Personality", f"{len(self.config.personality.personas)} personas")
+            table2.add_row("12", "Logging", f"{self.config.logging.level}")
+
+            console.print(table2)
+            console.print()
+
+            # Page 3 - Features
+            table3 = Table(box=box.ROUNDED, show_header=False, title="[bold]Features[/bold]")
+            table3.add_column("Option", style="cyan", width=4)
+            table3.add_column("Description", style="white")
+            table3.add_column("Status", style="dim")
+
+            table3.add_row("13", "Weather", f"{self.config.weather.primary}")
+            table3.add_row("14", "Web Status Page", self._status_icon(self.config.web_status.enabled))
+            table3.add_row("15", "Announcements", self._status_icon(self.config.announcements.enabled))
+            table3.add_row("16", "Webhooks", self._status_icon(self.config.integrations.webhook.enabled))
+            table3.add_row("", "", "")
+            table3.add_row("20", "Setup Wizard", "[dim]First-time setup[/dim]")
+            table3.add_row("0", "Save & Exit", self._get_modified_indicator())
+
+            console.print(table3)
             console.print()
 
             choice = IntPrompt.ask("Select option", default=0)
@@ -95,14 +126,32 @@ class Configurator:
             elif choice == 3:
                 self._llm_settings()
             elif choice == 4:
-                self._weather_settings()
-            elif choice == 5:
                 self._response_settings()
-            elif choice == 6:
+            elif choice == 5:
                 self._channel_settings()
-            elif choice == 7:
+            elif choice == 6:
                 self._history_settings()
+            elif choice == 7:
+                self._rate_limits_settings()
             elif choice == 8:
+                self._safety_settings()
+            elif choice == 9:
+                self._users_settings()
+            elif choice == 10:
+                self._commands_settings()
+            elif choice == 11:
+                self._personality_settings()
+            elif choice == 12:
+                self._logging_settings()
+            elif choice == 13:
+                self._weather_settings()
+            elif choice == 14:
+                self._web_status_settings()
+            elif choice == 15:
+                self._announcements_settings()
+            elif choice == 16:
+                self._webhook_settings()
+            elif choice == 20:
                 self._setup_wizard()
 
     def _show_header(self) -> None:
@@ -434,7 +483,7 @@ class Configurator:
         """History settings submenu."""
         while True:
             self._clear()
-            console.print("[bold]History Settings[/bold]\n")
+            console.print("[bold]History & Memory Settings[/bold]\n")
 
             table = Table(box=box.ROUNDED)
             table.add_column("Option", style="cyan", width=4)
@@ -445,6 +494,12 @@ class Configurator:
             table.add_row("1", "Database File", self.config.history.database)
             table.add_row("2", "Max Messages Per User", str(self.config.history.max_messages_per_user))
             table.add_row("3", "Conversation Timeout", f"{timeout_hours}h")
+            table.add_row("4", "Auto Cleanup", self._status_icon(self.config.history.auto_cleanup))
+            table.add_row("5", "Max Age (days)", str(self.config.history.max_age_days))
+            table.add_row("", "[bold]Memory[/bold]", "")
+            table.add_row("6", "Memory Enabled", self._status_icon(self.config.memory.enabled))
+            table.add_row("7", "Window Size", str(self.config.memory.window_size))
+            table.add_row("8", "Summarize Threshold", str(self.config.memory.summarize_threshold))
             table.add_row("0", "Back", "")
 
             console.print(table)
@@ -471,6 +526,631 @@ class Configurator:
                 seconds = value * 3600
                 if seconds != self.config.history.conversation_timeout:
                     self.config.history.conversation_timeout = seconds
+                    self.modified = True
+            elif choice == 4:
+                value = Confirm.ask("Enable auto cleanup?", default=self.config.history.auto_cleanup)
+                if value != self.config.history.auto_cleanup:
+                    self.config.history.auto_cleanup = value
+                    self.modified = True
+            elif choice == 5:
+                value = IntPrompt.ask("Max age (days)", default=self.config.history.max_age_days)
+                if value != self.config.history.max_age_days:
+                    self.config.history.max_age_days = value
+                    self.modified = True
+            elif choice == 6:
+                value = Confirm.ask("Enable memory?", default=self.config.memory.enabled)
+                if value != self.config.memory.enabled:
+                    self.config.memory.enabled = value
+                    self.modified = True
+            elif choice == 7:
+                value = IntPrompt.ask("Window size", default=self.config.memory.window_size)
+                if value != self.config.memory.window_size:
+                    self.config.memory.window_size = value
+                    self.modified = True
+            elif choice == 8:
+                value = IntPrompt.ask("Summarize threshold", default=self.config.memory.summarize_threshold)
+                if value != self.config.memory.summarize_threshold:
+                    self.config.memory.summarize_threshold = value
+                    self.modified = True
+
+    def _rate_limits_settings(self) -> None:
+        """Rate limits settings submenu."""
+        while True:
+            self._clear()
+            console.print("[bold]Rate Limits[/bold]\n")
+
+            table = Table(box=box.ROUNDED)
+            table.add_column("Option", style="cyan", width=4)
+            table.add_column("Setting", style="white")
+            table.add_column("Value", style="green")
+
+            table.add_row("1", "Messages Per Minute (per user)", str(self.config.rate_limits.messages_per_minute))
+            table.add_row("2", "Global Messages Per Minute", str(self.config.rate_limits.global_messages_per_minute))
+            table.add_row("3", "Cooldown (seconds)", str(self.config.rate_limits.cooldown_seconds))
+            table.add_row("4", "Burst Allowance", str(self.config.rate_limits.burst_allowance))
+            table.add_row("0", "Back", "")
+
+            console.print(table)
+            console.print()
+
+            choice = IntPrompt.ask("Select option", default=0)
+
+            if choice == 0:
+                return
+            elif choice == 1:
+                value = IntPrompt.ask("Messages per minute", default=self.config.rate_limits.messages_per_minute)
+                if value != self.config.rate_limits.messages_per_minute:
+                    self.config.rate_limits.messages_per_minute = value
+                    self.modified = True
+            elif choice == 2:
+                value = IntPrompt.ask("Global messages per minute", default=self.config.rate_limits.global_messages_per_minute)
+                if value != self.config.rate_limits.global_messages_per_minute:
+                    self.config.rate_limits.global_messages_per_minute = value
+                    self.modified = True
+            elif choice == 3:
+                value = float(Prompt.ask("Cooldown (seconds)", default=str(self.config.rate_limits.cooldown_seconds)))
+                if value != self.config.rate_limits.cooldown_seconds:
+                    self.config.rate_limits.cooldown_seconds = value
+                    self.modified = True
+            elif choice == 4:
+                value = IntPrompt.ask("Burst allowance", default=self.config.rate_limits.burst_allowance)
+                if value != self.config.rate_limits.burst_allowance:
+                    self.config.rate_limits.burst_allowance = value
+                    self.modified = True
+
+    def _safety_settings(self) -> None:
+        """Safety and filtering settings submenu."""
+        while True:
+            self._clear()
+            console.print("[bold]Safety & Filtering[/bold]\n")
+
+            table = Table(box=box.ROUNDED)
+            table.add_column("Option", style="cyan", width=4)
+            table.add_column("Setting", style="white")
+            table.add_column("Value", style="green")
+
+            blocked_str = ", ".join(self.config.safety.blocked_phrases[:3])
+            if len(self.config.safety.blocked_phrases) > 3:
+                blocked_str += f"... (+{len(self.config.safety.blocked_phrases) - 3})"
+            emergency_str = ", ".join(self.config.safety.emergency_keywords[:3])
+
+            table.add_row("1", "Max Response Length", str(self.config.safety.max_response_length))
+            table.add_row("2", "Filter Profanity", self._status_icon(self.config.safety.filter_profanity))
+            table.add_row("3", "Blocked Phrases", blocked_str or "[dim]none[/dim]")
+            table.add_row("4", "Require @mention", self._status_icon(self.config.safety.require_mention))
+            table.add_row("5", "Ignore Self", self._status_icon(self.config.safety.ignore_self))
+            table.add_row("6", "Emergency Keywords", emergency_str)
+            table.add_row("0", "Back", "")
+
+            console.print(table)
+            console.print()
+
+            choice = IntPrompt.ask("Select option", default=0)
+
+            if choice == 0:
+                return
+            elif choice == 1:
+                value = IntPrompt.ask("Max response length", default=self.config.safety.max_response_length)
+                if value != self.config.safety.max_response_length:
+                    self.config.safety.max_response_length = value
+                    self.modified = True
+            elif choice == 2:
+                value = Confirm.ask("Filter profanity?", default=self.config.safety.filter_profanity)
+                if value != self.config.safety.filter_profanity:
+                    self.config.safety.filter_profanity = value
+                    self.modified = True
+            elif choice == 3:
+                console.print("\n[dim]Current:[/dim]", ", ".join(self.config.safety.blocked_phrases) or "none")
+                value = Prompt.ask("Blocked phrases (comma-separated)", default=",".join(self.config.safety.blocked_phrases))
+                phrases = [p.strip() for p in value.split(",") if p.strip()]
+                if phrases != self.config.safety.blocked_phrases:
+                    self.config.safety.blocked_phrases = phrases
+                    self.modified = True
+            elif choice == 4:
+                value = Confirm.ask("Require @mention?", default=self.config.safety.require_mention)
+                if value != self.config.safety.require_mention:
+                    self.config.safety.require_mention = value
+                    self.modified = True
+            elif choice == 5:
+                value = Confirm.ask("Ignore self messages?", default=self.config.safety.ignore_self)
+                if value != self.config.safety.ignore_self:
+                    self.config.safety.ignore_self = value
+                    self.modified = True
+            elif choice == 6:
+                value = Prompt.ask("Emergency keywords (comma-separated)", default=",".join(self.config.safety.emergency_keywords))
+                keywords = [k.strip() for k in value.split(",") if k.strip()]
+                if keywords != self.config.safety.emergency_keywords:
+                    self.config.safety.emergency_keywords = keywords
+                    self.modified = True
+
+    def _users_settings(self) -> None:
+        """User management settings submenu."""
+        while True:
+            self._clear()
+            console.print("[bold]User Management[/bold]\n")
+
+            table = Table(box=box.ROUNDED)
+            table.add_column("Option", style="cyan", width=4)
+            table.add_column("Setting", style="white")
+            table.add_column("Value", style="green")
+
+            table.add_row("1", "Blocklist", f"{len(self.config.users.blocklist)} users")
+            table.add_row("2", "Allowlist Only Mode", self._status_icon(self.config.users.allowlist_only))
+            table.add_row("3", "Allowlist", f"{len(self.config.users.allowlist)} users")
+            table.add_row("4", "Admin Nodes", f"{len(self.config.users.admin_nodes)} users")
+            table.add_row("5", "VIP Nodes (bypass limits)", f"{len(self.config.users.vip_nodes)} users")
+            table.add_row("0", "Back", "")
+
+            console.print(table)
+            console.print()
+
+            choice = IntPrompt.ask("Select option", default=0)
+
+            if choice == 0:
+                return
+            elif choice == 1:
+                self._edit_node_list("Blocklist", self.config.users.blocklist)
+            elif choice == 2:
+                value = Confirm.ask("Allowlist only mode?", default=self.config.users.allowlist_only)
+                if value != self.config.users.allowlist_only:
+                    self.config.users.allowlist_only = value
+                    self.modified = True
+            elif choice == 3:
+                self._edit_node_list("Allowlist", self.config.users.allowlist)
+            elif choice == 4:
+                self._edit_node_list("Admin Nodes", self.config.users.admin_nodes)
+            elif choice == 5:
+                self._edit_node_list("VIP Nodes", self.config.users.vip_nodes)
+
+    def _edit_node_list(self, name: str, node_list: list) -> None:
+        """Edit a list of node IDs."""
+        while True:
+            self._clear()
+            console.print(f"[bold]{name}[/bold]\n")
+
+            if node_list:
+                for i, node in enumerate(node_list, 1):
+                    console.print(f"  {i}. {node}")
+            else:
+                console.print("  [dim]No nodes[/dim]")
+
+            console.print("\n[cyan]a[/cyan] Add node")
+            console.print("[cyan]r[/cyan] Remove node")
+            console.print("[cyan]0[/cyan] Back")
+            console.print()
+
+            choice = Prompt.ask("Select", default="0")
+
+            if choice == "0":
+                return
+            elif choice.lower() == "a":
+                value = Prompt.ask("Node ID (e.g., !abc12345)")
+                if value and value not in node_list:
+                    node_list.append(value)
+                    self.modified = True
+            elif choice.lower() == "r":
+                if node_list:
+                    idx = IntPrompt.ask("Remove which number", default=1)
+                    if 1 <= idx <= len(node_list):
+                        node_list.pop(idx - 1)
+                        self.modified = True
+
+    def _commands_settings(self) -> None:
+        """Commands settings submenu."""
+        while True:
+            self._clear()
+            console.print("[bold]Commands[/bold]\n")
+
+            table = Table(box=box.ROUNDED)
+            table.add_column("Option", style="cyan", width=4)
+            table.add_column("Setting", style="white")
+            table.add_column("Value", style="green")
+
+            table.add_row("1", "Commands Enabled", self._status_icon(self.config.commands.enabled))
+            table.add_row("2", "Prefix", self.config.commands.prefix)
+            table.add_row("3", "Disabled Commands", ", ".join(self.config.commands.disabled_commands) or "[dim]none[/dim]")
+            table.add_row("4", "Custom Commands", f"{len(self.config.commands.custom_commands)} defined")
+            table.add_row("0", "Back", "")
+
+            console.print(table)
+            console.print()
+
+            choice = IntPrompt.ask("Select option", default=0)
+
+            if choice == 0:
+                return
+            elif choice == 1:
+                value = Confirm.ask("Enable commands?", default=self.config.commands.enabled)
+                if value != self.config.commands.enabled:
+                    self.config.commands.enabled = value
+                    self.modified = True
+            elif choice == 2:
+                value = Prompt.ask("Command prefix", default=self.config.commands.prefix)
+                if value != self.config.commands.prefix:
+                    self.config.commands.prefix = value
+                    self.modified = True
+            elif choice == 3:
+                console.print("\n[dim]Built-in: help, ping, reset, status, weather[/dim]")
+                value = Prompt.ask("Disabled commands (comma-separated)", default=",".join(self.config.commands.disabled_commands))
+                commands = [c.strip() for c in value.split(",") if c.strip()]
+                if commands != self.config.commands.disabled_commands:
+                    self.config.commands.disabled_commands = commands
+                    self.modified = True
+            elif choice == 4:
+                self._custom_commands_editor()
+
+    def _custom_commands_editor(self) -> None:
+        """Edit custom commands."""
+        while True:
+            self._clear()
+            console.print("[bold]Custom Commands[/bold]\n")
+
+            if self.config.commands.custom_commands:
+                for name, data in self.config.commands.custom_commands.items():
+                    response = data.get("response", data) if isinstance(data, dict) else data
+                    console.print(f"  [cyan]{self.config.commands.prefix}{name}[/cyan] → {response[:50]}...")
+            else:
+                console.print("  [dim]No custom commands[/dim]")
+
+            console.print("\n[cyan]a[/cyan] Add command")
+            console.print("[cyan]r[/cyan] Remove command")
+            console.print("[cyan]0[/cyan] Back")
+            console.print()
+
+            choice = Prompt.ask("Select", default="0")
+
+            if choice == "0":
+                return
+            elif choice.lower() == "a":
+                name = Prompt.ask("Command name (without prefix)")
+                if name:
+                    response = Prompt.ask("Response text")
+                    if response:
+                        self.config.commands.custom_commands[name] = {"response": response}
+                        self.modified = True
+            elif choice.lower() == "r":
+                if self.config.commands.custom_commands:
+                    name = Prompt.ask("Command name to remove")
+                    if name in self.config.commands.custom_commands:
+                        del self.config.commands.custom_commands[name]
+                        self.modified = True
+
+    def _personality_settings(self) -> None:
+        """Personality settings submenu."""
+        while True:
+            self._clear()
+            console.print("[bold]Personality[/bold]\n")
+
+            table = Table(box=box.ROUNDED)
+            table.add_column("Option", style="cyan", width=4)
+            table.add_column("Setting", style="white")
+            table.add_column("Value", style="green")
+
+            prompt_preview = self.config.personality.system_prompt[:40] + "..." if self.config.personality.system_prompt else "[dim]using LLM default[/dim]"
+            table.add_row("1", "System Prompt Override", prompt_preview)
+            table.add_row("2", "Context Injection", self.config.personality.context_injection[:30] + "..." if self.config.personality.context_injection else "[dim]none[/dim]")
+            table.add_row("3", "Personas", f"{len(self.config.personality.personas)} defined")
+            table.add_row("0", "Back", "")
+
+            console.print(table)
+            console.print()
+
+            choice = IntPrompt.ask("Select option", default=0)
+
+            if choice == 0:
+                return
+            elif choice == 1:
+                console.print("\n[dim]Current:[/dim]")
+                console.print(self.config.personality.system_prompt or "(none)")
+                if Confirm.ask("\nEdit system prompt?", default=False):
+                    value = Prompt.ask("New system prompt (empty to clear)")
+                    if value != self.config.personality.system_prompt:
+                        self.config.personality.system_prompt = value
+                        self.modified = True
+            elif choice == 2:
+                console.print("\n[dim]Variables: {time}, {sender_name}, {channel}[/dim]")
+                value = Prompt.ask("Context injection template", default=self.config.personality.context_injection)
+                if value != self.config.personality.context_injection:
+                    self.config.personality.context_injection = value
+                    self.modified = True
+            elif choice == 3:
+                self._personas_editor()
+
+    def _personas_editor(self) -> None:
+        """Edit personas."""
+        while True:
+            self._clear()
+            console.print("[bold]Personas[/bold]\n")
+
+            if self.config.personality.personas:
+                for name, data in self.config.personality.personas.items():
+                    trigger = data.get("trigger", f"!{name}") if isinstance(data, dict) else f"!{name}"
+                    console.print(f"  [cyan]{name}[/cyan] (trigger: {trigger})")
+            else:
+                console.print("  [dim]No personas defined[/dim]")
+
+            console.print("\n[cyan]a[/cyan] Add persona")
+            console.print("[cyan]r[/cyan] Remove persona")
+            console.print("[cyan]0[/cyan] Back")
+            console.print()
+
+            choice = Prompt.ask("Select", default="0")
+
+            if choice == "0":
+                return
+            elif choice.lower() == "a":
+                name = Prompt.ask("Persona name")
+                if name:
+                    trigger = Prompt.ask("Trigger command", default=f"!{name}")
+                    prompt = Prompt.ask("System prompt for this persona")
+                    if prompt:
+                        self.config.personality.personas[name] = {"trigger": trigger, "prompt": prompt}
+                        self.modified = True
+            elif choice.lower() == "r":
+                if self.config.personality.personas:
+                    name = Prompt.ask("Persona name to remove")
+                    if name in self.config.personality.personas:
+                        del self.config.personality.personas[name]
+                        self.modified = True
+
+    def _logging_settings(self) -> None:
+        """Logging settings submenu."""
+        while True:
+            self._clear()
+            console.print("[bold]Logging[/bold]\n")
+
+            table = Table(box=box.ROUNDED)
+            table.add_column("Option", style="cyan", width=4)
+            table.add_column("Setting", style="white")
+            table.add_column("Value", style="green")
+
+            table.add_row("1", "Log Level", self.config.logging.level)
+            table.add_row("2", "Log File", self.config.logging.file or "[dim]console only[/dim]")
+            table.add_row("3", "Max File Size (MB)", str(self.config.logging.max_size_mb))
+            table.add_row("4", "Backup Count", str(self.config.logging.backup_count))
+            table.add_row("5", "Log Messages", self._status_icon(self.config.logging.log_messages))
+            table.add_row("6", "Log Responses", self._status_icon(self.config.logging.log_responses))
+            table.add_row("7", "Log API Calls", self._status_icon(self.config.logging.log_api_calls))
+            table.add_row("0", "Back", "")
+
+            console.print(table)
+            console.print()
+
+            choice = IntPrompt.ask("Select option", default=0)
+
+            if choice == 0:
+                return
+            elif choice == 1:
+                console.print("\n[cyan]1.[/cyan] DEBUG")
+                console.print("[cyan]2.[/cyan] INFO")
+                console.print("[cyan]3.[/cyan] WARNING")
+                console.print("[cyan]4.[/cyan] ERROR")
+                sel = IntPrompt.ask("Select", default=2)
+                levels = {1: "DEBUG", 2: "INFO", 3: "WARNING", 4: "ERROR"}
+                value = levels.get(sel, "INFO")
+                if value != self.config.logging.level:
+                    self.config.logging.level = value
+                    self.modified = True
+            elif choice == 2:
+                value = Prompt.ask("Log file path (empty for console only)", default=self.config.logging.file)
+                if value != self.config.logging.file:
+                    self.config.logging.file = value
+                    self.modified = True
+            elif choice == 3:
+                value = IntPrompt.ask("Max file size (MB)", default=self.config.logging.max_size_mb)
+                if value != self.config.logging.max_size_mb:
+                    self.config.logging.max_size_mb = value
+                    self.modified = True
+            elif choice == 4:
+                value = IntPrompt.ask("Backup count", default=self.config.logging.backup_count)
+                if value != self.config.logging.backup_count:
+                    self.config.logging.backup_count = value
+                    self.modified = True
+            elif choice == 5:
+                value = Confirm.ask("Log messages?", default=self.config.logging.log_messages)
+                if value != self.config.logging.log_messages:
+                    self.config.logging.log_messages = value
+                    self.modified = True
+            elif choice == 6:
+                value = Confirm.ask("Log responses?", default=self.config.logging.log_responses)
+                if value != self.config.logging.log_responses:
+                    self.config.logging.log_responses = value
+                    self.modified = True
+            elif choice == 7:
+                value = Confirm.ask("Log API calls?", default=self.config.logging.log_api_calls)
+                if value != self.config.logging.log_api_calls:
+                    self.config.logging.log_api_calls = value
+                    self.modified = True
+
+    def _web_status_settings(self) -> None:
+        """Web status page settings submenu."""
+        while True:
+            self._clear()
+            console.print("[bold]Web Status Page[/bold]\n")
+
+            table = Table(box=box.ROUNDED)
+            table.add_column("Option", style="cyan", width=4)
+            table.add_column("Setting", style="white")
+            table.add_column("Value", style="green")
+
+            table.add_row("1", "Enabled", self._status_icon(self.config.web_status.enabled))
+            table.add_row("2", "Port", str(self.config.web_status.port))
+            table.add_row("3", "Show Uptime", self._status_icon(self.config.web_status.show_uptime))
+            table.add_row("4", "Show Message Count", self._status_icon(self.config.web_status.show_message_count))
+            table.add_row("5", "Show Connected Nodes", self._status_icon(self.config.web_status.show_connected_nodes))
+            table.add_row("6", "Show Recent Activity", self._status_icon(self.config.web_status.show_recent_activity))
+            table.add_row("7", "Require Auth", self._status_icon(self.config.web_status.require_auth))
+            table.add_row("8", "Auth Password", "****" if self.config.web_status.auth_password else "[dim]not set[/dim]")
+            table.add_row("0", "Back", "")
+
+            console.print(table)
+            console.print()
+
+            choice = IntPrompt.ask("Select option", default=0)
+
+            if choice == 0:
+                return
+            elif choice == 1:
+                value = Confirm.ask("Enable web status?", default=self.config.web_status.enabled)
+                if value != self.config.web_status.enabled:
+                    self.config.web_status.enabled = value
+                    self.modified = True
+            elif choice == 2:
+                value = IntPrompt.ask("Port", default=self.config.web_status.port)
+                if value != self.config.web_status.port:
+                    self.config.web_status.port = value
+                    self.modified = True
+            elif choice == 3:
+                value = Confirm.ask("Show uptime?", default=self.config.web_status.show_uptime)
+                if value != self.config.web_status.show_uptime:
+                    self.config.web_status.show_uptime = value
+                    self.modified = True
+            elif choice == 4:
+                value = Confirm.ask("Show message count?", default=self.config.web_status.show_message_count)
+                if value != self.config.web_status.show_message_count:
+                    self.config.web_status.show_message_count = value
+                    self.modified = True
+            elif choice == 5:
+                value = Confirm.ask("Show connected nodes?", default=self.config.web_status.show_connected_nodes)
+                if value != self.config.web_status.show_connected_nodes:
+                    self.config.web_status.show_connected_nodes = value
+                    self.modified = True
+            elif choice == 6:
+                value = Confirm.ask("Show recent activity?", default=self.config.web_status.show_recent_activity)
+                if value != self.config.web_status.show_recent_activity:
+                    self.config.web_status.show_recent_activity = value
+                    self.modified = True
+            elif choice == 7:
+                value = Confirm.ask("Require authentication?", default=self.config.web_status.require_auth)
+                if value != self.config.web_status.require_auth:
+                    self.config.web_status.require_auth = value
+                    self.modified = True
+            elif choice == 8:
+                value = Prompt.ask("Password", password=True)
+                if value:
+                    self.config.web_status.auth_password = value
+                    self.modified = True
+
+    def _announcements_settings(self) -> None:
+        """Announcements settings submenu."""
+        while True:
+            self._clear()
+            console.print("[bold]Announcements[/bold]\n")
+
+            table = Table(box=box.ROUNDED)
+            table.add_column("Option", style="cyan", width=4)
+            table.add_column("Setting", style="white")
+            table.add_column("Value", style="green")
+
+            table.add_row("1", "Enabled", self._status_icon(self.config.announcements.enabled))
+            table.add_row("2", "Interval (hours)", str(self.config.announcements.interval_hours))
+            table.add_row("3", "Channel", str(self.config.announcements.channel))
+            table.add_row("4", "Messages", f"{len(self.config.announcements.messages)} defined")
+            table.add_row("5", "Random Order", self._status_icon(self.config.announcements.random_order))
+            table.add_row("0", "Back", "")
+
+            console.print(table)
+            console.print()
+
+            choice = IntPrompt.ask("Select option", default=0)
+
+            if choice == 0:
+                return
+            elif choice == 1:
+                value = Confirm.ask("Enable announcements?", default=self.config.announcements.enabled)
+                if value != self.config.announcements.enabled:
+                    self.config.announcements.enabled = value
+                    self.modified = True
+            elif choice == 2:
+                value = IntPrompt.ask("Interval (hours)", default=self.config.announcements.interval_hours)
+                if value != self.config.announcements.interval_hours:
+                    self.config.announcements.interval_hours = value
+                    self.modified = True
+            elif choice == 3:
+                value = IntPrompt.ask("Channel", default=self.config.announcements.channel)
+                if value != self.config.announcements.channel:
+                    self.config.announcements.channel = value
+                    self.modified = True
+            elif choice == 4:
+                self._announcements_messages_editor()
+            elif choice == 5:
+                value = Confirm.ask("Random order?", default=self.config.announcements.random_order)
+                if value != self.config.announcements.random_order:
+                    self.config.announcements.random_order = value
+                    self.modified = True
+
+    def _announcements_messages_editor(self) -> None:
+        """Edit announcement messages."""
+        while True:
+            self._clear()
+            console.print("[bold]Announcement Messages[/bold]\n")
+
+            if self.config.announcements.messages:
+                for i, msg in enumerate(self.config.announcements.messages, 1):
+                    console.print(f"  {i}. {msg[:60]}...")
+            else:
+                console.print("  [dim]No messages[/dim]")
+
+            console.print("\n[cyan]a[/cyan] Add message")
+            console.print("[cyan]r[/cyan] Remove message")
+            console.print("[cyan]0[/cyan] Back")
+            console.print()
+
+            choice = Prompt.ask("Select", default="0")
+
+            if choice == "0":
+                return
+            elif choice.lower() == "a":
+                value = Prompt.ask("Message text")
+                if value:
+                    self.config.announcements.messages.append(value)
+                    self.modified = True
+            elif choice.lower() == "r":
+                if self.config.announcements.messages:
+                    idx = IntPrompt.ask("Remove which number", default=1)
+                    if 1 <= idx <= len(self.config.announcements.messages):
+                        self.config.announcements.messages.pop(idx - 1)
+                        self.modified = True
+
+    def _webhook_settings(self) -> None:
+        """Webhook settings submenu."""
+        while True:
+            self._clear()
+            console.print("[bold]Webhooks[/bold]\n")
+
+            table = Table(box=box.ROUNDED)
+            table.add_column("Option", style="cyan", width=4)
+            table.add_column("Setting", style="white")
+            table.add_column("Value", style="green")
+
+            table.add_row("1", "Enabled", self._status_icon(self.config.integrations.webhook.enabled))
+            table.add_row("2", "URL", self.config.integrations.webhook.url or "[dim]not set[/dim]")
+            table.add_row("3", "Events", ", ".join(self.config.integrations.webhook.events))
+            table.add_row("0", "Back", "")
+
+            console.print(table)
+            console.print()
+
+            choice = IntPrompt.ask("Select option", default=0)
+
+            if choice == 0:
+                return
+            elif choice == 1:
+                value = Confirm.ask("Enable webhooks?", default=self.config.integrations.webhook.enabled)
+                if value != self.config.integrations.webhook.enabled:
+                    self.config.integrations.webhook.enabled = value
+                    self.modified = True
+            elif choice == 2:
+                value = Prompt.ask("Webhook URL", default=self.config.integrations.webhook.url)
+                if value != self.config.integrations.webhook.url:
+                    self.config.integrations.webhook.url = value
+                    self.modified = True
+            elif choice == 3:
+                console.print("\n[dim]Available: message_received, response_sent, error, startup, shutdown[/dim]")
+                value = Prompt.ask("Events (comma-separated)", default=",".join(self.config.integrations.webhook.events))
+                events = [e.strip() for e in value.split(",") if e.strip()]
+                if events != self.config.integrations.webhook.events:
+                    self.config.integrations.webhook.events = events
                     self.modified = True
 
     def _setup_wizard(self) -> None:
