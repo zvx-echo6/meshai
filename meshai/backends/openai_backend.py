@@ -98,9 +98,9 @@ class OpenAIBackend(LLMBackend):
             }
 
             # Enable web search if configured (Open WebUI feature)
-            # Uses tool_ids parameter to invoke the web_search tool
+            # Uses features.web_search parameter
             if getattr(self.config, 'web_search', False):
-                request_kwargs["extra_body"] = {"tool_ids": ["web_search"]}
+                request_kwargs["extra_body"] = {"features": {"web_search": True}}
 
             response = await self._client.chat.completions.create(**request_kwargs)
 
