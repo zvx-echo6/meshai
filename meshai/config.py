@@ -212,6 +212,7 @@ class LLMConfig:
         "Be concise but friendly. No markdown formatting."
     )
     use_system_prompt: bool = True  # Toggle to disable sending system prompt
+    web_search: bool = False  # Enable web search (Open WebUI feature)
 
     # Fallback settings
     fallback: Optional[LLMBackendConfig] = None

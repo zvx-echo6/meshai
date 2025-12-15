@@ -89,12 +89,19 @@ class OpenAIBackend(LLMBackend):
             full_messages.extend(messages)
 
         try:
-            response = await self._client.chat.completions.create(
-                model=self.config.model,
-                messages=full_messages,
-                max_tokens=max_tokens,
-                temperature=0.7,
-            )
+            # Build request kwargs
+            request_kwargs = {
+                "model": self.config.model,
+                "messages": full_messages,
+                "max_tokens": max_tokens,
+                "temperature": 0.7,
+            }
+
+            # Enable web search if configured (Open WebUI feature)
+            if getattr(self.config, 'web_search', False):
+                request_kwargs["extra_body"] = {"web_search": True}
+
+            response = await self._client.chat.completions.create(**request_kwargs)
 
             content = response.choices[0].message.content
             return content.strip() if content else ""

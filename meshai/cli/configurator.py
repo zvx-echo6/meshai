@@ -258,6 +258,8 @@ class Configurator:
             table.add_row("5", "System Prompt", f"[dim]{len(self.config.llm.system_prompt)} chars[/dim]")
             use_prompt = getattr(self.config.llm, 'use_system_prompt', True)
             table.add_row("6", "Use System Prompt", self._status_icon(use_prompt))
+            web_search = getattr(self.config.llm, 'web_search', False)
+            table.add_row("7", "Web Search", self._status_icon(web_search))
             table.add_row("0", "Back", "")
 
             console.print(table)
@@ -305,6 +307,10 @@ class Configurator:
             elif choice == 6:
                 current = getattr(self.config.llm, 'use_system_prompt', True)
                 self.config.llm.use_system_prompt = not current
+                self.modified = True
+            elif choice == 7:
+                current = getattr(self.config.llm, 'web_search', False)
+                self.config.llm.web_search = not current
                 self.modified = True
 
     def _weather_settings(self) -> None:
