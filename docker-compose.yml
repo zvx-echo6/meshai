@@ -1,19 +1,74 @@
+# MeshAI Docker Compose Configuration
+#
+# Usage:
+#   docker compose up -d                  # Start bot + web config
+#   docker compose logs -f                # View logs
+#
+# Web config: http://localhost:7681 (TUI in browser)
+#
+# Config is stored in the meshai_data volume at /data/config.yaml
+#
+# For serial connection (USB), uncomment the devices section below
+# For TCP connection, configure via web interface
+
 services:
   meshai:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    image: meshai:latest
     container_name: meshai
     restart: unless-stopped
-    volumes:
-      # Config and database persistence
-      - ./data:/data
-      # For serial connection - uncomment and adjust device path
-      # - /dev/ttyUSB0:/dev/ttyUSB0
-    # For serial connection - uncomment
+
+    # Uncomment for USB serial connection to Meshtastic device
     # devices:
     #   - /dev/ttyUSB0:/dev/ttyUSB0
-    # privileged: true  # May be needed for serial access
+    #   - /dev/ttyACM0:/dev/ttyACM0
+
+    ports:
+      # Web-based config interface (ttyd)
+      - "7681:7681"
+
+    volumes:
+      # Persistent data (database, config)
+      - meshai_data:/data
+
+    # Run interactively for first-time setup wizard
+    stdin_open: true
+    tty: true
+
     environment:
       # API key can be set here or in config.yaml
       - LLM_API_KEY=${LLM_API_KEY:-}
-    # For TCP connection, ensure network access to Meshtastic node
-    # network_mode: host  # Uncomment if needed for local network access
+
+    # Limit resources
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; sqlite3.connect('/data/conversations.db').execute('SELECT 1')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  meshai_data:
+    name: meshai_data
+
+networks:
+  default:
+    name: meshai_network
