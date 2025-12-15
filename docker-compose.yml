@@ -1,0 +1,19 @@
+services:
+  meshai:
+    build: .
+    container_name: meshai
+    restart: unless-stopped
+    volumes:
+      # Config and database persistence
+      - ./data:/data
+      # For serial connection - uncomment and adjust device path
+      # - /dev/ttyUSB0:/dev/ttyUSB0
+    # For serial connection - uncomment
+    # devices:
+    #   - /dev/ttyUSB0:/dev/ttyUSB0
+    # privileged: true  # May be needed for serial access
+    environment:
+      # API key can be set here or in config.yaml
+      - LLM_API_KEY=${LLM_API_KEY:-}
+    # For TCP connection, ensure network access to Meshtastic node
+    # network_mode: host  # Uncomment if needed for local network access

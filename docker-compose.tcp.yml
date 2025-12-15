@@ -1,0 +1,7 @@
+# Docker Compose override for TCP connection
+# Usage: docker compose -f docker-compose.yml -f docker-compose.tcp.yml up -d
+
+services:
+  meshai:
+    # Use host network for easy access to local Meshtastic node
+    network_mode: host

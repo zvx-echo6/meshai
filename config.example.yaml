@@ -1,0 +1,51 @@
+# MeshAI Configuration
+# Copy to config.yaml and edit as needed
+
+bot:
+  name: "ai"                    # @mention trigger (e.g., @ai)
+  owner: "K7ZVX"               # Owner callsign/name for logging
+  respond_to_mentions: true     # Respond to @botname mentions
+  respond_to_dms: true          # Respond to direct messages
+
+connection:
+  type: "serial"               # serial or tcp
+  serial_port: "/dev/ttyUSB0"  # Serial port (if type=serial)
+  tcp_host: "192.168.1.100"    # TCP host (if type=tcp)
+  tcp_port: 4403               # TCP port (if type=tcp)
+
+channels:
+  mode: "all"                  # "all" or "whitelist"
+  whitelist: [0]               # Channel indices (if mode=whitelist)
+
+response:
+  delay_min: 2.2               # Minimum delay before responding (seconds)
+  delay_max: 3.0               # Maximum delay before responding (seconds)
+  max_length: 150              # Max characters per message chunk
+  max_messages: 2              # Max message chunks per response
+
+history:
+  database: "conversations.db" # SQLite database file
+  max_messages_per_user: 20    # Max conversation history per user
+  conversation_timeout: 86400  # Reset conversation after N seconds (24h)
+
+llm:
+  backend: "openai"            # openai, anthropic, or google
+  api_key: ""                  # API key (or use env: LLM_API_KEY)
+  base_url: "https://api.openai.com/v1"  # API base URL
+  model: "gpt-4o-mini"         # Model to use
+  system_prompt: |
+    You are a helpful assistant on a Meshtastic mesh network.
+    Keep responses VERY brief - under 250 characters total.
+    Be concise but friendly. No markdown formatting.
+    You may have access to web search for current information.
+
+weather:
+  primary: "openmeteo"         # openmeteo, wttr, or llm
+  fallback: "llm"              # openmeteo, wttr, llm, or none
+  default_location: ""         # Default location if no GPS
+
+  openmeteo:
+    url: "https://api.open-meteo.com/v1"
+
+  wttr:
+    url: "https://wttr.in"
