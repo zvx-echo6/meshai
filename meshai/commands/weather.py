@@ -102,7 +102,7 @@ class WeatherCommand(CommandHandler):
                 return None
             lat, lon = coords
 
-        # Fetch current weather
+        # Fetch current weather + 3-day forecast
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
                 f"{base_url}/forecast",
@@ -110,8 +110,11 @@ class WeatherCommand(CommandHandler):
                     "latitude": lat,
                     "longitude": lon,
                     "current": "temperature_2m,weathercode,windspeed_10m",
+                    "daily": "weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
                     "temperature_unit": "fahrenheit",
                     "windspeed_unit": "mph",
+                    "forecast_days": 3,
+                    "timezone": "auto",
                 },
             )
             response.raise_for_status()
@@ -131,7 +134,38 @@ class WeatherCommand(CommandHandler):
         # Format location name
         loc_name = location if isinstance(location, str) else f"{lat:.2f},{lon:.2f}"
 
-        return f"{loc_name}: {temp:.0f}F, {condition}, Wind {wind:.0f}mph"
+        # Build current conditions
+        result = f"{loc_name}: {temp:.0f}F, {condition}, Wind {wind:.0f}mph"
+
+        # Add forecast
+        daily = data.get("daily", {})
+        dates = daily.get("time", [])
+        highs = daily.get("temperature_2m_max", [])
+        lows = daily.get("temperature_2m_min", [])
+        codes = daily.get("weathercode", [])
+        precip = daily.get("precipitation_probability_max", [])
+
+        if dates and len(dates) >= 3:
+            # Skip today (index 0), show next 2 days
+            forecast_parts = []
+            day_names = ["Today", "Tomorrow"]
+            for i in range(1, min(3, len(dates))):
+                day = day_names[i-1] if i <= len(day_names) else dates[i]
+                hi = highs[i] if i < len(highs) else None
+                lo = lows[i] if i < len(lows) else None
+                cond = self._weather_code_to_text(codes[i]) if i < len(codes) else ""
+                rain = precip[i] if i < len(precip) else 0
+
+                if hi is not None and lo is not None:
+                    part = f"{day}: {lo:.0f}-{hi:.0f}F {cond}"
+                    if rain and rain > 20:
+                        part += f" {rain}%rain"
+                    forecast_parts.append(part)
+
+            if forecast_parts:
+                result += " | " + ", ".join(forecast_parts)
+
+        return result
 
     async def _fetch_wttr(
         self,
