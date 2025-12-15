@@ -19,6 +19,131 @@ class BotConfig:
 
 
 @dataclass
+class RateLimitsConfig:
+    """Rate limiting settings."""
+
+    messages_per_minute: int = 10  # Per-user message limit
+    global_messages_per_minute: int = 30  # Total across all users
+    cooldown_seconds: float = 5.0  # Min time between responses to same user
+    burst_allowance: int = 3  # Allow short bursts before limiting
+
+
+@dataclass
+class LoggingConfig:
+    """Logging settings."""
+
+    level: str = "INFO"  # DEBUG | INFO | WARNING | ERROR
+    file: str = ""  # Empty = console only
+    max_size_mb: int = 10
+    backup_count: int = 3
+    log_messages: bool = True  # Log incoming messages
+    log_responses: bool = True  # Log outgoing responses
+    log_api_calls: bool = False  # Log raw LLM API requests (verbose)
+
+
+@dataclass
+class LLMBackendConfig:
+    """Single LLM backend configuration."""
+
+    backend: str = "openai"  # openai, anthropic, google
+    api_key: str = ""
+    base_url: str = "https://api.openai.com/v1"
+    model: str = "gpt-4o-mini"
+    timeout: int = 30
+
+
+@dataclass
+class SafetyConfig:
+    """Response filtering and safety settings."""
+
+    max_response_length: int = 250  # Hard cap on response length
+    filter_profanity: bool = False  # Basic profanity filter
+    blocked_phrases: list[str] = field(default_factory=list)  # Phrases to filter out
+    require_mention: bool = True  # Only respond when mentioned by name
+    ignore_self: bool = True  # Don't respond to own messages
+    emergency_keywords: list[str] = field(
+        default_factory=lambda: ["emergency", "help", "sos"]
+    )  # Always respond to these
+
+
+@dataclass
+class UsersConfig:
+    """User management settings."""
+
+    blocklist: list[str] = field(default_factory=list)  # Never respond to these node IDs
+    allowlist_only: bool = False  # If true, only respond to allowlist
+    allowlist: list[str] = field(default_factory=list)  # Exclusive users
+    admin_nodes: list[str] = field(default_factory=list)  # Nodes with admin commands
+    vip_nodes: list[str] = field(default_factory=list)  # Skip rate limits
+
+
+@dataclass
+class CustomCommandConfig:
+    """Custom static command definition."""
+
+    response: str = ""
+
+
+@dataclass
+class CommandsConfig:
+    """Command customization settings."""
+
+    enabled: bool = True
+    prefix: str = "!"  # Command prefix
+    custom_commands: dict = field(default_factory=dict)  # name -> response mapping
+    disabled_commands: list[str] = field(default_factory=list)  # Built-in commands to disable
+
+
+@dataclass
+class PersonalityConfig:
+    """Personality and prompt settings."""
+
+    system_prompt: str = (
+        "You are a helpful assistant on a Meshtastic mesh network. "
+        "Keep responses VERY brief - under 250 characters total. "
+        "Be concise but friendly. No markdown formatting."
+    )
+    context_injection: str = ""  # Template with {time}, {sender_name}, {channel}
+    personas: dict = field(default_factory=dict)  # trigger -> prompt mapping
+
+
+@dataclass
+class WebStatusConfig:
+    """Web status page settings."""
+
+    enabled: bool = False
+    port: int = 8080
+    show_uptime: bool = True
+    show_message_count: bool = True
+    show_connected_nodes: bool = True
+    show_recent_activity: bool = False  # Privacy concern
+    require_auth: bool = False
+    auth_password: str = ""
+
+
+@dataclass
+class AnnouncementsConfig:
+    """Periodic announcement settings."""
+
+    enabled: bool = False
+    interval_hours: int = 24
+    channel: int = 0
+    messages: list[str] = field(default_factory=list)
+    random_order: bool = True
+
+
+@dataclass
+class WebhookConfig:
+    """Webhook integration settings."""
+
+    enabled: bool = False
+    url: str = ""
+    events: list[str] = field(
+        default_factory=lambda: ["message_received", "response_sent", "error"]
+    )
+
+
+@dataclass
 class ConnectionConfig:
     """Meshtastic connection settings."""
 
@@ -51,8 +176,13 @@ class HistoryConfig:
     """Conversation history settings."""
 
     database: str = "conversations.db"
-    max_messages_per_user: int = 20
+    max_messages_per_user: int = 50
     conversation_timeout: int = 86400  # 24 hours
+
+    # Cleanup settings
+    auto_cleanup: bool = True
+    cleanup_interval_hours: int = 24
+    max_age_days: int = 30  # Delete conversations older than this
 
 
 @dataclass
@@ -66,17 +196,27 @@ class MemoryConfig:
 
 @dataclass
 class LLMConfig:
-    """LLM backend settings."""
+    """LLM backend settings with fallback support."""
 
+    # Primary backend (backwards compatible with old config)
     backend: str = "openai"  # openai, anthropic, google
     api_key: str = ""
     base_url: str = "https://api.openai.com/v1"
     model: str = "gpt-4o-mini"
+    timeout: int = 30
+
+    # System prompt (kept for backwards compat, personality.system_prompt preferred)
     system_prompt: str = (
         "You are a helpful assistant on a Meshtastic mesh network. "
         "Keep responses VERY brief - under 250 characters total. "
         "Be concise but friendly. No markdown formatting."
     )
+
+    # Fallback settings
+    fallback: Optional[LLMBackendConfig] = None
+    retry_attempts: int = 2
+    fallback_on_error: bool = True
+    fallback_on_timeout: bool = True
 
 
 @dataclass
@@ -105,6 +245,14 @@ class WeatherConfig:
 
 
 @dataclass
+class IntegrationsConfig:
+    """External integrations settings."""
+
+    weather: WeatherConfig = field(default_factory=WeatherConfig)
+    webhook: WebhookConfig = field(default_factory=WebhookConfig)
+
+
+@dataclass
 class Config:
     """Main configuration container."""
 
@@ -115,9 +263,28 @@ class Config:
     history: HistoryConfig = field(default_factory=HistoryConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
+
+    # New config sections
+    rate_limits: RateLimitsConfig = field(default_factory=RateLimitsConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
+    safety: SafetyConfig = field(default_factory=SafetyConfig)
+    users: UsersConfig = field(default_factory=UsersConfig)
+    commands: CommandsConfig = field(default_factory=CommandsConfig)
+    personality: PersonalityConfig = field(default_factory=PersonalityConfig)
+    web_status: WebStatusConfig = field(default_factory=WebStatusConfig)
+    announcements: AnnouncementsConfig = field(default_factory=AnnouncementsConfig)
+    integrations: IntegrationsConfig = field(default_factory=IntegrationsConfig)
+
+    # Keep weather at top level for backwards compatibility
     weather: WeatherConfig = field(default_factory=WeatherConfig)
 
     _config_path: Optional[Path] = field(default=None, repr=False)
+
+    def get_system_prompt(self) -> str:
+        """Get effective system prompt, preferring personality config."""
+        if self.personality.system_prompt:
+            return self.personality.system_prompt
+        return self.llm.system_prompt
 
     def resolve_api_key(self) -> str:
         """Resolve API key from config or environment."""

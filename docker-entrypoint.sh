@@ -10,7 +10,7 @@ if [ ! -f "$MESHAI_CONFIG" ]; then
     mkdir -p /data
     cat > "$MESHAI_CONFIG" << 'EOF'
 # MeshAI Configuration
-# Configure via http://localhost:7681
+# Configure via http://localhost:7682
 
 bot:
   name: ai
@@ -35,10 +35,28 @@ response:
   max_length: 150
   max_messages: 2
 
+rate_limits:
+  messages_per_minute: 10
+  global_messages_per_minute: 30
+  cooldown_seconds: 5.0
+  burst_allowance: 3
+
+logging:
+  level: INFO
+  file: /data/meshai.log
+  max_size_mb: 10
+  backup_count: 3
+  log_messages: true
+  log_responses: true
+  log_api_calls: false
+
 history:
   database: /data/conversations.db
-  max_messages_per_user: 20
+  max_messages_per_user: 50
   conversation_timeout: 86400
+  auto_cleanup: true
+  cleanup_interval_hours: 24
+  max_age_days: 30
 
 memory:
   enabled: true
@@ -50,10 +68,60 @@ llm:
   api_key: ""
   base_url: https://api.openai.com/v1
   model: gpt-4o-mini
+  timeout: 30
   system_prompt: >-
     You are a helpful assistant on a Meshtastic mesh network.
     Keep responses VERY brief - under 250 characters total.
     Be concise but friendly. No markdown formatting.
+  retry_attempts: 2
+  fallback_on_error: true
+  fallback_on_timeout: true
+
+safety:
+  max_response_length: 250
+  filter_profanity: false
+  blocked_phrases: []
+  require_mention: true
+  ignore_self: true
+  emergency_keywords:
+    - emergency
+    - help
+    - sos
+
+users:
+  blocklist: []
+  allowlist_only: false
+  allowlist: []
+  admin_nodes: []
+  vip_nodes: []
+
+commands:
+  enabled: true
+  prefix: "!"
+  disabled_commands: []
+  custom_commands: {}
+
+personality:
+  system_prompt: ""
+  context_injection: ""
+  personas: {}
+
+web_status:
+  enabled: false
+  port: 8080
+  show_uptime: true
+  show_message_count: true
+  show_connected_nodes: true
+  show_recent_activity: false
+  require_auth: false
+  auth_password: ""
+
+announcements:
+  enabled: false
+  interval_hours: 24
+  channel: 0
+  messages: []
+  random_order: true
 
 weather:
   primary: openmeteo
@@ -63,6 +131,19 @@ weather:
     url: https://api.open-meteo.com/v1
   wttr:
     url: https://wttr.in
+
+integrations:
+  weather:
+    primary: openmeteo
+    fallback: llm
+    default_location: ""
+  webhook:
+    enabled: false
+    url: ""
+    events:
+      - message_received
+      - response_sent
+      - error
 EOF
     echo "Default config created. Configure via http://localhost:7682"
 fi
@@ -70,6 +151,7 @@ fi
 # Start ttyd for web-based config access
 echo "Starting web config interface on port 7682..."
 ttyd -W -p 7682 \
+    -t enableClipboard=true \
     -t titleFixed="MeshAI Config" \
     -t 'theme={"background":"#0d1117","foreground":"#c9d1d9","cursor":"#58a6ff","selectionBackground":"#388bfd"}' \
     -t fontSize=14 \
