@@ -292,11 +292,12 @@ class Configurator:
                     self.modified = True
             elif choice == 5:
                 console.print("\n[dim]Current prompt:[/dim]")
-                console.print(self.config.llm.system_prompt)
+                console.print(self.config.llm.system_prompt or "(empty)")
                 console.print()
                 if Confirm.ask("Edit system prompt?", default=False):
-                    value = Prompt.ask("New system prompt")
-                    if value:
+                    console.print("[dim]Enter new prompt, or leave empty to clear[/dim]")
+                    value = Prompt.ask("New system prompt", default="")
+                    if value != self.config.llm.system_prompt:
                         self.config.llm.system_prompt = value
                         self.modified = True
 
