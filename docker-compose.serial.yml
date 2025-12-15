@@ -1,9 +1,0 @@
-# Docker Compose override for serial connection
-# Usage: docker compose -f docker-compose.yml -f docker-compose.serial.yml up -d
-
-services:
-  meshai:
-    devices:
-      - /dev/ttyUSB0:/dev/ttyUSB0
-    # May need privileged for some serial adapters
-    # privileged: true
