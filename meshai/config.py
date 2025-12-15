@@ -211,6 +211,7 @@ class LLMConfig:
         "Keep responses VERY brief - under 250 characters total. "
         "Be concise but friendly. No markdown formatting."
     )
+    use_system_prompt: bool = True  # Toggle to disable sending system prompt
 
     # Fallback settings
     fallback: Optional[LLMBackendConfig] = None

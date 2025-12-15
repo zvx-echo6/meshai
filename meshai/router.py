@@ -130,10 +130,15 @@ class MessageRouter:
         history = await self.history.get_history_for_llm(message.sender_id)
 
         # Generate response with user_id for memory optimization
+        # Use system prompt only if enabled in config
+        system_prompt = ""
+        if getattr(self.config.llm, 'use_system_prompt', True):
+            system_prompt = self.config.llm.system_prompt
+
         try:
             response = await self.llm.generate(
                 messages=history,
-                system_prompt=self.config.llm.system_prompt,
+                system_prompt=system_prompt,
                 max_tokens=300,
                 user_id=message.sender_id,  # Enable memory optimization
             )

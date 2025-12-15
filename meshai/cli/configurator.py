@@ -256,6 +256,8 @@ class Configurator:
             table.add_row("3", "Base URL", self.config.llm.base_url)
             table.add_row("4", "Model", self.config.llm.model)
             table.add_row("5", "System Prompt", f"[dim]{len(self.config.llm.system_prompt)} chars[/dim]")
+            use_prompt = getattr(self.config.llm, 'use_system_prompt', True)
+            table.add_row("6", "Use System Prompt", self._status_icon(use_prompt))
             table.add_row("0", "Back", "")
 
             console.print(table)
@@ -300,6 +302,10 @@ class Configurator:
                     if value != self.config.llm.system_prompt:
                         self.config.llm.system_prompt = value
                         self.modified = True
+            elif choice == 6:
+                current = getattr(self.config.llm, 'use_system_prompt', True)
+                self.config.llm.use_system_prompt = not current
+                self.modified = True
 
     def _weather_settings(self) -> None:
         """Weather settings submenu."""
