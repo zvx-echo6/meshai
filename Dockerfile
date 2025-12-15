@@ -72,7 +72,7 @@ USER meshai
 VOLUME ["/data"]
 
 # Expose ttyd web config port
-EXPOSE 7681
+EXPOSE 7682
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \

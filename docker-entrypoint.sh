@@ -64,12 +64,12 @@ weather:
   wttr:
     url: https://wttr.in
 EOF
-    echo "Default config created. Configure via http://localhost:7681"
+    echo "Default config created. Configure via http://localhost:7682"
 fi
 
 # Start ttyd for web-based config access
-echo "Starting web config interface on port 7681..."
-ttyd -W -p 7681 \
+echo "Starting web config interface on port 7682..."
+ttyd -W -p 7682 \
     -t titleFixed="MeshAI Config" \
     -t 'theme={"background":"#0d1117","foreground":"#c9d1d9","cursor":"#58a6ff","selectionBackground":"#388bfd"}' \
     -t fontSize=14 \
@@ -96,6 +96,6 @@ trap "kill %1 2>/dev/null; kill %2 2>/dev/null" EXIT
 echo "Starting MeshAI..."
 while true; do
     python -m meshai --config-file "$MESHAI_CONFIG" || true
-    echo "Bot exited. Check config at http://localhost:7681. Retrying in 5s..."
+    echo "Bot exited. Check config at http://localhost:7682. Retrying in 5s..."
     sleep 5
 done
