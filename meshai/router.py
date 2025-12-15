@@ -139,7 +139,7 @@ class MessageRouter:
             response = await self.llm.generate(
                 messages=history,
                 system_prompt=system_prompt,
-                max_tokens=300,
+                max_tokens=500,  # Increased for web search/RAG responses
                 user_id=message.sender_id,  # Enable memory optimization
             )
         except Exception as e:
