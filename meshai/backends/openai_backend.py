@@ -6,10 +6,20 @@ from typing import Optional
 from openai import AsyncOpenAI
 
 from ..config import LLMConfig
-from ..memory import ConversationSummary, RollingSummaryMemory
+from ..memory import RollingSummaryMemory
 from .base import LLMBackend
 
 logger = logging.getLogger(__name__)
+
+_SUMMARIZE_PROMPT = """Summarize this conversation in 2-3 concise sentences. Focus on:
+- Main topics discussed
+- Important context or user preferences
+- Key information to remember
+
+Conversation:
+{conversation}
+
+Summary (2-3 sentences):"""
 
 
 class OpenAIBackend(LLMBackend):
@@ -36,13 +46,35 @@ class OpenAIBackend(LLMBackend):
             base_url=config.base_url,
         )
 
-        # Initialize rolling summary memory for context optimization
+        # Initialize rolling summary memory with OpenAI summarize function
         self._memory = RollingSummaryMemory(
-            client=self._client,
-            model=config.model,
+            summarize_fn=self._summarize_messages,
             window_size=window_size,
             summarize_threshold=summarize_threshold,
         )
+
+    async def _summarize_messages(self, messages: list[dict]) -> str:
+        """Summarize messages using OpenAI API."""
+        if not messages:
+            return "No previous conversation."
+
+        conversation = "\n".join(
+            [f"{msg['role'].upper()}: {msg['content']}" for msg in messages]
+        )
+        prompt = _SUMMARIZE_PROMPT.format(conversation=conversation)
+
+        try:
+            response = await self._client.chat.completions.create(
+                model=self.config.model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=150,
+                temperature=0.3,
+            )
+            content = response.choices[0].message.content
+            return content.strip() if content else f"Previous conversation: {len(messages)} messages."
+        except Exception as e:
+            logger.warning(f"Failed to generate summary: {e}")
+            return f"Previous conversation: {len(messages)} messages about various topics."
 
     async def generate(
         self,

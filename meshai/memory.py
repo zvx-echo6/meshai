@@ -3,9 +3,7 @@
 import logging
 import time
 from dataclasses import dataclass
-from typing import Optional
-
-from openai import AsyncOpenAI
+from typing import Awaitable, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -39,21 +37,19 @@ class RollingSummaryMemory:
 
     def __init__(
         self,
-        client: AsyncOpenAI,
-        model: str,
+        summarize_fn: Callable[[list[dict]], Awaitable[str]],
         window_size: int = 4,
         summarize_threshold: int = 8,
     ):
         """Initialize rolling summary memory.
 
         Args:
-            client: AsyncOpenAI client for generating summaries
-            model: Model name to use for summarization
+            summarize_fn: Async callable that takes a list of messages and returns
+                a summary string. Each backend provides its own implementation.
             window_size: Number of recent message pairs to keep in full
             summarize_threshold: Messages to accumulate before re-summarizing
         """
-        self._client = client
-        self._model = model
+        self._summarize_fn = summarize_fn
         self._window_size = window_size
         self._summarize_threshold = summarize_threshold
 
@@ -105,7 +101,7 @@ class RollingSummaryMemory:
 
         # Generate new summary
         logger.debug(f"Generating summary for {user_id} ({len(messages)} messages)")
-        summary_text = await self._summarize(messages)
+        summary_text = await self._summarize_fn(messages)
 
         summary = ConversationSummary(
             summary=summary_text,
@@ -115,42 +111,6 @@ class RollingSummaryMemory:
 
         self._summaries[user_id] = summary
         return summary
-
-    async def _summarize(self, messages: list[dict]) -> str:
-        """Generate summary using LLM."""
-        if not messages:
-            return "No previous conversation."
-
-        # Format conversation
-        conversation = "\n".join(
-            [f"{msg['role'].upper()}: {msg['content']}" for msg in messages]
-        )
-
-        prompt = f"""Summarize this conversation in 2-3 concise sentences. Focus on:
-- Main topics discussed
-- Important context or user preferences
-- Key information to remember
-
-Conversation:
-{conversation}
-
-Summary (2-3 sentences):"""
-
-        try:
-            response = await self._client.chat.completions.create(
-                model=self._model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=150,
-                temperature=0.3,
-            )
-
-            content = response.choices[0].message.content
-            return content.strip() if content else f"Previous conversation: {len(messages)} messages."
-
-        except Exception as e:
-            logger.warning(f"Failed to generate summary: {e}")
-            # Fallback - provide basic context
-            return f"Previous conversation: {len(messages)} messages about various topics."
 
     def load_summary(self, user_id: str, summary: ConversationSummary) -> None:
         """Load summary from database into cache."""
