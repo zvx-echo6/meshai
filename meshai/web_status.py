@@ -1,6 +1,7 @@
 """Simple web status page for MeshAI."""
 
 import asyncio
+import html as html_module
 import json
 import logging
 import threading
@@ -159,6 +160,31 @@ class StatusRequestHandler(BaseHTTPRequestHandler):
             include_activity=self.config.show_recent_activity if self.config else False
         )
 
+        esc = html_module.escape
+
+        # Build optional stat rows
+        rows = ""
+        if self.config and self.config.show_uptime:
+            rows += (
+                '<div class="stat"><span class="stat-label">Uptime</span>'
+                f'<span class="stat-value">{esc(str(status["uptime"]))}</span></div>'
+            )
+        if self.config and self.config.show_message_count:
+            rows += (
+                '<div class="stat"><span class="stat-label">Messages</span>'
+                f'<span class="stat-value">{esc(str(status["messages_received"]))}</span></div>'
+                '<div class="stat"><span class="stat-label">Responses</span>'
+                f'<span class="stat-value">{esc(str(status["responses_sent"]))}</span></div>'
+            )
+        if self.config and self.config.show_connected_nodes:
+            rows += (
+                '<div class="stat"><span class="stat-label">Connected Nodes</span>'
+                f'<span class="stat-value">{esc(str(status["connected_nodes"]))}</span></div>'
+            )
+
+        status_class = "status-fallback" if status.get("using_fallback") else "status-online"
+        status_text = "ONLINE (Fallback)" if status.get("using_fallback") else "ONLINE"
+
         html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -192,17 +218,12 @@ class StatusRequestHandler(BaseHTTPRequestHandler):
         <h1>MeshAI Status</h1>
         <div class="stat">
             <span class="stat-label">Status</span>
-            <span class="stat-value {'status-fallback' if status.get('using_fallback') else 'status-online'}">
-                {'ONLINE (Fallback)' if status.get('using_fallback') else 'ONLINE'}
-            </span>
+            <span class="stat-value {esc(status_class)}">{esc(status_text)}</span>
         </div>
-        {'<div class="stat"><span class="stat-label">Uptime</span><span class="stat-value">' + status["uptime"] + '</span></div>' if self.config and self.config.show_uptime else ''}
-        {'<div class="stat"><span class="stat-label">Messages</span><span class="stat-value">' + str(status["messages_received"]) + '</span></div>' if self.config and self.config.show_message_count else ''}
-        {'<div class="stat"><span class="stat-label">Responses</span><span class="stat-value">' + str(status["responses_sent"]) + '</span></div>' if self.config and self.config.show_message_count else ''}
-        {'<div class="stat"><span class="stat-label">Connected Nodes</span><span class="stat-value">' + str(status["connected_nodes"]) + '</span></div>' if self.config and self.config.show_connected_nodes else ''}
+        {rows}
         <div class="stat">
             <span class="stat-label">Errors</span>
-            <span class="stat-value">{status["errors"]}</span>
+            <span class="stat-value">{esc(str(status["errors"]))}</span>
         </div>
         <div class="footer">Auto-refresh in 30s</div>
     </div>

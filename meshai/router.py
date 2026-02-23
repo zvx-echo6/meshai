@@ -33,6 +33,17 @@ class RouteResult:
     query: Optional[str] = None  # For LLM, the cleaned query
 
 
+# Patterns that suggest prompt injection attempts
+_INJECTION_PATTERNS = [
+    re.compile(r"ignore\s+(all\s+)?previous", re.IGNORECASE),
+    re.compile(r"ignore\s+your\s+instructions", re.IGNORECASE),
+    re.compile(r"disregard\s+(all\s+)?previous", re.IGNORECASE),
+    re.compile(r"you\s+are\s+now\b", re.IGNORECASE),
+    re.compile(r"new\s+instructions?\s*:", re.IGNORECASE),
+    re.compile(r"system\s*prompt\s*:", re.IGNORECASE),
+]
+
+
 class MessageRouter:
     """Routes incoming messages to appropriate handlers."""
 
@@ -186,12 +197,28 @@ class MessageRouter:
             logger.debug(f"Persisted summary for {user_id}")
 
     def _clean_query(self, text: str) -> str:
-        """Remove @mention from query text."""
+        """Remove @mention and check for prompt injection."""
         # Remove @botname mention
         cleaned = self._mention_pattern.sub("", text)
         # Clean up extra whitespace
         cleaned = " ".join(cleaned.split())
-        return cleaned.strip()
+        cleaned = cleaned.strip()
+
+        # Check for prompt injection if guard is enabled
+        if self.config.safety.prompt_injection_guard:
+            for pattern in _INJECTION_PATTERNS:
+                if pattern.search(cleaned):
+                    logger.warning(
+                        f"Possible prompt injection detected: {cleaned[:80]}..."
+                    )
+                    # Truncate to just the part before the injection pattern
+                    match = pattern.search(cleaned)
+                    cleaned = cleaned[:match.start()].strip()
+                    if not cleaned:
+                        cleaned = "Hello"
+                    break
+
+        return cleaned
 
     def _make_command_context(self, message: MeshMessage) -> CommandContext:
         """Create command context from message."""

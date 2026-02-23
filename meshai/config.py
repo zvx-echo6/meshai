@@ -64,6 +64,7 @@ class SafetyConfig:
     emergency_keywords: list[str] = field(
         default_factory=lambda: ["emergency", "help", "sos"]
     )  # Always respond to these
+    prompt_injection_guard: bool = True  # Basic prompt injection detection
 
 
 @dataclass
