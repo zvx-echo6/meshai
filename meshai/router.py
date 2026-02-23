@@ -11,6 +11,7 @@ from .commands import CommandContext, CommandDispatcher
 from .config import Config
 from .connector import MeshConnector, MeshMessage
 from .history import ConversationHistory
+from .personality import PersonalityManager
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +43,14 @@ class MessageRouter:
         history: ConversationHistory,
         dispatcher: CommandDispatcher,
         llm_backend: LLMBackend,
+        personality: Optional[PersonalityManager] = None,
     ):
         self.config = config
         self.connector = connector
         self.history = history
         self.dispatcher = dispatcher
         self.llm = llm_backend
+        self.personality = personality
 
         # Compile mention pattern
         bot_name = re.escape(config.bot.name)
@@ -68,6 +71,10 @@ class MessageRouter:
 
         # Check if DM
         if message.is_dm:
+            # In DMs, let commands through to dispatcher but skip !commands
+            # that should be handled by other bots (like MeshMonitor)
+            if self.dispatcher.is_command(message.text):
+                return True
             return self.config.bot.respond_to_dms
 
         # Check channel filtering
@@ -129,11 +136,16 @@ class MessageRouter:
         # Get conversation history
         history = await self.history.get_history_for_llm(message.sender_id)
 
-        # Generate response with user_id for memory optimization
-        # Use system prompt only if enabled in config
+        # Get system prompt from personality manager or config
         system_prompt = ""
         if getattr(self.config.llm, 'use_system_prompt', True):
-            system_prompt = self.config.llm.system_prompt
+            if self.personality:
+                system_prompt = self.personality.get_system_prompt(
+                    sender_name=message.sender_name,
+                    channel=message.channel,
+                )
+            else:
+                system_prompt = self.config.llm.system_prompt
 
         try:
             response = await self.llm.generate(
