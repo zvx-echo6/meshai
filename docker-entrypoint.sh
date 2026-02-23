@@ -17,6 +17,7 @@ bot:
   owner: ""
   respond_to_mentions: true
   respond_to_dms: true
+  filter_bbs_protocols: true
 
 connection:
   type: tcp

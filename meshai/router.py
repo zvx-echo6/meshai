@@ -33,6 +33,14 @@ class RouteResult:
     query: Optional[str] = None  # For LLM, the cleaned query
 
 
+# advBBS protocol and notification prefixes to ignore
+ADVBBS_PREFIXES = (
+    "MAILREQ|", "MAILACK|", "MAILNAK|", "MAILDAT|", "MAILDLV|",
+    "BOARDREQ|", "BOARDACK|", "BOARDNAK|", "BOARDDAT|", "BOARDDLV|",
+    "advBBS|",
+    "[MAIL]",
+)
+
 # Patterns that suggest prompt injection attempts
 _INJECTION_PATTERNS = [
     re.compile(r"ignore\s+(all\s+)?previous", re.IGNORECASE),
@@ -79,6 +87,12 @@ class MessageRouter:
         # Always ignore our own messages
         if message.sender_id == self.connector.my_node_id:
             return False
+
+        # Ignore advBBS protocol and notification messages
+        if self.config.bot.filter_bbs_protocols:
+            if any(message.text.startswith(p) for p in ADVBBS_PREFIXES):
+                logger.debug(f"Ignoring advBBS message from {message.sender_id}: {message.text[:40]}...")
+                return False
 
         # Check if DM — conversational mode only, skip !commands
         # (let MeshMonitor or other bots handle bang commands in DMs)

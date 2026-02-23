@@ -19,6 +19,7 @@ class BotConfig:
     owner: str = ""
     respond_to_mentions: bool = True
     respond_to_dms: bool = True
+    filter_bbs_protocols: bool = True
 
 
 @dataclass

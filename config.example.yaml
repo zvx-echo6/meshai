@@ -10,6 +10,7 @@ bot:
   owner: ""                      # Owner's callsign (optional)
   respond_to_mentions: true      # Respond when name is mentioned
   respond_to_dms: true           # Respond to direct messages
+  filter_bbs_protocols: true     # Ignore advBBS sync/notification messages
 
 # === MESHTASTIC CONNECTION ===
 connection:
