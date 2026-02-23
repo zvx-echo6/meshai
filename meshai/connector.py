@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 import meshtastic
@@ -26,13 +26,12 @@ class MeshMessage:
     channel: int  # Channel index
     is_dm: bool  # True if direct message to us
     packet: dict  # Raw packet for additional data
+    _position: Optional[tuple[float, float]] = field(default=None, repr=False, init=False)
 
     @property
     def sender_position(self) -> Optional[tuple[float, float]]:
         """Get sender's GPS position if available (lat, lon)."""
-        # Position comes from node info, not the message itself
-        # This will be populated by the connector if available
-        return self._position if hasattr(self, "_position") else None
+        return self._position
 
 
 class MeshConnector:

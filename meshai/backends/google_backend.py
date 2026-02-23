@@ -162,6 +162,12 @@ class GoogleBackend(LLMBackend):
                 )
 
         try:
+            # Create model with system instruction for persistent system prompt
+            model = genai.GenerativeModel(
+                self.config.model,
+                system_instruction=enhanced_system if enhanced_system else None,
+            )
+
             # Convert messages to Gemini format
             # Gemini uses "user" and "model" roles
             history = []
@@ -170,14 +176,10 @@ class GoogleBackend(LLMBackend):
                 history.append({"role": role, "parts": [msg["content"]]})
 
             # Start chat with history
-            chat = self._model.start_chat(history=history)
+            chat = model.start_chat(history=history)
 
             # Get the last user message
             last_message = final_messages[-1]["content"] if final_messages else ""
-
-            # Prepend system prompt to first message if needed
-            if enhanced_system and not history:
-                last_message = f"{enhanced_system}\n\n{last_message}"
 
             # Generate response
             response = await chat.send_message_async(

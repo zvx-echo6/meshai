@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import sys
 import time
@@ -18,6 +19,7 @@ from .commands.status import set_start_time
 from .config import Config, load_config
 from .connector import MeshConnector, MeshMessage
 from .history import ConversationHistory
+from .memory import ConversationSummary
 from .responder import Responder
 from .router import MessageRouter, RouteType
 
@@ -37,6 +39,7 @@ class MeshAI:
         self.responder: Optional[Responder] = None
         self._running = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._last_cleanup: float = 0.0
 
     async def start(self) -> None:
         """Start the bot."""
@@ -52,6 +55,7 @@ class MeshAI:
 
         self._running = True
         self._loop = asyncio.get_event_loop()
+        self._last_cleanup = time.time()
 
         # Write PID file
         self._write_pid()
@@ -63,8 +67,9 @@ class MeshAI:
             await asyncio.sleep(1)
 
             # Periodic cleanup
-            if int(time.time()) % 3600 == 0:  # Every hour
+            if time.time() - self._last_cleanup >= 3600:
                 await self.history.cleanup_expired()
+                self._last_cleanup = time.time()
 
     async def stop(self) -> None:
         """Stop the bot."""
@@ -120,6 +125,9 @@ class MeshAI:
             self.llm = OpenAIBackend(
                 self.config.llm, api_key, window_size, summarize_threshold
             )
+
+        # Load persisted summaries into memory cache
+        await self._load_summaries()
 
         # Meshtastic connector
         self.connector = MeshConnector(self.config.connection)
@@ -183,6 +191,40 @@ class MeshAI:
         except Exception as e:
             logger.error(f"Error handling message: {e}", exc_info=True)
 
+    async def _load_summaries(self) -> None:
+        """Load persisted summaries from database into memory cache."""
+        memory = self.llm.get_memory()
+        if not memory:
+            return
+
+        if not self.history or not self.history._db:
+            return
+
+        try:
+            async with self.history._lock:
+                cursor = await self.history._db.execute(
+                    "SELECT user_id, summary, message_count, updated_at "
+                    "FROM conversation_summaries"
+                )
+                rows = await cursor.fetchall()
+
+            loaded = 0
+            for row in rows:
+                user_id, summary_text, message_count, updated_at = row
+                summary = ConversationSummary(
+                    summary=summary_text,
+                    last_updated=updated_at,
+                    message_count=message_count,
+                )
+                memory.load_summary(user_id, summary)
+                loaded += 1
+
+            if loaded:
+                logger.info(f"Loaded {loaded} conversation summaries from database")
+
+        except Exception as e:
+            logger.warning(f"Failed to load summaries from database: {e}")
+
     def _write_pid(self) -> None:
         """Write PID file."""
         pid_file = Path("/tmp/meshai.pid")
@@ -193,9 +235,6 @@ class MeshAI:
         pid_file = Path("/tmp/meshai.pid")
         if pid_file.exists():
             pid_file.unlink()
-
-
-import os
 
 
 def setup_logging(verbose: bool = False) -> None:
