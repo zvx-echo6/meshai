@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import threading
 import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -18,6 +19,7 @@ class StatusData:
     """Container for status information."""
 
     def __init__(self):
+        self._lock = threading.Lock()
         self.start_time = time.time()
         self.message_count = 0
         self.response_count = 0
@@ -29,31 +31,34 @@ class StatusData:
 
     def record_message(self, sender_id: str, sender_name: str):
         """Record an incoming message."""
-        self.message_count += 1
-        self.last_message_time = time.time()
-        self.connected_nodes.add(sender_id)
+        with self._lock:
+            self.message_count += 1
+            self.last_message_time = time.time()
+            self.connected_nodes.add(sender_id)
 
-        self.recent_activity.append({
-            "type": "message",
-            "time": datetime.now().isoformat(),
-            "sender": sender_name,
-        })
-        # Keep only last 20 activities
-        self.recent_activity = self.recent_activity[-20:]
+            self.recent_activity.append({
+                "type": "message",
+                "time": datetime.now().isoformat(),
+                "sender": sender_name,
+            })
+            # Keep only last 20 activities
+            self.recent_activity = self.recent_activity[-20:]
 
     def record_response(self):
         """Record an outgoing response."""
-        self.response_count += 1
+        with self._lock:
+            self.response_count += 1
 
     def record_error(self, error: str):
         """Record an error."""
-        self.error_count += 1
-        self.recent_activity.append({
-            "type": "error",
-            "time": datetime.now().isoformat(),
-            "error": error[:100],
-        })
-        self.recent_activity = self.recent_activity[-20:]
+        with self._lock:
+            self.error_count += 1
+            self.recent_activity.append({
+                "type": "error",
+                "time": datetime.now().isoformat(),
+                "error": error[:100],
+            })
+            self.recent_activity = self.recent_activity[-20:]
 
     def get_uptime(self) -> str:
         """Get formatted uptime string."""
@@ -75,22 +80,23 @@ class StatusData:
 
     def to_dict(self, include_activity: bool = False) -> dict:
         """Convert to dictionary for JSON response."""
-        data = {
-            "status": "online",
-            "uptime": self.get_uptime(),
-            "uptime_seconds": int(time.time() - self.start_time),
-            "messages_received": self.message_count,
-            "responses_sent": self.response_count,
-            "errors": self.error_count,
-            "connected_nodes": len(self.connected_nodes),
-            "using_fallback": self.using_fallback,
-        }
+        with self._lock:
+            data = {
+                "status": "online",
+                "uptime": self.get_uptime(),
+                "uptime_seconds": int(time.time() - self.start_time),
+                "messages_received": self.message_count,
+                "responses_sent": self.response_count,
+                "errors": self.error_count,
+                "connected_nodes": len(self.connected_nodes),
+                "using_fallback": self.using_fallback,
+            }
 
-        if self.last_message_time:
-            data["last_message_ago"] = int(time.time() - self.last_message_time)
+            if self.last_message_time:
+                data["last_message_ago"] = int(time.time() - self.last_message_time)
 
-        if include_activity:
-            data["recent_activity"] = self.recent_activity
+            if include_activity:
+                data["recent_activity"] = list(self.recent_activity)
 
         return data
 
