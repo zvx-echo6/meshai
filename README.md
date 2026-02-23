@@ -10,6 +10,7 @@ LLM-powered assistant for Meshtastic mesh networks.
 - **Conversation History**: Per-user context maintained in SQLite
 - **Smart Chunking**: Automatically splits long responses for mesh transmission
 - **Rate Limiting**: Configurable delays to avoid flooding the mesh
+- **advBBS Compatible**: Runs alongside [advBBS](https://github.com/NovaNexusMesh/advBBS) on the same node — protocol sync messages and mail notifications are automatically filtered
 - **Rich Configurator**: Interactive TUI for easy setup
 
 ## Installation
@@ -187,6 +188,24 @@ LLM_API_KEY=your-key-here
 ```bash
 docker compose logs -f meshai
 ```
+
+## Running Alongside advBBS
+
+MeshAI is designed to coexist with [advBBS](https://github.com/NovaNexusMesh/advBBS) on the same Meshtastic node. Both connect via TCP to meshtasticd and share the radio, but MeshAI automatically ignores advBBS traffic:
+
+- **Sync protocol** — `MAILREQ|`, `MAILACK|`, `MAILDAT|`, `BOARDREQ|`, etc.
+- **RAP protocol** — `advBBS|` pings, pongs, and route advertisements
+- **Mail notifications** — `[MAIL]` new message alerts
+- **Bang commands in DMs** — `!mail`, `!board`, etc. are left for advBBS to handle
+
+No special configuration is needed. The filter is enabled by default and can be toggled in `config.yaml`:
+
+```yaml
+bot:
+  filter_bbs_protocols: true   # set false to disable
+```
+
+Plain-text BBS responses (e.g. "Welcome back, matt!") are indistinguishable from normal user messages and will be processed normally — this is a known and accepted limitation.
 
 ## Running as a Service
 
