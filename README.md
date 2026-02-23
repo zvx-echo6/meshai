@@ -133,20 +133,21 @@ DM: Tell me a short joke
 ### Quick Start with Docker
 
 ```bash
-# Clone and enter directory
-git clone https://github.com/zvx-echo6/meshai.git
-cd meshai
+# Create working directory
+mkdir -p meshai/data && cd meshai
 
-# Copy example config
-cp config.example.yaml data/config.yaml
+# Download docker-compose file
+curl -O https://raw.githubusercontent.com/zvx-echo6/meshai/main/docker-compose.yml
+
+# Copy and edit config
+curl -o data/config.yaml https://raw.githubusercontent.com/zvx-echo6/meshai/main/config.example.yaml
 # Edit data/config.yaml with your settings
 
-# For TCP connection to Meshtastic node:
-docker compose -f docker-compose.yml -f docker-compose.tcp.yml up -d
+# Start
+docker compose up -d
 
-# For Serial connection:
-# First edit docker-compose.serial.yml to set your device path
-docker compose -f docker-compose.yml -f docker-compose.serial.yml up -d
+# View logs
+docker compose logs -f
 ```
 
 ### Docker Configuration

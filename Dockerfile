@@ -13,6 +13,9 @@ FROM python:3.11-slim-bookworm
 LABEL maintainer="K7ZVX <matt@echo6.co>"
 LABEL description="MeshAI - LLM-powered Meshtastic assistant"
 LABEL version="0.1.0"
+LABEL org.opencontainers.image.source=https://github.com/zvx-echo6/meshai
+LABEL org.opencontainers.image.description="MeshAI - LLM-powered Meshtastic assistant"
+LABEL org.opencontainers.image.licenses=MIT
 
 # Build arguments
 ARG UID=1000
@@ -35,8 +38,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # For process management
     procps \
     && rm -rf /var/lib/apt/lists/* \
-    # Install ttyd for web-based config interface
-    && curl -sL https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 -o /usr/local/bin/ttyd \
+    # Install ttyd for web-based config interface (arch-aware)
+    && TTYD_ARCH=$(dpkg --print-architecture | sed 's/amd64/x86_64/' | sed 's/arm64/aarch64/') \
+    && curl -sL "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.${TTYD_ARCH}" -o /usr/local/bin/ttyd \
     && chmod +x /usr/local/bin/ttyd
 
 # Create non-root user

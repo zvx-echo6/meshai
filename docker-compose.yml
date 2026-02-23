@@ -13,13 +13,17 @@
 
 services:
   meshai:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        UID: ${UID:-1000}
-        GID: ${GID:-1000}
-    image: meshai:latest
+    # Pull from GitHub Container Registry
+    image: ghcr.io/zvx-echo6/meshai:latest
+
+    # Uncomment to build locally instead of pulling
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    #   args:
+    #     UID: ${UID:-1000}
+    #     GID: ${GID:-1000}
+
     container_name: meshai
     restart: unless-stopped
 
