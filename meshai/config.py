@@ -1,11 +1,14 @@
 """Configuration management for MeshAI."""
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 import yaml
+
+_config_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -284,7 +287,15 @@ class Config:
     _config_path: Optional[Path] = field(default=None, repr=False)
 
     def get_system_prompt(self) -> str:
-        """Get effective system prompt, preferring personality config."""
+        """Get effective system prompt, preferring personality config.
+
+        Deprecated: Use PersonalityManager.get_system_prompt() instead.
+        Kept for backwards compatibility.
+        """
+        _config_logger.warning(
+            "Config.get_system_prompt() is deprecated. "
+            "Use PersonalityManager.get_system_prompt() instead."
+        )
         if self.personality.system_prompt:
             return self.personality.system_prompt
         return self.llm.system_prompt

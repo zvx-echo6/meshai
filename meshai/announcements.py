@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import random
-from typing import Callable, Optional
+from typing import Awaitable, Callable, Optional
 
 from .config import AnnouncementsConfig
 
@@ -16,7 +16,7 @@ class AnnouncementScheduler:
     def __init__(
         self,
         config: AnnouncementsConfig,
-        send_callback: Callable[[str, int], asyncio.coroutine],
+        send_callback: Callable[[str, int], Awaitable[None]],
     ):
         """Initialize the announcement scheduler.
 
