@@ -53,7 +53,7 @@ services:
           memory: 64M
 
     healthcheck:
-      test: ["CMD", "python", "-c", "import sqlite3; sqlite3.connect('/data/conversations.db').execute('SELECT 1')"]
+      test: ["CMD-SHELL", "test -f /tmp/meshai.pid && kill -0 $(cat /tmp/meshai.pid) 2>/dev/null || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

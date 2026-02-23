@@ -80,12 +80,11 @@ class MessageRouter:
         if message.sender_id == self.connector.my_node_id:
             return False
 
-        # Check if DM
+        # Check if DM — conversational mode only, skip !commands
+        # (let MeshMonitor or other bots handle bang commands in DMs)
         if message.is_dm:
-            # In DMs, let commands through to dispatcher but skip !commands
-            # that should be handled by other bots (like MeshMonitor)
             if self.dispatcher.is_command(message.text):
-                return True
+                return False
             return self.config.bot.respond_to_dms
 
         # Check channel filtering

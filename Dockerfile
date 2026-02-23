@@ -74,9 +74,9 @@ VOLUME ["/data"]
 # Expose ttyd web config port
 EXPOSE 7682
 
-# Health check
+# Health check - verify bot process is alive via PID file
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD python -c "import sqlite3; sqlite3.connect('/data/conversations.db').execute('SELECT 1')" || exit 1
+    CMD test -f /tmp/meshai.pid && kill -0 $(cat /tmp/meshai.pid) 2>/dev/null || exit 1
 
 # Entrypoint handles config and ttyd
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
