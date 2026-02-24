@@ -43,6 +43,13 @@ memory:
   window_size: 4
   summarize_threshold: 8
 
+context:
+  enabled: true
+  observe_channels: []
+  ignore_nodes: []
+  max_age: 2592000
+  max_context_items: 20
+
 llm:
   backend: openai
   api_key: ""

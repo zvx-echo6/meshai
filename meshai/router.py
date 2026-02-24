@@ -10,6 +10,7 @@ from .backends.base import LLMBackend
 from .commands import CommandContext, CommandDispatcher
 from .config import Config
 from .connector import MeshConnector, MeshMessage
+from .context import MeshContext
 from .history import ConversationHistory
 
 logger = logging.getLogger(__name__)
@@ -61,12 +62,14 @@ class MessageRouter:
         history: ConversationHistory,
         dispatcher: CommandDispatcher,
         llm_backend: LLMBackend,
+        context: MeshContext = None,
     ):
         self.config = config
         self.connector = connector
         self.history = history
         self.dispatcher = dispatcher
         self.llm = llm_backend
+        self.context = context
 
 
     def should_respond(self, message: MeshMessage) -> bool:
@@ -146,6 +149,16 @@ class MessageRouter:
         system_prompt = ""
         if getattr(self.config.llm, 'use_system_prompt', True):
             system_prompt = self.config.llm.system_prompt
+
+        # Inject mesh context if available
+        if self.context:
+            max_items = getattr(self.config.context, 'max_context_items', 20)
+            context_block = self.context.get_context_block(max_items=max_items)
+            if context_block:
+                system_prompt += (
+                    "\n\n--- Recent mesh traffic (for context only, not messages to you) ---\n"
+                    + context_block
+                )
 
         try:
             response = await self.llm.generate(

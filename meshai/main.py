@@ -18,6 +18,7 @@ from .commands.dispatcher import create_dispatcher
 from .commands.status import set_start_time
 from .config import Config, load_config
 from .connector import MeshConnector, MeshMessage
+from .context import MeshContext
 from .history import ConversationHistory
 from .memory import ConversationSummary
 from .responder import Responder
@@ -35,6 +36,7 @@ class MeshAI:
         self.history: Optional[ConversationHistory] = None
         self.dispatcher: Optional[CommandDispatcher] = None
         self.llm: Optional[LLMBackend] = None
+        self.context: Optional[MeshContext] = None
         self.router: Optional[MessageRouter] = None
         self.responder: Optional[Responder] = None
         self._running = False
@@ -53,6 +55,10 @@ class MeshAI:
         self.connector.connect()
         self.connector.set_message_callback(self._on_message, asyncio.get_event_loop())
 
+        # Add own node ID to context ignore list
+        if self.context and self.connector.my_node_id:
+            self.context._ignore_nodes.add(self.connector.my_node_id)
+
         self._running = True
         self._loop = asyncio.get_event_loop()
         self._last_cleanup = time.time()
@@ -69,6 +75,8 @@ class MeshAI:
             # Periodic cleanup
             if time.time() - self._last_cleanup >= 3600:
                 await self.history.cleanup_expired()
+                if self.context:
+                    self.context.prune()
                 self._last_cleanup = time.time()
 
     async def stop(self) -> None:
@@ -137,9 +145,22 @@ class MeshAI:
         # Meshtastic connector
         self.connector = MeshConnector(self.config.connection)
 
+        # Passive mesh context buffer
+        ctx_cfg = self.config.context
+        if ctx_cfg.enabled:
+            self.context = MeshContext(
+                observe_channels=ctx_cfg.observe_channels or None,
+                ignore_nodes=ctx_cfg.ignore_nodes or None,
+                max_age=ctx_cfg.max_age,
+            )
+            logger.info("Mesh context buffer enabled")
+        else:
+            self.context = None
+
         # Message router
         self.router = MessageRouter(
             self.config, self.connector, self.history, self.dispatcher, self.llm,
+            context=self.context,
         )
 
         # Responder
@@ -148,6 +169,16 @@ class MeshAI:
     async def _on_message(self, message: MeshMessage) -> None:
         """Handle incoming message."""
         try:
+            # Passively observe channel broadcasts for context (before filtering)
+            if self.context and not message.is_dm and message.text:
+                self.context.observe(
+                    sender_name=message.sender_name,
+                    sender_id=message.sender_id,
+                    text=message.text,
+                    channel=message.channel,
+                    is_dm=False,
+                )
+
             # Check if we should respond
             if not self.router.should_respond(message):
                 return

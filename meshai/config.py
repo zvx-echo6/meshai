@@ -65,6 +65,17 @@ class MemoryConfig:
 
 
 @dataclass
+class ContextConfig:
+    """Passive mesh context settings."""
+
+    enabled: bool = True
+    observe_channels: list[int] = field(default_factory=list)  # Empty = all channels
+    ignore_nodes: list[str] = field(default_factory=list)  # Node IDs to ignore
+    max_age: int = 2_592_000  # 30 days in seconds
+    max_context_items: int = 20  # Max observations injected into LLM context
+
+
+@dataclass
 class CommandsConfig:
     """Command settings."""
 
@@ -128,6 +139,7 @@ class Config:
     response: ResponseConfig = field(default_factory=ResponseConfig)
     history: HistoryConfig = field(default_factory=HistoryConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    context: ContextConfig = field(default_factory=ContextConfig)
     commands: CommandsConfig = field(default_factory=CommandsConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     weather: WeatherConfig = field(default_factory=WeatherConfig)

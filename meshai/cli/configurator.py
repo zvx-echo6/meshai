@@ -75,8 +75,10 @@ class Configurator:
             table.add_row("4", "Response Settings", f"{self.config.response.max_length}ch max")
             table.add_row("5", "History & Memory", f"{self.config.history.max_messages_per_user} msgs")
             table.add_row("6", "Commands", cmd_status)
-            table.add_row("7", "Weather", f"{self.config.weather.primary}")
-            table.add_row("8", "Setup Wizard", "[dim]First-time setup[/dim]")
+            ctx_status = self._status_icon(self.config.context.enabled)
+            table.add_row("7", "Context", f"{ctx_status} {self.config.context.max_context_items} items")
+            table.add_row("8", "Weather", f"{self.config.weather.primary}")
+            table.add_row("9", "Setup Wizard", "[dim]First-time setup[/dim]")
 
             console.print(table)
             console.print()
@@ -85,13 +87,13 @@ class Configurator:
             if self.modified:
                 console.print("[yellow]* Unsaved changes[/yellow]")
                 console.print()
-            console.print("[white] 9. Save[/white]                  [dim]Save config, stay in menu[/dim]")
-            console.print("[green]10. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
-            console.print("[white]11. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
-            console.print("[white]12. Exit without Saving[/white]")
+            console.print("[white]10. Save[/white]                  [dim]Save config, stay in menu[/dim]")
+            console.print("[green]11. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
+            console.print("[white]12. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
+            console.print("[white]13. Exit without Saving[/white]")
             console.print()
 
-            choice = IntPrompt.ask("Select option", default=10)
+            choice = IntPrompt.ask("Select option", default=11)
 
             if choice == 1:
                 self._bot_settings()
@@ -106,17 +108,19 @@ class Configurator:
             elif choice == 6:
                 self._command_settings()
             elif choice == 7:
-                self._weather_settings()
+                self._context_settings()
             elif choice == 8:
-                self._setup_wizard()
+                self._weather_settings()
             elif choice == 9:
-                self._save_only()
+                self._setup_wizard()
             elif choice == 10:
-                self._save_and_restart()
+                self._save_only()
             elif choice == 11:
+                self._save_and_restart()
+            elif choice == 12:
                 self._save_restart_exit()
                 break
-            elif choice == 12:
+            elif choice == 13:
                 break
 
     def _show_header(self) -> None:
@@ -354,6 +358,67 @@ class Configurator:
                 value = Prompt.ask("Command prefix", default=self.config.commands.prefix)
                 if value != self.config.commands.prefix:
                     self.config.commands.prefix = value
+                    self.modified = True
+
+    def _context_settings(self) -> None:
+        """Mesh context settings submenu."""
+        while True:
+            self._clear()
+            console.print("[bold]Mesh Context Settings[/bold]\n")
+            console.print("[dim]Passively observes channel traffic to give the LLM situational awareness.[/dim]\n")
+
+            table = Table(box=box.ROUNDED)
+            table.add_column("Option", style="cyan", width=4)
+            table.add_column("Setting", style="white")
+            table.add_column("Value", style="green")
+
+            channels = self.config.context.observe_channels
+            ch_display = ", ".join(str(c) for c in channels) if channels else "[dim]all[/dim]"
+            nodes = self.config.context.ignore_nodes
+            node_display = ", ".join(nodes) if nodes else "[dim]none[/dim]"
+            age_days = self.config.context.max_age // 86400
+
+            table.add_row("1", "Enabled", self._status_icon(self.config.context.enabled))
+            table.add_row("2", "Observe Channels", ch_display)
+            table.add_row("3", "Ignore Nodes", node_display)
+            table.add_row("4", "Max Age", f"{age_days}d")
+            table.add_row("5", "Max Context Items", str(self.config.context.max_context_items))
+            table.add_row("0", "Back", "")
+
+            console.print(table)
+            console.print()
+
+            choice = IntPrompt.ask("Select option", default=0)
+
+            if choice == 0:
+                return
+            elif choice == 1:
+                self.config.context.enabled = not self.config.context.enabled
+                self.modified = True
+            elif choice == 2:
+                console.print("\n[dim]Enter channel indices separated by commas, or leave empty for all.[/dim]")
+                value = Prompt.ask("Channels", default=", ".join(str(c) for c in channels))
+                parsed = [int(x.strip()) for x in value.split(",") if x.strip().isdigit()] if value.strip() else []
+                if parsed != self.config.context.observe_channels:
+                    self.config.context.observe_channels = parsed
+                    self.modified = True
+            elif choice == 3:
+                console.print("\n[dim]Enter node IDs separated by commas, or leave empty for none.[/dim]")
+                value = Prompt.ask("Node IDs", default=", ".join(nodes))
+                parsed = [x.strip() for x in value.split(",") if x.strip()] if value.strip() else []
+                if parsed != self.config.context.ignore_nodes:
+                    self.config.context.ignore_nodes = parsed
+                    self.modified = True
+            elif choice == 4:
+                value = IntPrompt.ask("Max age (days)", default=age_days)
+                seconds = value * 86400
+                if seconds != self.config.context.max_age:
+                    self.config.context.max_age = seconds
+                    self.modified = True
+            elif choice == 5:
+                value = IntPrompt.ask("Max context items", default=self.config.context.max_context_items)
+                if value != self.config.context.max_context_items:
+                    self.config.context.max_context_items = value
                     self.modified = True
 
     def _weather_settings(self) -> None:
