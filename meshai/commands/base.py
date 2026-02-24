@@ -50,23 +50,3 @@ class CommandHandler(ABC):
             Response string to send back
         """
         pass
-
-
-class CommandResult:
-    """Result from command execution."""
-
-    def __init__(
-        self,
-        response: str,
-        success: bool = True,
-        suppress_history: bool = True,
-    ):
-        """
-        Args:
-            response: Text response to send
-            success: Whether command succeeded
-            suppress_history: If True, don't add to conversation history
-        """
-        self.response = response
-        self.success = success
-        self.suppress_history = suppress_history

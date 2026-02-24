@@ -138,19 +138,6 @@ class Responder:
 
         return 0
 
-    def format_dm_response(self, text: str, sender_name: str) -> str:
-        """Format response for DM context.
-
-        Args:
-            text: Response text
-            sender_name: Name of recipient
-
-        Returns:
-            Formatted response (currently unchanged)
-        """
-        # Could prefix with name or add other formatting
-        return text
-
     def format_channel_response(
         self, text: str, sender_name: str, mention_sender: bool = False
     ) -> str:
