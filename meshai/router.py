@@ -11,7 +11,6 @@ from .commands import CommandContext, CommandDispatcher
 from .config import Config
 from .connector import MeshConnector, MeshMessage
 from .history import ConversationHistory
-from .personality import PersonalityManager
 
 logger = logging.getLogger(__name__)
 
@@ -62,14 +61,12 @@ class MessageRouter:
         history: ConversationHistory,
         dispatcher: CommandDispatcher,
         llm_backend: LLMBackend,
-        personality: Optional[PersonalityManager] = None,
     ):
         self.config = config
         self.connector = connector
         self.history = history
         self.dispatcher = dispatcher
         self.llm = llm_backend
-        self.personality = personality
 
         # Compile mention pattern
         bot_name = re.escape(config.bot.name)
@@ -160,16 +157,10 @@ class MessageRouter:
         # Get conversation history
         history = await self.history.get_history_for_llm(message.sender_id)
 
-        # Get system prompt from personality manager or config
+        # Get system prompt from config
         system_prompt = ""
         if getattr(self.config.llm, 'use_system_prompt', True):
-            if self.personality:
-                system_prompt = self.personality.get_system_prompt(
-                    sender_name=message.sender_name,
-                    channel=message.channel,
-                )
-            else:
-                system_prompt = self.config.llm.system_prompt
+            system_prompt = self.config.llm.system_prompt
 
         try:
             response = await self.llm.generate(
@@ -217,19 +208,17 @@ class MessageRouter:
         cleaned = " ".join(cleaned.split())
         cleaned = cleaned.strip()
 
-        # Check for prompt injection if guard is enabled
-        if self.config.safety.prompt_injection_guard:
-            for pattern in _INJECTION_PATTERNS:
-                if pattern.search(cleaned):
-                    logger.warning(
-                        f"Possible prompt injection detected: {cleaned[:80]}..."
-                    )
-                    # Truncate to just the part before the injection pattern
-                    match = pattern.search(cleaned)
-                    cleaned = cleaned[:match.start()].strip()
-                    if not cleaned:
-                        cleaned = "Hello"
-                    break
+        # Check for prompt injection
+        for pattern in _INJECTION_PATTERNS:
+            if pattern.search(cleaned):
+                logger.warning(
+                    f"Possible prompt injection detected: {cleaned[:80]}..."
+                )
+                match = pattern.search(cleaned)
+                cleaned = cleaned[:match.start()].strip()
+                if not cleaned:
+                    cleaned = "Hello"
+                break
 
         return cleaned
 
