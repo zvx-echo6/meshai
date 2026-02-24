@@ -133,21 +133,6 @@ class AnthropicBackend(LLMBackend):
         """Get the memory manager instance."""
         return self._memory
 
-    async def generate_with_search(
-        self,
-        query: str,
-        system_prompt: Optional[str] = None,
-    ) -> str:
-        """Generate response - Anthropic doesn't have built-in search."""
-        prompt = system_prompt or (
-            "You are a helpful assistant. Answer the following question "
-            "based on your knowledge."
-        )
-
-        messages = [{"role": "user", "content": query}]
-
-        return await self.generate(messages, prompt, max_tokens=300)
-
     async def close(self) -> None:
         """Close the client."""
         await self._client.close()

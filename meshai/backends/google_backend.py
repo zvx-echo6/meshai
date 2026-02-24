@@ -150,18 +150,6 @@ class GoogleBackend(LLMBackend):
         """Get the memory manager instance."""
         return self._memory
 
-    async def generate_with_search(
-        self,
-        query: str,
-        system_prompt: Optional[str] = None,
-    ) -> str:
-        """Generate response - uses Gemini's built-in grounding if available."""
-        prompt = system_prompt or "You are a helpful assistant."
-
-        messages = [{"role": "user", "content": query}]
-
-        return await self.generate(messages, prompt, max_tokens=300)
-
     async def close(self) -> None:
         """Clean up - nothing to close for Google client."""
         pass

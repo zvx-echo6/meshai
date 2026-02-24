@@ -4,13 +4,10 @@ from .base import LLMBackend
 from .openai_backend import OpenAIBackend
 from .anthropic_backend import AnthropicBackend
 from .google_backend import GoogleBackend
-from .fallback import FallbackBackend, create_backend
 
 __all__ = [
     "LLMBackend",
     "OpenAIBackend",
     "AnthropicBackend",
     "GoogleBackend",
-    "FallbackBackend",
-    "create_backend",
 ]

@@ -147,26 +147,6 @@ class OpenAIBackend(LLMBackend):
         """Get the memory manager instance."""
         return self._memory
 
-    async def generate_with_search(
-        self,
-        query: str,
-        system_prompt: Optional[str] = None,
-    ) -> str:
-        """Generate response - search depends on model/provider capabilities.
-
-        Note: True web search requires the model/provider to support it
-        (e.g., OpenAI with plugins, or a local setup with SearXNG).
-        This implementation just passes the query as a regular message.
-        """
-        prompt = system_prompt or (
-            "You are a helpful assistant. Answer the following question. "
-            "If you have web search access, use it for current information."
-        )
-
-        messages = [{"role": "user", "content": query}]
-
-        return await self.generate(messages, prompt, max_tokens=300)
-
     async def close(self) -> None:
         """Close the client."""
         await self._client.close()

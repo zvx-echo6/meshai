@@ -1,10 +1,7 @@
 """Base class for LLM backends."""
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Optional
-
-if TYPE_CHECKING:
-    from ..memory import ConversationSummary
+from typing import Optional
 
 
 class LLMBackend(ABC):
@@ -34,23 +31,6 @@ class LLMBackend(ABC):
     def get_memory(self):
         """Get the memory manager instance. Override in subclasses."""
         return None
-
-    @abstractmethod
-    async def generate_with_search(
-        self,
-        query: str,
-        system_prompt: Optional[str] = None,
-    ) -> str:
-        """Generate a response with web search capability.
-
-        Args:
-            query: Search/question to answer
-            system_prompt: Optional system prompt
-
-        Returns:
-            Generated response text
-        """
-        pass
 
     async def close(self) -> None:
         """Clean up resources. Override if needed."""
