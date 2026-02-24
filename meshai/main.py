@@ -95,7 +95,11 @@ class MeshAI:
         await self.history.initialize()
 
         # Command dispatcher
-        self.dispatcher = create_dispatcher()
+        self.dispatcher = create_dispatcher(
+            prefix=self.config.commands.prefix,
+            disabled_commands=self.config.commands.disabled_commands,
+            custom_commands=self.config.commands.custom_commands,
+        )
 
         # LLM backend
         api_key = self.config.resolve_api_key()

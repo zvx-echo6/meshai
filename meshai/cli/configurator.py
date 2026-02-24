@@ -66,14 +66,18 @@ class Configurator:
             table.add_column("Description", style="white")
             table.add_column("Status", style="dim")
 
+            disabled_count = len(self.config.commands.disabled_commands)
+            cmd_status = f"{disabled_count} disabled" if disabled_count else "all enabled"
+
             table.add_row("1", "Bot Settings", f"@{self.config.bot.name}")
             table.add_row("2", "Connection", f"{self.config.connection.type}")
             table.add_row("3", "LLM Backend", f"{self.config.llm.backend}/{self.config.llm.model}")
             table.add_row("4", "Response Settings", f"{self.config.response.max_length}ch max")
             table.add_row("5", "Channels", f"{self.config.channels.mode}")
             table.add_row("6", "History & Memory", f"{self.config.history.max_messages_per_user} msgs")
-            table.add_row("7", "Weather", f"{self.config.weather.primary}")
-            table.add_row("8", "Setup Wizard", "[dim]First-time setup[/dim]")
+            table.add_row("7", "Commands", cmd_status)
+            table.add_row("8", "Weather", f"{self.config.weather.primary}")
+            table.add_row("9", "Setup Wizard", "[dim]First-time setup[/dim]")
 
             console.print(table)
             console.print()
@@ -82,13 +86,13 @@ class Configurator:
             if self.modified:
                 console.print("[yellow]* Unsaved changes[/yellow]")
                 console.print()
-            console.print("[white]9. Save[/white]                  [dim]Save config, stay in menu[/dim]")
-            console.print("[green]10. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
-            console.print("[white]11. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
-            console.print("[white]12. Exit without Saving[/white]")
+            console.print("[white]10. Save[/white]                  [dim]Save config, stay in menu[/dim]")
+            console.print("[green]11. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
+            console.print("[white]12. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
+            console.print("[white]13. Exit without Saving[/white]")
             console.print()
 
-            choice = IntPrompt.ask("Select option", default=10)
+            choice = IntPrompt.ask("Select option", default=11)
 
             if choice == 1:
                 self._bot_settings()
@@ -103,17 +107,19 @@ class Configurator:
             elif choice == 6:
                 self._history_settings()
             elif choice == 7:
-                self._weather_settings()
+                self._command_settings()
             elif choice == 8:
-                self._setup_wizard()
+                self._weather_settings()
             elif choice == 9:
-                self._save_only()
+                self._setup_wizard()
             elif choice == 10:
-                self._save_and_restart()
+                self._save_only()
             elif choice == 11:
+                self._save_and_restart()
+            elif choice == 12:
                 self._save_restart_exit()
                 break
-            elif choice == 12:
+            elif choice == 13:
                 break
 
     def _show_header(self) -> None:
@@ -319,6 +325,51 @@ class Configurator:
                 else:
                     console.print("[yellow]Google grounding is only available with the google backend.[/yellow]")
                     input("Press Enter to continue...")
+
+    def _command_settings(self) -> None:
+        """Command settings submenu."""
+        # All built-in commands
+        builtin = ["help", "ping", "status", "weather", "reset", "clear"]
+
+        while True:
+            self._clear()
+            console.print("[bold]Command Settings[/bold]\n")
+
+            table = Table(box=box.ROUNDED)
+            table.add_column("Option", style="cyan", width=4)
+            table.add_column("Command", style="white")
+            table.add_column("Status", style="green")
+
+            disabled = set(c.lower() for c in self.config.commands.disabled_commands)
+            for i, cmd in enumerate(builtin, 1):
+                status = "[red]disabled[/red]" if cmd in disabled else "[green]enabled[/green]"
+                table.add_row(str(i), f"!{cmd}", status)
+
+            table.add_row("", "", "")
+            table.add_row("7", "Command Prefix", self.config.commands.prefix)
+            table.add_row("0", "Back", "")
+
+            console.print(table)
+            console.print()
+
+            choice = IntPrompt.ask("Select option", default=0)
+
+            if choice == 0:
+                return
+            elif 1 <= choice <= len(builtin):
+                cmd = builtin[choice - 1]
+                if cmd in disabled:
+                    self.config.commands.disabled_commands.remove(cmd)
+                    console.print(f"[green]!{cmd} enabled[/green]")
+                else:
+                    self.config.commands.disabled_commands.append(cmd)
+                    console.print(f"[red]!{cmd} disabled[/red]")
+                self.modified = True
+            elif choice == 7:
+                value = Prompt.ask("Command prefix", default=self.config.commands.prefix)
+                if value != self.config.commands.prefix:
+                    self.config.commands.prefix = value
+                    self.modified = True
 
     def _weather_settings(self) -> None:
         """Weather settings submenu."""

@@ -74,6 +74,16 @@ class MemoryConfig:
 
 
 @dataclass
+class CommandsConfig:
+    """Command settings."""
+
+    enabled: bool = True
+    prefix: str = "!"
+    disabled_commands: list[str] = field(default_factory=list)
+    custom_commands: dict = field(default_factory=dict)
+
+
+@dataclass
 class LLMConfig:
     """LLM backend settings."""
 
@@ -128,6 +138,7 @@ class Config:
     response: ResponseConfig = field(default_factory=ResponseConfig)
     history: HistoryConfig = field(default_factory=HistoryConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    commands: CommandsConfig = field(default_factory=CommandsConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     weather: WeatherConfig = field(default_factory=WeatherConfig)
 
