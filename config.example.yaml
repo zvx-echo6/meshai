@@ -6,7 +6,7 @@
 
 # === BOT IDENTITY ===
 bot:
-  name: ai                       # Bot's trigger name (users say "ai help")
+  name: ai                       # Bot's trigger name (users say "@ai help")
   owner: ""                      # Owner's callsign (optional)
   respond_to_mentions: true      # Respond when name is mentioned
   respond_to_dms: true           # Respond to direct messages
@@ -31,13 +31,6 @@ response:
   delay_max: 3.0                 # Max delay before responding
   max_length: 150                # Max chars per message chunk
   max_messages: 2                # Max message chunks per response
-
-# === RATE LIMITING ===
-rate_limits:
-  messages_per_minute: 10        # Per-user message limit
-  global_messages_per_minute: 30 # Total across all users
-  cooldown_seconds: 5.0          # Min time between responses to same user
-  burst_allowance: 3             # Allow short bursts before limiting
 
 # === CONVERSATION HISTORY ===
 history:
@@ -66,25 +59,8 @@ llm:
     Keep responses VERY brief - under 250 characters total.
     Be concise but friendly. No markdown formatting.
 
-# === WEB STATUS PAGE ===
-web_status:
-  enabled: false                 # Enable web status page
-  port: 8080                     # Status page port
-  show_uptime: true
-  show_message_count: true
-  show_connected_nodes: true
-  show_recent_activity: false    # Privacy concern - disabled by default
-  require_auth: false            # Require password
-  auth_password: ""              # Password if require_auth=true
-
-# === ANNOUNCEMENTS ===
-announcements:
-  enabled: false                 # Enable periodic announcements
-  interval_hours: 24             # Time between announcements
-  channel: 0                     # Channel to broadcast on
-  messages: []                   # Messages to rotate through
-  # Example:
-  # messages:
-  #   - "MeshAI online. Mention 'ai' for help!"
-  #   - "Type !help for available commands."
-  random_order: true             # Randomize message order
+# === WEATHER ===
+weather:
+  primary: openmeteo             # openmeteo | wttr | llm
+  fallback: llm                  # openmeteo | wttr | llm | none
+  default_location: ""           # Default location for !weather (optional)

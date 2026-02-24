@@ -36,12 +36,6 @@ response:
   max_length: 150
   max_messages: 2
 
-rate_limits:
-  messages_per_minute: 10
-  global_messages_per_minute: 30
-  cooldown_seconds: 5.0
-  burst_allowance: 3
-
 history:
   database: /data/conversations.db
   max_messages_per_user: 50
@@ -65,23 +59,6 @@ llm:
     You are a helpful assistant on a Meshtastic mesh network.
     Keep responses VERY brief - under 250 characters total.
     Be concise but friendly. No markdown formatting.
-
-web_status:
-  enabled: false
-  port: 8080
-  show_uptime: true
-  show_message_count: true
-  show_connected_nodes: true
-  show_recent_activity: false
-  require_auth: false
-  auth_password: ""
-
-announcements:
-  enabled: false
-  interval_hours: 24
-  channel: 0
-  messages: []
-  random_order: true
 EOF
     echo "Default config created. Configure via http://localhost:7682"
 fi
