@@ -3,6 +3,7 @@
 import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum, auto
 from typing import Optional
 
@@ -157,10 +158,11 @@ class MessageRouter:
         # Get conversation history
         history = await self.history.get_history_for_llm(message.sender_id)
 
-        # Get system prompt from config
+        # Get system prompt from config, inject current date
         system_prompt = ""
         if getattr(self.config.llm, 'use_system_prompt', True):
-            system_prompt = self.config.llm.system_prompt
+            today = datetime.now(timezone.utc).strftime("%A, %B %d, %Y")
+            system_prompt = f"{self.config.llm.system_prompt}\nToday's date is {today}."
 
         try:
             response = await self.llm.generate(
