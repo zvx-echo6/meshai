@@ -169,6 +169,7 @@ def create_dispatcher(
     Returns:
         Configured CommandDispatcher
     """
+    from .clear import ClearCommand
     from .help import HelpCommand
     from .ping import PingCommand
     from .reset import ResetCommand
@@ -178,6 +179,7 @@ def create_dispatcher(
     dispatcher = CommandDispatcher(prefix=prefix, disabled_commands=disabled_commands)
 
     # Register all built-in commands
+    dispatcher.register(ClearCommand())
     dispatcher.register(HelpCommand(dispatcher))
     dispatcher.register(PingCommand())
     dispatcher.register(ResetCommand())
