@@ -1,9 +1,10 @@
-"""Google Gemini LLM backend with rolling summary memory."""
+"""Google Gemini LLM backend with rolling summary memory and Google Search grounding."""
 
 import logging
 from typing import Optional
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from ..config import LLMConfig
 from ..memory import RollingSummaryMemory
@@ -23,7 +24,7 @@ Summary (2-3 sentences):"""
 
 
 class GoogleBackend(LLMBackend):
-    """Google Gemini backend with rolling summary memory."""
+    """Google Gemini backend with rolling summary memory and optional grounding."""
 
     def __init__(
         self,
@@ -32,19 +33,9 @@ class GoogleBackend(LLMBackend):
         window_size: int = 4,
         summarize_threshold: int = 8,
     ):
-        """Initialize Google backend.
-
-        Args:
-            config: LLM configuration
-            api_key: Google API key
-            window_size: Recent message pairs to keep in full
-            summarize_threshold: Messages before re-summarizing
-        """
         self.config = config
-        genai.configure(api_key=api_key)
-        self._model = genai.GenerativeModel(config.model)
+        self._client = genai.Client(api_key=api_key)
 
-        # Initialize rolling summary memory with Gemini summarize function
         self._memory = RollingSummaryMemory(
             summarize_fn=self._summarize_messages,
             window_size=window_size,
@@ -52,7 +43,7 @@ class GoogleBackend(LLMBackend):
         )
 
     async def _summarize_messages(self, messages: list[dict]) -> str:
-        """Summarize messages using Google Gemini API."""
+        """Summarize messages using Gemini."""
         if not messages:
             return "No previous conversation."
 
@@ -62,9 +53,10 @@ class GoogleBackend(LLMBackend):
         prompt = _SUMMARIZE_PROMPT.format(conversation=conversation)
 
         try:
-            response = await self._model.generate_content_async(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
+            response = await self._client.aio.models.generate_content(
+                model=self.config.model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
                     max_output_tokens=150,
                     temperature=0.3,
                 ),
@@ -81,18 +73,7 @@ class GoogleBackend(LLMBackend):
         max_tokens: int = 300,
         user_id: Optional[str] = None,
     ) -> str:
-        """Generate a response using Google Gemini API.
-
-        Args:
-            messages: Conversation history
-            system_prompt: System prompt
-            max_tokens: Maximum tokens to generate
-            user_id: User identifier (enables memory optimization)
-
-        Returns:
-            Generated response
-        """
-        # Use memory manager to optimize context if user_id provided
+        """Generate a response using Google Gemini with optional grounding."""
         enhanced_system = system_prompt
         final_messages = messages
 
@@ -101,43 +82,40 @@ class GoogleBackend(LLMBackend):
                 user_id=user_id,
                 full_history=messages,
             )
-
             if summary:
                 enhanced_system = f"{system_prompt}\n\nPrevious conversation summary: {summary}"
                 final_messages = recent_messages
-
                 logger.debug(
                     f"Using summary + {len(recent_messages)} recent messages "
                     f"(total history: {len(messages)})"
                 )
 
         try:
-            # Create model with system instruction for persistent system prompt
-            model = genai.GenerativeModel(
-                self.config.model,
+            contents = []
+            for msg in final_messages:
+                role = "model" if msg["role"] == "assistant" else "user"
+                contents.append(
+                    types.Content(
+                        role=role,
+                        parts=[types.Part.from_text(text=msg["content"])],
+                    )
+                )
+
+            tools = []
+            if self.config.google_grounding:
+                tools.append(types.Tool(google_search=types.GoogleSearch()))
+
+            config = types.GenerateContentConfig(
                 system_instruction=enhanced_system if enhanced_system else None,
+                max_output_tokens=max_tokens,
+                temperature=0.7,
+                tools=tools if tools else None,
             )
 
-            # Convert messages to Gemini format
-            # Gemini uses "user" and "model" roles
-            history = []
-            for msg in final_messages[:-1]:  # All but last message
-                role = "model" if msg["role"] == "assistant" else "user"
-                history.append({"role": role, "parts": [msg["content"]]})
-
-            # Start chat with history
-            chat = model.start_chat(history=history)
-
-            # Get the last user message
-            last_message = final_messages[-1]["content"] if final_messages else ""
-
-            # Generate response
-            response = await chat.send_message_async(
-                last_message,
-                generation_config=genai.types.GenerationConfig(
-                    max_output_tokens=max_tokens,
-                    temperature=0.7,
-                ),
+            response = await self._client.aio.models.generate_content(
+                model=self.config.model,
+                contents=contents,
+                config=config,
             )
 
             return response.text.strip() if response.text else ""
@@ -147,9 +125,7 @@ class GoogleBackend(LLMBackend):
             raise
 
     def get_memory(self) -> RollingSummaryMemory:
-        """Get the memory manager instance."""
         return self._memory
 
     async def close(self) -> None:
-        """Clean up - nothing to close for Google client."""
         pass

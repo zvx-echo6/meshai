@@ -59,6 +59,7 @@ llm:
     You are a helpful assistant on a Meshtastic mesh network.
     Keep responses VERY brief - under 250 characters total.
     Be concise but friendly. No markdown formatting.
+  google_grounding: false
 EOF
     echo "Default config created. Configure via http://localhost:7682"
 fi

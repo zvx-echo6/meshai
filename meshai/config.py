@@ -90,6 +90,7 @@ class LLMConfig:
     )
     use_system_prompt: bool = True  # Toggle to disable sending system prompt
     web_search: bool = False  # Enable web search (Open WebUI feature)
+    google_grounding: bool = False  # Enable Google Search grounding (Gemini only)
 
 
 @dataclass

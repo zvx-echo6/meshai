@@ -58,6 +58,7 @@ llm:
     You are a helpful assistant on a Meshtastic mesh network.
     Keep responses VERY brief - under 250 characters total.
     Be concise but friendly. No markdown formatting.
+  google_grounding: false          # Enable Google Search grounding (Gemini only, $35/1k queries)
 
 # === WEATHER ===
 weather:

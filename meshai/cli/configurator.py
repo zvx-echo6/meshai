@@ -261,6 +261,7 @@ class Configurator:
             table.add_row("5", "System Prompt", f"[dim]{len(self.config.llm.system_prompt)} chars[/dim]")
             table.add_row("6", "Use System Prompt", self._status_icon(self.config.llm.use_system_prompt))
             table.add_row("7", "Web Search", self._status_icon(self.config.llm.web_search))
+            table.add_row("8", "Google Grounding", self._status_icon(self.config.llm.google_grounding))
             table.add_row("0", "Back", "")
 
             console.print(table)
@@ -311,6 +312,13 @@ class Configurator:
             elif choice == 7:
                 self.config.llm.web_search = not self.config.llm.web_search
                 self.modified = True
+            elif choice == 8:
+                if self.config.llm.backend == "google":
+                    self.config.llm.google_grounding = not self.config.llm.google_grounding
+                    self.modified = True
+                else:
+                    console.print("[yellow]Google grounding is only available with the google backend.[/yellow]")
+                    input("Press Enter to continue...")
 
     def _weather_settings(self) -> None:
         """Weather settings submenu."""
