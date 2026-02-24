@@ -166,8 +166,7 @@ class MessageRouter:
             response = await self.llm.generate(
                 messages=history,
                 system_prompt=system_prompt,
-                max_tokens=500,  # Increased for web search/RAG responses
-                user_id=message.sender_id,  # Enable memory optimization
+                max_tokens=500,
             )
         except Exception as e:
             logger.error(f"LLM generation error: {e}")
