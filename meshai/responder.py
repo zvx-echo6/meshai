@@ -137,24 +137,3 @@ class Responder:
             return pos
 
         return 0
-
-    def format_channel_response(
-        self, text: str, sender_name: str, mention_sender: bool = False
-    ) -> str:
-        """Format response for channel context.
-
-        Args:
-            text: Response text
-            sender_name: Name of sender being replied to
-            mention_sender: Whether to prefix with sender's name
-
-        Returns:
-            Formatted response
-        """
-        if mention_sender:
-            # Check if adding prefix would exceed max length
-            prefix = f"@{sender_name}: "
-            if len(prefix) + len(text) <= self.config.max_length * self.config.max_messages:
-                return prefix + text
-
-        return text

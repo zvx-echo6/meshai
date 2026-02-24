@@ -6,9 +6,8 @@
 
 # === BOT IDENTITY ===
 bot:
-  name: ai                       # Bot's trigger name (users say "@ai help")
+  name: ai                       # Bot's display name
   owner: ""                      # Owner's callsign (optional)
-  respond_to_mentions: true      # Respond when name is mentioned
   respond_to_dms: true           # Respond to direct messages
   filter_bbs_protocols: true     # Ignore advBBS sync/notification messages
 
@@ -18,12 +17,6 @@ connection:
   serial_port: /dev/ttyUSB0      # For serial connection
   tcp_host: localhost            # For TCP connection (meshtasticd)
   tcp_port: 4403
-
-# === CHANNEL FILTERING ===
-channels:
-  mode: all                      # all | whitelist
-  whitelist:                     # Only respond on these channels (if mode=whitelist)
-    - 0
 
 # === RESPONSE BEHAVIOR ===
 response:

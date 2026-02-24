@@ -68,12 +68,12 @@ class MessageRouter:
         self.dispatcher = dispatcher
         self.llm = llm_backend
 
-        # Compile mention pattern
-        bot_name = re.escape(config.bot.name)
-        self._mention_pattern = re.compile(rf"@{bot_name}\b", re.IGNORECASE)
 
     def should_respond(self, message: MeshMessage) -> bool:
         """Determine if we should respond to this message.
+
+        DM-only bot: ignores all public channel messages.
+        Commands and conversational LLM responses both work in DMs.
 
         Args:
             message: Incoming message
@@ -85,35 +85,20 @@ class MessageRouter:
         if message.sender_id == self.connector.my_node_id:
             return False
 
+        # Only respond to DMs
+        if not message.is_dm:
+            return False
+
+        if not self.config.bot.respond_to_dms:
+            return False
+
         # Ignore advBBS protocol and notification messages
         if self.config.bot.filter_bbs_protocols:
             if any(message.text.startswith(p) for p in ADVBBS_PREFIXES):
                 logger.debug(f"Ignoring advBBS message from {message.sender_id}: {message.text[:40]}...")
                 return False
 
-        # Check if DM — conversational mode only, skip !commands
-        # (let MeshMonitor or other bots handle bang commands in DMs)
-        if message.is_dm:
-            if self.dispatcher.is_command(message.text):
-                return False
-            return self.config.bot.respond_to_dms
-
-        # Check channel filtering
-        if self.config.channels.mode == "whitelist":
-            if message.channel not in self.config.channels.whitelist:
-                return False
-
-        # Check for @mention
-        if self.config.bot.respond_to_mentions:
-            if self._mention_pattern.search(message.text):
-                return True
-
-        # Check for bang command (always respond to commands)
-        if self.dispatcher.is_command(message.text):
-            return True
-
-        # Not a DM, no mention, no command - ignore
-        return False
+        return True
 
     async def route(self, message: MeshMessage) -> RouteResult:
         """Route a message and generate response.
@@ -200,11 +185,8 @@ class MessageRouter:
             logger.debug(f"Persisted summary for {user_id}")
 
     def _clean_query(self, text: str) -> str:
-        """Remove @mention and check for prompt injection."""
-        # Remove @botname mention
-        cleaned = self._mention_pattern.sub("", text)
-        # Clean up extra whitespace
-        cleaned = " ".join(cleaned.split())
+        """Clean up query text and check for prompt injection."""
+        cleaned = " ".join(text.split())
         cleaned = cleaned.strip()
 
         # Check for prompt injection

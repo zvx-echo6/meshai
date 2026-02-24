@@ -69,15 +69,14 @@ class Configurator:
             disabled_count = len(self.config.commands.disabled_commands)
             cmd_status = f"{disabled_count} disabled" if disabled_count else "all enabled"
 
-            table.add_row("1", "Bot Settings", f"@{self.config.bot.name}")
+            table.add_row("1", "Bot Settings", self.config.bot.name)
             table.add_row("2", "Connection", f"{self.config.connection.type}")
             table.add_row("3", "LLM Backend", f"{self.config.llm.backend}/{self.config.llm.model}")
             table.add_row("4", "Response Settings", f"{self.config.response.max_length}ch max")
-            table.add_row("5", "Channels", f"{self.config.channels.mode}")
-            table.add_row("6", "History & Memory", f"{self.config.history.max_messages_per_user} msgs")
-            table.add_row("7", "Commands", cmd_status)
-            table.add_row("8", "Weather", f"{self.config.weather.primary}")
-            table.add_row("9", "Setup Wizard", "[dim]First-time setup[/dim]")
+            table.add_row("5", "History & Memory", f"{self.config.history.max_messages_per_user} msgs")
+            table.add_row("6", "Commands", cmd_status)
+            table.add_row("7", "Weather", f"{self.config.weather.primary}")
+            table.add_row("8", "Setup Wizard", "[dim]First-time setup[/dim]")
 
             console.print(table)
             console.print()
@@ -86,13 +85,13 @@ class Configurator:
             if self.modified:
                 console.print("[yellow]* Unsaved changes[/yellow]")
                 console.print()
-            console.print("[white]10. Save[/white]                  [dim]Save config, stay in menu[/dim]")
-            console.print("[green]11. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
-            console.print("[white]12. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
-            console.print("[white]13. Exit without Saving[/white]")
+            console.print("[white] 9. Save[/white]                  [dim]Save config, stay in menu[/dim]")
+            console.print("[green]10. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
+            console.print("[white]11. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
+            console.print("[white]12. Exit without Saving[/white]")
             console.print()
 
-            choice = IntPrompt.ask("Select option", default=11)
+            choice = IntPrompt.ask("Select option", default=10)
 
             if choice == 1:
                 self._bot_settings()
@@ -103,23 +102,21 @@ class Configurator:
             elif choice == 4:
                 self._response_settings()
             elif choice == 5:
-                self._channel_settings()
-            elif choice == 6:
                 self._history_settings()
-            elif choice == 7:
+            elif choice == 6:
                 self._command_settings()
-            elif choice == 8:
+            elif choice == 7:
                 self._weather_settings()
-            elif choice == 9:
+            elif choice == 8:
                 self._setup_wizard()
-            elif choice == 10:
+            elif choice == 9:
                 self._save_only()
-            elif choice == 11:
+            elif choice == 10:
                 self._save_and_restart()
-            elif choice == 12:
+            elif choice == 11:
                 self._save_restart_exit()
                 break
-            elif choice == 13:
+            elif choice == 12:
                 break
 
     def _show_header(self) -> None:
@@ -148,18 +145,13 @@ class Configurator:
             table.add_column("Setting", style="white")
             table.add_column("Value", style="green")
 
-            table.add_row("1", "Bot Name (@mention)", self.config.bot.name)
+            table.add_row("1", "Bot Name", self.config.bot.name)
             table.add_row("2", "Owner", self.config.bot.owner or "[dim]not set[/dim]")
             table.add_row(
-                "3",
-                "Respond to @mentions",
-                self._status_icon(self.config.bot.respond_to_mentions),
+                "3", "Respond to DMs", self._status_icon(self.config.bot.respond_to_dms)
             )
             table.add_row(
-                "4", "Respond to DMs", self._status_icon(self.config.bot.respond_to_dms)
-            )
-            table.add_row(
-                "5", "Filter BBS Protocols", self._status_icon(self.config.bot.filter_bbs_protocols)
+                "4", "Filter BBS Protocols", self._status_icon(self.config.bot.filter_bbs_protocols)
             )
             table.add_row("0", "Back", "")
 
@@ -181,18 +173,11 @@ class Configurator:
                     self.config.bot.owner = value
                     self.modified = True
             elif choice == 3:
-                value = Confirm.ask(
-                    "Respond to @mentions?", default=self.config.bot.respond_to_mentions
-                )
-                if value != self.config.bot.respond_to_mentions:
-                    self.config.bot.respond_to_mentions = value
-                    self.modified = True
-            elif choice == 4:
                 value = Confirm.ask("Respond to DMs?", default=self.config.bot.respond_to_dms)
                 if value != self.config.bot.respond_to_dms:
                     self.config.bot.respond_to_dms = value
                     self.modified = True
-            elif choice == 5:
+            elif choice == 4:
                 value = Confirm.ask("Filter BBS protocols?", default=self.config.bot.filter_bbs_protocols)
                 if value != self.config.bot.filter_bbs_protocols:
                     self.config.bot.filter_bbs_protocols = value
@@ -478,49 +463,6 @@ class Configurator:
                     self.config.response.max_messages = value
                     self.modified = True
 
-    def _channel_settings(self) -> None:
-        """Channel filtering settings submenu."""
-        while True:
-            self._clear()
-            console.print("[bold]Channel Filtering[/bold]\n")
-
-            table = Table(box=box.ROUNDED)
-            table.add_column("Option", style="cyan", width=4)
-            table.add_column("Setting", style="white")
-            table.add_column("Value", style="green")
-
-            whitelist_str = ", ".join(str(c) for c in self.config.channels.whitelist)
-            table.add_row("1", "Mode", self.config.channels.mode)
-            table.add_row("2", "Whitelist Channels", whitelist_str or "[dim]none[/dim]")
-            table.add_row("0", "Back", "")
-
-            console.print(table)
-            console.print()
-
-            choice = IntPrompt.ask("Select option", default=0)
-
-            if choice == 0:
-                return
-            elif choice == 1:
-                console.print("\n[cyan]1.[/cyan] all - Respond on all channels")
-                console.print("[cyan]2.[/cyan] whitelist - Only respond on specific channels")
-                sel = IntPrompt.ask("Select", default=1 if self.config.channels.mode == "all" else 2)
-                value = "all" if sel == 1 else "whitelist"
-                if value != self.config.channels.mode:
-                    self.config.channels.mode = value
-                    self.modified = True
-            elif choice == 2:
-                value = Prompt.ask(
-                    "Whitelist (comma-separated)", default=whitelist_str
-                )
-                try:
-                    channels = [int(c.strip()) for c in value.split(",") if c.strip()]
-                    if channels != self.config.channels.whitelist:
-                        self.config.channels.whitelist = channels
-                        self.modified = True
-                except ValueError:
-                    console.print("[red]Invalid input. Use comma-separated numbers.[/red]")
-
     def _history_settings(self) -> None:
         """History settings submenu."""
         while True:
@@ -603,7 +545,7 @@ class Configurator:
 
         # Step 1: Bot identity
         console.print("[bold cyan]Step 1: Bot Identity[/bold cyan]")
-        self.config.bot.name = Prompt.ask("Bot name (for @mentions)", default="ai")
+        self.config.bot.name = Prompt.ask("Bot name", default="ai")
         self.config.bot.owner = Prompt.ask("Your name/callsign", default="")
         console.print()
 

@@ -15,7 +15,6 @@ if [ ! -f "$MESHAI_CONFIG" ]; then
 bot:
   name: ai
   owner: ""
-  respond_to_mentions: true
   respond_to_dms: true
   filter_bbs_protocols: true
 
@@ -24,11 +23,6 @@ connection:
   serial_port: /dev/ttyUSB0
   tcp_host: localhost
   tcp_port: 4403
-
-channels:
-  mode: all
-  whitelist:
-    - 0
 
 response:
   delay_min: 2.2
@@ -74,38 +68,50 @@ ttyd -W -p 7682 \
     /bin/bash -c 'while true; do python3 -m meshai --config-file "$MESHAI_CONFIG" --config; sleep 1; done' &
 
 # Keep ttyd running even if bot fails
-trap "kill %1 2>/dev/null; kill %2 2>/dev/null" EXIT
+trap "kill %1 2>/dev/null" EXIT
 
-# Restart watcher - monitors for restart signal from config tool
-BOT_PID_FILE="/tmp/meshai_bot.pid"
-(
-    while true; do
-        if [ -f /tmp/meshai_restart ]; then
-            rm -f /tmp/meshai_restart
-            echo "Restart signal received, restarting bot..."
-            # Kill bot using PID file
-            if [ -f "$BOT_PID_FILE" ]; then
-                BOT_PID=$(cat "$BOT_PID_FILE")
-                if kill -0 "$BOT_PID" 2>/dev/null; then
-                    kill "$BOT_PID" 2>/dev/null || true
-                    echo "Sent TERM to bot (PID $BOT_PID)"
-                fi
-            fi
-            # Debounce - wait before checking for more signals
-            sleep 3
-        fi
-        sleep 2
+# Kill bot gracefully with SIGKILL fallback
+kill_bot() {
+    local pid=$1
+    if ! kill -0 "$pid" 2>/dev/null; then
+        return
+    fi
+    kill "$pid" 2>/dev/null || true
+    echo "Sent SIGTERM to bot (PID $pid)"
+    # Wait up to 5 seconds for graceful shutdown
+    for i in 1 2 3 4 5; do
+        kill -0 "$pid" 2>/dev/null || return
+        sleep 1
     done
-) &
+    # Force kill if still alive
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+        echo "Sent SIGKILL to bot (PID $pid)"
+    fi
+}
 
-# Start the bot in a loop - retry on failure
+# Start the bot in a loop with integrated restart watcher
 echo "Starting MeshAI..."
+rm -f /tmp/meshai_restart
 while true; do
     python -m meshai --config-file "$MESHAI_CONFIG" &
     BOT_PID=$!
-    echo "$BOT_PID" > "$BOT_PID_FILE"
-    wait $BOT_PID || true
-    rm -f "$BOT_PID_FILE"
-    echo "Bot exited. Check config at http://localhost:7682. Retrying in 5s..."
-    sleep 5
+    echo "$BOT_PID" > /tmp/meshai.pid
+    echo "Bot started (PID $BOT_PID)"
+
+    # Poll: wait for bot to exit OR restart signal
+    while kill -0 $BOT_PID 2>/dev/null; do
+        if [ -f /tmp/meshai_restart ]; then
+            rm -f /tmp/meshai_restart
+            echo "Restart signal received, restarting bot..."
+            kill_bot $BOT_PID
+            break
+        fi
+        sleep 1
+    done
+
+    wait $BOT_PID 2>/dev/null || true
+    rm -f /tmp/meshai.pid
+    echo "Bot exited. Restarting in 3s..."
+    sleep 3
 done

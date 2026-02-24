@@ -174,22 +174,12 @@ class MeshAI:
             if not response:
                 return
 
-            # Send response
-            if message.is_dm:
-                await self.responder.send_response(
-                    text=response,
-                    destination=message.sender_id,
-                    channel=message.channel,
-                )
-            else:
-                formatted = self.responder.format_channel_response(
-                    response, message.sender_name, mention_sender=True
-                )
-                await self.responder.send_response(
-                    text=formatted,
-                    destination=None,
-                    channel=message.channel,
-                )
+            # Send DM response
+            await self.responder.send_response(
+                text=response,
+                destination=message.sender_id,
+                channel=message.channel,
+            )
 
         except Exception as e:
             logger.error(f"Error handling message: {e}", exc_info=True)

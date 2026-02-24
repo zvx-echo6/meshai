@@ -17,7 +17,6 @@ class BotConfig:
 
     name: str = "ai"
     owner: str = ""
-    respond_to_mentions: bool = True
     respond_to_dms: bool = True
     filter_bbs_protocols: bool = True
 
@@ -30,14 +29,6 @@ class ConnectionConfig:
     serial_port: str = "/dev/ttyUSB0"
     tcp_host: str = "192.168.1.100"
     tcp_port: int = 4403
-
-
-@dataclass
-class ChannelsConfig:
-    """Channel filtering settings."""
-
-    mode: str = "all"  # all or whitelist
-    whitelist: list[int] = field(default_factory=lambda: [0])
 
 
 @dataclass
@@ -134,7 +125,6 @@ class Config:
 
     bot: BotConfig = field(default_factory=BotConfig)
     connection: ConnectionConfig = field(default_factory=ConnectionConfig)
-    channels: ChannelsConfig = field(default_factory=ChannelsConfig)
     response: ResponseConfig = field(default_factory=ResponseConfig)
     history: HistoryConfig = field(default_factory=HistoryConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
