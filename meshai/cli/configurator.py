@@ -10,7 +10,7 @@ from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.table import Table
 from rich.text import Text
 
-from ..config import Config, get_default_config, load_config, save_config
+from ..config import Config, load_config, save_config
 
 console = Console()
 
@@ -72,11 +72,8 @@ class Configurator:
             table.add_row("4", "Response Settings", f"{self.config.response.max_length}ch max")
             table.add_row("5", "Channels", f"{self.config.channels.mode}")
             table.add_row("6", "History & Memory", f"{self.config.history.max_messages_per_user} msgs")
-            table.add_row("7", "Rate Limits", f"{self.config.rate_limits.messages_per_minute}/min")
-            table.add_row("8", "Weather", f"{self.config.weather.primary}")
-            table.add_row("9", "Web Status Page", self._status_icon(self.config.web_status.enabled))
-            table.add_row("10", "Announcements", self._status_icon(self.config.announcements.enabled))
-            table.add_row("11", "Setup Wizard", "[dim]First-time setup[/dim]")
+            table.add_row("7", "Weather", f"{self.config.weather.primary}")
+            table.add_row("8", "Setup Wizard", "[dim]First-time setup[/dim]")
 
             console.print(table)
             console.print()
@@ -85,13 +82,13 @@ class Configurator:
             if self.modified:
                 console.print("[yellow]* Unsaved changes[/yellow]")
                 console.print()
-            console.print("[white]12. Save[/white]                 [dim]Save config, stay in menu[/dim]")
-            console.print("[green]13. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
-            console.print("[white]14. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
-            console.print("[white]15. Exit without Saving[/white]")
+            console.print("[white]9. Save[/white]                  [dim]Save config, stay in menu[/dim]")
+            console.print("[green]10. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
+            console.print("[white]11. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
+            console.print("[white]12. Exit without Saving[/white]")
             console.print()
 
-            choice = IntPrompt.ask("Select option", default=13)
+            choice = IntPrompt.ask("Select option", default=10)
 
             if choice == 1:
                 self._bot_settings()
@@ -106,23 +103,17 @@ class Configurator:
             elif choice == 6:
                 self._history_settings()
             elif choice == 7:
-                self._rate_limits_settings()
-            elif choice == 8:
                 self._weather_settings()
-            elif choice == 9:
-                self._web_status_settings()
-            elif choice == 10:
-                self._announcements_settings()
-            elif choice == 11:
+            elif choice == 8:
                 self._setup_wizard()
-            elif choice == 12:
+            elif choice == 9:
                 self._save_only()
-            elif choice == 13:
+            elif choice == 10:
                 self._save_and_restart()
-            elif choice == 14:
+            elif choice == 11:
                 self._save_restart_exit()
                 break
-            elif choice == 15:
+            elif choice == 12:
                 break
 
     def _show_header(self) -> None:
@@ -132,9 +123,13 @@ class Configurator:
             title += " [yellow]*[/yellow]"
         console.print(Panel(title, box=box.MINIMAL))
 
-    def _get_modified_indicator(self) -> str:
-        """Return modified indicator string."""
-        return "[yellow]* Unsaved changes[/yellow]" if self.modified else ""
+    def _handle_exit(self) -> None:
+        """Handle exit (keyboard interrupt)."""
+        if self.modified:
+            if Confirm.ask("\nSave changes before exiting?", default=True):
+                save_config(self.config, self.config_path)
+                console.print("[green]Saved.[/green]")
+        console.print("\nGoodbye!")
 
     def _bot_settings(self) -> None:
         """Bot settings submenu."""
@@ -156,6 +151,9 @@ class Configurator:
             )
             table.add_row(
                 "4", "Respond to DMs", self._status_icon(self.config.bot.respond_to_dms)
+            )
+            table.add_row(
+                "5", "Filter BBS Protocols", self._status_icon(self.config.bot.filter_bbs_protocols)
             )
             table.add_row("0", "Back", "")
 
@@ -187,6 +185,11 @@ class Configurator:
                 value = Confirm.ask("Respond to DMs?", default=self.config.bot.respond_to_dms)
                 if value != self.config.bot.respond_to_dms:
                     self.config.bot.respond_to_dms = value
+                    self.modified = True
+            elif choice == 5:
+                value = Confirm.ask("Filter BBS protocols?", default=self.config.bot.filter_bbs_protocols)
+                if value != self.config.bot.filter_bbs_protocols:
+                    self.config.bot.filter_bbs_protocols = value
                     self.modified = True
 
     def _connection_settings(self) -> None:
@@ -256,10 +259,8 @@ class Configurator:
             table.add_row("3", "Base URL", self.config.llm.base_url)
             table.add_row("4", "Model", self.config.llm.model)
             table.add_row("5", "System Prompt", f"[dim]{len(self.config.llm.system_prompt)} chars[/dim]")
-            use_prompt = getattr(self.config.llm, 'use_system_prompt', True)
-            table.add_row("6", "Use System Prompt", self._status_icon(use_prompt))
-            web_search = getattr(self.config.llm, 'web_search', False)
-            table.add_row("7", "Web Search", self._status_icon(web_search))
+            table.add_row("6", "Use System Prompt", self._status_icon(self.config.llm.use_system_prompt))
+            table.add_row("7", "Web Search", self._status_icon(self.config.llm.web_search))
             table.add_row("0", "Back", "")
 
             console.print(table)
@@ -305,12 +306,10 @@ class Configurator:
                         self.config.llm.system_prompt = value
                         self.modified = True
             elif choice == 6:
-                current = getattr(self.config.llm, 'use_system_prompt', True)
-                self.config.llm.use_system_prompt = not current
+                self.config.llm.use_system_prompt = not self.config.llm.use_system_prompt
                 self.modified = True
             elif choice == 7:
-                current = getattr(self.config.llm, 'web_search', False)
-                self.config.llm.web_search = not current
+                self.config.llm.web_search = not self.config.llm.web_search
                 self.modified = True
 
     def _weather_settings(self) -> None:
@@ -536,201 +535,6 @@ class Configurator:
                 if value != self.config.memory.summarize_threshold:
                     self.config.memory.summarize_threshold = value
                     self.modified = True
-
-    def _rate_limits_settings(self) -> None:
-        """Rate limits settings submenu."""
-        while True:
-            self._clear()
-            console.print("[bold]Rate Limits[/bold]\n")
-
-            table = Table(box=box.ROUNDED)
-            table.add_column("Option", style="cyan", width=4)
-            table.add_column("Setting", style="white")
-            table.add_column("Value", style="green")
-
-            table.add_row("1", "Messages Per Minute (per user)", str(self.config.rate_limits.messages_per_minute))
-            table.add_row("2", "Global Messages Per Minute", str(self.config.rate_limits.global_messages_per_minute))
-            table.add_row("3", "Cooldown (seconds)", str(self.config.rate_limits.cooldown_seconds))
-            table.add_row("4", "Burst Allowance", str(self.config.rate_limits.burst_allowance))
-            table.add_row("0", "Back", "")
-
-            console.print(table)
-            console.print()
-
-            choice = IntPrompt.ask("Select option", default=0)
-
-            if choice == 0:
-                return
-            elif choice == 1:
-                value = IntPrompt.ask("Messages per minute", default=self.config.rate_limits.messages_per_minute)
-                if value != self.config.rate_limits.messages_per_minute:
-                    self.config.rate_limits.messages_per_minute = value
-                    self.modified = True
-            elif choice == 2:
-                value = IntPrompt.ask("Global messages per minute", default=self.config.rate_limits.global_messages_per_minute)
-                if value != self.config.rate_limits.global_messages_per_minute:
-                    self.config.rate_limits.global_messages_per_minute = value
-                    self.modified = True
-            elif choice == 3:
-                value = float(Prompt.ask("Cooldown (seconds)", default=str(self.config.rate_limits.cooldown_seconds)))
-                if value != self.config.rate_limits.cooldown_seconds:
-                    self.config.rate_limits.cooldown_seconds = value
-                    self.modified = True
-            elif choice == 4:
-                value = IntPrompt.ask("Burst allowance", default=self.config.rate_limits.burst_allowance)
-                if value != self.config.rate_limits.burst_allowance:
-                    self.config.rate_limits.burst_allowance = value
-                    self.modified = True
-
-    def _web_status_settings(self) -> None:
-        """Web status page settings submenu."""
-        while True:
-            self._clear()
-            console.print("[bold]Web Status Page[/bold]\n")
-
-            table = Table(box=box.ROUNDED)
-            table.add_column("Option", style="cyan", width=4)
-            table.add_column("Setting", style="white")
-            table.add_column("Value", style="green")
-
-            table.add_row("1", "Enabled", self._status_icon(self.config.web_status.enabled))
-            table.add_row("2", "Port", str(self.config.web_status.port))
-            table.add_row("3", "Show Uptime", self._status_icon(self.config.web_status.show_uptime))
-            table.add_row("4", "Show Message Count", self._status_icon(self.config.web_status.show_message_count))
-            table.add_row("5", "Show Connected Nodes", self._status_icon(self.config.web_status.show_connected_nodes))
-            table.add_row("6", "Show Recent Activity", self._status_icon(self.config.web_status.show_recent_activity))
-            table.add_row("7", "Require Auth", self._status_icon(self.config.web_status.require_auth))
-            table.add_row("8", "Auth Password", "****" if self.config.web_status.auth_password else "[dim]not set[/dim]")
-            table.add_row("0", "Back", "")
-
-            console.print(table)
-            console.print()
-
-            choice = IntPrompt.ask("Select option", default=0)
-
-            if choice == 0:
-                return
-            elif choice == 1:
-                value = Confirm.ask("Enable web status?", default=self.config.web_status.enabled)
-                if value != self.config.web_status.enabled:
-                    self.config.web_status.enabled = value
-                    self.modified = True
-            elif choice == 2:
-                value = IntPrompt.ask("Port", default=self.config.web_status.port)
-                if value != self.config.web_status.port:
-                    self.config.web_status.port = value
-                    self.modified = True
-            elif choice == 3:
-                value = Confirm.ask("Show uptime?", default=self.config.web_status.show_uptime)
-                if value != self.config.web_status.show_uptime:
-                    self.config.web_status.show_uptime = value
-                    self.modified = True
-            elif choice == 4:
-                value = Confirm.ask("Show message count?", default=self.config.web_status.show_message_count)
-                if value != self.config.web_status.show_message_count:
-                    self.config.web_status.show_message_count = value
-                    self.modified = True
-            elif choice == 5:
-                value = Confirm.ask("Show connected nodes?", default=self.config.web_status.show_connected_nodes)
-                if value != self.config.web_status.show_connected_nodes:
-                    self.config.web_status.show_connected_nodes = value
-                    self.modified = True
-            elif choice == 6:
-                value = Confirm.ask("Show recent activity?", default=self.config.web_status.show_recent_activity)
-                if value != self.config.web_status.show_recent_activity:
-                    self.config.web_status.show_recent_activity = value
-                    self.modified = True
-            elif choice == 7:
-                value = Confirm.ask("Require authentication?", default=self.config.web_status.require_auth)
-                if value != self.config.web_status.require_auth:
-                    self.config.web_status.require_auth = value
-                    self.modified = True
-            elif choice == 8:
-                value = Prompt.ask("Password", password=True)
-                if value:
-                    self.config.web_status.auth_password = value
-                    self.modified = True
-
-    def _announcements_settings(self) -> None:
-        """Announcements settings submenu."""
-        while True:
-            self._clear()
-            console.print("[bold]Announcements[/bold]\n")
-
-            table = Table(box=box.ROUNDED)
-            table.add_column("Option", style="cyan", width=4)
-            table.add_column("Setting", style="white")
-            table.add_column("Value", style="green")
-
-            table.add_row("1", "Enabled", self._status_icon(self.config.announcements.enabled))
-            table.add_row("2", "Interval (hours)", str(self.config.announcements.interval_hours))
-            table.add_row("3", "Channel", str(self.config.announcements.channel))
-            table.add_row("4", "Messages", f"{len(self.config.announcements.messages)} defined")
-            table.add_row("5", "Random Order", self._status_icon(self.config.announcements.random_order))
-            table.add_row("0", "Back", "")
-
-            console.print(table)
-            console.print()
-
-            choice = IntPrompt.ask("Select option", default=0)
-
-            if choice == 0:
-                return
-            elif choice == 1:
-                value = Confirm.ask("Enable announcements?", default=self.config.announcements.enabled)
-                if value != self.config.announcements.enabled:
-                    self.config.announcements.enabled = value
-                    self.modified = True
-            elif choice == 2:
-                value = IntPrompt.ask("Interval (hours)", default=self.config.announcements.interval_hours)
-                if value != self.config.announcements.interval_hours:
-                    self.config.announcements.interval_hours = value
-                    self.modified = True
-            elif choice == 3:
-                value = IntPrompt.ask("Channel", default=self.config.announcements.channel)
-                if value != self.config.announcements.channel:
-                    self.config.announcements.channel = value
-                    self.modified = True
-            elif choice == 4:
-                self._announcements_messages_editor()
-            elif choice == 5:
-                value = Confirm.ask("Random order?", default=self.config.announcements.random_order)
-                if value != self.config.announcements.random_order:
-                    self.config.announcements.random_order = value
-                    self.modified = True
-
-    def _announcements_messages_editor(self) -> None:
-        """Edit announcement messages."""
-        while True:
-            self._clear()
-            console.print("[bold]Announcement Messages[/bold]\n")
-
-            if self.config.announcements.messages:
-                for i, msg in enumerate(self.config.announcements.messages, 1):
-                    console.print(f"  {i}. {msg[:60]}...")
-            else:
-                console.print("  [dim]No messages[/dim]")
-
-            console.print("\n[cyan]a[/cyan] Add message")
-            console.print("[cyan]r[/cyan] Remove message")
-            console.print("[cyan]0[/cyan] Back")
-            console.print()
-
-            choice = Prompt.ask("Select", default="0")
-
-            if choice == "0":
-                return
-            elif choice.lower() == "a":
-                value = Prompt.ask("Message text")
-                if value:
-                    self.config.announcements.messages.append(value)
-                    self.modified = True
-            elif choice.lower() == "r":
-                if self.config.announcements.messages:
-                    idx = IntPrompt.ask("Remove which number", default=1)
-                    if 1 <= idx <= len(self.config.announcements.messages):
-                        self.config.announcements.messages.pop(idx - 1)
-                        self.modified = True
 
     def _setup_wizard(self) -> None:
         """First-time setup wizard."""
