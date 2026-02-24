@@ -110,16 +110,27 @@ class ConversationHistory:
         cutoff_time = time.time() - self.config.conversation_timeout
 
         async with self._lock:
-            cursor = await self._db.execute(
-                """
-                SELECT role, content, timestamp
-                FROM conversations
-                WHERE user_id = ? AND timestamp > ?
-                ORDER BY timestamp ASC
-                LIMIT ?
-                """,
-                (user_id, cutoff_time, self.config.max_messages_per_user * 2),
-            )
+            if self.config.max_messages_per_user > 0:
+                cursor = await self._db.execute(
+                    """
+                    SELECT role, content, timestamp
+                    FROM conversations
+                    WHERE user_id = ? AND timestamp > ?
+                    ORDER BY timestamp ASC
+                    LIMIT ?
+                    """,
+                    (user_id, cutoff_time, self.config.max_messages_per_user * 2),
+                )
+            else:
+                cursor = await self._db.execute(
+                    """
+                    SELECT role, content, timestamp
+                    FROM conversations
+                    WHERE user_id = ? AND timestamp > ?
+                    ORDER BY timestamp ASC
+                    """,
+                    (user_id, cutoff_time),
+                )
 
             rows = await cursor.fetchall()
 
@@ -161,6 +172,9 @@ class ConversationHistory:
 
     async def _prune_history(self, user_id: str) -> None:
         """Remove old messages beyond the limit for a user."""
+        if self.config.max_messages_per_user <= 0:
+            return  # No limit
+
         # Get count of messages for user
         cursor = await self._db.execute(
             "SELECT COUNT(*) FROM conversations WHERE user_id = ?",
