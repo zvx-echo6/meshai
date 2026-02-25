@@ -1,5 +1,6 @@
 """Message routing logic for MeshAI."""
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
@@ -159,6 +160,10 @@ class MessageRouter:
                     "\n\n--- Recent mesh traffic (for context only, not messages to you) ---\n"
                     + context_block
                 )
+            else:
+                system_prompt += (
+                    "\n\n[No recent mesh traffic observed yet.]"
+                )
 
         try:
             response = await self.llm.generate(
@@ -166,6 +171,9 @@ class MessageRouter:
                 system_prompt=system_prompt,
                 max_tokens=500,
             )
+        except asyncio.TimeoutError:
+            logger.error("LLM request timed out")
+            response = "Sorry, request timed out. Try again."
         except Exception as e:
             logger.error(f"LLM generation error: {e}")
             response = "Sorry, I encountered an error. Please try again."

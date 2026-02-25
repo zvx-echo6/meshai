@@ -98,7 +98,10 @@ class LLMConfig:
     system_prompt: str = (
         "You are a helpful assistant on a Meshtastic mesh network. "
         "Keep responses VERY brief - under 250 characters total. "
-        "Be concise but friendly. No markdown formatting."
+        "Be concise but friendly. No markdown formatting. "
+        "You can passively observe recent mesh traffic when available. "
+        "If asked about mesh activity and no recent traffic is shown below, "
+        "say you haven't observed any traffic yet rather than claiming you lack access."
     )
     use_system_prompt: bool = True  # Toggle to disable sending system prompt
     web_search: bool = False  # Enable web search (Open WebUI feature)

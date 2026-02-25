@@ -1,5 +1,6 @@
 """Google Gemini LLM backend with rolling summary memory and Google Search grounding."""
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -53,15 +54,20 @@ class GoogleBackend(LLMBackend):
         prompt = _SUMMARIZE_PROMPT.format(conversation=conversation)
 
         try:
-            response = await self._client.aio.models.generate_content(
-                model=self.config.model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    max_output_tokens=150,
-                    temperature=0.3,
+            response = await asyncio.wait_for(
+                self._client.aio.models.generate_content(
+                    model=self.config.model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        max_output_tokens=150,
+                        temperature=0.3,
+                    ),
                 ),
+                timeout=self.config.timeout,
             )
             return response.text.strip() if response.text else f"Previous conversation: {len(messages)} messages."
+        except asyncio.TimeoutError:
+            logger.warning(f"Summary generation timed out after {self.config.timeout}s")
         except Exception as e:
             logger.warning(f"Failed to generate summary: {e}")
             return f"Previous conversation: {len(messages)} messages about various topics."
@@ -112,14 +118,20 @@ class GoogleBackend(LLMBackend):
                 tools=tools if tools else None,
             )
 
-            response = await self._client.aio.models.generate_content(
-                model=self.config.model,
-                contents=contents,
-                config=config,
+            response = await asyncio.wait_for(
+                self._client.aio.models.generate_content(
+                    model=self.config.model,
+                    contents=contents,
+                    config=config,
+                ),
+                timeout=self.config.timeout,
             )
 
             return response.text.strip() if response.text else ""
 
+        except asyncio.TimeoutError:
+            logger.error(f"Google API timed out after {self.config.timeout}s")
+            raise
         except Exception as e:
             logger.error(f"Google API error: {e}")
             raise

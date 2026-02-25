@@ -1,5 +1,6 @@
 """OpenAI-compatible LLM backend with rolling summary memory."""
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -134,11 +135,17 @@ class OpenAIBackend(LLMBackend):
             if getattr(self.config, 'web_search', False):
                 request_kwargs["extra_body"] = {"features": {"web_search": True}}
 
-            response = await self._client.chat.completions.create(**request_kwargs)
+            response = await asyncio.wait_for(
+                self._client.chat.completions.create(**request_kwargs),
+                timeout=self.config.timeout,
+            )
 
             content = response.choices[0].message.content
             return content.strip() if content else ""
 
+        except asyncio.TimeoutError:
+            logger.error(f"OpenAI API timed out after {self.config.timeout}s")
+            raise
         except Exception as e:
             logger.error(f"OpenAI API error: {e}")
             raise

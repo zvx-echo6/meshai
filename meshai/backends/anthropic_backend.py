@@ -1,5 +1,6 @@
 """Anthropic (Claude) LLM backend with rolling summary memory."""
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -114,17 +115,23 @@ class AnthropicBackend(LLMBackend):
             final_messages = messages
 
         try:
-            response = await self._client.messages.create(
-                model=self.config.model,
-                max_tokens=max_tokens,
-                system=enhanced_system,
-                messages=final_messages,
+            response = await asyncio.wait_for(
+                self._client.messages.create(
+                    model=self.config.model,
+                    max_tokens=max_tokens,
+                    system=enhanced_system,
+                    messages=final_messages,
+                ),
+                timeout=self.config.timeout,
             )
 
             # Extract text from response
             content = response.content[0].text if response.content else ""
             return content.strip()
 
+        except asyncio.TimeoutError:
+            logger.error(f"Anthropic API timed out after {self.config.timeout}s")
+            raise
         except Exception as e:
             logger.error(f"Anthropic API error: {e}")
             raise
