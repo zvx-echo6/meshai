@@ -141,8 +141,7 @@ class CommandDispatcher:
         handler = self._commands.get(cmd)
 
         if handler is None:
-            # Unknown command
-            return f"Unknown command: !{cmd.lower()}. Try !help"
+            return None
 
         try:
             logger.debug(f"Dispatching !{cmd.lower()} from {context.sender_id}")
