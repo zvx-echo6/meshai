@@ -12,6 +12,7 @@ LLM-powered assistant for Meshtastic mesh networks.
 - **Rate Limiting**: Configurable delays to avoid flooding the mesh
 - **advBBS Compatible**: Runs alongside [advBBS](https://github.com/NovaNexusMesh/advBBS) on the same node — protocol sync messages and mail notifications are automatically filtered
 - **Rich Configurator**: Interactive TUI for easy setup
+- **MeshMonitor Integration**: Syncs with [MeshMonitor](https://github.com/Yeraze/meshmonitor) by Yeraze to avoid duplicate responses
 
 ## Installation
 
@@ -207,6 +208,28 @@ bot:
 ```
 
 Plain-text BBS responses (e.g. "Welcome back, matt!") are indistinguishable from normal user messages and will be processed normally — this is a known and accepted limitation.
+
+## MeshMonitor Integration
+
+MeshAI integrates with [MeshMonitor](https://github.com/Yeraze/meshmonitor), a comprehensive Meshtastic monitoring platform by Yeraze. When enabled, MeshAI automatically fetches MeshMonitor's auto-responder trigger patterns and ignores messages that MeshMonitor handles, preventing duplicate responses on the mesh.
+
+**Features:**
+- Automatic trigger discovery via MeshMonitor's API
+- Dynamic ignore list — no manual sync needed
+- Trigger list injected into the LLM prompt so MeshAI can discuss MeshMonitor commands conversationally
+- Configurable via TUI (option 9) or config.yaml
+
+**Configuration:**
+
+```yaml
+meshmonitor:
+  enabled: true
+  url: "http://192.168.1.100:8080"
+  inject_into_prompt: true
+  refresh_interval: 300
+```
+
+MeshMonitor is a separate project — get it at https://github.com/Yeraze/meshmonitor
 
 ## Running as a Service
 
