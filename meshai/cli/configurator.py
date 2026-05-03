@@ -78,7 +78,9 @@ class Configurator:
             ctx_status = self._status_icon(self.config.context.enabled)
             table.add_row("7", "Context", f"{ctx_status} {self.config.context.max_context_items} items")
             table.add_row("8", "Weather", f"{self.config.weather.primary}")
-            table.add_row("9", "Setup Wizard", "[dim]First-time setup[/dim]")
+            mm_status = self._status_icon(self.config.meshmonitor.enabled)
+            table.add_row("9", "MeshMonitor Sync", f"{mm_status}")
+            table.add_row("10", "Setup Wizard", "[dim]First-time setup[/dim]")
 
             console.print(table)
             console.print()
@@ -112,15 +114,17 @@ class Configurator:
             elif choice == 8:
                 self._weather_settings()
             elif choice == 9:
-                self._setup_wizard()
+                self._meshmonitor_settings()
             elif choice == 10:
-                self._save_only()
+                self._setup_wizard()
             elif choice == 11:
-                self._save_and_restart()
+                self._save_only()
             elif choice == 12:
+                self._save_and_restart()
+            elif choice == 13:
                 self._save_restart_exit()
                 break
-            elif choice == 13:
+            elif choice == 14:
                 break
 
     def _show_header(self) -> None:
@@ -601,6 +605,108 @@ class Configurator:
                 if value != self.config.memory.summarize_threshold:
                     self.config.memory.summarize_threshold = value
                     self.modified = True
+
+
+    def _meshmonitor_settings(self) -> None:
+        """MeshMonitor sync settings submenu."""
+        while True:
+            self._clear()
+            console.print("[bold]MeshMonitor Sync Settings[/bold]
+")
+            console.print("[dim]Auto-ignore messages that match MeshMonitor trigger patterns.[/dim]
+")
+
+            table = Table(box=box.ROUNDED)
+            table.add_column("Option", style="cyan", width=4)
+            table.add_column("Setting", style="white")
+            table.add_column("Value", style="green")
+
+            triggers_file = self.config.meshmonitor.triggers_file or "[dim]not set[/dim]"
+            table.add_row("1", "Enabled", self._status_icon(self.config.meshmonitor.enabled))
+            table.add_row("2", "Triggers File", triggers_file)
+            table.add_row("3", "Inject into Prompt", self._status_icon(self.config.meshmonitor.inject_into_prompt))
+            table.add_row("4", "View Triggers", "[dim]show loaded patterns[/dim]")
+            table.add_row("0", "Back", "")
+
+            console.print(table)
+            console.print()
+
+            choice = IntPrompt.ask("Select option", default=0)
+
+            if choice == 0:
+                return
+            elif choice == 1:
+                self.config.meshmonitor.enabled = not self.config.meshmonitor.enabled
+                self.modified = True
+            elif choice == 2:
+                value = Prompt.ask("Triggers file path", default=self.config.meshmonitor.triggers_file or "/data/triggers.json")
+                if value != self.config.meshmonitor.triggers_file:
+                    self.config.meshmonitor.triggers_file = value
+                    self.modified = True
+            elif choice == 3:
+                self.config.meshmonitor.inject_into_prompt = not self.config.meshmonitor.inject_into_prompt
+                self.modified = True
+            elif choice == 4:
+                self._view_meshmonitor_triggers()
+
+
+
+    def _view_meshmonitor_triggers(self) -> None:
+        """Display loaded MeshMonitor trigger patterns."""
+        self._clear()
+        console.print("[bold]MeshMonitor Triggers[/bold]
+")
+
+        triggers_file = self.config.meshmonitor.triggers_file
+        if not triggers_file:
+            console.print("[yellow]No triggers file configured.[/yellow]")
+            input("
+Press Enter to continue...")
+            return
+
+        from pathlib import Path
+        import json
+
+        triggers_path = Path(triggers_file)
+        if not triggers_path.exists():
+            console.print(f"[yellow]Triggers file not found: {triggers_file}[/yellow]")
+            input("
+Press Enter to continue...")
+            return
+
+        try:
+            with open(triggers_path) as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            console.print(f"[red]Invalid JSON in triggers file: {e}[/red]")
+            input("
+Press Enter to continue...")
+            return
+
+        if not data:
+            console.print("[dim]Triggers file is empty.[/dim]")
+            input("
+Press Enter to continue...")
+            return
+
+        # Display triggers in a table
+        table = Table(box=box.ROUNDED, title="Loaded Triggers")
+        table.add_column("Command", style="cyan")
+        table.add_column("Pattern", style="white")
+
+        for name, pattern in data.items():
+            if isinstance(pattern, str):
+                table.add_row(name, pattern)
+            elif isinstance(pattern, dict) and "pattern" in pattern:
+                table.add_row(name, pattern["pattern"])
+            else:
+                table.add_row(name, "[dim]complex[/dim]")
+
+        console.print(table)
+        console.print(f"
+[dim]Total: {len(data)} trigger(s)[/dim]")
+        input("
+Press Enter to continue...")
 
     def _setup_wizard(self) -> None:
         """First-time setup wizard."""
