@@ -64,6 +64,7 @@ class MessageRouter:
         dispatcher: CommandDispatcher,
         llm_backend: LLMBackend,
         context: MeshContext = None,
+        meshmonitor_sync=None,
     ):
         self.config = config
         self.connector = connector
@@ -71,6 +72,7 @@ class MessageRouter:
         self.dispatcher = dispatcher
         self.llm = llm_backend
         self.context = context
+        self.meshmonitor_sync = meshmonitor_sync
 
 
     def should_respond(self, message: MeshMessage) -> bool:
@@ -100,6 +102,15 @@ class MessageRouter:
         if self.config.bot.filter_bbs_protocols:
             if any(message.text.startswith(p) for p in ADVBBS_PREFIXES):
                 logger.debug(f"Ignoring advBBS message from {message.sender_id}: {message.text[:40]}...")
+                return False
+
+        # Ignore messages that match MeshMonitor auto-responder triggers
+        if self.meshmonitor_sync and message.text:
+            if self.meshmonitor_sync.matches(message.text.strip()):
+                logger.debug(
+                    f"Ignoring DM from {message.sender_id}: "
+                    f"matches MeshMonitor trigger"
+                )
                 return False
 
         return True
@@ -164,6 +175,23 @@ class MessageRouter:
                 system_prompt += (
                     "\n\n[No recent mesh traffic observed yet.]"
                 )
+
+        # Inject MeshMonitor commands into prompt
+        if (
+            self.meshmonitor_sync
+            and getattr(self.config.meshmonitor, "inject_into_prompt", False)
+            and self.meshmonitor_sync.trigger_list
+        ):
+            trigger_lines = ", ".join(
+                t for t in self.meshmonitor_sync.trigger_list
+                if t not in ("commands", "command")
+            )
+            system_prompt += (
+                "\n\nMESHMONITOR COMMANDS (handled by MeshMonitor, not you): "
+                + trigger_lines
+                + "\nIf someone asks what commands are available, mention these too."
+            )
+
 
         try:
             response = await self.llm.generate(

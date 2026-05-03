@@ -61,8 +61,18 @@ llm:
     Keep responses VERY brief - under 250 characters total.
     Be concise but friendly. No markdown formatting.
   google_grounding: false
+
+meshmonitor:
+  enabled: false
+  triggers_file: /data/triggers.json
+  inject_into_prompt: true
 EOF
     echo "Default config created. Configure via http://localhost:7682"
+fi
+
+# Create triggers.json if missing
+if [ ! -f "/data/triggers.json" ]; then
+    echo '{"triggers": []}' > /data/triggers.json
 fi
 
 # Start ttyd for web-based config access

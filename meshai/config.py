@@ -75,6 +75,16 @@ class ContextConfig:
     max_context_items: int = 20  # Max observations injected into LLM context
 
 
+
+
+@dataclass
+class MeshMonitorConfig:
+    """MeshMonitor trigger sync settings."""
+
+    enabled: bool = False
+    triggers_file: str = ""
+    inject_into_prompt: bool = True
+
 @dataclass
 class CommandsConfig:
     """Command settings."""
@@ -146,6 +156,7 @@ class Config:
     commands: CommandsConfig = field(default_factory=CommandsConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     weather: WeatherConfig = field(default_factory=WeatherConfig)
+    meshmonitor: MeshMonitorConfig = field(default_factory=MeshMonitorConfig)
 
     _config_path: Optional[Path] = field(default=None, repr=False)
 

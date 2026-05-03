@@ -37,6 +37,7 @@ class MeshAI:
         self.dispatcher: Optional[CommandDispatcher] = None
         self.llm: Optional[LLMBackend] = None
         self.context: Optional[MeshContext] = None
+        self.meshmonitor_sync = None
         self.router: Optional[MessageRouter] = None
         self.responder: Optional[Responder] = None
         self._running = False
@@ -78,6 +79,10 @@ class MeshAI:
                 if self.context:
                     self.context.prune()
                 self._last_cleanup = time.time()
+
+            # Refresh MeshMonitor triggers if file changed
+            if self.meshmonitor_sync:
+                self.meshmonitor_sync.maybe_refresh()
 
     async def stop(self) -> None:
         """Stop the bot."""
@@ -157,10 +162,21 @@ class MeshAI:
         else:
             self.context = None
 
+        # MeshMonitor trigger sync
+        self.meshmonitor_sync = None
+        mm_cfg = self.config.meshmonitor
+        if mm_cfg.enabled and mm_cfg.triggers_file:
+            from .meshmonitor import MeshMonitorSync
+            self.meshmonitor_sync = MeshMonitorSync(
+                triggers_file=mm_cfg.triggers_file,
+            )
+            self.meshmonitor_sync.load()
+
         # Message router
         self.router = MessageRouter(
             self.config, self.connector, self.history, self.dispatcher, self.llm,
             context=self.context,
+            meshmonitor_sync=self.meshmonitor_sync,
         )
 
         # Responder

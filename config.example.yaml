@@ -66,3 +66,9 @@ weather:
   primary: openmeteo             # openmeteo | wttr | llm
   fallback: llm                  # openmeteo | wttr | llm | none
   default_location: ""           # Default location for !weather (optional)
+
+# === MESHMONITOR INTEGRATION ===
+meshmonitor:
+  enabled: false
+  triggers_file: /data/triggers.json
+  inject_into_prompt: true
