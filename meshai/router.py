@@ -104,14 +104,10 @@ class MessageRouter:
                 logger.debug(f"Ignoring advBBS message from {message.sender_id}: {message.text[:40]}...")
                 return False
 
-        # Ignore messages that match MeshMonitor auto-responder triggers
-        if self.meshmonitor_sync and message.text:
-            if self.meshmonitor_sync.matches(message.text.strip()):
-                logger.debug(
-                    f"Ignoring DM from {message.sender_id}: "
-                    f"matches MeshMonitor trigger"
-                )
-                return False
+        # Ignore messages that MeshMonitor will handle
+        if self.meshmonitor_sync and self.meshmonitor_sync.matches(message.text):
+            logger.debug(f"Ignoring MeshMonitor-handled message: {message.text[:40]}...")
+            return False
 
         return True
 
@@ -157,12 +153,48 @@ class MessageRouter:
         # Get conversation history
         history = await self.history.get_history_for_llm(message.sender_id)
 
-        # Get system prompt from config
-        system_prompt = ""
-        if getattr(self.config.llm, 'use_system_prompt', True):
-            system_prompt = self.config.llm.system_prompt
+        # Build system prompt in order: identity -> static -> meshmonitor -> context
 
-        # Inject mesh context if available
+        # 1. Dynamic identity from bot config
+        bot_name = self.config.bot.name or "MeshAI"
+        bot_owner = self.config.bot.owner or "Unknown"
+
+        identity = (
+            f"You are {bot_name}, an LLM-powered conversational assistant running on a "
+            f"Meshtastic mesh network. Your managing operator is {bot_owner}. "
+            f"You are open source at github.com/zvx-echo6/meshai.\n\n"
+            f"IDENTITY: Your name is {bot_name}. You respond to DMs only. You connect "
+            f"to a Meshtastic node via TCP through meshtasticd.\n\n"
+        )
+
+        # 2. Static system prompt from config
+        static_prompt = ""
+        if getattr(self.config.llm, 'use_system_prompt', True):
+            static_prompt = self.config.llm.system_prompt
+
+        system_prompt = identity + static_prompt
+
+        # 3. MeshMonitor info (only when enabled)
+        if (
+            self.meshmonitor_sync
+            and self.config.meshmonitor.enabled
+            and self.config.meshmonitor.inject_into_prompt
+        ):
+            meshmonitor_intro = (
+                "\n\nMESHMONITOR: You run alongside MeshMonitor (by Yeraze) on the same "
+                "meshtasticd node. MeshMonitor handles web dashboard, maps, telemetry, "
+                "traceroutes, security scanning, and auto-responder commands. Its trigger "
+                "commands are listed below — if someone asks what commands are available, "
+                "mention both yours and MeshMonitor's. If someone asks where to get "
+                "MeshMonitor, direct them to github.com/Yeraze/meshmonitor"
+            )
+            system_prompt += meshmonitor_intro
+
+            commands_summary = self.meshmonitor_sync.get_commands_summary()
+            if commands_summary:
+                system_prompt += "\n\n" + commands_summary
+
+        # 4. Inject mesh context if available
         if self.context:
             max_items = getattr(self.config.context, 'max_context_items', 20)
             context_block = self.context.get_context_block(max_items=max_items)
@@ -175,23 +207,6 @@ class MessageRouter:
                 system_prompt += (
                     "\n\n[No recent mesh traffic observed yet.]"
                 )
-
-        # Inject MeshMonitor commands into prompt
-        if (
-            self.meshmonitor_sync
-            and getattr(self.config.meshmonitor, "inject_into_prompt", False)
-            and self.meshmonitor_sync.trigger_list
-        ):
-            trigger_lines = ", ".join(
-                t for t in self.meshmonitor_sync.trigger_list
-                if t not in ("commands", "command")
-            )
-            system_prompt += (
-                "\n\nMESHMONITOR COMMANDS (handled by MeshMonitor, not you): "
-                + trigger_lines
-                + "\nIf someone asks what commands are available, mention these too."
-            )
-
 
         try:
             response = await self.llm.generate(

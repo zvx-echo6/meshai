@@ -75,16 +75,6 @@ class ContextConfig:
     max_context_items: int = 20  # Max observations injected into LLM context
 
 
-
-
-@dataclass
-class MeshMonitorConfig:
-    """MeshMonitor trigger sync settings."""
-
-    enabled: bool = False
-    triggers_file: str = ""
-    inject_into_prompt: bool = True
-
 @dataclass
 class CommandsConfig:
     """Command settings."""
@@ -106,12 +96,24 @@ class LLMConfig:
     timeout: int = 30
 
     system_prompt: str = (
-        "You are a helpful assistant on a Meshtastic mesh network. "
-        "Keep responses VERY brief - under 250 characters total. "
-        "Be concise but friendly. No markdown formatting. "
-        "You can passively observe recent mesh traffic when available. "
-        "If asked about mesh activity and no recent traffic is shown below, "
-        "say you haven't observed any traffic yet rather than claiming you lack access."
+        "YOUR COMMANDS (handled directly by you via DM):\n"
+        "!help — List available commands.\n"
+        "!ping — Connectivity test, responds with pong.\n"
+        "!status — Shows your version, uptime, user count, and message count.\n"
+        "!weather [location] — Weather lookup using Open-Meteo API.\n"
+        "!reset — Clears conversation history and memory.\n"
+        "!clear — Same as !reset.\n\n"
+        "YOUR ARCHITECTURE: Modular Python — pluggable LLM backends (OpenAI, Anthropic, "
+        "Google, local), per-user SQLite conversation history, rolling summary memory, "
+        "passive mesh context buffer (observes channel traffic), smart chunking for LoRa "
+        "message limits, prompt injection defense, advBBS filtering.\n\n"
+        "RESPONSE RULES:\n"
+        "- Keep responses VERY brief — under 200 characters total.\n"
+        "- Be concise but friendly. No markdown formatting.\n"
+        "- If asked about mesh activity and no recent traffic is shown, say you haven't "
+        "observed any yet.\n"
+        "- When asked about yourself or commands, answer conversationally. Don't dump lists.\n"
+        "- You are part of the freq51 mesh in the Twin Falls, Idaho area."
     )
     use_system_prompt: bool = True  # Toggle to disable sending system prompt
     web_search: bool = False  # Enable web search (Open WebUI feature)
@@ -141,6 +143,16 @@ class WeatherConfig:
     default_location: str = ""
     openmeteo: OpenMeteoConfig = field(default_factory=OpenMeteoConfig)
     wttr: WttrConfig = field(default_factory=WttrConfig)
+
+
+@dataclass
+class MeshMonitorConfig:
+    """MeshMonitor trigger sync settings."""
+
+    enabled: bool = False
+    url: str = ""  # e.g., http://100.64.0.11:3333
+    inject_into_prompt: bool = True  # Tell LLM about MeshMonitor commands
+    refresh_interval: int = 300  # Seconds between refreshes
 
 
 @dataclass

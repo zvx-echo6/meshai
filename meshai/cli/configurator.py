@@ -79,7 +79,8 @@ class Configurator:
             table.add_row("7", "Context", f"{ctx_status} {self.config.context.max_context_items} items")
             table.add_row("8", "Weather", f"{self.config.weather.primary}")
             mm_status = self._status_icon(self.config.meshmonitor.enabled)
-            table.add_row("9", "MeshMonitor Sync", f"{mm_status}")
+            mm_url = self.config.meshmonitor.url or "[dim]not set[/dim]"
+            table.add_row("9", "MeshMonitor Sync", f"{mm_status} {mm_url}")
             table.add_row("10", "Setup Wizard", "[dim]First-time setup[/dim]")
 
             console.print(table)
@@ -89,13 +90,13 @@ class Configurator:
             if self.modified:
                 console.print("[yellow]* Unsaved changes[/yellow]")
                 console.print()
-            console.print("[white]10. Save[/white]                  [dim]Save config, stay in menu[/dim]")
-            console.print("[green]11. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
-            console.print("[white]12. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
-            console.print("[white]13. Exit without Saving[/white]")
+            console.print("[white]11. Save[/white]                  [dim]Save config, stay in menu[/dim]")
+            console.print("[green]12. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
+            console.print("[white]13. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
+            console.print("[white]14. Exit without Saving[/white]")
             console.print()
 
-            choice = IntPrompt.ask("Select option", default=11)
+            choice = IntPrompt.ask("Select option", default=12)
 
             if choice == 1:
                 self._bot_settings()
@@ -606,26 +607,23 @@ class Configurator:
                     self.config.memory.summarize_threshold = value
                     self.modified = True
 
-
     def _meshmonitor_settings(self) -> None:
         """MeshMonitor sync settings submenu."""
         while True:
             self._clear()
-            console.print("[bold]MeshMonitor Sync Settings[/bold]
-")
-            console.print("[dim]Auto-ignore messages that match MeshMonitor trigger patterns.[/dim]
-")
+            console.print("[bold]MeshMonitor Sync Settings[/bold]\n")
+            console.print("[dim]Sync auto-responder triggers from MeshMonitor to avoid duplicate responses.[/dim]\n")
 
             table = Table(box=box.ROUNDED)
             table.add_column("Option", style="cyan", width=4)
             table.add_column("Setting", style="white")
             table.add_column("Value", style="green")
 
-            triggers_file = self.config.meshmonitor.triggers_file or "[dim]not set[/dim]"
             table.add_row("1", "Enabled", self._status_icon(self.config.meshmonitor.enabled))
-            table.add_row("2", "Triggers File", triggers_file)
+            table.add_row("2", "MeshMonitor URL", self.config.meshmonitor.url or "[dim]not set[/dim]")
             table.add_row("3", "Inject into Prompt", self._status_icon(self.config.meshmonitor.inject_into_prompt))
-            table.add_row("4", "View Triggers", "[dim]show loaded patterns[/dim]")
+            table.add_row("4", "Refresh Interval", f"{self.config.meshmonitor.refresh_interval}s")
+            table.add_row("5", "View Triggers", "[dim]Fetch and display[/dim]")
             table.add_row("0", "Back", "")
 
             console.print(table)
@@ -639,74 +637,52 @@ class Configurator:
                 self.config.meshmonitor.enabled = not self.config.meshmonitor.enabled
                 self.modified = True
             elif choice == 2:
-                value = Prompt.ask("Triggers file path", default=self.config.meshmonitor.triggers_file or "/data/triggers.json")
-                if value != self.config.meshmonitor.triggers_file:
-                    self.config.meshmonitor.triggers_file = value
+                value = Prompt.ask("MeshMonitor URL (e.g., http://100.64.0.11:3333)",
+                                   default=self.config.meshmonitor.url)
+                if value != self.config.meshmonitor.url:
+                    self.config.meshmonitor.url = value
                     self.modified = True
             elif choice == 3:
                 self.config.meshmonitor.inject_into_prompt = not self.config.meshmonitor.inject_into_prompt
                 self.modified = True
             elif choice == 4:
+                value = IntPrompt.ask("Refresh interval (seconds)", default=self.config.meshmonitor.refresh_interval)
+                if value != self.config.meshmonitor.refresh_interval:
+                    self.config.meshmonitor.refresh_interval = value
+                    self.modified = True
+            elif choice == 5:
                 self._view_meshmonitor_triggers()
 
-
-
     def _view_meshmonitor_triggers(self) -> None:
-        """Display loaded MeshMonitor trigger patterns."""
+        """Fetch and display MeshMonitor triggers."""
         self._clear()
-        console.print("[bold]MeshMonitor Triggers[/bold]
-")
+        console.print("[bold]MeshMonitor Triggers[/bold]\n")
 
-        triggers_file = self.config.meshmonitor.triggers_file
-        if not triggers_file:
-            console.print("[yellow]No triggers file configured.[/yellow]")
-            input("
-Press Enter to continue...")
+        if not self.config.meshmonitor.url:
+            console.print("[yellow]MeshMonitor URL not configured.[/yellow]")
+            input("\nPress Enter to continue...")
             return
 
-        from pathlib import Path
-        import json
-
-        triggers_path = Path(triggers_file)
-        if not triggers_path.exists():
-            console.print(f"[yellow]Triggers file not found: {triggers_file}[/yellow]")
-            input("
-Press Enter to continue...")
-            return
+        console.print(f"[dim]Fetching from {self.config.meshmonitor.url}...[/dim]\n")
 
         try:
-            with open(triggers_path) as f:
-                data = json.load(f)
-        except json.JSONDecodeError as e:
-            console.print(f"[red]Invalid JSON in triggers file: {e}[/red]")
-            input("
-Press Enter to continue...")
-            return
+            from ..meshmonitor import MeshMonitorSync
+            sync = MeshMonitorSync(self.config.meshmonitor.url)
+            count = sync.load()
 
-        if not data:
-            console.print("[dim]Triggers file is empty.[/dim]")
-            input("
-Press Enter to continue...")
-            return
-
-        # Display triggers in a table
-        table = Table(box=box.ROUNDED, title="Loaded Triggers")
-        table.add_column("Command", style="cyan")
-        table.add_column("Pattern", style="white")
-
-        for name, pattern in data.items():
-            if isinstance(pattern, str):
-                table.add_row(name, pattern)
-            elif isinstance(pattern, dict) and "pattern" in pattern:
-                table.add_row(name, pattern["pattern"])
+            if count == 0:
+                if sync.last_error:
+                    console.print(f"[red]Error: {sync.last_error}[/red]")
+                else:
+                    console.print("[yellow]No triggers configured in MeshMonitor.[/yellow]")
             else:
-                table.add_row(name, "[dim]complex[/dim]")
+                console.print(f"[green]Loaded {count} triggers:[/green]\n")
+                for trigger in sync.raw_triggers:
+                    console.print(f"  [cyan]{trigger}[/cyan]")
+        except Exception as e:
+            console.print(f"[red]Failed to fetch triggers: {e}[/red]")
 
-        console.print(table)
-        console.print(f"
-[dim]Total: {len(data)} trigger(s)[/dim]")
-        input("
-Press Enter to continue...")
+        input("\nPress Enter to continue...")
 
     def _setup_wizard(self) -> None:
         """First-time setup wizard."""

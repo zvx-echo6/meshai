@@ -73,16 +73,16 @@ class MeshAI:
         while self._running:
             await asyncio.sleep(1)
 
+            # Periodic MeshMonitor refresh
+            if self.meshmonitor_sync:
+                self.meshmonitor_sync.maybe_refresh()
+
             # Periodic cleanup
             if time.time() - self._last_cleanup >= 3600:
                 await self.history.cleanup_expired()
                 if self.context:
                     self.context.prune()
                 self._last_cleanup = time.time()
-
-            # Refresh MeshMonitor triggers if file changed
-            if self.meshmonitor_sync:
-                self.meshmonitor_sync.maybe_refresh()
 
     async def stop(self) -> None:
         """Stop the bot."""
@@ -163,14 +163,17 @@ class MeshAI:
             self.context = None
 
         # MeshMonitor trigger sync
-        self.meshmonitor_sync = None
         mm_cfg = self.config.meshmonitor
-        if mm_cfg.enabled and mm_cfg.triggers_file:
+        if mm_cfg.enabled and mm_cfg.url:
             from .meshmonitor import MeshMonitorSync
             self.meshmonitor_sync = MeshMonitorSync(
-                triggers_file=mm_cfg.triggers_file,
+                url=mm_cfg.url,
+                refresh_interval=mm_cfg.refresh_interval,
             )
-            self.meshmonitor_sync.load()
+            count = self.meshmonitor_sync.load()
+            logger.info(f"MeshMonitor sync enabled, loaded {count} triggers")
+        else:
+            self.meshmonitor_sync = None
 
         # Message router
         self.router = MessageRouter(
