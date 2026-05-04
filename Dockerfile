@@ -58,6 +58,8 @@ WORKDIR /app
 # Copy requirements first for layer caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# Pre-download embedding model for hybrid search
+RUN python3 -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
 
 # Copy application code
 COPY --chown=meshai:meshai meshai/ ./meshai/

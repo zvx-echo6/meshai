@@ -14,12 +14,12 @@
 services:
   meshai:
     # Pull from GitHub Container Registry
-    image: ghcr.io/zvx-echo6/meshai:latest
+    # image: ghcr.io/zvx-echo6/meshai:latest
 
     # Uncomment to build locally instead of pulling
-    # build:
-    #   context: .
-    #   dockerfile: Dockerfile
+    build:
+      context: .
+      dockerfile: Dockerfile
     #   args:
     #     UID: ${UID:-1000}
     #     GID: ${GID:-1000}
@@ -52,7 +52,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 3G
         reservations:
           memory: 64M
 
@@ -68,6 +68,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
 
 volumes:
   meshai_data:

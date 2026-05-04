@@ -81,7 +81,10 @@ class Configurator:
             mm_status = self._status_icon(self.config.meshmonitor.enabled)
             mm_url = self.config.meshmonitor.url or "[dim]not set[/dim]"
             table.add_row("9", "MeshMonitor Sync", f"{mm_status} {mm_url}")
-            table.add_row("10", "Setup Wizard", "[dim]First-time setup[/dim]")
+            kb_status = self._status_icon(self.config.knowledge.enabled)
+            kb_path = self.config.knowledge.db_path or "[dim]not set[/dim]"
+            table.add_row("10", "Knowledge Base", f"{kb_status} {kb_path}")
+            table.add_row("11", "Setup Wizard", "[dim]First-time setup[/dim]")
 
             console.print(table)
             console.print()
@@ -90,13 +93,13 @@ class Configurator:
             if self.modified:
                 console.print("[yellow]* Unsaved changes[/yellow]")
                 console.print()
-            console.print("[white]11. Save[/white]                  [dim]Save config, stay in menu[/dim]")
-            console.print("[green]12. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
-            console.print("[white]13. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
-            console.print("[white]14. Exit without Saving[/white]")
+            console.print("[white]12. Save[/white]                  [dim]Save config, stay in menu[/dim]")
+            console.print("[green]13. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
+            console.print("[white]14. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
+            console.print("[white]15. Exit without Saving[/white]")
             console.print()
 
-            choice = IntPrompt.ask("Select option", default=12)
+            choice = IntPrompt.ask("Select option", default=13)
 
             if choice == 1:
                 self._bot_settings()
@@ -117,15 +120,17 @@ class Configurator:
             elif choice == 9:
                 self._meshmonitor_settings()
             elif choice == 10:
-                self._setup_wizard()
+                self._knowledge_settings()
             elif choice == 11:
-                self._save_only()
+                self._setup_wizard()
             elif choice == 12:
-                self._save_and_restart()
+                self._save_only()
             elif choice == 13:
+                self._save_and_restart()
+            elif choice == 14:
                 self._save_restart_exit()
                 break
-            elif choice == 14:
+            elif choice == 15:
                 break
 
     def _show_header(self) -> None:
@@ -683,6 +688,45 @@ class Configurator:
             console.print(f"[red]Failed to fetch triggers: {e}[/red]")
 
         input("\nPress Enter to continue...")
+
+
+    def _knowledge_settings(self) -> None:
+        """Knowledge base settings submenu."""
+        while True:
+            self._clear()
+            console.print("[bold]Knowledge Base Settings[/bold]\n")
+            table = Table(box=box.ROUNDED)
+            table.add_column("Option", style="cyan", width=4)
+            table.add_column("Setting", style="white")
+            table.add_column("Value", style="green")
+
+            table.add_row("1", "Enabled", self._status_icon(self.config.knowledge.enabled))
+            table.add_row("2", "Database Path", self.config.knowledge.db_path or "[dim]not set[/dim]")
+            table.add_row("3", "Results Count", str(self.config.knowledge.top_k))
+            table.add_row("0", "Back", "")
+
+            console.print(table)
+            console.print()
+
+            choice = IntPrompt.ask("Select option", default=0)
+
+            if choice == 0:
+                return
+            elif choice == 1:
+                value = Confirm.ask("Enable knowledge base?", default=self.config.knowledge.enabled)
+                if value != self.config.knowledge.enabled:
+                    self.config.knowledge.enabled = value
+                    self.modified = True
+            elif choice == 2:
+                value = Prompt.ask("Database path", default=self.config.knowledge.db_path)
+                if value != self.config.knowledge.db_path:
+                    self.config.knowledge.db_path = value
+                    self.modified = True
+            elif choice == 3:
+                value = IntPrompt.ask("Results count (top_k)", default=self.config.knowledge.top_k)
+                if value != self.config.knowledge.top_k:
+                    self.config.knowledge.top_k = value
+                    self.modified = True
 
     def _setup_wizard(self) -> None:
         """First-time setup wizard."""

@@ -13,6 +13,7 @@ from .config import Config
 from .connector import MeshConnector, MeshMessage
 from .context import MeshContext
 from .history import ConversationHistory
+from .chunker import chunk_response, ContinuationState
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ class MessageRouter:
         llm_backend: LLMBackend,
         context: MeshContext = None,
         meshmonitor_sync=None,
+        knowledge=None,
     ):
         self.config = config
         self.connector = connector
@@ -73,6 +75,8 @@ class MessageRouter:
         self.llm = llm_backend
         self.context = context
         self.meshmonitor_sync = meshmonitor_sync
+        self.knowledge = knowledge
+        self.continuations = ContinuationState(max_continuations=3)
 
 
     def should_respond(self, message: MeshMessage) -> bool:
@@ -110,6 +114,30 @@ class MessageRouter:
             return False
 
         return True
+
+    def check_continuation(self, message) -> list[str] | None:
+        """Check if this is a continuation request and return messages if so.
+
+        Returns:
+            List of messages to send, or None if not a continuation
+        """
+        user_id = message.sender_id
+        text = message.text.strip()
+
+        logger.info(f"check_continuation: user={user_id}, text='{text[:30]}', has_pending={self.continuations.has_pending(user_id)}")
+
+        if self.continuations.has_pending(user_id):
+            if self.continuations.is_continuation_request(text):
+                result = self.continuations.get_continuation(user_id)
+                if result:
+                    messages, _ = result
+                    return messages
+                # Max continuations reached, return None to fall through
+            else:
+                # User asked something new, clear pending continuation
+                self.continuations.clear(user_id)
+
+        return None
 
     async def route(self, message: MeshMessage) -> RouteResult:
         """Route a message and generate response.
@@ -208,6 +236,23 @@ class MessageRouter:
                     "\n\n[No recent mesh traffic observed yet.]"
                 )
 
+
+
+        # 5. Knowledge base retrieval
+        if self.knowledge and query:
+            results = self.knowledge.search(query)
+            if results:
+                chunks = "\n\n".join(
+                    f"[{r['title']}]: {r['excerpt']}" for r in results
+                )
+                system_prompt += (
+                    "\n\nREFERENCE KNOWLEDGE - Answer using this information:\n"
+                    + chunks
+                )
+
+        # DEBUG: Log system prompt status
+        logger.warning(f"SYSTEM PROMPT LENGTH: {len(system_prompt)} chars")
+        logger.warning(f"HAS REFERENCE KNOWLEDGE: {'REFERENCE KNOWLEDGE' in system_prompt}")
         try:
             response = await self.llm.generate(
                 messages=history,
@@ -227,7 +272,21 @@ class MessageRouter:
         # Persist summary if one was created/updated
         await self._persist_summary(message.sender_id)
 
-        return response
+        # Chunk the response with sentence awareness
+        messages, remaining = chunk_response(
+            response,
+            max_chars=self.config.response.max_length,
+            max_messages=self.config.response.max_messages,
+        )
+
+        # Store remaining content for continuation
+        if remaining:
+            logger.info(f"Storing continuation for {message.sender_id}: {len(remaining)} chars remaining")
+            self.continuations.store(message.sender_id, remaining)
+        else:
+            logger.info(f"No remaining content for {message.sender_id}")
+
+        return messages
 
     async def _persist_summary(self, user_id: str) -> None:
         """Persist any cached summary to the database.

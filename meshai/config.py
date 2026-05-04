@@ -108,7 +108,7 @@ class LLMConfig:
         "passive mesh context buffer (observes channel traffic), smart chunking for LoRa "
         "message limits, prompt injection defense, advBBS filtering.\n\n"
         "RESPONSE RULES:\n"
-        "- Keep responses VERY brief — under 200 characters total.\n"
+        "- Keep responses very brief — 1-2 short sentences, under 300 characters. Only give longer answers if the user explicitly asks for detail or explanation.\n"
         "- Be concise but friendly. No markdown formatting.\n"
         "- If asked about mesh activity and no recent traffic is shown, say you haven't "
         "observed any yet.\n"
@@ -156,6 +156,14 @@ class MeshMonitorConfig:
 
 
 @dataclass
+class KnowledgeConfig:
+    """FTS5 knowledge base settings."""
+
+    enabled: bool = False
+    db_path: str = ""
+    top_k: int = 5
+
+@dataclass
 class Config:
     """Main configuration container."""
 
@@ -169,6 +177,7 @@ class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     weather: WeatherConfig = field(default_factory=WeatherConfig)
     meshmonitor: MeshMonitorConfig = field(default_factory=MeshMonitorConfig)
+    knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
 
     _config_path: Optional[Path] = field(default=None, repr=False)
 

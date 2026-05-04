@@ -64,16 +64,11 @@ llm:
 
 meshmonitor:
   enabled: false
-  triggers_file: /data/triggers.json
   inject_into_prompt: true
 EOF
     echo "Default config created. Configure via http://localhost:7682"
 fi
 
-# Create triggers.json if missing
-if [ ! -f "/data/triggers.json" ]; then
-    echo '{"triggers": []}' > /data/triggers.json
-fi
 
 # Start ttyd for web-based config access
 echo "Starting web config interface on port 7682..."
@@ -111,7 +106,7 @@ kill_bot() {
 echo "Starting MeshAI..."
 rm -f /tmp/meshai_restart
 while true; do
-    python -m meshai --config-file "$MESHAI_CONFIG" &
+    python -m meshai -v --config-file "$MESHAI_CONFIG" &
     BOT_PID=$!
     echo "$BOT_PID" > /tmp/meshai.pid
     echo "Bot started (PID $BOT_PID)"

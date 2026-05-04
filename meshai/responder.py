@@ -1,4 +1,4 @@
-"""Response handling - delays and message chunking."""
+"""Response handling - delays and message delivery."""
 
 import asyncio
 import logging
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class Responder:
-    """Handles response formatting, chunking, and delivery."""
+    """Handles response delivery with pacing."""
 
     def __init__(self, config: ResponseConfig, connector: MeshConnector):
         self.config = config
@@ -20,120 +20,46 @@ class Responder:
 
     async def send_response(
         self,
-        text: str,
+        messages: list[str] | str,
         destination: Optional[str] = None,
         channel: int = 0,
     ) -> bool:
-        """Send a response with delay and chunking.
+        """Send response messages with human-pacing delays.
 
         Args:
-            text: Response text (will be chunked if too long)
+            messages: Pre-chunked messages list, or single string (legacy)
             destination: Node ID for DM, or None for channel broadcast
             channel: Channel to send on
 
         Returns:
-            True if all chunks sent successfully
+            True if all messages sent successfully
         """
-        # Chunk the message
-        chunks = self._chunk_message(text)
+        # Handle legacy single string
+        if isinstance(messages, str):
+            messages = [messages]
 
-        # Limit to max messages
-        if len(chunks) > self.config.max_messages:
-            chunks = chunks[: self.config.max_messages]
-            # Truncate last chunk to indicate more was cut
-            if chunks:
-                last = chunks[-1]
-                if len(last) > self.config.max_length - 3:
-                    chunks[-1] = last[: self.config.max_length - 3] + "..."
+        if not messages:
+            return True
 
         success = True
-        for i, chunk in enumerate(chunks):
-            # Apply delay before sending
-            delay = random.uniform(self.config.delay_min, self.config.delay_max)
-            await asyncio.sleep(delay)
+        for i, msg in enumerate(messages):
+            # Apply delay before sending (except first message)
+            if i > 0:
+                delay = random.uniform(self.config.delay_min, self.config.delay_max)
+                await asyncio.sleep(delay)
 
-            # Send chunk
+            # Send message
             sent = self.connector.send_message(
-                text=chunk,
+                text=msg,
                 destination=destination,
                 channel=channel,
             )
 
             if not sent:
-                logger.error(f"Failed to send chunk {i + 1}/{len(chunks)}")
+                logger.error(f"Failed to send message {i + 1}/{len(messages)}")
                 success = False
                 break
 
-            logger.debug(f"Sent chunk {i + 1}/{len(chunks)}: {chunk[:50]}...")
+            logger.debug(f"Sent message {i + 1}/{len(messages)}: {msg[:50]}...")
 
         return success
-
-    def _chunk_message(self, text: str) -> list[str]:
-        """Split message into chunks respecting max_length.
-
-        Tries to break at word boundaries when possible.
-
-        Args:
-            text: Text to chunk
-
-        Returns:
-            List of chunks
-        """
-        max_len = self.config.max_length
-
-        if len(text) <= max_len:
-            return [text]
-
-        chunks = []
-        remaining = text
-
-        while remaining:
-            if len(remaining) <= max_len:
-                chunks.append(remaining)
-                break
-
-            # Find a good break point
-            chunk = remaining[:max_len]
-
-            # Try to break at word boundary
-            break_point = self._find_break_point(chunk)
-
-            if break_point > 0:
-                chunks.append(remaining[:break_point].rstrip())
-                remaining = remaining[break_point:].lstrip()
-            else:
-                # No good break point, hard cut
-                chunks.append(chunk)
-                remaining = remaining[max_len:]
-
-        return chunks
-
-    def _find_break_point(self, text: str) -> int:
-        """Find best break point in text.
-
-        Prefers: sentence end > comma/semicolon > space
-
-        Args:
-            text: Text to find break in
-
-        Returns:
-            Index to break at, or 0 if no good break found
-        """
-        # Look for sentence endings
-        for char in ".!?":
-            pos = text.rfind(char)
-            if pos > len(text) // 2:  # Only if in second half
-                return pos + 1
-
-        # Look for clause breaks
-        for char in ",;:":
-            pos = text.rfind(char)
-            if pos > len(text) // 2:
-                return pos + 1
-
-        # Look for word boundary
-        pos = text.rfind(" ")
-        if pos > len(text) // 3:  # Only if past first third
-            return pos
-
-        return 0

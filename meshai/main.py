@@ -38,6 +38,7 @@ class MeshAI:
         self.llm: Optional[LLMBackend] = None
         self.context: Optional[MeshContext] = None
         self.meshmonitor_sync = None
+        self.knowledge = None
         self.router: Optional[MessageRouter] = None
         self.responder: Optional[Responder] = None
         self._running = False
@@ -97,6 +98,8 @@ class MeshAI:
 
         if self.llm:
             await self.llm.close()
+        if self.knowledge:
+            self.knowledge.close()
 
         self._remove_pid()
         logger.info("MeshAI stopped")
@@ -175,11 +178,23 @@ class MeshAI:
         else:
             self.meshmonitor_sync = None
 
+        # Knowledge base
+        kb_cfg = self.config.knowledge
+        if kb_cfg.enabled and kb_cfg.db_path:
+            from .knowledge import KnowledgeSearch
+            self.knowledge = KnowledgeSearch(
+                db_path=kb_cfg.db_path,
+                top_k=kb_cfg.top_k,
+            )
+        else:
+            self.knowledge = None
+
         # Message router
         self.router = MessageRouter(
             self.config, self.connector, self.history, self.dispatcher, self.llm,
             context=self.context,
             meshmonitor_sync=self.meshmonitor_sync,
+            knowledge=self.knowledge,
         )
 
         # Responder
@@ -208,6 +223,16 @@ class MeshAI:
             )
 
             # Route the message
+            # Check for continuation request first
+            continuation_messages = self.router.check_continuation(message)
+            if continuation_messages:
+                await self.responder.send_response(
+                    continuation_messages,
+                    destination=message.sender_id,
+                    channel=message.channel,
+                )
+                return
+
             result = await self.router.route(message)
 
             if result.route_type == RouteType.IGNORE:
@@ -215,18 +240,18 @@ class MeshAI:
 
             # Determine response
             if result.route_type == RouteType.COMMAND:
-                response = result.response
+                messages = result.response  # Commands return single string
             elif result.route_type == RouteType.LLM:
-                response = await self.router.generate_llm_response(message, result.query)
+                messages = await self.router.generate_llm_response(message, result.query)
             else:
                 return
 
-            if not response:
+            if not messages:
                 return
 
             # Send DM response
             await self.responder.send_response(
-                text=response,
+                messages,
                 destination=message.sender_id,
                 channel=message.channel,
             )

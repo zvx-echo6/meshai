@@ -6,9 +6,10 @@ LLM-powered assistant for Meshtastic mesh networks.
 
 - **LLM Chat**: Responds to @mentions and DMs with AI-generated responses
 - **Multi-backend**: Supports OpenAI, Anthropic Claude, Google Gemini, and local LLMs via LiteLLM
+- **Knowledge Base (RAG)**: Hybrid FTS5 + vector search over Meshtastic documentation
+- **Message Chunking**: Sentence-aware splitting with continuation prompts for long responses
 - **Bang Commands**: `!help`, `!ping`, `!reset`, `!status`, `!weather`
 - **Conversation History**: Per-user context maintained in SQLite
-- **Smart Chunking**: Automatically splits long responses for mesh transmission
 - **Rate Limiting**: Configurable delays to avoid flooding the mesh
 - **advBBS Compatible**: Runs alongside [advBBS](https://github.com/NovaNexusMesh/advBBS) on the same node — protocol sync messages and mail notifications are automatically filtered
 - **Rich Configurator**: Interactive TUI for easy setup
@@ -105,28 +106,80 @@ DM: Tell me a short joke
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        MeshAI                                │
-├─────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────────┐ │
-│  │  Meshtastic │    │   Message   │    │   LLM Backend   │ │
-│  │  Connector  │───▶│   Router    │───▶│   (pluggable)   │ │
-│  │ Serial/TCP  │    │             │    │                 │ │
-│  └─────────────┘    └─────────────┘    └─────────────────┘ │
-│         │                 │                    │            │
-│         │           ┌─────▼─────┐              │            │
-│         │           │ Conversation│             │            │
-│         │           │  History   │◀────────────┘            │
-│         │           │  (SQLite)  │                          │
-│         │           └───────────┘                           │
-│         │                                                   │
-│         ▼                                                   │
-│  ┌─────────────┐                                           │
-│  │  Responder  │  - 2.2-3s delay                           │
-│  │             │  - Chunk to 150 chars                     │
-│  │             │  - Max 2 messages                         │
-│  └─────────────┘                                           │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                           MeshAI                                  │
+├──────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐    ┌─────────────┐    ┌──────────────────────┐ │
+│  │  Meshtastic │    │   Message   │    │    LLM Backend       │ │
+│  │  Connector  │───▶│   Router    │───▶│    (pluggable)       │ │
+│  │ Serial/TCP  │    │             │    │                      │ │
+│  └─────────────┘    └──────┬──────┘    └──────────────────────┘ │
+│         │                  │                     │               │
+│         │           ┌──────▼──────┐              │               │
+│         │           │ Conversation│              │               │
+│         │           │   History   │◀─────────────┘               │
+│         │           │  (SQLite)   │                              │
+│         │           └─────────────┘                              │
+│         │                  │                                     │
+│         │           ┌──────▼──────┐    ┌──────────────────────┐ │
+│         │           │  Knowledge  │───▶│  Hybrid FTS5+Vector  │ │
+│         │           │    Base     │    │  (sqlite-vec + BGE)  │ │
+│         │           └─────────────┘    └──────────────────────┘ │
+│         │                                                        │
+│         ▼                                                        │
+│  ┌─────────────┐    ┌─────────────┐                             │
+│  │  Responder  │───▶│   Chunker   │  Sentence-aware splitting   │
+│  │             │    │             │  + continuation prompts     │
+│  └─────────────┘    └─────────────┘                             │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+## Knowledge Base (RAG)
+
+MeshAI can answer questions using a local knowledge base built from Meshtastic documentation. The system uses hybrid search combining:
+
+- **FTS5 keyword search** — fast exact term matching with domain-aware query construction
+- **Vector embeddings** — semantic similarity using `bge-small-en-v1.5` (384 dimensions)
+- **Reciprocal Rank Fusion** — merges results from both methods for best relevance
+
+**Building the knowledge base:**
+
+```bash
+# Extract from Meshtastic ZIM file
+python scripts/zim_to_knowledge.py meshtastic.zim --output knowledge.db
+
+# Or from markdown files
+python scripts/md_to_knowledge.py docs/ --output knowledge.db
+```
+
+**Configuration:**
+
+```yaml
+knowledge:
+  enabled: true
+  db_path: /data/meshai_knowledge.db
+  top_k: 5              # Number of chunks to retrieve
+  fts_weight: 0.5       # Weight for keyword matches (0-1)
+  vector_weight: 0.5    # Weight for semantic matches (0-1)
+```
+
+The knowledge base requires `sqlite-vec` and `fastembed` (installed automatically with requirements.txt).
+
+## Message Chunking
+
+Long LLM responses are automatically split into mesh-friendly chunks:
+
+- **Sentence-aware** — never splits a sentence across messages
+- **Configurable limits** — max characters per message, max messages per response
+- **Continuation prompts** — if content remains, asks "Want me to keep going?"
+- **Natural follow-ups** — responds to "yes", "ok", "continue", "more", etc.
+
+**Configuration:**
+
+```yaml
+response:
+  max_length: 200       # Max chars per message
+  max_messages: 3       # Messages before continuation prompt
 ```
 
 ## Docker
@@ -214,7 +267,7 @@ Plain-text BBS responses (e.g. "Welcome back, matt!") are indistinguishable from
 MeshAI integrates with [MeshMonitor](https://github.com/Yeraze/meshmonitor), a comprehensive Meshtastic monitoring platform by Yeraze. When enabled, MeshAI automatically fetches MeshMonitor's auto-responder trigger patterns and ignores messages that MeshMonitor handles, preventing duplicate responses on the mesh.
 
 **Features:**
-- Automatic trigger discovery via MeshMonitor's API
+- Automatic trigger discovery via MeshMonitor's HTTP API
 - Dynamic ignore list — no manual sync needed
 - Trigger list injected into the LLM prompt so MeshAI can discuss MeshMonitor commands conversationally
 - Configurable via TUI (option 9) or config.yaml
@@ -258,6 +311,14 @@ sudo systemctl daemon-reload
 sudo systemctl enable meshai
 sudo systemctl start meshai
 ```
+
+## Acknowledgments
+
+- [Meshtastic](https://meshtastic.org/) — the mesh networking platform
+- [MeshMonitor](https://github.com/Yeraze/meshmonitor) by Yeraze — monitoring integration
+- [advBBS](https://github.com/NovaNexusMesh/advBBS) by NovaNexusMesh — BBS coexistence design
+- [sqlite-vec](https://github.com/asg017/sqlite-vec) by Alex Garcia — vector search in SQLite
+- [fastembed](https://github.com/qdrant/fastembed) by Qdrant — fast local embeddings
 
 ## License
 
