@@ -7,7 +7,11 @@ from typing import Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from .. import __version__
+
 logger = logging.getLogger(__name__)
+
+USER_AGENT = f"MeshAI/{__version__}"
 
 
 class MeshviewSource:
@@ -75,8 +79,12 @@ class MeshviewSource:
             Parsed JSON data or None on error
         """
         url = f"{self._url}{endpoint}"
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,
+        }
         try:
-            req = Request(url, headers={"Accept": "application/json"})
+            req = Request(url, headers=headers)
             with urlopen(req, timeout=15) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except HTTPError as e:

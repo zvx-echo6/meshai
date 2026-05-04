@@ -8,7 +8,11 @@ from typing import Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from .. import __version__
+
 logger = logging.getLogger(__name__)
+
+USER_AGENT = f"MeshAI/{__version__}"
 
 
 class MeshMonitorDataSource:
@@ -122,6 +126,7 @@ class MeshMonitorDataSource:
         headers = {
             "Accept": "application/json",
             "Authorization": f"Bearer {self._api_token}",
+            "User-Agent": USER_AGENT,
         }
         try:
             req = Request(url, headers=headers)
