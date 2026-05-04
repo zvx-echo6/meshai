@@ -94,8 +94,8 @@ class Configurator:
 
             # Mesh Intelligence
             mi_status = self._status_icon(self.config.mesh_intelligence.enabled)
-            mi_regions = len(self.config.mesh_intelligence.region_labels)
-            mi_info = f"{mi_regions} labels" if mi_regions else "[dim]auto[/dim]"
+            mi_regions = len(self.config.mesh_intelligence.regions)
+            mi_info = f"{mi_regions} regions" if mi_regions else "[dim]auto[/dim]"
             table.add_row("12", "Mesh Intelligence", f"{mi_status} {mi_info}")
 
             table.add_row("13", "Setup Wizard", "[dim]First-time setup[/dim]")
