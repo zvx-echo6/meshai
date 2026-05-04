@@ -11,7 +11,7 @@ LLM-powered assistant for Meshtastic mesh networks.
 - **Bang Commands**: `!help`, `!ping`, `!reset`, `!status`, `!weather`
 - **Conversation History**: Per-user context maintained in SQLite
 - **Rate Limiting**: Configurable delays to avoid flooding the mesh
-- **advBBS Compatible**: Runs alongside [advBBS](https://github.com/NovaNexusMesh/advBBS) on the same node — protocol sync messages and mail notifications are automatically filtered
+- **advBBS Compatible**: Runs alongside [advBBS](https://github.com/zvx-echo6/advbbs) on the same node — protocol sync messages and mail notifications are automatically filtered
 - **Rich Configurator**: Interactive TUI for easy setup
 - **MeshMonitor Integration**: Syncs with [MeshMonitor](https://github.com/Yeraze/meshmonitor) by Yeraze to avoid duplicate responses
 
@@ -246,7 +246,7 @@ docker compose logs -f meshai
 
 ## Running Alongside advBBS
 
-MeshAI is designed to coexist with [advBBS](https://github.com/NovaNexusMesh/advBBS) on the same Meshtastic node. Both connect via TCP to meshtasticd and share the radio, but MeshAI automatically ignores advBBS traffic:
+MeshAI is designed to coexist with [advBBS](https://github.com/zvx-echo6/advbbs) on the same Meshtastic node. Both connect via TCP to meshtasticd and share the radio, but MeshAI automatically ignores advBBS traffic:
 
 - **Sync protocol** — `MAILREQ|`, `MAILACK|`, `MAILDAT|`, `BOARDREQ|`, etc.
 - **RAP protocol** — `advBBS|` pings, pongs, and route advertisements
@@ -316,7 +316,7 @@ sudo systemctl start meshai
 
 - [Meshtastic](https://meshtastic.org/) — the mesh networking platform
 - [MeshMonitor](https://github.com/Yeraze/meshmonitor) by Yeraze — monitoring integration
-- [advBBS](https://github.com/NovaNexusMesh/advBBS) by NovaNexusMesh — BBS coexistence design
+- [advBBS](https://github.com/zvx-echo6/advbbs) — BBS coexistence design
 - [sqlite-vec](https://github.com/asg017/sqlite-vec) by Alex Garcia — vector search in SQLite
 - [fastembed](https://github.com/qdrant/fastembed) by Qdrant — fast local embeddings
 
