@@ -555,6 +555,148 @@ class MeshSourceManager:
             "edge_duplicates": raw_edges - dedup_edges,
         }
 
+    def get_all_packets(self) -> list[dict]:
+        """Get deduplicated packets from all MeshMonitor sources.
+
+        Packets are deduplicated by packet_id to avoid double-counting
+        when multiple sources report the same MQTT feed.
+
+        Returns:
+            List of packet dicts with '_sources' field
+        """
+        packets_by_id: dict[int, dict] = {}
+
+        for name, source in self._sources.items():
+            if not isinstance(source, MeshMonitorDataSource):
+                continue
+
+            if not hasattr(source, "packets"):
+                continue
+
+            for pkt in source.packets:
+                packet_id = pkt.get("packet_id") or pkt.get("id")
+                if packet_id is None:
+                    # Fallback key: (from_node, timestamp, portnum)
+                    from_node = pkt.get("from_node") or pkt.get("from")
+                    ts = pkt.get("timestamp") or pkt.get("rxTime")
+                    portnum = pkt.get("portnum")
+                    if from_node and ts:
+                        packet_id = hash((from_node, ts, portnum))
+                    else:
+                        # Can't deduplicate, use negative counter
+                        packet_id = -len(packets_by_id) - 1
+
+                if packet_id in packets_by_id:
+                    existing = packets_by_id[packet_id]
+                    if name not in existing["_sources"]:
+                        existing["_sources"].append(name)
+                else:
+                    tagged = dict(pkt)
+                    tagged["_sources"] = [name]
+                    packets_by_id[packet_id] = tagged
+
+        return list(packets_by_id.values())
+
+    def get_traffic_stats(self) -> dict[str, dict]:
+        """Get traffic statistics from all sources.
+
+        Returns:
+            Dict mapping source name to traffic stats:
+            - hourly_counts: list of {period, count} for last 24h
+            - total_packets: total packet count
+            - packets_per_hour: average packets per hour
+        """
+        stats = {}
+
+        for name, source in self._sources.items():
+            source_stats = {}
+
+            if isinstance(source, MeshviewSource):
+                # Meshview has stats with hourly breakdown
+                if hasattr(source, "stats") and source.stats:
+                    data = source.stats.get("data", [])
+                    source_stats["hourly_counts"] = data
+                    total = sum(item.get("count", 0) for item in data)
+                    source_stats["total_packets"] = total
+                    source_stats["packets_per_hour"] = total / len(data) if data else 0
+
+                if hasattr(source, "counts") and source.counts:
+                    source_stats["total_seen"] = source.counts.get("total_seen", 0)
+                    source_stats["total_packets_all_time"] = source.counts.get("total_packets", 0)
+
+            elif isinstance(source, MeshMonitorDataSource):
+                # MeshMonitor has network_stats
+                if hasattr(source, "network_stats") and source.network_stats:
+                    ns = source.network_stats
+                    source_stats["total_nodes"] = ns.get("totalNodes", 0)
+                    source_stats["active_nodes"] = ns.get("activeNodes", 0)
+                    source_stats["traceroute_count"] = ns.get("tracerouteCount", 0)
+                    source_stats["last_updated"] = ns.get("lastUpdated", 0)
+
+                # Count packets by portnum for breakdown
+                if hasattr(source, "packets") and source.packets:
+                    portnum_counts: dict[str, int] = {}
+                    for pkt in source.packets:
+                        portnum = pkt.get("portnum_name") or str(pkt.get("portnum", "UNKNOWN"))
+                        portnum_counts[portnum] = portnum_counts.get(portnum, 0) + 1
+                    source_stats["packets_by_portnum"] = portnum_counts
+                    source_stats["packet_count"] = len(source.packets)
+
+            if source_stats:
+                stats[name] = source_stats
+
+        return stats
+
+    def get_solar_data(self) -> list[dict]:
+        """Get solar/power data from all MeshMonitor sources.
+
+        Returns:
+            List of solar data dicts with '_sources' field
+        """
+        all_solar = []
+        for name, source in self._sources.items():
+            if isinstance(source, MeshMonitorDataSource):
+                if hasattr(source, "solar") and source.solar:
+                    for item in source.solar:
+                        tagged = dict(item)
+                        tagged["_sources"] = [name]
+                        all_solar.append(tagged)
+        return all_solar
+
+    def get_network_stats(self) -> dict[str, dict]:
+        """Get network statistics from all sources.
+
+        Returns:
+            Dict mapping source name to network stats dict
+        """
+        stats = {}
+
+        for name, source in self._sources.items():
+            source_stats = {}
+
+            if isinstance(source, MeshviewSource):
+                if hasattr(source, "counts") and source.counts:
+                    source_stats.update(source.counts)
+                source_stats["node_count"] = len(source.nodes)
+                source_stats["edge_count"] = len(source.edges)
+
+            elif isinstance(source, MeshMonitorDataSource):
+                if hasattr(source, "network_stats") and source.network_stats:
+                    source_stats.update(source.network_stats)
+                if hasattr(source, "topology") and source.topology:
+                    source_stats["topology"] = source.topology
+                source_stats["node_count"] = len(source.nodes)
+                source_stats["telemetry_count"] = len(source.telemetry)
+                source_stats["traceroute_count"] = len(source.traceroutes)
+                source_stats["channel_count"] = len(source.channels)
+                if hasattr(source, "packets"):
+                    source_stats["packet_count"] = len(source.packets)
+
+            if source_stats:
+                stats[name] = source_stats
+
+        return stats
+
     @property
     def source_count(self) -> int:
         """Get number of active sources."""

@@ -109,9 +109,17 @@ class NodeHealth:
     # Metrics
     packet_count_24h: int = 0
     text_packet_count_24h: int = 0
+    position_packet_count_24h: int = 0
+    telemetry_packet_count_24h: int = 0
     battery_percent: Optional[float] = None
     voltage: Optional[float] = None
+    channel_utilization: Optional[float] = None  # From device telemetry
+    air_util_tx: Optional[float] = None  # From device telemetry
     has_solar: bool = False
+    uplink_enabled: bool = False
+
+    # Packet breakdown by portnum
+    packets_by_portnum: dict[str, int] = field(default_factory=dict)
 
     # Scores
     score: HealthScore = field(default_factory=HealthScore)
@@ -120,6 +128,13 @@ class NodeHealth:
     def non_text_packets(self) -> int:
         """Non-text packets in 24h."""
         return self.packet_count_24h - self.text_packet_count_24h
+
+    @property
+    def estimated_position_interval(self) -> Optional[float]:
+        """Estimate position broadcast interval in seconds."""
+        if self.position_packet_count_24h > 0:
+            return 86400 / self.position_packet_count_24h
+        return None
 
 
 @dataclass
@@ -154,6 +169,20 @@ class MeshHealth:
     nodes: dict[str, NodeHealth] = field(default_factory=dict)
     score: HealthScore = field(default_factory=HealthScore)
     last_computed: float = 0.0
+
+    # Data availability flags for reporting
+    has_packet_data: bool = False
+    has_telemetry_data: bool = False
+    has_traceroute_data: bool = False
+    has_channel_data: bool = False
+
+    # Traceroute statistics
+    traceroute_count: int = 0
+    avg_hop_count: float = 0.0
+    max_hop_count: int = 0
+
+    # MQTT/uplink statistics
+    uplink_node_count: int = 0
 
     @property
     def total_nodes(self) -> int:
@@ -348,7 +377,21 @@ class MeshHealthEngine:
             if voltage is not None:
                 node.voltage = float(voltage)
 
-        # Count packets per node (last 24h)
+            # Extract channel utilization and air_util_tx from device metrics
+            ch_util = telem.get("channelUtilization") or telem.get("channel_utilization")
+            if ch_util is not None:
+                node.channel_utilization = float(ch_util)
+
+            air_tx = telem.get("airUtilTx") or telem.get("air_util_tx")
+            if air_tx is not None:
+                node.air_util_tx = float(air_tx)
+
+            # Check for uplink (MQTT) enabled
+            uplink = telem.get("uplinkEnabled") or telem.get("uplink_enabled")
+            if uplink:
+                node.uplink_enabled = True
+
+        # Count packets per node (last 24h) with portnum breakdown
         twenty_four_hours_ago = now - 86400
         for pkt in all_packets:
             pkt_time = pkt.get("timestamp") or pkt.get("rxTime") or 0
@@ -361,10 +404,24 @@ class MeshHealthEngine:
 
             nodes[from_id].packet_count_24h += 1
 
+            # Get portnum for breakdown
+            port_num = pkt.get("portnum") or pkt.get("port_num") or pkt.get("portnum_name") or ""
+            port_name = str(port_num).upper()
+
+            # Track by portnum
+            if port_name:
+                nodes[from_id].packets_by_portnum[port_name] = \
+                    nodes[from_id].packets_by_portnum.get(port_name, 0) + 1
+
             # Check if text message
-            port_num = pkt.get("portnum") or pkt.get("port_num") or ""
-            if "TEXT" in str(port_num).upper():
+            if "TEXT" in port_name:
                 nodes[from_id].text_packet_count_24h += 1
+            # Count position packets
+            elif "POSITION" in port_name:
+                nodes[from_id].position_packet_count_24h += 1
+            # Count telemetry packets
+            elif "TELEMETRY" in port_name:
+                nodes[from_id].telemetry_packet_count_24h += 1
 
         # Initialize regions from anchors
         region_map: dict[str, RegionHealth] = {}
@@ -497,19 +554,58 @@ class MeshHealthEngine:
         self._compute_region_scores(regions, nodes, has_packet_data)
         mesh_score = self._compute_mesh_score(regions, nodes, has_packet_data)
 
-        # Build result
+        # Get traceroute data for statistics
+        all_traceroutes = source_manager.get_all_traceroutes()
+        traceroute_count = len(all_traceroutes)
+        hop_counts = []
+        for tr in all_traceroutes:
+            # Extract hop count from traceroute data
+            route = tr.get("route") or tr.get("hops") or []
+            if isinstance(route, list):
+                hop_counts.append(len(route))
+
+        avg_hop_count = sum(hop_counts) / len(hop_counts) if hop_counts else 0.0
+        max_hop_count = max(hop_counts) if hop_counts else 0
+
+        # Get channel data and count MQTT/uplink nodes
+        all_channels = source_manager.get_all_channels()
+        uplink_count = sum(1 for node in nodes.values() if node.uplink_enabled)
+
+        # Build result with data availability flags
         mesh_health = MeshHealth(
             regions=regions,
             unlocated_nodes=unlocated,
             nodes=nodes,
             score=mesh_score,
             last_computed=now,
+            has_packet_data=has_packet_data,
+            has_telemetry_data=len(all_telemetry) > 0,
+            has_traceroute_data=traceroute_count > 0,
+            has_channel_data=len(all_channels) > 0,
+            traceroute_count=traceroute_count,
+            avg_hop_count=avg_hop_count,
+            max_hop_count=max_hop_count,
+            uplink_node_count=uplink_count,
         )
 
         self._mesh_health = mesh_health
+
+        # Log computation summary with data availability
+        data_sources = []
+        if has_packet_data:
+            data_sources.append(f"{len(all_packets)} pkts")
+        if len(all_telemetry) > 0:
+            data_sources.append(f"{len(all_telemetry)} telem")
+        if traceroute_count > 0:
+            data_sources.append(f"{traceroute_count} traces")
+        if len(all_channels) > 0:
+            data_sources.append(f"{len(all_channels)} ch")
+        data_str = ", ".join(data_sources) if data_sources else "nodes only"
+
         logger.info(
             f"Mesh health computed: {mesh_health.total_nodes} nodes, "
-            f"{mesh_health.total_regions} regions, score {mesh_score.composite:.0f}/100"
+            f"{mesh_health.total_regions} regions, score {mesh_score.composite:.0f}/100 "
+            f"[{data_str}]"
         )
 
         return mesh_health
@@ -696,4 +792,3 @@ class MeshHealthEngine:
             n for n in self._mesh_health.nodes.values()
             if n.battery_percent is not None and n.battery_percent < self.battery_warning_percent
         ]
-

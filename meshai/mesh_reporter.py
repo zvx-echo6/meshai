@@ -70,7 +70,7 @@ class MeshReporter:
 
         # Utilization
         util = score.util_percent
-        util_data_available = getattr(score, 'util_data_available', False)
+        util_data_available = getattr(health, 'has_packet_data', False) or getattr(score, 'util_data_available', False)
         if not util_data_available:
             util_label = "N/A - no packet data"
         elif util < 15:
@@ -95,12 +95,28 @@ class MeshReporter:
             "",
             f"Overall: {score.composite:.0f}/100 ({score.tier})",
             f"Infrastructure: {infra_online}/{infra_total} online ({infra_pct}%)",
-            f"Channel Utilization: {util:.1f}% avg ({util_label})",
-            f"Node Behavior: {score.flagged_nodes} nodes flagged",
-            f"Power/Solar: {power_label} ({score.solar_index:.0f}% solar index)",
-            "",
-            "Regions:",
         ]
+
+        # Channel Utilization with data availability
+        if util_data_available:
+            lines.append(f"Channel Utilization: {util:.1f}% avg ({util_label})")
+        else:
+            lines.append("Channel Utilization: No data available")
+
+        lines.append(f"Node Behavior: {score.flagged_nodes} nodes flagged")
+        lines.append(f"Power/Solar: {power_label} ({score.solar_index:.0f}% solar index)")
+
+        # Network topology stats (if available)
+        if health.has_traceroute_data:
+            lines.append(f"Routing: {health.traceroute_count} traceroutes, avg {health.avg_hop_count:.1f} hops, max {health.max_hop_count}")
+        else:
+            lines.append("Routing: No traceroute data available")
+
+        # MQTT uplink stats
+        lines.append(f"MQTT Uplinks: {health.uplink_node_count} nodes")
+
+        lines.append("")
+        lines.append("Regions:")
 
         # Region summaries
         for region in health.regions:
@@ -221,12 +237,22 @@ class MeshReporter:
 
         # Channel utilization by locality
         lines.append("")
-        lines.append(f"Channel Utilization: {rs.util_percent:.0f}%")
-        if region.localities:
-            lines.append("  Localities:")
-            for loc in region.localities:
-                node_count = len(loc.node_ids)
-                lines.append(f"    {loc.name}: {loc.score.util_percent:.0f}% - {node_count} nodes")
+        mesh_health = self.health_engine.mesh_health
+        if mesh_health and mesh_health.has_packet_data:
+            lines.append(f"Channel Utilization: {rs.util_percent:.0f}%")
+            if region.localities:
+                lines.append("  Localities:")
+                for loc in region.localities:
+                    node_count = len(loc.node_ids)
+                    lines.append(f"    {loc.name}: {loc.score.util_percent:.0f}% - {node_count} nodes")
+        else:
+            lines.append("Channel Utilization: No data available")
+
+        # MQTT uplink stats for region
+        uplink_nodes = [health.nodes.get(nid) for nid in region.node_ids
+                        if health.nodes.get(nid) and health.nodes[nid].uplink_enabled]
+        lines.append("")
+        lines.append(f"MQTT Uplinks: {len(uplink_nodes)} nodes")
 
         # Flagged nodes in this region
         flagged_in_region = []
@@ -305,7 +331,24 @@ class MeshReporter:
         lines.append("Traffic (24h):")
         lines.append(f"  Total packets: {node.packet_count_24h}")
         lines.append(f"  Text messages: {node.text_packet_count_24h}")
-        lines.append(f"  Non-text: {node.non_text_packets}")
+        lines.append(f"  Position: {node.position_packet_count_24h}")
+        lines.append(f"  Telemetry: {node.telemetry_packet_count_24h}")
+        lines.append(f"  Other non-text: {node.non_text_packets - node.position_packet_count_24h - node.telemetry_packet_count_24h}")
+
+        # Estimated intervals
+        est_pos = node.estimated_position_interval
+        if est_pos is not None:
+            if est_pos < 60:
+                interval_str = f"{int(est_pos)}s"
+            else:
+                interval_str = f"{int(est_pos / 60)}m"
+            lines.append(f"  Est. position interval: {interval_str}")
+
+        # Channel utilization from device telemetry
+        if node.channel_utilization is not None:
+            lines.append(f"  Channel util (device): {node.channel_utilization:.1f}%")
+        if node.air_util_tx is not None:
+            lines.append(f"  TX airtime: {node.air_util_tx:.1f}%")
 
         # Power
         lines.append("")
@@ -318,6 +361,11 @@ class MeshReporter:
         if node.voltage:
             lines.append(f"  Voltage: {node.voltage:.2f}V")
         lines.append(f"  Solar: {'Yes' if node.has_solar else 'Unknown'}")
+
+        # Connectivity
+        lines.append("")
+        lines.append("Connectivity:")
+        lines.append(f"  MQTT Uplink: {'Enabled' if node.uplink_enabled else 'Disabled'}")
 
         # Recommendations for this node
         recs = self._node_recommendations(node)
@@ -338,6 +386,19 @@ class MeshReporter:
             ratio = node.non_text_packets / self.health_engine.packet_threshold
             recs.append(f"Sending {ratio:.1f}x normal packets. Check position/telemetry intervals.")
 
+        # Position interval too frequent (< 300s = 5 min)
+        est_interval = node.estimated_position_interval
+        if est_interval is not None and est_interval < 300:
+            recs.append(f"Position interval ~{int(est_interval)}s is aggressive. Recommend 900s (15 min) for battery life.")
+
+        # High channel utilization on this node
+        if node.channel_utilization is not None and node.channel_utilization > 25:
+            recs.append(f"Channel utilization {node.channel_utilization:.0f}% - consider moving to less congested frequency.")
+
+        # High air_util_tx (this node transmitting a lot)
+        if node.air_util_tx is not None and node.air_util_tx > 10:
+            recs.append(f"TX airtime {node.air_util_tx:.1f}% - reduce telemetry frequency to be a better mesh citizen.")
+
         # Low battery
         if node.battery_percent is not None and node.battery_percent < 20:
             recs.append(f"Battery at {node.battery_percent:.0f}%. Consider charging or adding solar.")
@@ -346,6 +407,10 @@ class MeshReporter:
         if not node.is_online:
             age = _format_age(node.last_seen)
             recs.append(f"Node offline since {age}. Check power and connectivity.")
+
+        # Infrastructure node without MQTT uplink
+        if node.is_infrastructure and not node.uplink_enabled:
+            recs.append("Infrastructure node without MQTT uplink. Consider enabling for better mesh visibility.")
 
         return recs
 
@@ -410,6 +475,27 @@ class MeshReporter:
             names = ", ".join(n.short_name or n.node_id[:4] for n in flagged[:3])
             recs.append(f"High-traffic nodes ({names}) impacting channel. Review their telemetry settings.")
 
+        # Check for nodes with aggressive position intervals
+        aggressive_interval_nodes = []
+        for nid in region.node_ids:
+            node = health.nodes.get(nid)
+            if node:
+                est = node.estimated_position_interval
+                if est is not None and est < 300:
+                    aggressive_interval_nodes.append(node)
+        if aggressive_interval_nodes:
+            names = ", ".join(n.short_name or n.node_id[:4] for n in aggressive_interval_nodes[:3])
+            recs.append(f"Nodes with frequent position broadcasts ({names}). Recommend 900s interval.")
+
+        # Check MQTT/uplink coverage in region
+        infra_nodes = [health.nodes.get(nid) for nid in region.node_ids
+                       if health.nodes.get(nid) and health.nodes[nid].is_infrastructure]
+        uplink_count = sum(1 for n in infra_nodes if n and n.uplink_enabled)
+        if infra_nodes and uplink_count == 0:
+            recs.append("No MQTT uplinks in region. Consider enabling on at least one infrastructure node.")
+        elif len(infra_nodes) >= 3 and uplink_count == 1:
+            recs.append(f"Only 1/{len(infra_nodes)} infrastructure nodes with MQTT uplink. Consider adding redundancy.")
+
         return recs
 
     def _mesh_recommendations(self, health) -> list[str]:
@@ -436,6 +522,29 @@ class MeshReporter:
         battery_warnings = self.health_engine.get_battery_warnings()
         if len(battery_warnings) > 2:
             recs.append(f"{len(battery_warnings)} nodes with low battery. Consider solar additions for remote nodes.")
+
+        # Hop count recommendation from traceroutes
+        if health.has_traceroute_data:
+            if health.avg_hop_count > 4:
+                recs.append(f"Average hop count {health.avg_hop_count:.1f} is high. Consider adding infrastructure to reduce latency.")
+            elif health.max_hop_count > 6:
+                recs.append(f"Max hop count {health.max_hop_count} indicates long routes. Strategic node placement could improve reach.")
+
+        # MQTT uplink coverage
+        if health.uplink_node_count == 0:
+            total_infra = sum(1 for n in health.nodes.values() if n.is_infrastructure)
+            if total_infra > 0:
+                recs.append("No MQTT uplinks detected. Enable on infrastructure nodes for better mesh visibility.")
+        elif health.total_regions > 0:
+            uplinks_per_region = health.uplink_node_count / health.total_regions
+            if uplinks_per_region < 1:
+                recs.append(f"Only {health.uplink_node_count} MQTT uplinks across {health.total_regions} regions. Consider adding redundancy.")
+
+        # Aggressive position intervals mesh-wide
+        aggressive_nodes = [n for n in health.nodes.values()
+                           if n.estimated_position_interval is not None and n.estimated_position_interval < 300]
+        if len(aggressive_nodes) > 5:
+            recs.append(f"{len(aggressive_nodes)} nodes with position interval <5min. Recommend 15min (900s) as default.")
 
         return recs
 
@@ -566,4 +675,3 @@ class MeshReporter:
             lines.append(f"  {region.name}: {s.composite:.0f}/100{flag}")
 
         return "\n".join(lines)
-
