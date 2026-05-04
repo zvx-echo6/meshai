@@ -70,7 +70,10 @@ class MeshReporter:
 
         # Utilization
         util = score.util_percent
-        if util < 15:
+        util_data_available = getattr(score, 'util_data_available', False)
+        if not util_data_available:
+            util_label = "N/A - no packet data"
+        elif util < 15:
             util_label = "Low"
         elif util < 20:
             util_label = "Moderate"
@@ -183,16 +186,36 @@ class MeshReporter:
             f"Infrastructure ({rs.infra_online}/{rs.infra_total}):",
         ]
 
-        # List infrastructure nodes
+        # Collect infrastructure nodes and detect duplicate shortnames
+        infra_nodes = []
         for nid in region.node_ids:
             node = health.nodes.get(nid)
-            if not node or not node.is_infrastructure:
-                continue
+            if node and node.is_infrastructure:
+                infra_nodes.append((nid, node))
+
+        # Count shortname occurrences to detect duplicates
+        shortname_counts: dict[str, int] = {}
+        for nid, node in infra_nodes:
+            sn = node.short_name or nid[:4]
+            shortname_counts[sn] = shortname_counts.get(sn, 0) + 1
+
+        # List infrastructure nodes with disambiguation for duplicates
+        for nid, node in infra_nodes:
             status = "+" if node.is_online else "X"
             age = _format_age(node.last_seen)
             bat = f", bat {node.battery_percent:.0f}%" if node.battery_percent else ""
             role = node.role or "ROUTER"
-            lines.append(f"  {status} {node.short_name or nid[:4]} ({role}) - last seen {age}{bat}")
+            sn = node.short_name or nid[:4]
+
+            # Disambiguate duplicate shortnames with node ID suffix
+            if shortname_counts.get(sn, 0) > 1:
+                # Use last 4 chars of node_id as disambiguator
+                disambig = f", !{nid[-8:]}" if len(nid) >= 8 else f", {nid}"
+                name_str = f"{sn} ({role}{disambig})"
+            else:
+                name_str = f"{sn} ({role})"
+
+            lines.append(f"  {status} {name_str} - last seen {age}{bat}")
             if not node.is_online:
                 lines[-1] += " <- OFFLINE"
 
@@ -543,3 +566,4 @@ class MeshReporter:
             lines.append(f"  {region.name}: {s.composite:.0f}/100{flag}")
 
         return "\n".join(lines)
+

@@ -60,6 +60,9 @@ _MESH_KEYWORDS = {
     "hop", "optimize", "optimization", "infrastructure", "infra", "relay",
     "repeater", "region", "locality", "congestion", "collision", "airtime",
     "telemetry", "firmware", "subscribe", "alert", "snr", "rssi",
+    # Additional keywords for better detection
+    "noisy", "noisiest", "traffic", "packets", "power", "routers",
+    "repeaters", "regions", "localities", "score", "status",
 }
 
 # Phrases that indicate mesh questions
@@ -73,7 +76,52 @@ _MESH_PHRASES = [
     "node status",
     "network health",
     "mesh health",
+    "which node",
+    "which nodes",
+    "which infra",
+    "list nodes",
+    "list infra",
+    "tell me about",
+    "what about",
+    "how is",
+    "how are",
 ]
+
+# City name to region mapping (hardcoded fallback)
+_CITY_TO_REGION = {
+    # Idaho
+    "twin falls": "South Central ID",
+    "boise": "South Western ID",
+    "nampa": "South Western ID",
+    "meridian": "South Western ID",
+    "caldwell": "South Western ID",
+    "idaho falls": "South Eastern ID",
+    "pocatello": "South Eastern ID",
+    "coeur d'alene": "Northern ID",
+    "cda": "Northern ID",
+    "post falls": "Northern ID",
+    "moscow": "Northern ID",
+    "lewiston": "Northern ID",
+    "salmon": "Central ID",
+    "sun valley": "Central ID",
+    "ketchum": "Central ID",
+    # Utah
+    "ogden": "Northern UT",
+    "logan": "Northern UT",
+    "salt lake": "Central UT",
+    "salt lake city": "Central UT",
+    "slc": "Central UT",
+    "provo": "Central UT",
+    "orem": "Central UT",
+    "vernal": "Eastern UT",
+    "moab": "Eastern UT",
+    "price": "Eastern UT",
+    "tooele": "Western UT",
+    "wendover": "Western UT",
+    "st george": "Southern UT",
+    "st. george": "Southern UT",
+    "cedar city": "Southern UT",
+}
 
 # Mesh awareness instruction for LLM
 _MESH_AWARENESS_PROMPT = """
@@ -86,6 +134,46 @@ When the user asks about mesh health, network status, or optimization:
 - Keep responses concise - these go over LoRa with limited message size
 - Users can run !health for a quick mesh summary or !region [name] for regional info
 """
+
+
+def _build_region_abbreviations(region_names: list[str]) -> dict[str, str]:
+    """Build abbreviation to region name mapping.
+
+    Generates abbreviations like:
+    - "South Central ID" -> "SCID", "SC-ID", "SC ID"
+    - "South Western ID" -> "SWID", "SW-ID", "SW ID"
+
+    Args:
+        region_names: List of full region names
+
+    Returns:
+        Dict mapping lowercase abbreviation to full region name
+    """
+    abbrevs = {}
+
+    for name in region_names:
+        parts = name.replace("???", "-").replace("???", "-").split()
+        if not parts:
+            continue
+
+        # Get first letter of each word (uppercase)
+        initials = "".join(p[0].upper() for p in parts if p)
+        abbrevs[initials.lower()] = name
+
+        # If last part is a state abbrev (2 chars), create variants
+        if len(parts) >= 2:
+            last = parts[-1]
+            if len(last) == 2 and last.isupper():
+                # "South Central ID" -> prefix is "South Central"
+                prefix_parts = parts[:-1]
+                prefix_initials = "".join(p[0].upper() for p in prefix_parts)
+
+                # SC-ID, SC ID, SCID variants
+                abbrevs[f"{prefix_initials.lower()}-{last.lower()}"] = name
+                abbrevs[f"{prefix_initials.lower()} {last.lower()}"] = name
+                abbrevs[f"{prefix_initials.lower()}{last.lower()}"] = name
+
+    return abbrevs
 
 
 class MessageRouter:
@@ -117,6 +205,17 @@ class MessageRouter:
         self.health_engine = health_engine
         self.mesh_reporter = mesh_reporter
         self.continuations = ContinuationState(max_continuations=3)
+
+        # Per-user mesh context tracking for follow-up handling
+        # Maps user_id -> {"last_was_mesh": bool, "last_scope": (type, value), "non_mesh_count": int}
+        self._user_mesh_context: dict[str, dict] = {}
+
+        # Build region abbreviation map
+        self._region_abbrevs: dict[str, str] = {}
+        if self.health_engine and self.health_engine.regions:
+            region_names = [r.name for r in self.health_engine.regions]
+            self._region_abbrevs = _build_region_abbreviations(region_names)
+            logger.debug(f"Built region abbreviations: {self._region_abbrevs}")
 
     def should_respond(self, message: MeshMessage) -> bool:
         """Determine if we should respond to this message.
@@ -241,37 +340,121 @@ class MessageRouter:
         """
         msg_lower = message.lower()
 
-        # Check for node references
+        # === NODE MATCHING (check first - more specific) ===
         if self.health_engine and self.health_engine.mesh_health:
             health = self.health_engine.mesh_health
 
-            # Look for node shortnames (4 chars, case-insensitive)
+            # 1. Exact shortname match (case-insensitive, word boundary)
             for node in health.nodes.values():
                 if node.short_name:
-                    # Check if shortname appears as a word in message
                     pattern = r'\b' + re.escape(node.short_name.lower()) + r'\b'
                     if re.search(pattern, msg_lower):
                         return ("node", node.short_name)
 
-                # Check longname substring
-                if node.long_name and node.long_name.lower() in msg_lower:
-                    return ("node", node.short_name or node.node_id)
+            # 2. Longname substring match (case-insensitive)
+            for node in health.nodes.values():
+                if node.long_name and len(node.long_name) > 3:
+                    # Match significant portion of longname
+                    if node.long_name.lower() in msg_lower:
+                        return ("node", node.short_name or node.node_id)
+                    # Also try matching without common suffixes like "Router", "Repeater"
+                    clean_name = node.long_name.lower()
+                    for suffix in [" router", " repeater", " relay", " base", " v2", " - g2"]:
+                        clean_name = clean_name.replace(suffix, "")
+                    if len(clean_name) > 4 and clean_name in msg_lower:
+                        return ("node", node.short_name or node.node_id)
 
-        # Check for region references
+            # 3. NodeId hex match (with or without ! prefix)
+            hex_pattern = r'!?([0-9a-f]{8})'
+            hex_match = re.search(hex_pattern, msg_lower)
+            if hex_match:
+                hex_id = hex_match.group(1)
+                for nid, node in health.nodes.items():
+                    if hex_id in nid.lower():
+                        return ("node", node.short_name or nid)
+
+            # 4. NodeNum decimal match
+            num_pattern = r'\b(\d{9,10})\b'
+            num_match = re.search(num_pattern, message)
+            if num_match:
+                node_num = int(num_match.group(1))
+                hex_id = format(node_num, 'x')
+                for nid, node in health.nodes.items():
+                    if hex_id in nid.lower():
+                        return ("node", node.short_name or nid)
+
+        # === REGION MATCHING ===
         if self.health_engine:
-            for anchor in self.health_engine.regions:
+            # 1. Check abbreviations first (SCID, SWID, etc.)
+            for abbrev, region_name in self._region_abbrevs.items():
+                # Match as word boundary
+                pattern = r'\b' + re.escape(abbrev) + r'\b'
+                if re.search(pattern, msg_lower):
+                    return ("region", region_name)
+
+            # 2. Check city names
+            for city, region_name in _CITY_TO_REGION.items():
+                if city in msg_lower:
+                    return ("region", region_name)
+
+            # 3. Full region name matching (SORTED BY LENGTH - longest first)
+            regions_by_length = sorted(
+                self.health_engine.regions,
+                key=lambda r: len(r.name),
+                reverse=True
+            )
+
+            for anchor in regions_by_length:
                 anchor_lower = anchor.name.lower()
-                # Check region name
+                # Check full region name
                 if anchor_lower in msg_lower:
                     return ("region", anchor.name)
 
-                # Check parts of region name (e.g., "wood river" matches "Wood River - ID")
-                parts = anchor_lower.replace("-", " ").replace("–", " ").split()
-                for part in parts:
-                    if len(part) > 3 and part in msg_lower:
-                        return ("region", anchor.name)
+            # 4. Partial region name matching (also longest first)
+            for anchor in regions_by_length:
+                anchor_lower = anchor.name.lower()
+                # Check significant parts of region name
+                # Split on common separators
+                parts = anchor_lower.replace("-", " ").replace("???", " ").replace("???", " ").split()
+                # Only match on significant words (>3 chars, not state abbrevs)
+                significant_parts = [p for p in parts if len(p) > 3]
+
+                # Check if ALL significant parts appear in message
+                if significant_parts and all(p in msg_lower for p in significant_parts):
+                    return ("region", anchor.name)
 
         return ("mesh", None)
+
+    def _get_user_mesh_context(self, user_id: str) -> dict:
+        """Get or create mesh context for a user."""
+        if user_id not in self._user_mesh_context:
+            self._user_mesh_context[user_id] = {
+                "last_was_mesh": False,
+                "last_scope": ("mesh", None),
+                "non_mesh_count": 0,
+            }
+        return self._user_mesh_context[user_id]
+
+    def _update_user_mesh_context(
+        self,
+        user_id: str,
+        is_mesh: bool,
+        scope: tuple[str, Optional[str]] = None,
+    ) -> None:
+        """Update mesh context tracking for a user."""
+        ctx = self._get_user_mesh_context(user_id)
+
+        if is_mesh:
+            ctx["last_was_mesh"] = True
+            ctx["non_mesh_count"] = 0
+            if scope:
+                ctx["last_scope"] = scope
+        else:
+            ctx["non_mesh_count"] += 1
+            # Reset after 2 consecutive non-mesh messages
+            if ctx["non_mesh_count"] >= 2:
+                ctx["last_was_mesh"] = False
+                ctx["last_scope"] = ("mesh", None)
 
     async def generate_llm_response(self, message: MeshMessage, query: str) -> str:
         """Generate LLM response for a message.
@@ -320,7 +503,7 @@ class MessageRouter:
                 "\n\nMESHMONITOR: You run alongside MeshMonitor (by Yeraze) on the same "
                 "meshtasticd node. MeshMonitor handles web dashboard, maps, telemetry, "
                 "traceroutes, security scanning, and auto-responder commands. Its trigger "
-                "commands are listed below — if someone asks what commands are available, "
+                "commands are listed below ??? if someone asks what commands are available, "
                 "mention both yours and MeshMonitor's. If someone asks where to get "
                 "MeshMonitor, direct them to github.com/Yeraze/meshmonitor"
             )
@@ -357,12 +540,22 @@ class MessageRouter:
                 )
 
         # 6. Mesh Intelligence (inject health data for mesh questions)
-        if (
-            self.source_manager
-            and self.mesh_reporter
-            and self._is_mesh_question(query)
-        ):
+        user_ctx = self._get_user_mesh_context(message.sender_id)
+        is_direct_mesh_question = self._is_mesh_question(query)
+        is_followup = user_ctx["last_was_mesh"] and not is_direct_mesh_question
+
+        should_inject_mesh = is_direct_mesh_question or is_followup
+
+        if self.source_manager and self.mesh_reporter and should_inject_mesh:
+            # Detect scope from current message
             scope_type, scope_value = self._detect_mesh_scope(query)
+
+            # For follow-ups with no detected scope, use previous scope
+            if is_followup and scope_type == "mesh" and scope_value is None:
+                prev_scope = user_ctx.get("last_scope", ("mesh", None))
+                if prev_scope[0] != "mesh" or prev_scope[1] is not None:
+                    scope_type, scope_value = prev_scope
+                    logger.debug(f"Using previous scope for follow-up: {scope_type}, {scope_value}")
 
             # Always include Tier 1 summary for mesh questions
             tier1 = self.mesh_reporter.build_tier1_summary()
@@ -383,6 +576,16 @@ class MessageRouter:
 
             # Add mesh awareness instructions
             system_prompt += _MESH_AWARENESS_PROMPT
+
+            # Update mesh context tracking
+            self._update_user_mesh_context(
+                message.sender_id,
+                is_mesh=True,
+                scope=(scope_type, scope_value),
+            )
+        else:
+            # Not a mesh question
+            self._update_user_mesh_context(message.sender_id, is_mesh=False)
 
         # DEBUG: Log system prompt status
         logger.debug(f"System prompt length: {len(system_prompt)} chars")
@@ -470,3 +673,4 @@ class MessageRouter:
             connector=self.connector,
             history=self.history,
         )
+

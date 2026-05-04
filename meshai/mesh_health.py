@@ -59,6 +59,9 @@ class HealthScore:
     battery_warnings: int = 0
     solar_index: float = 100.0
 
+    # Flag to indicate if utilization data is available
+    util_data_available: bool = False
+
     @property
     def composite(self) -> float:
         """Calculate weighted composite score."""
@@ -251,7 +254,7 @@ class MeshHealthEngine:
         all_telemetry = source_manager.get_all_telemetry()
         all_packets = []
 
-        # Get packets from MeshMonitor sources
+        # Get packets from MeshMonitor sources (if available)
         for status in source_manager.get_status():
             if status["type"] == "meshmonitor":
                 src = source_manager.get_source(status["name"])
@@ -260,6 +263,9 @@ class MeshHealthEngine:
                         tagged = dict(pkt)
                         tagged["_source"] = status["name"]
                         all_packets.append(tagged)
+
+        # Track if we have packet data for utilization calculation
+        has_packet_data = len(all_packets) > 0
 
         # Build node health records
         nodes: dict[str, NodeHealth] = {}
@@ -486,10 +492,10 @@ class MeshHealthEngine:
                     if n["id"] in nodes:
                         nodes[n["id"]].locality = locality.name
 
-        # Compute scores at each level
-        self._compute_locality_scores(regions, nodes)
-        self._compute_region_scores(regions, nodes)
-        mesh_score = self._compute_mesh_score(regions, nodes)
+        # Compute scores at each level (pass packet data availability flag)
+        self._compute_locality_scores(regions, nodes, has_packet_data)
+        self._compute_region_scores(regions, nodes, has_packet_data)
+        mesh_score = self._compute_mesh_score(regions, nodes, has_packet_data)
 
         # Build result
         mesh_health = MeshHealth(
@@ -512,37 +518,45 @@ class MeshHealthEngine:
         self,
         regions: list[RegionHealth],
         nodes: dict[str, NodeHealth],
+        has_packet_data: bool = False,
     ) -> None:
         """Compute health scores for each locality."""
         for region in regions:
             for locality in region.localities:
                 locality_nodes = [nodes[nid] for nid in locality.node_ids if nid in nodes]
-                locality.score = self._compute_node_group_score(locality_nodes)
+                locality.score = self._compute_node_group_score(locality_nodes, has_packet_data)
 
     def _compute_region_scores(
         self,
         regions: list[RegionHealth],
         nodes: dict[str, NodeHealth],
+        has_packet_data: bool = False,
     ) -> None:
         """Compute health scores for each region."""
         for region in regions:
             region_nodes = [nodes[nid] for nid in region.node_ids if nid in nodes]
-            region.score = self._compute_node_group_score(region_nodes)
+            region.score = self._compute_node_group_score(region_nodes, has_packet_data)
 
     def _compute_mesh_score(
         self,
         regions: list[RegionHealth],
         nodes: dict[str, NodeHealth],
+        has_packet_data: bool = False,
     ) -> HealthScore:
         """Compute mesh-wide health score."""
         all_nodes = list(nodes.values())
-        return self._compute_node_group_score(all_nodes)
+        return self._compute_node_group_score(all_nodes, has_packet_data)
 
-    def _compute_node_group_score(self, node_list: list[NodeHealth]) -> HealthScore:
+    def _compute_node_group_score(
+        self,
+        node_list: list[NodeHealth],
+        has_packet_data: bool = False,
+    ) -> HealthScore:
         """Compute health score for a group of nodes.
 
         Args:
             node_list: List of NodeHealth objects
+            has_packet_data: Whether packet data is available for utilization calc
 
         Returns:
             HealthScore for the group
@@ -560,24 +574,30 @@ class MeshHealthEngine:
         else:
             infra_score = 100.0  # No infrastructure = not penalized
 
-        # Channel utilization (simplified - based on packet counts)
-        total_packets = sum(n.packet_count_24h for n in node_list)
-        baseline = len(node_list) * 500
-        if baseline > 0:
-            util_percent = (total_packets / baseline) * 15
-        else:
-            util_percent = 0
+        # Channel utilization (based on packet counts if available)
+        if has_packet_data:
+            total_packets = sum(n.packet_count_24h for n in node_list)
+            baseline = len(node_list) * 500
+            if baseline > 0:
+                util_percent = (total_packets / baseline) * 15
+            else:
+                util_percent = 0
 
-        if util_percent < UTIL_HEALTHY:
-            util_score = 100.0
-        elif util_percent < UTIL_CAUTION:
-            util_score = 75.0
-        elif util_percent < UTIL_WARNING:
-            util_score = 50.0
-        elif util_percent < UTIL_UNHEALTHY:
-            util_score = 25.0
+            if util_percent < UTIL_HEALTHY:
+                util_score = 100.0
+            elif util_percent < UTIL_CAUTION:
+                util_score = 75.0
+            elif util_percent < UTIL_WARNING:
+                util_score = 50.0
+            elif util_percent < UTIL_UNHEALTHY:
+                util_score = 25.0
+            else:
+                util_score = 0.0
         else:
-            util_score = 0.0
+            # No packet data available - assume healthy utilization
+            # This prevents penalizing the score when we simply don't have data
+            util_percent = 0.0
+            util_score = 100.0
 
         # Node behavior (flagged nodes)
         flagged = [n for n in node_list if n.non_text_packets > self.packet_threshold]
@@ -622,6 +642,7 @@ class MeshHealthEngine:
             flagged_nodes=flagged_count,
             battery_warnings=battery_warnings,
             solar_index=solar_index,
+            util_data_available=has_packet_data,
         )
 
     def get_region(self, name: str) -> Optional[RegionHealth]:
@@ -675,3 +696,4 @@ class MeshHealthEngine:
             n for n in self._mesh_health.nodes.values()
             if n.battery_percent is not None and n.battery_percent < self.battery_warning_percent
         ]
+
