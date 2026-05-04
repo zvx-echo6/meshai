@@ -1099,7 +1099,7 @@ class Configurator:
             console.print("[cyan]1.[/cyan] Add region")
             console.print("[cyan]2.[/cyan] Edit region")
             console.print("[cyan]3.[/cyan] Remove region")
-            console.print("[cyan]4.[/cyan] Load Idaho defaults")
+            console.print("[cyan]4.[/cyan] Load ID/UT defaults")
             console.print("[cyan]0.[/cyan] Back")
             console.print()
 
@@ -1150,15 +1150,23 @@ class Configurator:
                     console.print(f"[green]Removed: {removed.name}[/green]")
                     input("Press Enter to continue...")
             elif choice == 4:
-                # Load Idaho region defaults
+                # Load ID/UT region defaults
                 self.config.mesh_intelligence.regions = [
-                    RegionAnchor(name="North Idaho", lat=47.5, lon=-116.8),
-                    RegionAnchor(name="Southwestern Idaho", lat=43.6, lon=-116.2),
-                    RegionAnchor(name="South Central Idaho", lat=42.5, lon=-114.5),
-                    RegionAnchor(name="Eastern Idaho", lat=43.5, lon=-112.0),
+                    # Idaho
+                    RegionAnchor(name="Northern ID", lat=47.6777, lon=-116.7805),      # Coeur d'Alene
+                    RegionAnchor(name="Central ID", lat=45.1757, lon=-113.8958),       # Salmon
+                    RegionAnchor(name="South Western ID", lat=43.6150, lon=-116.2023), # Boise
+                    RegionAnchor(name="South Central ID", lat=42.5558, lon=-114.4701), # Twin Falls
+                    RegionAnchor(name="South Eastern ID", lat=43.4926, lon=-112.0341), # Idaho Falls
+                    # Utah
+                    RegionAnchor(name="Northern UT", lat=41.2230, lon=-111.9738),      # Ogden
+                    RegionAnchor(name="Central UT", lat=40.7608, lon=-111.8910),       # Salt Lake City
+                    RegionAnchor(name="Eastern UT", lat=40.4555, lon=-109.5287),       # Vernal
+                    RegionAnchor(name="Western UT", lat=40.5308, lon=-112.2983),       # Tooele
+                    RegionAnchor(name="Southern UT", lat=37.0965, lon=-113.5684),      # St. George
                 ]
                 self.modified = True
-                console.print("[green]Loaded 4 Idaho region defaults.[/green]")
+                console.print("[green]Loaded 10 ID/UT region defaults.[/green]")
                 input("Press Enter to continue...")
 
     def _setup_wizard(self) -> None:
