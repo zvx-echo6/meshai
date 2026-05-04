@@ -255,7 +255,7 @@ class MeshHealthEngine:
             if node_id in self.infra_overrides:
                 is_infra = False
 
-            # Get position
+            # Get position (handle different API formats)
             lat = node.get("latitude") or node.get("lat")
             lon = node.get("longitude") or node.get("lon")
             # Handle nested position object
@@ -263,9 +263,23 @@ class MeshHealthEngine:
                 pos = node["position"]
                 lat = pos.get("latitude") or pos.get("lat")
                 lon = pos.get("longitude") or pos.get("lon")
+            # Handle Meshview scaled integer format (last_lat/last_long)
+            if lat is None:
+                lat = node.get("last_lat")
+                lon = node.get("last_long")
+                # Meshview uses 1e7 scaling for GPS coordinates
+                if lat is not None and isinstance(lat, int) and abs(lat) > 1000:
+                    lat = lat / 1e7
+                if lon is not None and isinstance(lon, int) and abs(lon) > 1000:
+                    lon = lon / 1e7
 
-            # Get last seen
+            # Get last seen (handle different timestamp formats)
             last_seen = node.get("lastHeard") or node.get("last_heard") or node.get("lastSeen") or 0
+            # Handle Meshview microsecond timestamps
+            if not last_seen:
+                last_seen_us = node.get("last_seen_us")
+                if last_seen_us:
+                    last_seen = last_seen_us / 1e6  # Convert microseconds to seconds
             if isinstance(last_seen, str):
                 try:
                     from datetime import datetime
