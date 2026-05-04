@@ -369,7 +369,7 @@ class MeshHealthEngine:
                 center_lon=anchor.lon,
             )
 
-        # Assign nodes to nearest region
+        # Assign nodes to nearest region (first pass: GPS-based)
         unlocated = []
         for node in nodes.values():
             if node.latitude and node.longitude:
@@ -381,6 +381,70 @@ class MeshHealthEngine:
                     unlocated.append(node.node_id)
             else:
                 unlocated.append(node.node_id)
+
+        # Build neighbor map from edges
+        # First, create a mapping from numeric node_id to hex id
+        numeric_to_hex: dict[str, str] = {}
+        for node in all_nodes:
+            hex_id = node.get("id")
+            num_id = node.get("node_id")
+            if hex_id and num_id:
+                numeric_to_hex[str(num_id)] = str(hex_id)
+
+        all_edges = source_manager.get_all_edges()
+        neighbors: dict[str, set[str]] = {}
+        for edge in all_edges:
+            # Get edge endpoints (may be numeric)
+            from_raw = edge.get("from") or edge.get("from_node") or edge.get("source")
+            to_raw = edge.get("to") or edge.get("to_node") or edge.get("target")
+            if not from_raw or not to_raw:
+                continue
+
+            # Convert to hex ID format if numeric
+            from_id = numeric_to_hex.get(str(from_raw), str(from_raw))
+            to_id = numeric_to_hex.get(str(to_raw), str(to_raw))
+
+            if from_id not in neighbors:
+                neighbors[from_id] = set()
+            if to_id not in neighbors:
+                neighbors[to_id] = set()
+            neighbors[from_id].add(to_id)
+            neighbors[to_id].add(from_id)
+
+        # Second pass: Assign unlocated nodes based on neighbor regions
+        # Repeat until no more assignments
+        max_iterations = 10
+        for _ in range(max_iterations):
+            newly_assigned = []
+            for node_id in unlocated:
+                if node_id not in nodes:
+                    continue
+                node = nodes[node_id]
+                if node.region:
+                    continue  # Already assigned
+
+                # Count neighbor regions
+                neighbor_ids = neighbors.get(node_id, set())
+                region_counts: dict[str, int] = {}
+                for nid in neighbor_ids:
+                    if nid in nodes and nodes[nid].region:
+                        r = nodes[nid].region
+                        region_counts[r] = region_counts.get(r, 0) + 1
+
+                if region_counts:
+                    # Assign to most common neighbor region
+                    best_region = max(region_counts, key=region_counts.get)
+                    node.region = best_region
+                    region_map[best_region].node_ids.append(node_id)
+                    newly_assigned.append(node_id)
+
+            # Remove newly assigned from unlocated
+            for nid in newly_assigned:
+                if nid in unlocated:
+                    unlocated.remove(nid)
+
+            if not newly_assigned:
+                break  # No more progress
 
         regions = list(region_map.values())
 
