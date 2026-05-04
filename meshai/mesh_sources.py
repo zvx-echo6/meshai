@@ -1,4 +1,4 @@
-"""Mesh data source manager with deduplication."""
+"""Mesh data source manager with deduplication and normalization."""
 
 import logging
 import time
@@ -9,6 +9,138 @@ from .sources.meshview import MeshviewSource
 from .sources.meshmonitor_data import MeshMonitorDataSource
 
 logger = logging.getLogger(__name__)
+
+# Meshtastic role enum mapping (integer -> string)
+# From meshtastic.protobuf.config_pb2.Config.DeviceConfig.Role
+MESHTASTIC_ROLE_MAP = {
+    0: "CLIENT",
+    1: "CLIENT_MUTE",
+    2: "ROUTER",
+    3: "ROUTER_CLIENT",
+    4: "REPEATER",
+    5: "TRACKER",
+    6: "SENSOR",
+    7: "TAK",
+    8: "CLIENT_HIDDEN",
+    9: "LOST_AND_FOUND",
+    10: "TAK_TRACKER",
+    11: "ROUTER_LATE",
+    12: "CLIENT_BASE",
+}
+
+
+def _normalize_node(node: dict) -> dict:
+    """Normalize a node dict to consistent field names and formats.
+
+    Handles differences between Meshview and MeshMonitor APIs:
+    - Role: integer enums -> string names
+    - GPS: last_lat/last_long -> latitude/longitude
+    - Timestamps: various formats -> last_heard (epoch seconds)
+    - Hardware: hw_model/hwModel -> hw_model (string preferred)
+
+    Args:
+        node: Raw node dict from any source
+
+    Returns:
+        Copy of node with normalized fields added
+    """
+    result = dict(node)  # Keep all original fields
+
+    # === ROLE NORMALIZATION ===
+    role = node.get("role")
+    if role is None:
+        result["role"] = "UNKNOWN"
+    elif isinstance(role, int):
+        result["role"] = MESHTASTIC_ROLE_MAP.get(role, f"UNKNOWN_{role}")
+    elif isinstance(role, str):
+        result["role"] = role.upper()
+    else:
+        result["role"] = str(role).upper()
+
+    # === GPS NORMALIZATION ===
+    # Latitude
+    lat = None
+    if "latitude" in node and node["latitude"] is not None:
+        lat = node["latitude"]
+    elif "last_lat" in node and node["last_lat"] is not None:
+        lat = node["last_lat"]
+        # Meshview uses scaled integers (1e7)
+        if isinstance(lat, int) and abs(lat) > 1000:
+            lat = lat / 1e7
+    elif "lat" in node and node["lat"] is not None:
+        lat = node["lat"]
+
+    # Longitude
+    lon = None
+    if "longitude" in node and node["longitude"] is not None:
+        lon = node["longitude"]
+    elif "last_long" in node and node["last_long"] is not None:
+        lon = node["last_long"]
+        # Meshview uses scaled integers (1e7)
+        if isinstance(lon, int) and abs(lon) > 1000:
+            lon = lon / 1e7
+    elif "lon" in node and node["lon"] is not None:
+        lon = node["lon"]
+    elif "lng" in node and node["lng"] is not None:
+        lon = node["lng"]
+
+    # Filter out invalid GPS (0,0 or very close to 0)
+    if lat is not None and lon is not None:
+        if abs(lat) < 0.001 and abs(lon) < 0.001:
+            lat = None
+            lon = None
+
+    result["latitude"] = lat
+    result["longitude"] = lon
+
+    # === TIMESTAMP NORMALIZATION ===
+    # Normalize to "last_heard" as epoch seconds
+    ts = None
+
+    # Check last_seen_us first (Meshview microseconds)
+    if "last_seen_us" in node and node["last_seen_us"] is not None:
+        val = node["last_seen_us"]
+        if isinstance(val, (int, float)) and val > 0:
+            ts = val / 1_000_000  # Microseconds to seconds
+
+    # Check other timestamp fields
+    if ts is None:
+        for field in ("lastHeard", "last_heard", "last_seen", "lastSeen", "updated_at"):
+            if field in node and node[field] is not None:
+                val = node[field]
+                if isinstance(val, (int, float)) and val > 0:
+                    # Detect format by magnitude
+                    if val > 1e15:
+                        # Microseconds
+                        ts = val / 1_000_000
+                    elif val > 1e12:
+                        # Milliseconds
+                        ts = val / 1_000
+                    else:
+                        # Already epoch seconds
+                        ts = float(val)
+                    break
+
+    result["last_heard"] = ts
+
+    # === HARDWARE MODEL NORMALIZATION ===
+    hw = None
+    # Prefer string hw_model
+    if "hw_model" in node and isinstance(node["hw_model"], str):
+        hw = node["hw_model"]
+    elif "hwModel" in node and isinstance(node["hwModel"], str):
+        hw = node["hwModel"]
+    # Fall back to whatever is available
+    if hw is None:
+        if "hw_model" in node and node["hw_model"] is not None:
+            hw = node["hw_model"]
+        elif "hwModel" in node and node["hwModel"] is not None:
+            hw = node["hwModel"]
+
+    if hw is not None:
+        result["hw_model"] = hw
+
+    return result
 
 
 def _extract_node_num(node: dict) -> int | None:
@@ -182,8 +314,8 @@ class MeshSourceManager:
     def get_all_nodes(self) -> list[dict]:
         """Get deduplicated nodes from all sources.
 
-        Nodes are deduplicated by their numeric node ID. When a node appears
-        in multiple sources, data is merged with the following rules:
+        Nodes are normalized and deduplicated by their numeric node ID.
+        When a node appears in multiple sources, data is merged with:
         - Most fields: last source wins
         - _sources: accumulates all source names
 
@@ -194,14 +326,16 @@ class MeshSourceManager:
 
         for name, source in self._sources.items():
             for node in source.nodes:
-                node_num = _extract_node_num(node)
+                # Normalize the node data first
+                normalized = _normalize_node(node)
+
+                node_num = _extract_node_num(normalized)
                 if node_num is None:
                     # Can't deduplicate, include as-is with source tag
-                    tagged = dict(node)
-                    tagged["_sources"] = [name]
+                    normalized["_sources"] = [name]
                     # Use a negative counter as pseudo-key to avoid collisions
                     pseudo_key = -len(nodes_by_num) - 1
-                    nodes_by_num[pseudo_key] = tagged
+                    nodes_by_num[pseudo_key] = normalized
                     continue
 
                 if node_num in nodes_by_num:
@@ -211,14 +345,13 @@ class MeshSourceManager:
                     if name not in existing["_sources"]:
                         existing["_sources"].append(name)
                     # Update all fields except _sources
-                    for key, value in node.items():
+                    for key, value in normalized.items():
                         if key != "_sources" and value is not None:
                             existing[key] = value
                 else:
                     # New node
-                    tagged = dict(node)
-                    tagged["_sources"] = [name]
-                    nodes_by_num[node_num] = tagged
+                    normalized["_sources"] = [name]
+                    nodes_by_num[node_num] = normalized
 
         return list(nodes_by_num.values())
 
