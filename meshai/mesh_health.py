@@ -281,28 +281,27 @@ class MeshHealthEngine:
         # Aggregate all nodes from all sources
         all_nodes = source_manager.get_all_nodes()
         all_telemetry = source_manager.get_all_telemetry()
-        all_packets = []
 
-        # Get packets from MeshMonitor sources (if available)
-        for status in source_manager.get_status():
-            if status["type"] == "meshmonitor":
-                src = source_manager.get_source(status["name"])
-                if src and hasattr(src, "packets"):
-                    for pkt in src.packets:
-                        tagged = dict(pkt)
-                        tagged["_source"] = status["name"]
-                        all_packets.append(tagged)
+        # FIX: Use aggregator method for deduped packets
+        all_packets = source_manager.get_all_packets()
 
         # Track if we have packet data for utilization calculation
         has_packet_data = len(all_packets) > 0
 
         # Build node health records
+        # BUG 2 FIX: Use _node_num as the canonical key
         nodes: dict[str, NodeHealth] = {}
         for node in all_nodes:
-            node_id = node.get("id") or node.get("nodeId") or node.get("num")
-            if not node_id:
-                continue
-            node_id = str(node_id)
+            # Use _node_num set by source manager (canonical Meshtastic node number)
+            node_num = node.get("_node_num")
+            if node_num is not None:
+                node_id = str(node_num)
+            else:
+                # Fallback for nodes without _node_num
+                node_id = node.get("nodeNum") or node.get("id") or node.get("nodeId") or node.get("num")
+                if not node_id:
+                    continue
+                node_id = str(node_id)
 
             # Skip if we already have this node from another source
             if node_id in nodes:
@@ -363,28 +362,79 @@ class MeshHealthEngine:
             )
 
         # Add telemetry data
+        # BUG 4 & 5 FIX: Handle MeshMonitor telemetryType/value structure
         for telem in all_telemetry:
-            node_id = str(telem.get("nodeId") or telem.get("node_id") or "")
+            # Get node number - try decimal first, then hex
+            node_num = telem.get("nodeNum")
+            if node_num is not None:
+                node_id = str(int(node_num))
+            else:
+                node_hex = telem.get("nodeId") or telem.get("node_id") or ""
+                if isinstance(node_hex, str) and node_hex:
+                    stripped = node_hex.lstrip("!")
+                    try:
+                        node_id = str(int(stripped, 16))
+                    except ValueError:
+                        continue
+                else:
+                    continue
+
             if node_id not in nodes:
                 continue
 
             node = nodes[node_id]
-            battery = telem.get("batteryLevel") or telem.get("battery_level")
-            voltage = telem.get("voltage")
 
-            if battery is not None:
-                node.battery_percent = float(battery)
-            if voltage is not None:
-                node.voltage = float(voltage)
+            # Handle MeshMonitor telemetryType/value structure
+            telem_type = (telem.get("telemetryType") or "").lower()
+            value = telem.get("value")
 
-            # Extract channel utilization and air_util_tx from device metrics
-            ch_util = telem.get("channelUtilization") or telem.get("channel_utilization")
-            if ch_util is not None:
-                node.channel_utilization = float(ch_util)
+            if telem_type and value is not None:
+                try:
+                    value = float(value)
+                except (ValueError, TypeError):
+                    value = None
 
-            air_tx = telem.get("airUtilTx") or telem.get("air_util_tx")
-            if air_tx is not None:
-                node.air_util_tx = float(air_tx)
+                if value is not None:
+                    if telem_type in ("batterylevel", "battery_level", "battery"):
+                        node.battery_percent = value
+                    elif telem_type == "voltage":
+                        node.voltage = value
+                    elif telem_type in ("channelutilization", "channel_utilization"):
+                        node.channel_utilization = value
+                    elif telem_type in ("airutiltx", "air_util_tx"):
+                        node.air_util_tx = value
+                    elif telem_type in ("uplinkenabled", "uplink_enabled"):
+                        node.uplink_enabled = bool(value)
+
+            # Also try direct field access as fallback (for flat telemetry objects)
+            if node.battery_percent is None:
+                bat = telem.get("batteryLevel") or telem.get("battery_level")
+                if bat is not None:
+                    try:
+                        node.battery_percent = float(bat)
+                    except (ValueError, TypeError):
+                        pass
+            if node.voltage is None:
+                vol = telem.get("voltage")
+                if vol is not None:
+                    try:
+                        node.voltage = float(vol)
+                    except (ValueError, TypeError):
+                        pass
+            if node.channel_utilization is None:
+                ch_util = telem.get("channelUtilization") or telem.get("channel_utilization")
+                if ch_util is not None:
+                    try:
+                        node.channel_utilization = float(ch_util)
+                    except (ValueError, TypeError):
+                        pass
+            if node.air_util_tx is None:
+                air_tx = telem.get("airUtilTx") or telem.get("air_util_tx")
+                if air_tx is not None:
+                    try:
+                        node.air_util_tx = float(air_tx)
+                    except (ValueError, TypeError):
+                        pass
 
             # Check for uplink (MQTT) enabled
             uplink = telem.get("uplinkEnabled") or telem.get("uplink_enabled")
@@ -392,20 +442,41 @@ class MeshHealthEngine:
                 node.uplink_enabled = True
 
         # Count packets per node (last 24h) with portnum breakdown
+        # BUG 3 FIX: Use correct MeshMonitor packet field names
         twenty_four_hours_ago = now - 86400
         for pkt in all_packets:
             pkt_time = pkt.get("timestamp") or pkt.get("rxTime") or 0
             if pkt_time < twenty_four_hours_ago:
                 continue
 
-            from_id = str(pkt.get("from") or pkt.get("fromId") or "")
+            # Extract from_node using multiple possible field names
+            from_raw = pkt.get("from_node") or pkt.get("from") or pkt.get("fromId") or pkt.get("from_node_id")
+            if from_raw is None:
+                continue
+
+            # Normalize to canonical node number string
+            if isinstance(from_raw, int):
+                from_id = str(from_raw)
+            elif isinstance(from_raw, str):
+                # Could be hex like "!a1b2c3d4" or decimal string
+                stripped = from_raw.lstrip("!")
+                try:
+                    from_id = str(int(stripped, 16))
+                except ValueError:
+                    if stripped.isdigit():
+                        from_id = stripped
+                    else:
+                        continue
+            else:
+                continue
+
             if from_id not in nodes:
                 continue
 
             nodes[from_id].packet_count_24h += 1
 
             # Get portnum for breakdown
-            port_num = pkt.get("portnum") or pkt.get("port_num") or pkt.get("portnum_name") or ""
+            port_num = pkt.get("portnum_name") or pkt.get("portnum") or pkt.get("port_num") or ""
             port_name = str(port_num).upper()
 
             # Track by portnum
@@ -671,24 +742,27 @@ class MeshHealthEngine:
             infra_score = 100.0  # No infrastructure = not penalized
 
         # Channel utilization (based on packet counts if available)
+        # BUG 7 FIX: Use actual Meshtastic airtime calculation
         if has_packet_data:
-            total_packets = sum(n.packet_count_24h for n in node_list)
-            baseline = len(node_list) * 500
-            if baseline > 0:
-                util_percent = (total_packets / baseline) * 15
-            else:
-                util_percent = 0
+            total_non_text_packets = sum(n.non_text_packets for n in node_list)
+            # Average airtime per packet on MediumFast: ~200ms
+            # Total available airtime per hour: 3,600,000ms
+            # Utilization = (packets_per_hour * airtime_ms) / total_airtime_ms * 100
+            packets_per_hour = total_non_text_packets / 24.0  # 24h window
+            airtime_per_packet_ms = 200  # ~200ms on MediumFast preset
+            util_percent = (packets_per_hour * airtime_per_packet_ms) / 3_600_000 * 100
 
-            if util_percent < UTIL_HEALTHY:
+            # Apply scoring thresholds with interpolation
+            if util_percent < UTIL_HEALTHY:  # <15%
                 util_score = 100.0
-            elif util_percent < UTIL_CAUTION:
-                util_score = 75.0
-            elif util_percent < UTIL_WARNING:
-                util_score = 50.0
-            elif util_percent < UTIL_UNHEALTHY:
-                util_score = 25.0
-            else:
-                util_score = 0.0
+            elif util_percent < UTIL_CAUTION:  # 15-20%
+                util_score = 100.0 - ((util_percent - UTIL_HEALTHY) / (UTIL_CAUTION - UTIL_HEALTHY)) * 25
+            elif util_percent < UTIL_WARNING:  # 20-25%
+                util_score = 75.0 - ((util_percent - UTIL_CAUTION) / (UTIL_WARNING - UTIL_CAUTION)) * 25
+            elif util_percent < UTIL_UNHEALTHY:  # 25-35%
+                util_score = 50.0 - ((util_percent - UTIL_WARNING) / (UTIL_UNHEALTHY - UTIL_WARNING)) * 25
+            else:  # 35%+
+                util_score = max(0.0, 25.0 - ((util_percent - UTIL_UNHEALTHY) / 10) * 25)
         else:
             # No packet data available - assume healthy utilization
             # This prevents penalizing the score when we simply don't have data

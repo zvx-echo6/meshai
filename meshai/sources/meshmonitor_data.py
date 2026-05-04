@@ -181,8 +181,11 @@ class MeshMonitorDataSource:
         else:
             errors.append("channels")
 
-        # Fetch telemetry
-        data = self._fetch_json("/api/v1/telemetry")
+        # Fetch telemetry - BUG 6 FIX: Request more records for 24h coverage
+        data = self._fetch_json("/api/v1/telemetry?limit=5000")
+        if data is None:
+            # Fallback without limit param
+            data = self._fetch_json("/api/v1/telemetry")
         if data is not None:
             self._telemetry = data if isinstance(data, list) else []
             success_count += 1
@@ -190,8 +193,10 @@ class MeshMonitorDataSource:
         else:
             errors.append("telemetry")
 
-        # Fetch traceroutes
-        data = self._fetch_json("/api/v1/traceroutes")
+        # Fetch traceroutes - BUG 6 FIX: Request more records
+        data = self._fetch_json("/api/v1/traceroutes?limit=1000")
+        if data is None:
+            data = self._fetch_json("/api/v1/traceroutes")
         if data is not None:
             self._traceroutes = data if isinstance(data, list) else []
             success_count += 1
@@ -217,8 +222,11 @@ class MeshMonitorDataSource:
         else:
             errors.append("topology")
 
-        # Fetch packets
-        data = self._fetch_json("/api/v1/packets")
+        # Fetch packets - BUG 6 FIX: Request more packets for 24h coverage
+        data = self._fetch_json("/api/v1/packets?limit=5000")
+        if data is None:
+            # Fallback without limit param
+            data = self._fetch_json("/api/v1/packets")
         if data is not None:
             self._packets = data if isinstance(data, list) else []
             success_count += 1
