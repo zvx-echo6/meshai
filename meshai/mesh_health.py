@@ -279,7 +279,7 @@ class MeshHealthEngine:
             role = node.get("role") or node.get("hwModel") or ""
 
             # Determine if infrastructure
-            is_infra = role.upper() in INFRASTRUCTURE_ROLES
+            is_infra = str(role).upper() in INFRASTRUCTURE_ROLES
 
             # Get position (handle different API formats)
             lat = node.get("latitude") or node.get("lat")

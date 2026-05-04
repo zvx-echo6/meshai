@@ -157,6 +157,7 @@ def create_dispatcher(
     prefix: str = "!",
     disabled_commands: Optional[list[str]] = None,
     custom_commands: Optional[dict] = None,
+    mesh_reporter=None,
 ) -> CommandDispatcher:
     """Create and populate command dispatcher with default commands.
 
@@ -164,6 +165,7 @@ def create_dispatcher(
         prefix: Command prefix (default: "!")
         disabled_commands: List of command names to disable
         custom_commands: Dict of name -> response for custom commands
+        mesh_reporter: MeshReporter instance for health commands
 
     Returns:
         Configured CommandDispatcher
@@ -174,6 +176,7 @@ def create_dispatcher(
     from .reset import ResetCommand
     from .status import StatusCommand
     from .weather import WeatherCommand
+    from .health import HealthCommand, RegionCommand
 
     dispatcher = CommandDispatcher(prefix=prefix, disabled_commands=disabled_commands)
 
@@ -184,6 +187,23 @@ def create_dispatcher(
     dispatcher.register(ResetCommand())
     dispatcher.register(StatusCommand())
     dispatcher.register(WeatherCommand())
+
+    # Register mesh health commands
+    health_cmd = HealthCommand(mesh_reporter)
+    dispatcher.register(health_cmd)
+    # Register aliases for health command
+    for alias in getattr(health_cmd, 'aliases', []):
+        alias_handler = HealthCommand(mesh_reporter)
+        alias_handler.name = alias
+        dispatcher.register(alias_handler)
+
+    region_cmd = RegionCommand(mesh_reporter)
+    dispatcher.register(region_cmd)
+    # Register aliases for region command
+    for alias in getattr(region_cmd, 'aliases', []):
+        alias_handler = RegionCommand(mesh_reporter)
+        alias_handler.name = alias
+        dispatcher.register(alias_handler)
 
     # Register custom commands
     if custom_commands:

@@ -41,6 +41,7 @@ class MeshAI:
         self.knowledge = None
         self.source_manager = None
         self.health_engine = None
+        self.mesh_reporter = None
         self.router: Optional[MessageRouter] = None
         self.responder: Optional[Responder] = None
         self._running = False
@@ -121,13 +122,6 @@ class MeshAI:
         # Conversation history
         self.history = ConversationHistory(self.config.history)
         await self.history.initialize()
-
-        # Command dispatcher
-        self.dispatcher = create_dispatcher(
-            prefix=self.config.commands.prefix,
-            disabled_commands=self.config.commands.disabled_commands,
-            custom_commands=self.config.commands.custom_commands,
-        )
 
         # LLM backend
         api_key = self.config.resolve_api_key()
@@ -234,6 +228,14 @@ class MeshAI:
         else:
             self.health_engine = None
 
+        # Mesh reporter (for LLM prompt injection and commands)
+        if self.health_engine and self.source_manager:
+            from .mesh_reporter import MeshReporter
+            self.mesh_reporter = MeshReporter(self.health_engine, self.source_manager)
+            logger.info("Mesh reporter enabled")
+        else:
+            self.mesh_reporter = None
+
         # Knowledge base
         kb_cfg = self.config.knowledge
         if kb_cfg.enabled and kb_cfg.db_path:
@@ -245,6 +247,14 @@ class MeshAI:
         else:
             self.knowledge = None
 
+        # Command dispatcher (needs mesh_reporter for health commands)
+        self.dispatcher = create_dispatcher(
+            prefix=self.config.commands.prefix,
+            disabled_commands=self.config.commands.disabled_commands,
+            custom_commands=self.config.commands.custom_commands,
+            mesh_reporter=self.mesh_reporter,
+        )
+
         # Message router
         self.router = MessageRouter(
             self.config, self.connector, self.history, self.dispatcher, self.llm,
@@ -253,6 +263,7 @@ class MeshAI:
             knowledge=self.knowledge,
             source_manager=self.source_manager,
             health_engine=self.health_engine,
+            mesh_reporter=self.mesh_reporter,
         )
 
         # Responder

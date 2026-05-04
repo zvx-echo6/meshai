@@ -53,6 +53,40 @@ _INJECTION_PATTERNS = [
     re.compile(r"system\s*prompt\s*:", re.IGNORECASE),
 ]
 
+# Keywords that indicate mesh-related questions
+_MESH_KEYWORDS = {
+    "mesh", "network", "health", "nodes", "node", "utilization", "signal",
+    "coverage", "battery", "solar", "offline", "router", "channel", "packet",
+    "hop", "optimize", "optimization", "infrastructure", "infra", "relay",
+    "repeater", "region", "locality", "congestion", "collision", "airtime",
+    "telemetry", "firmware", "subscribe", "alert", "snr", "rssi",
+}
+
+# Phrases that indicate mesh questions
+_MESH_PHRASES = [
+    "how's the mesh",
+    "hows the mesh",
+    "mesh status",
+    "what's wrong",
+    "whats wrong",
+    "check node",
+    "node status",
+    "network health",
+    "mesh health",
+]
+
+# Mesh awareness instruction for LLM
+_MESH_AWARENESS_PROMPT = """
+When the user asks about mesh health, network status, or optimization:
+- Use the LIVE MESH HEALTH DATA injected above to answer with real numbers
+- Be specific: name nodes, cite utilization percentages, reference actual scores
+- Give actionable recommendations based on the data
+- If asked about a region or node you have detail for, use that detail
+- If asked about something the data doesn't cover, say so - don't fabricate
+- Keep responses concise - these go over LoRa with limited message size
+- Users can run !health for a quick mesh summary or !region [name] for regional info
+"""
+
 
 class MessageRouter:
     """Routes incoming messages to appropriate handlers."""
@@ -69,6 +103,7 @@ class MessageRouter:
         knowledge=None,
         source_manager=None,
         health_engine=None,
+        mesh_reporter=None,
     ):
         self.config = config
         self.connector = connector
@@ -80,8 +115,8 @@ class MessageRouter:
         self.knowledge = knowledge
         self.source_manager = source_manager
         self.health_engine = health_engine
+        self.mesh_reporter = mesh_reporter
         self.continuations = ContinuationState(max_continuations=3)
-
 
     def should_respond(self, message: MeshMessage) -> bool:
         """Determine if we should respond to this message.
@@ -128,7 +163,7 @@ class MessageRouter:
         user_id = message.sender_id
         text = message.text.strip()
 
-        logger.info(f"check_continuation: user={user_id}, text='{text[:30]}', has_pending={self.continuations.has_pending(user_id)}")
+        logger.debug(f"check_continuation: user={user_id}, text='{text[:30]}', has_pending={self.continuations.has_pending(user_id)}")
 
         if self.continuations.has_pending(user_id):
             if self.continuations.is_continuation_request(text):
@@ -169,6 +204,75 @@ class MessageRouter:
         # Route to LLM
         return RouteResult(RouteType.LLM, query=query)
 
+    def _is_mesh_question(self, message: str) -> bool:
+        """Check if message is asking about mesh health/status.
+
+        Args:
+            message: User message text
+
+        Returns:
+            True if this is a mesh-related question
+        """
+        msg_lower = message.lower()
+
+        # Check for mesh phrases
+        for phrase in _MESH_PHRASES:
+            if phrase in msg_lower:
+                return True
+
+        # Check for mesh keywords
+        words = set(re.findall(r'\b\w+\b', msg_lower))
+        if words & _MESH_KEYWORDS:
+            return True
+
+        return False
+
+    def _detect_mesh_scope(self, message: str) -> tuple[str, Optional[str]]:
+        """Detect the scope of a mesh question.
+
+        Args:
+            message: User message text
+
+        Returns:
+            Tuple of (scope_type, scope_value):
+            - ("node", "{identifier}") if asking about specific node
+            - ("region", "{region_name}") if asking about specific region
+            - ("mesh", None) for general mesh questions
+        """
+        msg_lower = message.lower()
+
+        # Check for node references
+        if self.health_engine and self.health_engine.mesh_health:
+            health = self.health_engine.mesh_health
+
+            # Look for node shortnames (4 chars, case-insensitive)
+            for node in health.nodes.values():
+                if node.short_name:
+                    # Check if shortname appears as a word in message
+                    pattern = r'\b' + re.escape(node.short_name.lower()) + r'\b'
+                    if re.search(pattern, msg_lower):
+                        return ("node", node.short_name)
+
+                # Check longname substring
+                if node.long_name and node.long_name.lower() in msg_lower:
+                    return ("node", node.short_name or node.node_id)
+
+        # Check for region references
+        if self.health_engine:
+            for anchor in self.health_engine.regions:
+                anchor_lower = anchor.name.lower()
+                # Check region name
+                if anchor_lower in msg_lower:
+                    return ("region", anchor.name)
+
+                # Check parts of region name (e.g., "wood river" matches "Wood River - ID")
+                parts = anchor_lower.replace("-", " ").replace("–", " ").split()
+                for part in parts:
+                    if len(part) > 3 and part in msg_lower:
+                        return ("region", anchor.name)
+
+        return ("mesh", None)
+
     async def generate_llm_response(self, message: MeshMessage, query: str) -> str:
         """Generate LLM response for a message.
 
@@ -185,7 +289,7 @@ class MessageRouter:
         # Get conversation history
         history = await self.history.get_history_for_llm(message.sender_id)
 
-        # Build system prompt in order: identity -> static -> meshmonitor -> context
+        # Build system prompt in order: identity -> static -> meshmonitor -> context -> knowledge -> mesh
 
         # 1. Dynamic identity from bot config
         bot_name = self.config.bot.name or "MeshAI"
@@ -240,8 +344,6 @@ class MessageRouter:
                     "\n\n[No recent mesh traffic observed yet.]"
                 )
 
-
-
         # 5. Knowledge base retrieval
         if self.knowledge and query:
             results = self.knowledge.search(query)
@@ -254,9 +356,37 @@ class MessageRouter:
                     + chunks
                 )
 
+        # 6. Mesh Intelligence (inject health data for mesh questions)
+        if (
+            self.source_manager
+            and self.mesh_reporter
+            and self._is_mesh_question(query)
+        ):
+            scope_type, scope_value = self._detect_mesh_scope(query)
+
+            # Always include Tier 1 summary for mesh questions
+            tier1 = self.mesh_reporter.build_tier1_summary()
+            system_prompt += "\n\n" + tier1
+
+            # Add Tier 2 detail if scoped
+            if scope_type == "region" and scope_value:
+                region_detail = self.mesh_reporter.build_region_detail(scope_value)
+                system_prompt += "\n\n" + region_detail
+            elif scope_type == "node" and scope_value:
+                node_detail = self.mesh_reporter.build_node_detail(scope_value)
+                system_prompt += "\n\n" + node_detail
+
+            # Always include relevant recommendations
+            recommendations = self.mesh_reporter.build_recommendations(scope_type, scope_value)
+            if recommendations:
+                system_prompt += "\n\n" + recommendations
+
+            # Add mesh awareness instructions
+            system_prompt += _MESH_AWARENESS_PROMPT
+
         # DEBUG: Log system prompt status
-        logger.warning(f"SYSTEM PROMPT LENGTH: {len(system_prompt)} chars")
-        logger.warning(f"HAS REFERENCE KNOWLEDGE: {'REFERENCE KNOWLEDGE' in system_prompt}")
+        logger.debug(f"System prompt length: {len(system_prompt)} chars")
+
         try:
             response = await self.llm.generate(
                 messages=history,
@@ -285,10 +415,8 @@ class MessageRouter:
 
         # Store remaining content for continuation
         if remaining:
-            logger.info(f"Storing continuation for {message.sender_id}: {len(remaining)} chars remaining")
+            logger.debug(f"Storing continuation for {message.sender_id}: {len(remaining)} chars remaining")
             self.continuations.store(message.sender_id, remaining)
-        else:
-            logger.info(f"No remaining content for {message.sender_id}")
 
         return messages
 
