@@ -100,6 +100,25 @@ class MeshviewSource:
             logger.warning(f"Meshview {endpoint}: {e}")
             return None
 
+    def _extract_list(self, data: dict | list | None, key: str) -> list[dict]:
+        """Extract a list from API response, handling wrapper dicts.
+
+        Args:
+            data: Raw API response (may be list or {"key": [...]})
+            key: Expected key if response is wrapped
+
+        Returns:
+            Extracted list or empty list
+        """
+        if data is None:
+            return []
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and key in data:
+            inner = data[key]
+            return inner if isinstance(inner, list) else []
+        return []
+
     def fetch_all(self) -> bool:
         """Fetch all data from Meshview API.
 
@@ -112,19 +131,19 @@ class MeshviewSource:
         success_count = 0
         errors = []
 
-        # Fetch nodes
+        # Fetch nodes - response is {"nodes": [...]}
         data = self._fetch_json("/api/nodes")
         if data is not None:
-            self._nodes = data if isinstance(data, list) else []
+            self._nodes = self._extract_list(data, "nodes")
             success_count += 1
             logger.debug(f"Meshview: fetched {len(self._nodes)} nodes")
         else:
             errors.append("nodes")
 
-        # Fetch edges
+        # Fetch edges - response is {"edges": [...]}
         data = self._fetch_json("/api/edges")
         if data is not None:
-            self._edges = data if isinstance(data, list) else []
+            self._edges = self._extract_list(data, "edges")
             success_count += 1
             logger.debug(f"Meshview: fetched {len(self._edges)} edges")
         else:
