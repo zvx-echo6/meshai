@@ -100,3 +100,26 @@ knowledge:
 #     refresh_interval: 300
 #     enabled: true
 mesh_sources: []
+
+# === MESH INTELLIGENCE ===
+# Geographic clustering and health scoring for mesh analysis.
+# Requires mesh_sources to be configured with at least one data source.
+#
+# mesh_intelligence:
+#   enabled: true
+#   region_radius_miles: 40.0      # Radius for region clustering
+#   locality_radius_miles: 8.0     # Radius for locality clustering
+#   offline_threshold_hours: 24    # Hours before node considered offline
+#   packet_threshold: 500          # Non-text packets per 24h to flag
+#   battery_warning_percent: 20    # Battery level for warnings
+#   infra_overrides: []            # Node IDs to exclude from infrastructure
+#   region_labels: {}              # Override auto-names: {"Twin Falls": "Magic Valley"}
+mesh_intelligence:
+  enabled: false
+  region_radius_miles: 40.0
+  locality_radius_miles: 8.0
+  offline_threshold_hours: 24
+  packet_threshold: 500
+  battery_warning_percent: 20
+  infra_overrides: []
+  region_labels: {}

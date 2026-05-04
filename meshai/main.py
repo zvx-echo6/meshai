@@ -40,11 +40,13 @@ class MeshAI:
         self.meshmonitor_sync = None
         self.knowledge = None
         self.source_manager = None
+        self.health_engine = None
         self.router: Optional[MessageRouter] = None
         self.responder: Optional[Responder] = None
         self._running = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._last_cleanup: float = 0.0
+        self._last_health_compute: float = 0.0
 
     async def start(self) -> None:
         """Start the bot."""
@@ -65,6 +67,7 @@ class MeshAI:
         self._running = True
         self._loop = asyncio.get_event_loop()
         self._last_cleanup = time.time()
+        self._last_health_compute = 0.0
 
         # Write PID file
         self._write_pid()
@@ -79,9 +82,13 @@ class MeshAI:
             if self.meshmonitor_sync:
                 self.meshmonitor_sync.maybe_refresh()
 
-            # Periodic mesh source refresh
+            # Periodic mesh source refresh and health computation
             if self.source_manager:
-                self.source_manager.refresh_all()
+                refreshed = self.source_manager.refresh_all()
+                # Recompute health after source refresh
+                if refreshed > 0 and self.health_engine:
+                    self.health_engine.compute(self.source_manager)
+                    self._last_health_compute = time.time()
 
             # Periodic cleanup
             if time.time() - self._last_cleanup >= 3600:
@@ -205,6 +212,30 @@ class MeshAI:
         else:
             self.source_manager = None
 
+        # Mesh health engine
+        mi_cfg = self.config.mesh_intelligence
+        if mi_cfg.enabled and self.source_manager:
+            from .mesh_health import MeshHealthEngine
+            self.health_engine = MeshHealthEngine(
+                region_radius=mi_cfg.region_radius_miles,
+                locality_radius=mi_cfg.locality_radius_miles,
+                offline_threshold_hours=mi_cfg.offline_threshold_hours,
+                packet_threshold=mi_cfg.packet_threshold,
+                battery_warning_percent=mi_cfg.battery_warning_percent,
+                infra_overrides=mi_cfg.infra_overrides,
+                region_labels=mi_cfg.region_labels,
+            )
+            # Initial health computation
+            mesh_health = self.health_engine.compute(self.source_manager)
+            self._last_health_compute = time.time()
+            logger.info(
+                f"Mesh intelligence enabled: {mesh_health.total_nodes} nodes, "
+                f"{mesh_health.total_regions} regions, "
+                f"score {mesh_health.score.composite:.0f}/100 ({mesh_health.score.tier})"
+            )
+        else:
+            self.health_engine = None
+
         # Knowledge base
         kb_cfg = self.config.knowledge
         if kb_cfg.enabled and kb_cfg.db_path:
@@ -223,6 +254,7 @@ class MeshAI:
             meshmonitor_sync=self.meshmonitor_sync,
             knowledge=self.knowledge,
             source_manager=self.source_manager,
+            health_engine=self.health_engine,
         )
 
         # Responder

@@ -177,6 +177,20 @@ class MeshSourceConfig:
 
 
 @dataclass
+class MeshIntelligenceConfig:
+    """Mesh intelligence and health scoring settings."""
+
+    enabled: bool = False
+    region_radius_miles: float = 40.0  # Radius for region clustering
+    locality_radius_miles: float = 8.0  # Radius for locality clustering
+    offline_threshold_hours: int = 24  # Hours before node considered offline
+    packet_threshold: int = 500  # Non-text packets per 24h to flag
+    battery_warning_percent: int = 20  # Battery level for warnings
+    infra_overrides: list[str] = field(default_factory=list)  # Node IDs to exclude from infra
+    region_labels: dict[str, str] = field(default_factory=dict)  # {suggested: custom}
+
+
+@dataclass
 class Config:
     """Main configuration container."""
 
@@ -192,6 +206,7 @@ class Config:
     meshmonitor: MeshMonitorConfig = field(default_factory=MeshMonitorConfig)
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
     mesh_sources: list[MeshSourceConfig] = field(default_factory=list)
+    mesh_intelligence: MeshIntelligenceConfig = field(default_factory=MeshIntelligenceConfig)
 
     _config_path: Optional[Path] = field(default=None, repr=False)
 

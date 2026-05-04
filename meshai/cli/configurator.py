@@ -92,7 +92,13 @@ class Configurator:
             src_status = f"{enabled_sources}/{total_sources} enabled" if total_sources else "[dim]none[/dim]"
             table.add_row("11", "Mesh Sources", src_status)
 
-            table.add_row("12", "Setup Wizard", "[dim]First-time setup[/dim]")
+            # Mesh Intelligence
+            mi_status = self._status_icon(self.config.mesh_intelligence.enabled)
+            mi_regions = len(self.config.mesh_intelligence.region_labels)
+            mi_info = f"{mi_regions} labels" if mi_regions else "[dim]auto[/dim]"
+            table.add_row("12", "Mesh Intelligence", f"{mi_status} {mi_info}")
+
+            table.add_row("13", "Setup Wizard", "[dim]First-time setup[/dim]")
 
             console.print(table)
             console.print()
@@ -101,13 +107,13 @@ class Configurator:
             if self.modified:
                 console.print("[yellow]* Unsaved changes[/yellow]")
                 console.print()
-            console.print("[white]13. Save[/white]                  [dim]Save config, stay in menu[/dim]")
-            console.print("[green]14. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
-            console.print("[white]15. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
-            console.print("[white]16. Exit without Saving[/white]")
+            console.print("[white]14. Save[/white]                  [dim]Save config, stay in menu[/dim]")
+            console.print("[green]15. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
+            console.print("[white]16. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
+            console.print("[white]17. Exit without Saving[/white]")
             console.print()
 
-            choice = IntPrompt.ask("Select option", default=14)
+            choice = IntPrompt.ask("Select option", default=15)
 
             if choice == 1:
                 self._bot_settings()
@@ -132,15 +138,17 @@ class Configurator:
             elif choice == 11:
                 self._mesh_sources_settings()
             elif choice == 12:
-                self._setup_wizard()
+                self._mesh_intelligence_settings()
             elif choice == 13:
-                self._save_only()
+                self._setup_wizard()
             elif choice == 14:
-                self._save_and_restart()
+                self._save_only()
             elif choice == 15:
+                self._save_and_restart()
+            elif choice == 16:
                 self._save_restart_exit()
                 break
-            elif choice == 16:
+            elif choice == 17:
                 break
 
     def _show_header(self) -> None:
@@ -1007,6 +1015,181 @@ class Configurator:
             console.print(f"[red]Error: {e}[/red]")
 
         input("\nPress Enter to continue...")
+
+    def _mesh_intelligence_settings(self) -> None:
+        """Mesh intelligence settings submenu."""
+        while True:
+            self._clear()
+            console.print("[bold]Mesh Intelligence Settings[/bold]\n")
+            console.print("[dim]Geographic clustering and health scoring for mesh analysis.[/dim]\n")
+
+            mi = self.config.mesh_intelligence
+
+            table = Table(box=box.ROUNDED)
+            table.add_column("Option", style="cyan", width=4)
+            table.add_column("Setting", style="white")
+            table.add_column("Value", style="green")
+
+            table.add_row("1", "Enabled", self._status_icon(mi.enabled))
+            table.add_row("2", "Region Radius (miles)", str(mi.region_radius_miles))
+            table.add_row("3", "Locality Radius (miles)", str(mi.locality_radius_miles))
+            table.add_row("4", "Offline Threshold (hours)", str(mi.offline_threshold_hours))
+            table.add_row("5", "Packet Threshold (24h)", str(mi.packet_threshold))
+            table.add_row("6", "Battery Warning (%)", str(mi.battery_warning_percent))
+            table.add_row("7", "Region Labels", f"{len(mi.region_labels)} custom" if mi.region_labels else "[dim]auto[/dim]")
+            table.add_row("8", "Infra Overrides", f"{len(mi.infra_overrides)} nodes" if mi.infra_overrides else "[dim]none[/dim]")
+            table.add_row("0", "Back", "")
+
+            console.print(table)
+            console.print()
+
+            choice = IntPrompt.ask("Select option", default=0)
+
+            if choice == 0:
+                return
+            elif choice == 1:
+                mi.enabled = not mi.enabled
+                self.modified = True
+            elif choice == 2:
+                value = float(Prompt.ask("Region radius (miles)", default=str(mi.region_radius_miles)))
+                if value != mi.region_radius_miles:
+                    mi.region_radius_miles = value
+                    self.modified = True
+            elif choice == 3:
+                value = float(Prompt.ask("Locality radius (miles)", default=str(mi.locality_radius_miles)))
+                if value != mi.locality_radius_miles:
+                    mi.locality_radius_miles = value
+                    self.modified = True
+            elif choice == 4:
+                value = IntPrompt.ask("Offline threshold (hours)", default=mi.offline_threshold_hours)
+                if value != mi.offline_threshold_hours:
+                    mi.offline_threshold_hours = value
+                    self.modified = True
+            elif choice == 5:
+                value = IntPrompt.ask("Packet threshold (24h)", default=mi.packet_threshold)
+                if value != mi.packet_threshold:
+                    mi.packet_threshold = value
+                    self.modified = True
+            elif choice == 6:
+                value = IntPrompt.ask("Battery warning (%)", default=mi.battery_warning_percent)
+                if value != mi.battery_warning_percent:
+                    mi.battery_warning_percent = value
+                    self.modified = True
+            elif choice == 7:
+                self._edit_region_labels()
+            elif choice == 8:
+                self._edit_infra_overrides()
+
+    def _edit_region_labels(self) -> None:
+        """Edit region label overrides."""
+        while True:
+            self._clear()
+            console.print("[bold]Region Labels[/bold]\n")
+            console.print("[dim]Override auto-generated region names with custom labels.[/dim]\n")
+
+            labels = self.config.mesh_intelligence.region_labels
+
+            if labels:
+                table = Table(box=box.ROUNDED)
+                table.add_column("#", style="cyan", width=3)
+                table.add_column("Auto Name", style="white")
+                table.add_column("Custom Label", style="green")
+
+                for i, (auto, custom) in enumerate(labels.items(), 1):
+                    table.add_row(str(i), auto, custom)
+                console.print(table)
+            else:
+                console.print("[dim]No custom labels configured.[/dim]")
+
+            console.print()
+            console.print("[cyan]1.[/cyan] Add label")
+            console.print("[cyan]2.[/cyan] Remove label")
+            console.print("[cyan]0.[/cyan] Back")
+            console.print()
+
+            choice = IntPrompt.ask("Select option", default=0)
+
+            if choice == 0:
+                return
+            elif choice == 1:
+                auto_name = Prompt.ask("Auto-generated name to override (e.g., 'Twin Falls')")
+                if auto_name:
+                    custom_label = Prompt.ask("Custom label")
+                    if custom_label:
+                        self.config.mesh_intelligence.region_labels[auto_name] = custom_label
+                        self.modified = True
+                        console.print(f"[green]Added: '{auto_name}' -> '{custom_label}'[/green]")
+                        input("Press Enter to continue...")
+            elif choice == 2:
+                if not labels:
+                    console.print("[yellow]No labels to remove.[/yellow]")
+                    input("\nPress Enter to continue...")
+                    continue
+                keys = list(labels.keys())
+                console.print()
+                for i, k in enumerate(keys, 1):
+                    console.print(f"[cyan]{i}.[/cyan] {k} -> {labels[k]}")
+                console.print("[cyan]0.[/cyan] Cancel")
+                console.print()
+                idx = IntPrompt.ask("Select label to remove", default=0)
+                if 1 <= idx <= len(keys):
+                    key = keys[idx - 1]
+                    del self.config.mesh_intelligence.region_labels[key]
+                    self.modified = True
+                    console.print(f"[green]Removed '{key}'[/green]")
+                    input("Press Enter to continue...")
+
+    def _edit_infra_overrides(self) -> None:
+        """Edit infrastructure override node IDs."""
+        while True:
+            self._clear()
+            console.print("[bold]Infrastructure Overrides[/bold]\n")
+            console.print("[dim]Node IDs to exclude from infrastructure classification.[/dim]\n")
+
+            overrides = self.config.mesh_intelligence.infra_overrides
+
+            if overrides:
+                for i, node_id in enumerate(overrides, 1):
+                    console.print(f"[cyan]{i}.[/cyan] {node_id}")
+            else:
+                console.print("[dim]No overrides configured.[/dim]")
+
+            console.print()
+            console.print("[cyan]1.[/cyan] Add node ID")
+            console.print("[cyan]2.[/cyan] Remove node ID")
+            console.print("[cyan]0.[/cyan] Back")
+            console.print()
+
+            choice = IntPrompt.ask("Select option", default=0)
+
+            if choice == 0:
+                return
+            elif choice == 1:
+                node_id = Prompt.ask("Node ID to exclude from infra (e.g., !abc12345)")
+                if node_id and node_id not in overrides:
+                    self.config.mesh_intelligence.infra_overrides.append(node_id)
+                    self.modified = True
+                    console.print(f"[green]Added: {node_id}[/green]")
+                    input("Press Enter to continue...")
+                elif node_id in overrides:
+                    console.print("[yellow]Node ID already in list.[/yellow]")
+                    input("\nPress Enter to continue...")
+            elif choice == 2:
+                if not overrides:
+                    console.print("[yellow]No overrides to remove.[/yellow]")
+                    input("\nPress Enter to continue...")
+                    continue
+                console.print()
+                for i, node_id in enumerate(overrides, 1):
+                    console.print(f"[cyan]{i}.[/cyan] {node_id}")
+                console.print("[cyan]0.[/cyan] Cancel")
+                console.print()
+                idx = IntPrompt.ask("Select to remove", default=0)
+                if 1 <= idx <= len(overrides):
+                    removed = self.config.mesh_intelligence.infra_overrides.pop(idx - 1)
+                    self.modified = True
+                    console.print(f"[green]Removed: {removed}[/green]")
+                    input("Press Enter to continue...")
 
     def _setup_wizard(self) -> None:
         """First-time setup wizard."""
