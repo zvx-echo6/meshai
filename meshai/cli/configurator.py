@@ -1,5 +1,6 @@
 """Rich-based TUI configurator for MeshAI."""
 
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -10,7 +11,7 @@ from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.table import Table
 from rich.text import Text
 
-from ..config import Config, load_config, save_config
+from ..config import Config, MeshSourceConfig, load_config, save_config
 
 console = Console()
 
@@ -84,7 +85,14 @@ class Configurator:
             kb_status = self._status_icon(self.config.knowledge.enabled)
             kb_path = self.config.knowledge.db_path or "[dim]not set[/dim]"
             table.add_row("10", "Knowledge Base", f"{kb_status} {kb_path}")
-            table.add_row("11", "Setup Wizard", "[dim]First-time setup[/dim]")
+
+            # Mesh Sources
+            total_sources = len(self.config.mesh_sources)
+            enabled_sources = sum(1 for s in self.config.mesh_sources if s.enabled)
+            src_status = f"{enabled_sources}/{total_sources} enabled" if total_sources else "[dim]none[/dim]"
+            table.add_row("11", "Mesh Sources", src_status)
+
+            table.add_row("12", "Setup Wizard", "[dim]First-time setup[/dim]")
 
             console.print(table)
             console.print()
@@ -93,13 +101,13 @@ class Configurator:
             if self.modified:
                 console.print("[yellow]* Unsaved changes[/yellow]")
                 console.print()
-            console.print("[white]12. Save[/white]                  [dim]Save config, stay in menu[/dim]")
-            console.print("[green]13. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
-            console.print("[white]14. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
-            console.print("[white]15. Exit without Saving[/white]")
+            console.print("[white]13. Save[/white]                  [dim]Save config, stay in menu[/dim]")
+            console.print("[green]14. Save & Restart Bot[/green]   [dim]Apply changes now[/dim]")
+            console.print("[white]15. Save & Exit[/white]          [dim]Save, restart bot, exit[/dim]")
+            console.print("[white]16. Exit without Saving[/white]")
             console.print()
 
-            choice = IntPrompt.ask("Select option", default=13)
+            choice = IntPrompt.ask("Select option", default=14)
 
             if choice == 1:
                 self._bot_settings()
@@ -122,15 +130,17 @@ class Configurator:
             elif choice == 10:
                 self._knowledge_settings()
             elif choice == 11:
-                self._setup_wizard()
+                self._mesh_sources_settings()
             elif choice == 12:
-                self._save_only()
+                self._setup_wizard()
             elif choice == 13:
-                self._save_and_restart()
+                self._save_only()
             elif choice == 14:
+                self._save_and_restart()
+            elif choice == 15:
                 self._save_restart_exit()
                 break
-            elif choice == 15:
+            elif choice == 16:
                 break
 
     def _show_header(self) -> None:
@@ -727,6 +737,276 @@ class Configurator:
                 if value != self.config.knowledge.top_k:
                     self.config.knowledge.top_k = value
                     self.modified = True
+
+    def _mesh_sources_settings(self) -> None:
+        """Mesh data sources settings submenu."""
+        while True:
+            self._clear()
+            console.print("[bold]Mesh Data Sources[/bold]\n")
+            console.print("[dim]Connect to Meshview and/or MeshMonitor instances for live mesh data.[/dim]\n")
+
+            # Display configured sources
+            if self.config.mesh_sources:
+                table = Table(box=box.ROUNDED)
+                table.add_column("#", style="cyan", width=3)
+                table.add_column("Name", style="white")
+                table.add_column("Type", style="blue")
+                table.add_column("URL", style="dim")
+                table.add_column("Enabled", style="green")
+
+                for i, src in enumerate(self.config.mesh_sources, 1):
+                    table.add_row(
+                        str(i),
+                        src.name,
+                        src.type,
+                        src.url[:40] + "..." if len(src.url) > 40 else src.url,
+                        self._status_icon(src.enabled),
+                    )
+                console.print(table)
+            else:
+                console.print("[dim]No sources configured.[/dim]")
+
+            console.print()
+            console.print("[cyan]1.[/cyan] Add source")
+            console.print("[cyan]2.[/cyan] Edit source")
+            console.print("[cyan]3.[/cyan] Remove source")
+            console.print("[cyan]4.[/cyan] Test source")
+            console.print("[cyan]0.[/cyan] Back")
+            console.print()
+
+            choice = IntPrompt.ask("Select option", default=0)
+
+            if choice == 0:
+                return
+            elif choice == 1:
+                self._add_mesh_source()
+            elif choice == 2:
+                self._edit_mesh_source()
+            elif choice == 3:
+                self._remove_mesh_source()
+            elif choice == 4:
+                self._test_mesh_source()
+
+    def _add_mesh_source(self) -> None:
+        """Add a new mesh data source."""
+        self._clear()
+        console.print("[bold]Add Mesh Source[/bold]\n")
+
+        # Get name
+        existing_names = {s.name for s in self.config.mesh_sources}
+        while True:
+            name = Prompt.ask("Source name (unique identifier)")
+            if not name:
+                console.print("[yellow]Name is required.[/yellow]")
+                continue
+            if name in existing_names:
+                console.print(f"[yellow]Name '{name}' already exists. Choose another.[/yellow]")
+                continue
+            break
+
+        # Get type
+        console.print("\n[cyan]1.[/cyan] meshview - Meshview instance")
+        console.print("[cyan]2.[/cyan] meshmonitor - MeshMonitor instance")
+        type_choice = IntPrompt.ask("Source type", default=1)
+        source_type = "meshview" if type_choice == 1 else "meshmonitor"
+
+        # Get URL
+        url = Prompt.ask("URL (e.g., https://meshview.example.com or http://192.168.1.100:3333)")
+
+        # Get API token (MeshMonitor only)
+        api_token = ""
+        if source_type == "meshmonitor":
+            console.print("\n[dim]API token is required for MeshMonitor. Use ${ENV_VAR} for env vars.[/dim]")
+            api_token = Prompt.ask("API token", default="")
+
+        # Get refresh interval
+        refresh_interval = IntPrompt.ask("Refresh interval (seconds)", default=300)
+
+        # Create and add source
+        source = MeshSourceConfig(
+            name=name,
+            type=source_type,
+            url=url,
+            api_token=api_token,
+            refresh_interval=refresh_interval,
+            enabled=True,
+        )
+        self.config.mesh_sources.append(source)
+        self.modified = True
+
+        console.print(f"\n[green]Source '{name}' added.[/green]")
+        input("Press Enter to continue...")
+
+    def _edit_mesh_source(self) -> None:
+        """Edit an existing mesh data source."""
+        if not self.config.mesh_sources:
+            console.print("[yellow]No sources to edit.[/yellow]")
+            input("\nPress Enter to continue...")
+            return
+
+        self._clear()
+        console.print("[bold]Edit Mesh Source[/bold]\n")
+
+        # Show list
+        for i, src in enumerate(self.config.mesh_sources, 1):
+            status = "[green]enabled[/green]" if src.enabled else "[red]disabled[/red]"
+            console.print(f"[cyan]{i}.[/cyan] {src.name} ({src.type}) - {status}")
+
+        console.print("[cyan]0.[/cyan] Cancel")
+        console.print()
+
+        choice = IntPrompt.ask("Select source to edit", default=0)
+        if choice == 0 or choice > len(self.config.mesh_sources):
+            return
+
+        src = self.config.mesh_sources[choice - 1]
+
+        while True:
+            self._clear()
+            console.print(f"[bold]Edit Source: {src.name}[/bold]\n")
+
+            table = Table(box=box.ROUNDED)
+            table.add_column("Option", style="cyan", width=4)
+            table.add_column("Setting", style="white")
+            table.add_column("Value", style="green")
+
+            table.add_row("1", "Name", src.name)
+            table.add_row("2", "Type", src.type)
+            table.add_row("3", "URL", src.url)
+            if src.type == "meshmonitor":
+                token_display = "****" + src.api_token[-4:] if len(src.api_token) > 4 else src.api_token or "[dim]not set[/dim]"
+                table.add_row("4", "API Token", token_display)
+            table.add_row("5", "Refresh Interval", f"{src.refresh_interval}s")
+            table.add_row("6", "Enabled", self._status_icon(src.enabled))
+            table.add_row("0", "Back", "")
+
+            console.print(table)
+            console.print()
+
+            opt = IntPrompt.ask("Select option", default=0)
+
+            if opt == 0:
+                return
+            elif opt == 1:
+                existing_names = {s.name for s in self.config.mesh_sources if s != src}
+                value = Prompt.ask("Name", default=src.name)
+                if value and value not in existing_names:
+                    src.name = value
+                    self.modified = True
+                elif value in existing_names:
+                    console.print("[yellow]Name already exists.[/yellow]")
+            elif opt == 2:
+                console.print("\n[cyan]1.[/cyan] meshview")
+                console.print("[cyan]2.[/cyan] meshmonitor")
+                t = IntPrompt.ask("Type", default=1 if src.type == "meshview" else 2)
+                new_type = "meshview" if t == 1 else "meshmonitor"
+                if new_type != src.type:
+                    src.type = new_type
+                    self.modified = True
+            elif opt == 3:
+                value = Prompt.ask("URL", default=src.url)
+                if value != src.url:
+                    src.url = value
+                    self.modified = True
+            elif opt == 4 and src.type == "meshmonitor":
+                value = Prompt.ask("API Token", default=src.api_token)
+                if value != src.api_token:
+                    src.api_token = value
+                    self.modified = True
+            elif opt == 5:
+                value = IntPrompt.ask("Refresh interval (seconds)", default=src.refresh_interval)
+                if value != src.refresh_interval:
+                    src.refresh_interval = value
+                    self.modified = True
+            elif opt == 6:
+                src.enabled = not src.enabled
+                self.modified = True
+
+    def _remove_mesh_source(self) -> None:
+        """Remove a mesh data source."""
+        if not self.config.mesh_sources:
+            console.print("[yellow]No sources to remove.[/yellow]")
+            input("\nPress Enter to continue...")
+            return
+
+        self._clear()
+        console.print("[bold]Remove Mesh Source[/bold]\n")
+
+        # Show list
+        for i, src in enumerate(self.config.mesh_sources, 1):
+            console.print(f"[cyan]{i}.[/cyan] {src.name} ({src.type})")
+
+        console.print("[cyan]0.[/cyan] Cancel")
+        console.print()
+
+        choice = IntPrompt.ask("Select source to remove", default=0)
+        if choice == 0 or choice > len(self.config.mesh_sources):
+            return
+
+        src = self.config.mesh_sources[choice - 1]
+        if Confirm.ask(f"Remove source '{src.name}'?", default=False):
+            self.config.mesh_sources.pop(choice - 1)
+            self.modified = True
+            console.print(f"[green]Source '{src.name}' removed.[/green]")
+            input("Press Enter to continue...")
+
+    def _test_mesh_source(self) -> None:
+        """Test a mesh data source connection."""
+        if not self.config.mesh_sources:
+            console.print("[yellow]No sources to test.[/yellow]")
+            input("\nPress Enter to continue...")
+            return
+
+        self._clear()
+        console.print("[bold]Test Mesh Source[/bold]\n")
+
+        # Show list
+        for i, src in enumerate(self.config.mesh_sources, 1):
+            console.print(f"[cyan]{i}.[/cyan] {src.name} ({src.type})")
+
+        console.print("[cyan]0.[/cyan] Cancel")
+        console.print()
+
+        choice = IntPrompt.ask("Select source to test", default=0)
+        if choice == 0 or choice > len(self.config.mesh_sources):
+            return
+
+        src = self.config.mesh_sources[choice - 1]
+        console.print(f"\n[dim]Testing {src.name} ({src.url})...[/dim]\n")
+
+        try:
+            if src.type == "meshview":
+                from ..sources.meshview import MeshviewSource
+                source = MeshviewSource(url=src.url, refresh_interval=src.refresh_interval)
+            else:
+                from ..sources.meshmonitor_data import MeshMonitorDataSource
+                source = MeshMonitorDataSource(
+                    url=src.url,
+                    api_token=src.api_token,
+                    refresh_interval=src.refresh_interval,
+                )
+
+            success = source.fetch_all()
+
+            if success:
+                console.print("[green]Connection successful![/green]\n")
+                console.print(f"  Nodes: {len(source.nodes)}")
+                if src.type == "meshview":
+                    console.print(f"  Edges: {len(source.edges)}")
+                    console.print(f"  Stats: {'loaded' if source.stats else 'none'}")
+                    console.print(f"  Counts: {'loaded' if source.counts else 'none'}")
+                else:
+                    console.print(f"  Channels: {len(source.channels)}")
+                    console.print(f"  Telemetry: {len(source.telemetry)}")
+                    console.print(f"  Traceroutes: {len(source.traceroutes)}")
+                    console.print(f"  Packets: {len(source.packets)}")
+            else:
+                console.print(f"[red]Connection failed: {source.last_error}[/red]")
+
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+
+        input("\nPress Enter to continue...")
 
     def _setup_wizard(self) -> None:
         """First-time setup wizard."""

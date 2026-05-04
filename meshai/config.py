@@ -163,6 +163,19 @@ class KnowledgeConfig:
     db_path: str = ""
     top_k: int = 5
 
+
+@dataclass
+class MeshSourceConfig:
+    """Configuration for a mesh data source."""
+
+    name: str = ""
+    type: str = ""  # "meshview" or "meshmonitor"
+    url: str = ""
+    api_token: str = ""  # MeshMonitor only, supports ${ENV_VAR}
+    refresh_interval: int = 300
+    enabled: bool = True
+
+
 @dataclass
 class Config:
     """Main configuration container."""
@@ -178,6 +191,7 @@ class Config:
     weather: WeatherConfig = field(default_factory=WeatherConfig)
     meshmonitor: MeshMonitorConfig = field(default_factory=MeshMonitorConfig)
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
+    mesh_sources: list[MeshSourceConfig] = field(default_factory=list)
 
     _config_path: Optional[Path] = field(default=None, repr=False)
 
@@ -215,6 +229,13 @@ def _dict_to_dataclass(cls, data: dict):
         # Handle nested dataclasses
         if hasattr(field_type, "__dataclass_fields__") and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(field_type, value)
+        # Handle list of MeshSourceConfig
+        elif key == "mesh_sources" and isinstance(value, list):
+            kwargs[key] = [
+                _dict_to_dataclass(MeshSourceConfig, item)
+                if isinstance(item, dict) else item
+                for item in value
+            ]
         else:
             kwargs[key] = value
 
@@ -234,7 +255,11 @@ def _dataclass_to_dict(obj) -> dict:
         if hasattr(value, "__dataclass_fields__"):
             result[field_name] = _dataclass_to_dict(value)
         elif isinstance(value, list):
-            result[field_name] = list(value)
+            # Handle list of dataclasses (like mesh_sources)
+            result[field_name] = [
+                _dataclass_to_dict(item) if hasattr(item, "__dataclass_fields__") else item
+                for item in value
+            ]
         else:
             result[field_name] = value
     return result

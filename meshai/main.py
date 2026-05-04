@@ -39,6 +39,7 @@ class MeshAI:
         self.context: Optional[MeshContext] = None
         self.meshmonitor_sync = None
         self.knowledge = None
+        self.source_manager = None
         self.router: Optional[MessageRouter] = None
         self.responder: Optional[Responder] = None
         self._running = False
@@ -77,6 +78,10 @@ class MeshAI:
             # Periodic MeshMonitor refresh
             if self.meshmonitor_sync:
                 self.meshmonitor_sync.maybe_refresh()
+
+            # Periodic mesh source refresh
+            if self.source_manager:
+                self.source_manager.refresh_all()
 
             # Periodic cleanup
             if time.time() - self._last_cleanup >= 3600:
@@ -178,6 +183,28 @@ class MeshAI:
         else:
             self.meshmonitor_sync = None
 
+        # Mesh data sources
+        enabled_sources = [s for s in self.config.mesh_sources if s.enabled]
+        if enabled_sources:
+            from .mesh_sources import MeshSourceManager
+            self.source_manager = MeshSourceManager(enabled_sources)
+            # Initial fetch
+            self.source_manager.refresh_all()
+            # Log status
+            for status in self.source_manager.get_status():
+                if status["is_loaded"]:
+                    logger.info(
+                        f"Mesh source '{status['name']}' ({status['type']}): "
+                        f"{status['node_count']} nodes"
+                    )
+                else:
+                    logger.warning(
+                        f"Mesh source '{status['name']}' ({status['type']}): "
+                        f"failed - {status.get('last_error', 'unknown error')}"
+                    )
+        else:
+            self.source_manager = None
+
         # Knowledge base
         kb_cfg = self.config.knowledge
         if kb_cfg.enabled and kb_cfg.db_path:
@@ -195,6 +222,7 @@ class MeshAI:
             context=self.context,
             meshmonitor_sync=self.meshmonitor_sync,
             knowledge=self.knowledge,
+            source_manager=self.source_manager,
         )
 
         # Responder

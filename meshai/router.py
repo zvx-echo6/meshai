@@ -67,6 +67,7 @@ class MessageRouter:
         context: MeshContext = None,
         meshmonitor_sync=None,
         knowledge=None,
+        source_manager=None,
     ):
         self.config = config
         self.connector = connector
@@ -76,6 +77,7 @@ class MessageRouter:
         self.context = context
         self.meshmonitor_sync = meshmonitor_sync
         self.knowledge = knowledge
+        self.source_manager = source_manager  # For future use in Phase 3
         self.continuations = ContinuationState(max_continuations=3)
 
 
