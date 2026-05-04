@@ -14,9 +14,7 @@ from typing import Optional
 
 from .geo import (
     cluster_by_distance,
-    suggest_cluster_name,
     get_cluster_center,
-    assign_to_nearest_cluster,
     haversine_distance,
 )
 
@@ -26,7 +24,6 @@ logger = logging.getLogger(__name__)
 INFRASTRUCTURE_ROLES = {"ROUTER", "ROUTER_LATE", "ROUTER_CLIENT"}
 
 # Default thresholds
-DEFAULT_REGION_RADIUS_MILES = 40.0
 DEFAULT_LOCALITY_RADIUS_MILES = 8.0
 DEFAULT_OFFLINE_THRESHOLD_HOURS = 24
 DEFAULT_PACKET_THRESHOLD = 500  # Non-text packets per 24h
@@ -127,7 +124,6 @@ class LocalityHealth:
     """Health data for a locality (sub-region cluster)."""
 
     name: str
-    suggested_name: str = ""
     center_lat: float = 0.0
     center_lon: float = 0.0
     node_ids: list[str] = field(default_factory=list)
@@ -139,7 +135,6 @@ class RegionHealth:
     """Health data for a region."""
 
     name: str
-    suggested_name: str = ""
     center_lat: float = 0.0
     center_lon: float = 0.0
     localities: list[LocalityHealth] = field(default_factory=list)
@@ -166,37 +161,47 @@ class MeshHealth:
         return len(self.regions)
 
 
+@dataclass
+class RegionAnchor:
+    """A fixed region anchor point for assignment."""
+    name: str
+    lat: float
+    lon: float
+
+
 class MeshHealthEngine:
     """Computes mesh health scores from aggregated source data."""
 
     def __init__(
         self,
-        region_radius: float = DEFAULT_REGION_RADIUS_MILES,
+        regions: Optional[list] = None,
         locality_radius: float = DEFAULT_LOCALITY_RADIUS_MILES,
         offline_threshold_hours: int = DEFAULT_OFFLINE_THRESHOLD_HOURS,
         packet_threshold: int = DEFAULT_PACKET_THRESHOLD,
         battery_warning_percent: int = DEFAULT_BATTERY_WARNING_PERCENT,
-        infra_overrides: Optional[list[str]] = None,
-        region_labels: Optional[dict[str, str]] = None,
     ):
         """Initialize health engine.
 
         Args:
-            region_radius: Miles radius for region clustering
-            locality_radius: Miles radius for locality clustering
+            regions: List of region anchors (dicts or RegionAnchor with name, lat, lon)
+            locality_radius: Miles radius for locality clustering within regions
             offline_threshold_hours: Hours before a node is considered offline
             packet_threshold: Non-text packets per 24h to flag a node
             battery_warning_percent: Battery level for warnings
-            infra_overrides: Node IDs to exclude from infrastructure
-            region_labels: Override labels for regions {suggested_name: custom_label}
         """
-        self.region_radius = region_radius
+        # Convert region configs to RegionAnchor objects
+        self.regions: list[RegionAnchor] = []
+        if regions:
+            for r in regions:
+                if hasattr(r, 'name'):
+                    self.regions.append(RegionAnchor(r.name, r.lat, r.lon))
+                elif isinstance(r, dict):
+                    self.regions.append(RegionAnchor(r['name'], r['lat'], r['lon']))
+
         self.locality_radius = locality_radius
         self.offline_threshold_hours = offline_threshold_hours
         self.packet_threshold = packet_threshold
         self.battery_warning_percent = battery_warning_percent
-        self.infra_overrides = set(infra_overrides or [])
-        self.region_labels = dict(region_labels or {})
 
         self._mesh_health: Optional[MeshHealth] = None
 
@@ -204,6 +209,30 @@ class MeshHealthEngine:
     def mesh_health(self) -> Optional[MeshHealth]:
         """Get last computed mesh health."""
         return self._mesh_health
+
+    def _find_nearest_region(self, lat: float, lon: float) -> Optional[str]:
+        """Find the nearest region anchor to a GPS point.
+
+        Args:
+            lat: Latitude
+            lon: Longitude
+
+        Returns:
+            Region name or None if no regions defined
+        """
+        if not self.regions:
+            return None
+
+        nearest = None
+        min_dist = float("inf")
+
+        for region in self.regions:
+            dist = haversine_distance(lat, lon, region.lat, region.lon)
+            if dist < min_dist:
+                min_dist = dist
+                nearest = region.name
+
+        return nearest
 
     def compute(self, source_manager) -> MeshHealth:
         """Compute mesh health from source data.
@@ -219,7 +248,6 @@ class MeshHealthEngine:
 
         # Aggregate all nodes from all sources
         all_nodes = source_manager.get_all_nodes()
-        all_edges = source_manager.get_all_edges()
         all_telemetry = source_manager.get_all_telemetry()
         all_packets = []
 
@@ -252,8 +280,6 @@ class MeshHealthEngine:
 
             # Determine if infrastructure
             is_infra = role.upper() in INFRASTRUCTURE_ROLES
-            if node_id in self.infra_overrides:
-                is_infra = False
 
             # Get position (handle different API formats)
             lat = node.get("latitude") or node.get("lat")
@@ -334,77 +360,43 @@ class MeshHealthEngine:
             if "TEXT" in str(port_num).upper():
                 nodes[from_id].text_packet_count_24h += 1
 
-        # Cluster infrastructure nodes into regions
-        infra_nodes = [n for n in nodes.values() if n.is_infrastructure]
-        infra_dicts = [
-            {"id": n.node_id, "latitude": n.latitude, "longitude": n.longitude}
-            for n in infra_nodes
-            if n.latitude and n.longitude
-        ]
-
-        region_clusters = cluster_by_distance(
-            infra_dicts,
-            self.region_radius,
-            lat_key="latitude",
-            lon_key="longitude",
-            id_key="id",
-        )
-
-        # Build regions
-        regions: list[RegionHealth] = []
-        for cluster in region_clusters:
-            suggested = suggest_cluster_name(cluster)
-            label = self.region_labels.get(suggested, suggested)
-            center_lat, center_lon = get_cluster_center(cluster)
-
-            region = RegionHealth(
-                name=label,
-                suggested_name=suggested,
-                center_lat=center_lat,
-                center_lon=center_lon,
-                node_ids=[n["id"] for n in cluster],
+        # Initialize regions from anchors
+        region_map: dict[str, RegionHealth] = {}
+        for anchor in self.regions:
+            region_map[anchor.name] = RegionHealth(
+                name=anchor.name,
+                center_lat=anchor.lat,
+                center_lon=anchor.lon,
             )
-            regions.append(region)
 
-            # Mark nodes with their region
-            for n in cluster:
-                if n["id"] in nodes:
-                    nodes[n["id"]].region = label
-
-        # Assign non-infrastructure nodes to nearest region
+        # Assign nodes to nearest region
         unlocated = []
         for node in nodes.values():
-            if node.region:
-                continue  # Already assigned
-
             if node.latitude and node.longitude:
-                # Find nearest region
-                min_dist = float("inf")
-                nearest_region = None
-                for region in regions:
-                    dist = haversine_distance(
-                        node.latitude, node.longitude,
-                        region.center_lat, region.center_lon
-                    )
-                    if dist < min_dist:
-                        min_dist = dist
-                        nearest_region = region
-
-                if nearest_region:
-                    node.region = nearest_region.name
-                    nearest_region.node_ids.append(node.node_id)
+                region_name = self._find_nearest_region(node.latitude, node.longitude)
+                if region_name and region_name in region_map:
+                    node.region = region_name
+                    region_map[region_name].node_ids.append(node.node_id)
                 else:
                     unlocated.append(node.node_id)
             else:
                 unlocated.append(node.node_id)
 
-        # Create localities within each region
+        regions = list(region_map.values())
+
+        # Create localities within each region (cluster by proximity)
         for region in regions:
+            if not region.node_ids:
+                continue
+
             region_nodes = [
                 {"id": nid, "latitude": nodes[nid].latitude, "longitude": nodes[nid].longitude}
                 for nid in region.node_ids
                 if nodes[nid].latitude and nodes[nid].longitude
             ]
+
+            if not region_nodes:
+                continue
 
             locality_clusters = cluster_by_distance(
                 region_nodes,
@@ -414,13 +406,11 @@ class MeshHealthEngine:
                 id_key="id",
             )
 
-            for cluster in locality_clusters:
-                suggested = suggest_cluster_name(cluster)
+            for i, cluster in enumerate(locality_clusters):
                 center_lat, center_lon = get_cluster_center(cluster)
 
                 locality = LocalityHealth(
-                    name=suggested,
-                    suggested_name=suggested,
+                    name=f"{region.name} L{i+1}",
                     center_lat=center_lat,
                     center_lon=center_lon,
                     node_ids=[n["id"] for n in cluster],
@@ -430,7 +420,7 @@ class MeshHealthEngine:
                 # Mark nodes with their locality
                 for n in cluster:
                     if n["id"] in nodes:
-                        nodes[n["id"]].locality = suggested
+                        nodes[n["id"]].locality = locality.name
 
         # Compute scores at each level
         self._compute_locality_scores(regions, nodes)
@@ -507,12 +497,10 @@ class MeshHealthEngine:
             infra_score = 100.0  # No infrastructure = not penalized
 
         # Channel utilization (simplified - based on packet counts)
-        # Rough estimate: 1000 packets/day across all nodes = ~15% utilization
         total_packets = sum(n.packet_count_24h for n in node_list)
-        # Estimate utilization: packets / (nodes * 500 baseline)
         baseline = len(node_list) * 500
         if baseline > 0:
-            util_percent = (total_packets / baseline) * 15  # Scale to percentage
+            util_percent = (total_packets / baseline) * 15
         else:
             util_percent = 0
 
@@ -555,9 +543,8 @@ class MeshHealthEngine:
             battery_ratio = battery_warnings / nodes_with_battery
             power_score = 100.0 * (1 - battery_ratio)
         else:
-            power_score = 100.0  # No battery data = assume OK
+            power_score = 100.0
 
-        # Solar index (placeholder - would need solar data)
         solar_index = 100.0
 
         return HealthScore(
@@ -574,14 +561,7 @@ class MeshHealthEngine:
         )
 
     def get_region(self, name: str) -> Optional[RegionHealth]:
-        """Get a region by name.
-
-        Args:
-            name: Region name (case-insensitive)
-
-        Returns:
-            RegionHealth or None
-        """
+        """Get a region by name."""
         if not self._mesh_health:
             return None
 
@@ -589,27 +569,16 @@ class MeshHealthEngine:
         for region in self._mesh_health.regions:
             if region.name.lower() == name_lower:
                 return region
-            if region.suggested_name.lower() == name_lower:
-                return region
         return None
 
     def get_node(self, node_id: str) -> Optional[NodeHealth]:
-        """Get a node by ID or short name.
-
-        Args:
-            node_id: Node ID or short name
-
-        Returns:
-            NodeHealth or None
-        """
+        """Get a node by ID or short name."""
         if not self._mesh_health:
             return None
 
-        # Try direct ID lookup
         if node_id in self._mesh_health.nodes:
             return self._mesh_health.nodes[node_id]
 
-        # Try short name match
         node_id_lower = node_id.lower()
         for node in self._mesh_health.nodes.values():
             if node.short_name.lower() == node_id_lower:

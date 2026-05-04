@@ -177,17 +177,24 @@ class MeshSourceConfig:
 
 
 @dataclass
+class RegionAnchor:
+    """A fixed region anchor point."""
+
+    name: str = ""
+    lat: float = 0.0
+    lon: float = 0.0
+
+
+@dataclass
 class MeshIntelligenceConfig:
     """Mesh intelligence and health scoring settings."""
 
     enabled: bool = False
-    region_radius_miles: float = 40.0  # Radius for region clustering
-    locality_radius_miles: float = 8.0  # Radius for locality clustering
+    regions: list[RegionAnchor] = field(default_factory=list)  # Fixed region anchors
+    locality_radius_miles: float = 8.0  # Radius for locality clustering within regions
     offline_threshold_hours: int = 24  # Hours before node considered offline
     packet_threshold: int = 500  # Non-text packets per 24h to flag
     battery_warning_percent: int = 20  # Battery level for warnings
-    infra_overrides: list[str] = field(default_factory=list)  # Node IDs to exclude from infra
-    region_labels: dict[str, str] = field(default_factory=dict)  # {suggested: custom}
 
 
 @dataclass
@@ -248,6 +255,13 @@ def _dict_to_dataclass(cls, data: dict):
         elif key == "mesh_sources" and isinstance(value, list):
             kwargs[key] = [
                 _dict_to_dataclass(MeshSourceConfig, item)
+                if isinstance(item, dict) else item
+                for item in value
+            ]
+        # Handle list of RegionAnchor
+        elif key == "regions" and isinstance(value, list):
+            kwargs[key] = [
+                _dict_to_dataclass(RegionAnchor, item)
                 if isinstance(item, dict) else item
                 for item in value
             ]

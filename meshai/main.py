@@ -217,13 +217,11 @@ class MeshAI:
         if mi_cfg.enabled and self.source_manager:
             from .mesh_health import MeshHealthEngine
             self.health_engine = MeshHealthEngine(
-                region_radius=mi_cfg.region_radius_miles,
+                regions=mi_cfg.regions,
                 locality_radius=mi_cfg.locality_radius_miles,
                 offline_threshold_hours=mi_cfg.offline_threshold_hours,
                 packet_threshold=mi_cfg.packet_threshold,
                 battery_warning_percent=mi_cfg.battery_warning_percent,
-                infra_overrides=mi_cfg.infra_overrides,
-                region_labels=mi_cfg.region_labels,
             )
             # Initial health computation
             mesh_health = self.health_engine.compute(self.source_manager)

@@ -1021,7 +1021,7 @@ class Configurator:
         while True:
             self._clear()
             console.print("[bold]Mesh Intelligence Settings[/bold]\n")
-            console.print("[dim]Geographic clustering and health scoring for mesh analysis.[/dim]\n")
+            console.print("[dim]Region-based health scoring for mesh analysis.[/dim]\n")
 
             mi = self.config.mesh_intelligence
 
@@ -1031,13 +1031,11 @@ class Configurator:
             table.add_column("Value", style="green")
 
             table.add_row("1", "Enabled", self._status_icon(mi.enabled))
-            table.add_row("2", "Region Radius (miles)", str(mi.region_radius_miles))
+            table.add_row("2", "Regions", f"{len(mi.regions)} defined" if mi.regions else "[dim]none[/dim]")
             table.add_row("3", "Locality Radius (miles)", str(mi.locality_radius_miles))
             table.add_row("4", "Offline Threshold (hours)", str(mi.offline_threshold_hours))
             table.add_row("5", "Packet Threshold (24h)", str(mi.packet_threshold))
             table.add_row("6", "Battery Warning (%)", str(mi.battery_warning_percent))
-            table.add_row("7", "Region Labels", f"{len(mi.region_labels)} custom" if mi.region_labels else "[dim]auto[/dim]")
-            table.add_row("8", "Infra Overrides", f"{len(mi.infra_overrides)} nodes" if mi.infra_overrides else "[dim]none[/dim]")
             table.add_row("0", "Back", "")
 
             console.print(table)
@@ -1051,10 +1049,7 @@ class Configurator:
                 mi.enabled = not mi.enabled
                 self.modified = True
             elif choice == 2:
-                value = float(Prompt.ask("Region radius (miles)", default=str(mi.region_radius_miles)))
-                if value != mi.region_radius_miles:
-                    mi.region_radius_miles = value
-                    self.modified = True
+                self._edit_regions()
             elif choice == 3:
                 value = float(Prompt.ask("Locality radius (miles)", default=str(mi.locality_radius_miles)))
                 if value != mi.locality_radius_miles:
@@ -1075,35 +1070,36 @@ class Configurator:
                 if value != mi.battery_warning_percent:
                     mi.battery_warning_percent = value
                     self.modified = True
-            elif choice == 7:
-                self._edit_region_labels()
-            elif choice == 8:
-                self._edit_infra_overrides()
 
-    def _edit_region_labels(self) -> None:
-        """Edit region label overrides."""
+    def _edit_regions(self) -> None:
+        """Edit region anchor points."""
+        from ..config import RegionAnchor
+
         while True:
             self._clear()
-            console.print("[bold]Region Labels[/bold]\n")
-            console.print("[dim]Override auto-generated region names with custom labels.[/dim]\n")
+            console.print("[bold]Region Anchors[/bold]\n")
+            console.print("[dim]Define region center points. Nodes are assigned to nearest region.[/dim]\n")
 
-            labels = self.config.mesh_intelligence.region_labels
+            regions = self.config.mesh_intelligence.regions
 
-            if labels:
+            if regions:
                 table = Table(box=box.ROUNDED)
                 table.add_column("#", style="cyan", width=3)
-                table.add_column("Auto Name", style="white")
-                table.add_column("Custom Label", style="green")
+                table.add_column("Name", style="white")
+                table.add_column("Latitude", style="green")
+                table.add_column("Longitude", style="green")
 
-                for i, (auto, custom) in enumerate(labels.items(), 1):
-                    table.add_row(str(i), auto, custom)
+                for i, r in enumerate(regions, 1):
+                    table.add_row(str(i), r.name, f"{r.lat:.4f}", f"{r.lon:.4f}")
                 console.print(table)
             else:
-                console.print("[dim]No custom labels configured.[/dim]")
+                console.print("[dim]No regions defined.[/dim]")
 
             console.print()
-            console.print("[cyan]1.[/cyan] Add label")
-            console.print("[cyan]2.[/cyan] Remove label")
+            console.print("[cyan]1.[/cyan] Add region")
+            console.print("[cyan]2.[/cyan] Edit region")
+            console.print("[cyan]3.[/cyan] Remove region")
+            console.print("[cyan]4.[/cyan] Load Idaho defaults")
             console.print("[cyan]0.[/cyan] Back")
             console.print()
 
@@ -1112,84 +1108,58 @@ class Configurator:
             if choice == 0:
                 return
             elif choice == 1:
-                auto_name = Prompt.ask("Auto-generated name to override (e.g., 'Twin Falls')")
-                if auto_name:
-                    custom_label = Prompt.ask("Custom label")
-                    if custom_label:
-                        self.config.mesh_intelligence.region_labels[auto_name] = custom_label
-                        self.modified = True
-                        console.print(f"[green]Added: '{auto_name}' -> '{custom_label}'[/green]")
-                        input("Press Enter to continue...")
-            elif choice == 2:
-                if not labels:
-                    console.print("[yellow]No labels to remove.[/yellow]")
-                    input("\nPress Enter to continue...")
-                    continue
-                keys = list(labels.keys())
-                console.print()
-                for i, k in enumerate(keys, 1):
-                    console.print(f"[cyan]{i}.[/cyan] {k} -> {labels[k]}")
-                console.print("[cyan]0.[/cyan] Cancel")
-                console.print()
-                idx = IntPrompt.ask("Select label to remove", default=0)
-                if 1 <= idx <= len(keys):
-                    key = keys[idx - 1]
-                    del self.config.mesh_intelligence.region_labels[key]
+                name = Prompt.ask("Region name")
+                if name:
+                    lat = float(Prompt.ask("Center latitude", default="0.0"))
+                    lon = float(Prompt.ask("Center longitude", default="0.0"))
+                    self.config.mesh_intelligence.regions.append(
+                        RegionAnchor(name=name, lat=lat, lon=lon)
+                    )
                     self.modified = True
-                    console.print(f"[green]Removed '{key}'[/green]")
+                    console.print(f"[green]Added: {name} @ {lat}, {lon}[/green]")
                     input("Press Enter to continue...")
-
-    def _edit_infra_overrides(self) -> None:
-        """Edit infrastructure override node IDs."""
-        while True:
-            self._clear()
-            console.print("[bold]Infrastructure Overrides[/bold]\n")
-            console.print("[dim]Node IDs to exclude from infrastructure classification.[/dim]\n")
-
-            overrides = self.config.mesh_intelligence.infra_overrides
-
-            if overrides:
-                for i, node_id in enumerate(overrides, 1):
-                    console.print(f"[cyan]{i}.[/cyan] {node_id}")
-            else:
-                console.print("[dim]No overrides configured.[/dim]")
-
-            console.print()
-            console.print("[cyan]1.[/cyan] Add node ID")
-            console.print("[cyan]2.[/cyan] Remove node ID")
-            console.print("[cyan]0.[/cyan] Back")
-            console.print()
-
-            choice = IntPrompt.ask("Select option", default=0)
-
-            if choice == 0:
-                return
-            elif choice == 1:
-                node_id = Prompt.ask("Node ID to exclude from infra (e.g., !abc12345)")
-                if node_id and node_id not in overrides:
-                    self.config.mesh_intelligence.infra_overrides.append(node_id)
-                    self.modified = True
-                    console.print(f"[green]Added: {node_id}[/green]")
-                    input("Press Enter to continue...")
-                elif node_id in overrides:
-                    console.print("[yellow]Node ID already in list.[/yellow]")
-                    input("\nPress Enter to continue...")
             elif choice == 2:
-                if not overrides:
-                    console.print("[yellow]No overrides to remove.[/yellow]")
+                if not regions:
+                    console.print("[yellow]No regions to edit.[/yellow]")
                     input("\nPress Enter to continue...")
                     continue
                 console.print()
-                for i, node_id in enumerate(overrides, 1):
-                    console.print(f"[cyan]{i}.[/cyan] {node_id}")
+                for i, r in enumerate(regions, 1):
+                    console.print(f"[cyan]{i}.[/cyan] {r.name}")
                 console.print("[cyan]0.[/cyan] Cancel")
-                console.print()
-                idx = IntPrompt.ask("Select to remove", default=0)
-                if 1 <= idx <= len(overrides):
-                    removed = self.config.mesh_intelligence.infra_overrides.pop(idx - 1)
+                idx = IntPrompt.ask("Select region", default=0)
+                if 1 <= idx <= len(regions):
+                    r = regions[idx - 1]
+                    r.name = Prompt.ask("Name", default=r.name)
+                    r.lat = float(Prompt.ask("Latitude", default=str(r.lat)))
+                    r.lon = float(Prompt.ask("Longitude", default=str(r.lon)))
                     self.modified = True
-                    console.print(f"[green]Removed: {removed}[/green]")
+            elif choice == 3:
+                if not regions:
+                    console.print("[yellow]No regions to remove.[/yellow]")
+                    input("\nPress Enter to continue...")
+                    continue
+                console.print()
+                for i, r in enumerate(regions, 1):
+                    console.print(f"[cyan]{i}.[/cyan] {r.name}")
+                console.print("[cyan]0.[/cyan] Cancel")
+                idx = IntPrompt.ask("Select region to remove", default=0)
+                if 1 <= idx <= len(regions):
+                    removed = self.config.mesh_intelligence.regions.pop(idx - 1)
+                    self.modified = True
+                    console.print(f"[green]Removed: {removed.name}[/green]")
                     input("Press Enter to continue...")
+            elif choice == 4:
+                # Load Idaho region defaults
+                self.config.mesh_intelligence.regions = [
+                    RegionAnchor(name="North Idaho", lat=47.5, lon=-116.8),
+                    RegionAnchor(name="Southwestern Idaho", lat=43.6, lon=-116.2),
+                    RegionAnchor(name="South Central Idaho", lat=42.5, lon=-114.5),
+                    RegionAnchor(name="Eastern Idaho", lat=43.5, lon=-112.0),
+                ]
+                self.modified = True
+                console.print("[green]Loaded 4 Idaho region defaults.[/green]")
+                input("Press Enter to continue...")
 
     def _setup_wizard(self) -> None:
         """First-time setup wizard."""
