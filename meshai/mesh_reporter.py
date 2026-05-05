@@ -1490,3 +1490,76 @@ class MeshReporter:
 
         return recs
 
+    def build_lora_compact(self, scope: str, scope_value: str = None) -> str:
+        """Build LoRa-optimized compact summary for !health command."""
+        health = self.health_engine.mesh_health
+        if not health:
+            return "Mesh: No data"
+        if scope == "region" and scope_value:
+            region = self._find_region(scope_value)
+            if not region:
+                return f"Region '{scope_value}' not found"
+            rs = region.score
+            context = self._region_context(region.name)
+            name = context.split("(")[0].strip() if context else region.name
+            return f"{name} {rs.composite:.0f}/100 | {rs.infra_online}/{rs.infra_total} infra | {rs.util_percent:.0f}% util"
+        if scope == "node" and scope_value:
+            return self.build_node_compact(scope_value)
+        s = health.score
+        lines = [f"Mesh {s.composite:.0f}/100 | {s.infra_online}/{s.infra_total} infra | {s.util_percent:.0f}% util"]
+        for region in health.regions:
+            if region.score.composite < 60:
+                offline = region.score.infra_total - region.score.infra_online
+                context = self._region_context(region.name)
+                name = context.split("(")[0].strip() if context else region.name
+                lines.append(f"! {name} {region.score.composite:.0f}/100 - {offline} infra offline")
+        battery_warnings = self.health_engine.get_battery_warnings()
+        for node in battery_warnings[:2]:
+            if node.is_infrastructure:
+                lines.append(f"! {node.short_name or str(node.node_num)} bat {node.battery_percent:.0f}%")
+        return "\n".join(lines[:5])
+
+    def list_regions_compact(self) -> str:
+        """List all regions with scores for !region command."""
+        health = self.health_engine.mesh_health
+        if not health or not health.regions:
+            return "No regions configured."
+        lines = ["Regions:"]
+        for region in health.regions:
+            s = region.score
+            flag = _tier_flag(s.tier)
+            context = self._region_context(region.name)
+            name = context.split("(")[0].strip() if context else region.name
+            lines.append(f"  {name}: {s.composite:.0f}/100{flag}")
+        return "\n".join(lines)
+
+    def build_region_compact(self, region_name: str) -> str:
+        """Build compact region summary for subscription delivery."""
+        region = self._find_region(region_name)
+        if not region:
+            return f"Region '{region_name}' not found"
+        rs = region.score
+        context = self._region_context(region.name)
+        name = context.split("(")[0].strip() if context else region.name
+        lines = [f"{name}: {rs.composite:.0f}/100"]
+        lines.append(f"Infra: {rs.infra_online}/{rs.infra_total} | Util: {rs.util_percent:.0f}%")
+        if rs.infra_online < rs.infra_total:
+            lines.append(f"! {rs.infra_total - rs.infra_online} infra offline")
+        return "\n".join(lines)
+
+    def build_node_compact(self, node_identifier: str) -> str:
+        """Build compact node summary for subscription delivery."""
+        node = self._find_node(node_identifier)
+        if not node:
+            return f"Node '{node_identifier}' not found"
+        name = node.long_name or node.short_name or str(node.node_num)
+        status = "OK" if node.is_online else "OFFLINE"
+        parts = [f"{name}: {status}"]
+        if node.battery_percent is not None:
+            parts.append(_format_battery(node.battery_percent, node.voltage))
+        if node.packets_sent_24h > 0:
+            parts.append(f"{node.packets_sent_24h} pkts/24h")
+        if node.channel_utilization is not None:
+            parts.append(f"util {node.channel_utilization:.1f}%")
+        return " | ".join(parts)
+
