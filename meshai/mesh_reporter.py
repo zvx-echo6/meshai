@@ -1535,7 +1535,7 @@ class MeshReporter:
             mood = "critical"
 
         # Each line ends with period so chunker sends each as separate message
-        lines = [f"📡 freq51 {dot} {mood}."]
+        lines = [f"📡 Mesh {dot} {mood}."]
 
         offline_infra = [n for n in health.nodes.values() if n.is_infrastructure and not n.is_online]
         if offline_infra:
