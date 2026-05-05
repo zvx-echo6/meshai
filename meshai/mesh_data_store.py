@@ -1265,6 +1265,11 @@ class MeshDataStore:
         sample_nodes = random.sample(infra_nodes, min(5, len(infra_nodes)))
         sampled_count = 0
 
+        # Check if source supports required methods
+        if not hasattr(source, "fetch_recent_packets"):
+            logger.debug("Gateway sampling skipped: source lacks fetch_recent_packets")
+            return
+
         for node in sample_nodes:
             # Get recent packets from this node
             packets = source.fetch_recent_packets(node.node_num, limit=5)
@@ -1986,6 +1991,67 @@ class MeshDataStore:
 
         return result
 
+    # === Backwards compatibility methods for mesh_health.py ===
+
+    def get_all_nodes(self) -> list[dict]:
+        """Get all nodes as list of dicts (backwards compatibility).
+
+        Returns nodes in the format expected by mesh_health.py.
+        """
+        result = []
+        for node_num, node in self._nodes.items():
+            node_dict = {
+                "_node_num": node_num,
+                "nodeNum": node_num,
+                "id": node.node_id_hex,
+                "shortName": node.short_name,
+                "short_name": node.short_name,
+                "longName": node.long_name,
+                "long_name": node.long_name,
+                "role": node.role,
+                "hwModel": node.hw_model,
+                "latitude": node.latitude,
+                "longitude": node.longitude,
+                "lat": node.latitude,
+                "lon": node.longitude,
+                "lastHeard": node.last_heard,
+                "last_seen": node.last_heard,
+                "batteryLevel": node.battery_percent,
+                "battery_percent": node.battery_percent,
+                "voltage": node.voltage,
+                "channelUtilization": node.channel_utilization,
+                "airUtilTx": node.air_util_tx,
+                "uptime": node.uptime_seconds,
+                "mqtt_gateway": node.is_mqtt_gateway,
+                "_sources": list(node.sources),
+            }
+            result.append(node_dict)
+        return result
+
+    def get_all_telemetry(self) -> list[dict]:
+        """Get all telemetry records (backwards compatibility).
+
+        Returns telemetry in the format expected by mesh_health.py.
+        """
+        # Return telemetry from all sources
+        result = []
+        for source in self._sources.values():
+            if hasattr(source, "telemetry"):
+                result.extend(source.telemetry)
+        return result
+
+    def get_all_packets(self) -> list[dict]:
+        """Get all packets (backwards compatibility).
+
+        Returns packets in the format expected by mesh_health.py.
+        """
+        # Return packets from all sources
+        result = []
+        for source in self._sources.values():
+            if hasattr(source, "packets"):
+                result.extend(source.packets)
+        return result
+
     def get_environment_history(
         self, node_num: int, metric: str, window: str = "24h"
     ) -> list[tuple[float, float]]:
@@ -2023,6 +2089,23 @@ class MeshDataStore:
         """Expose database connection for reporter queries."""
         return self._db
 
+
+    def get_all_edges(self) -> list[dict]:
+        """Get all edges as list of dicts (backwards compatibility).
+
+        Returns edges in the format expected by mesh_health.py.
+        """
+        result = []
+        for edge in self._edges:
+            edge_dict = {
+                "from_node": edge.from_node,
+                "to_node": edge.to_node,
+                "snr": edge.snr,
+                "rssi": edge.rssi,
+                "timestamp": edge.timestamp,
+            }
+            result.append(edge_dict)
+        return result
     def close(self) -> None:
         """Close database connection."""
         if self._db:
