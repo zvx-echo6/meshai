@@ -1563,3 +1563,26 @@ class MeshReporter:
             parts.append(f"util {node.channel_utilization:.1f}%")
         return " | ".join(parts)
 
+
+
+    def build_distance(self, node1_id: str, node2_id: str) -> str:
+        """Compute and format distance between two nodes."""
+        n1 = self._find_node(node1_id)
+        n2 = self._find_node(node2_id)
+
+        if not n1:
+            return f"Node '{node1_id}' not found."
+        if not n2:
+            return f"Node '{node2_id}' not found."
+
+        if not n1.latitude or not n1.longitude:
+            return f"{n1.short_name} has no GPS position."
+        if not n2.latitude or not n2.longitude:
+            return f"{n2.short_name} has no GPS position."
+
+        km = _haversine_km(n1.latitude, n1.longitude, n2.latitude, n2.longitude)
+
+        name1 = _node_display_name(n1.long_name, n1.short_name, str(n1.node_num))
+        name2 = _node_display_name(n2.long_name, n2.short_name, str(n2.node_num))
+
+        return f"{name1} ↔ {name2}: {_format_distance(km)}"
