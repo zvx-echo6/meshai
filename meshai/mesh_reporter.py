@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from .mesh_data_store import MeshDataStore
-    from .mesh_health import MeshHealthEngine, NodeHealth, RegionHealth
+    from .mesh_health import MeshHealthEngine, RegionHealth
+    from .mesh_models import UnifiedNode
 
 logger = logging.getLogger(__name__)
 
@@ -499,18 +500,18 @@ class MeshReporter:
         flagged = self.health_engine.get_flagged_nodes()
         for node in flagged[:3]:
             threshold = self.health_engine.packet_threshold
-            ratio = node.non_text_packets / threshold
-            name = _node_display_name(node.long_name, node.short_name, node.node_id)
+            ratio = (node.packets_sent_24h - node.text_messages_24h) / threshold
+            name = _node_display_name(node.long_name, node.short_name, str(node.node_num))
             issues.append(
                 f"Node {name} sending "
-                f"{node.non_text_packets} non-text packets/24h ({ratio:.1f}x threshold)"
+                f"{(node.packets_sent_24h - node.text_messages_24h)} non-text packets/24h ({ratio:.1f}x threshold)"
             )
 
         # Battery issues (skip USB-powered nodes)
         battery_warnings = self.health_engine.get_battery_warnings()
         for node in battery_warnings[:2]:
             if node.battery_percent is not None and node.battery_percent <= 100:
-                name = _node_display_name(node.long_name, node.short_name, node.node_id)
+                name = _node_display_name(node.long_name, node.short_name, str(node.node_num))
                 issues.append(
                     f"Node {name} battery at {node.battery_percent:.0f}%"
                 )
@@ -538,7 +539,11 @@ class MeshReporter:
 
         # Collect infrastructure nodes
         infra_nodes = []
-        for nid in region.node_ids:
+        for nid_str in region.node_ids:
+            try:
+                nid = int(nid_str)
+            except ValueError:
+                continue
             node = health.nodes.get(nid)
             if node and node.is_infrastructure:
                 infra_nodes.append((nid, node))
@@ -546,7 +551,7 @@ class MeshReporter:
         # List infrastructure nodes with battery, packets, and utilization
         for nid, node in infra_nodes:
             status = "+" if node.is_online else "X"
-            age = _format_age(node.last_seen)
+            age = _format_age(node.last_heard)
             role = node.role or "ROUTER"
             hw = f", {node.hw_model}" if node.hw_model else ""
 
@@ -559,14 +564,13 @@ class MeshReporter:
             metrics.append(f"seen {age}")
             if node.battery_percent is not None:
                 metrics.append(f"bat {_format_battery(node.battery_percent, node.voltage)}")
-            if node.packet_count_24h > 0:
-                metrics.append(f"{node.packet_count_24h} pkts/24h")
+            if node.packets_sent_24h > 0:
+                metrics.append(f"{node.packets_sent_24h} pkts/24h")
             if node.channel_utilization is not None:
                 metrics.append(f"util {node.channel_utilization:.1f}%")
             # Add neighbor count from unified node
-            unified_node = self.data_store.nodes.get(node.node_num)
-            if unified_node and unified_node.neighbor_count > 0:
-                metrics.append(f"{unified_node.neighbor_count} neighbors")
+            if node.neighbor_count > 0:
+                metrics.append(f"{node.neighbor_count} neighbors")
 
             line = f"  {status} {name_str} - {', '.join(metrics)}"
             if not node.is_online:
@@ -621,23 +625,31 @@ class MeshReporter:
 
         # Flagged nodes in this region
         flagged_in_region = []
-        for nid in region.node_ids:
+        for nid_str in region.node_ids:
+            try:
+                nid = int(nid_str)
+            except ValueError:
+                continue
             node = health.nodes.get(nid)
-            if node and node.non_text_packets > self.health_engine.packet_threshold:
+            if node and (node.packets_sent_24h - node.text_messages_24h) > self.health_engine.packet_threshold:
                 flagged_in_region.append(node)
 
         if flagged_in_region:
             lines.append("")
             lines.append("Flagged Nodes (high packet senders):")
             for node in flagged_in_region[:5]:
-                name = _node_display_name(node.long_name, node.short_name, node.node_id)
+                name = _node_display_name(node.long_name, node.short_name, str(node.node_num))
                 lines.append(
-                    f"  {name}: {node.non_text_packets} non-text pkts/24h"
+                    f"  {name}: {(node.packets_sent_24h - node.text_messages_24h)} non-text pkts/24h"
                 )
 
         # Power warnings in this region (skip USB-powered)
         low_bat = []
-        for nid in region.node_ids:
+        for nid_str in region.node_ids:
+            try:
+                nid = int(nid_str)
+            except ValueError:
+                continue
             node = health.nodes.get(nid)
             if (
                 node
@@ -710,7 +722,8 @@ class MeshReporter:
             return f"NODE DETAIL: {node_identifier}\nNode not found."
 
         # Get corresponding unified node from data store for historical data
-        unified = self.data_store.get_node(node.node_num)
+        # All fields now directly on node (UnifiedNode)
+        unified = node
 
         # Header with long name first
         display_name = _node_display_name(node.long_name, node.short_name, str(node.node_num))
@@ -725,35 +738,36 @@ class MeshReporter:
         if node.latitude and node.longitude:
             lines.append(f"Position: {node.latitude:.4f}, {node.longitude:.4f}")
 
-        age = _format_age(node.last_seen)
+        age = _format_age(node.last_heard)
         status = "Online" if node.is_online else "OFFLINE"
         lines.append(f"Last Seen: {age} ({status})")
 
         # Sources from unified node
-        if unified and unified.sources:
+        if node.sources:
             lines.append(f"Sources: {', '.join(unified.sources)}")
 
         # Traffic stats with historical data
         lines.append("")
         lines.append("Traffic History:")
-        lines.append(f"  24h: {node.packet_count_24h} pkts")
+        lines.append(f"  24h: {node.packets_sent_24h} pkts")
         if unified:
             lines.append(f"  48h: {unified.packets_sent_48h}")
-            lines.append(f"  7d: {unified.packets_sent_7d}")
+            lines.append(f"  7d: {node.packets_sent_7d}")
             lines.append(f"  14d: {unified.packets_sent_14d}")
 
         # Packet breakdown with clean portnum names
-        if node.packets_by_portnum:
+        if node.packets_by_type:
             lines.append("")
             lines.append("Packet Breakdown (24h):")
             for portnum, count in sorted(
-                node.packets_by_portnum.items(), key=lambda x: -x[1]
+                node.packets_by_type.items(), key=lambda x: -x[1]
             )[:5]:
                 clean_name = _clean_portnum(portnum)
                 lines.append(f"  {clean_name}: {count}")
 
         # Estimated intervals
-        est_pos = node.estimated_position_interval
+        pos_count = node.packets_by_type.get("POSITION_APP", 0)
+        est_pos = 86400 / pos_count if pos_count > 0 else None
         if est_pos is not None:
             if est_pos < 60:
                 interval_str = f"{int(est_pos)}s"
@@ -797,21 +811,21 @@ class MeshReporter:
         lines.append(f"  MQTT Uplink: {'Enabled' if node.uplink_enabled else 'Disabled'}")
 
         # Coverage
-        if unified and unified.avg_gateways is not None:
+        if node.avg_gateways is not None:
             total_gw = len(self.data_store._sources)
-            pct = (unified.avg_gateways / total_gw * 100) if total_gw > 0 else 0
-            if unified.avg_gateways >= total_gw:
+            pct = (node.avg_gateways / total_gw * 100) if total_gw > 0 else 0
+            if node.avg_gateways >= total_gw:
                 status = "Full"
-            elif unified.avg_gateways >= 2:
+            elif node.avg_gateways >= 2:
                 status = "Partial"
             else:
                 status = "Single gateway - node goes dark if that gateway fails"
-            lines.append(f"  Coverage: {unified.avg_gateways:.0f}/{total_gw} gateways ({pct:.0f}%) - {status}")
+            lines.append(f"  Coverage: {node.avg_gateways:.0f}/{total_gw} gateways ({pct:.0f}%) - {status}")
 
         # Neighbors section
-        if unified and unified.neighbors:
+        if node.neighbors:
             lines.append("")
-            lines.append(f"Neighbors ({unified.neighbor_count}):")
+            lines.append(f"Neighbors ({node.neighbor_count}):")
 
             # Build edge lookup for signal quality
             edge_lookup = {}
@@ -856,11 +870,11 @@ class MeshReporter:
         # Environment section (from unified node sensor data)
         if unified:
             env_lines = []
-            if unified.temperature is not None:
-                temp_str = _format_temperature(unified.temperature)
+            if node.temperature is not None:
+                temp_str = _format_temperature(node.temperature)
                 env_lines.append(f"Temp: {temp_str}")
-            if unified.humidity is not None:
-                env_lines.append(f"Humidity: {unified.humidity:.1f}%")
+            if node.humidity is not None:
+                env_lines.append(f"Humidity: {node.humidity:.1f}%")
             if unified.barometric_pressure is not None:
                 env_lines.append(f"Pressure: {unified.barometric_pressure:.1f} hPa")
             if unified.gas_resistance is not None:
@@ -870,15 +884,15 @@ class MeshReporter:
                 env_lines.append(f"IAQ: {unified.iaq:.0f} ({iaq_label})")
             if unified.light_lux is not None:
                 env_lines.append(f"Light: {unified.light_lux:.0f} lux")
-            if unified.wind_speed is not None:
-                env_lines.append(f"Wind: {unified.wind_speed:.1f} m/s")
+            if node.wind_speed is not None:
+                env_lines.append(f"Wind: {node.wind_speed:.1f} m/s")
             if unified.wind_direction is not None:
                 env_lines.append(f"Wind Dir: {unified.wind_direction:.0f} deg")
             if unified.rainfall is not None:
                 env_lines.append(f"Rainfall: {unified.rainfall:.1f} mm")
-            if unified.pm2_5 is not None:
-                aqi_label = "Good" if unified.pm2_5 < 12 else "Moderate" if unified.pm2_5 < 35 else "Unhealthy"
-                env_lines.append(f"PM2.5: {unified.pm2_5:.1f} ug/m3 ({aqi_label})")
+            if node.pm2_5 is not None:
+                aqi_label = "Good" if node.pm2_5 < 12 else "Moderate" if node.pm2_5 < 35 else "Unhealthy"
+                env_lines.append(f"PM2.5: {node.pm2_5:.1f} ug/m3 ({aqi_label})")
             if unified.pm10 is not None:
                 env_lines.append(f"PM10: {unified.pm10:.1f} ug/m3")
             if unified.ext_voltage is not None:
@@ -897,7 +911,7 @@ class MeshReporter:
                     lines.append(f"  {el}")
 
         # Recommendations for this node (trend-aware)
-        recs = self._node_recommendations(node, unified)
+        recs = self._node_recommendations(node)
         if recs:
             lines.append("")
             lines.append("Recommendations:")
@@ -906,24 +920,23 @@ class MeshReporter:
 
         return "\n".join(lines)
 
-    def _node_recommendations(self, node: "NodeHealth", unified=None) -> list[str]:
+    def _node_recommendations(self, node: "UnifiedNode") -> list[str]:
         """Generate recommendations for a specific node.
 
         Args:
-            node: NodeHealth instance
-            unified: Optional UnifiedNode for historical data
+            node: UnifiedNode instance with all fields
         """
         recs = []
 
         # High packet count with trend context
-        if node.non_text_packets > self.health_engine.packet_threshold:
-            ratio = node.non_text_packets / self.health_engine.packet_threshold
+        if (node.packets_sent_24h - node.text_messages_24h) > self.health_engine.packet_threshold:
+            ratio = (node.packets_sent_24h - node.text_messages_24h) / self.health_engine.packet_threshold
 
             # Check if trending up
             trend_note = ""
             if unified:
-                avg_7d = unified.packets_sent_7d / 7 if unified.packets_sent_7d else 0
-                if avg_7d > 0 and node.packet_count_24h > avg_7d * 1.5:
+                avg_7d = node.packets_sent_7d / 7 if node.packets_sent_7d else 0
+                if avg_7d > 0 and node.packets_sent_24h > avg_7d * 1.5:
                     trend_note = " (trending up vs 7d avg)"
 
             recs.append(
@@ -931,7 +944,8 @@ class MeshReporter:
             )
 
         # Position interval too frequent (< 300s = 5 min)
-        est_interval = node.estimated_position_interval
+        pos_count = node.packets_by_type.get("POSITION_APP", 0)
+        est_interval = 86400 / pos_count if pos_count > 0 else None
         if est_interval is not None and est_interval < 300:
             recs.append(
                 f"Position interval ~{int(est_interval)}s is aggressive. "
@@ -968,7 +982,7 @@ class MeshReporter:
 
         # Offline
         if not node.is_online:
-            age = _format_age(node.last_seen)
+            age = _format_age(node.last_heard)
             recs.append(f"Node offline since {age}. Check power and connectivity.")
 
         # Infrastructure node without MQTT uplink
@@ -978,31 +992,30 @@ class MeshReporter:
                 "Consider enabling for better mesh visibility."
             )
 
-        # Environmental recommendations (from unified node)
-        if unified:
+        # Environmental recommendations
             # Freezing temperature warning for battery nodes
-            if unified.temperature is not None and unified.temperature < 0:
-                if unified.battery_percent is not None and unified.battery_percent <= 100:
+            if node.temperature is not None and node.temperature < 0:
+                if node.battery_percent is not None and node.battery_percent <= 100:
                     recs.append(
-                        f"Temperature {unified.temperature:.1f}C - below freezing reduces battery capacity 20-40%."
+                        f"Temperature {node.temperature:.1f}C - below freezing reduces battery capacity 20-40%."
                     )
 
             # High humidity condensation risk
-            if unified.humidity is not None and unified.humidity > 90:
+            if node.humidity is not None and node.humidity > 90:
                 recs.append(
-                    f"Humidity at {unified.humidity:.0f}% - condensation risk. Ensure enclosure is sealed."
+                    f"Humidity at {node.humidity:.0f}% - condensation risk. Ensure enclosure is sealed."
                 )
 
             # Poor air quality
-            if unified.pm2_5 is not None and unified.pm2_5 > 35:
+            if node.pm2_5 is not None and node.pm2_5 > 35:
                 recs.append(
-                    f"PM2.5 at {unified.pm2_5:.1f} ug/m3 - unhealthy air quality in this area."
+                    f"PM2.5 at {node.pm2_5:.1f} ug/m3 - unhealthy air quality in this area."
                 )
 
             # High wind
-            if unified.wind_speed is not None and unified.wind_speed > 20:
+            if node.wind_speed is not None and node.wind_speed > 20:
                 recs.append(
-                    f"Wind speed {unified.wind_speed:.1f} m/s - check antenna mounting and cable strain relief."
+                    f"Wind speed {node.wind_speed:.1f} m/s - check antenna mounting and cable strain relief."
                 )
 
         return recs
@@ -1017,9 +1030,8 @@ class MeshReporter:
 
         if scope == "node" and scope_value:
             node = self._find_node(scope_value)
-            unified = self.data_store.get_node(node.node_num) if node else None
             if node:
-                recs.extend(self._node_recommendations(node, unified))
+                recs.extend(self._node_recommendations(node))
 
         elif scope == "region" and scope_value:
             region = self._find_region(scope_value)
@@ -1060,9 +1072,13 @@ class MeshReporter:
 
         # Flagged nodes (high packet senders)
         flagged = []
-        for nid in region.node_ids:
+        for nid_str in region.node_ids:
+            try:
+                nid = int(nid_str)
+            except ValueError:
+                continue
             node = health.nodes.get(nid)
-            if node and node.non_text_packets > self.health_engine.packet_threshold:
+            if node and (node.packets_sent_24h - node.text_messages_24h) > self.health_engine.packet_threshold:
                 flagged.append(node)
         if flagged:
             names = ", ".join(
@@ -1075,7 +1091,11 @@ class MeshReporter:
 
         # Check for nodes with aggressive position intervals
         aggressive_interval_nodes = []
-        for nid in region.node_ids:
+        for nid_str in region.node_ids:
+            try:
+                nid = int(nid_str)
+            except ValueError:
+                continue
             node = health.nodes.get(nid)
             if node:
                 est = node.estimated_position_interval
@@ -1273,12 +1293,13 @@ class MeshReporter:
         if not node:
             return f"Node '{node_identifier}' not found"
 
-        unified = self.data_store.get_node(node.node_num)
+        # All fields now directly on node (UnifiedNode)
+        unified = node
 
         # Build compact status
         display_name = node.short_name or node.long_name or f"!{node.node_num:08x}"
         status = "ON" if node.is_online else "OFF"
-        age = _format_age(node.last_seen)
+        age = _format_age(node.last_heard)
 
         parts = [f"{display_name} [{status}]"]
 
@@ -1293,16 +1314,16 @@ class MeshReporter:
         parts.append(f"seen {age}")
 
         # Traffic
-        if node.packet_count_24h > 0:
-            parts.append(f"{node.packet_count_24h} pkts/24h")
+        if node.packets_sent_24h > 0:
+            parts.append(f"{node.packets_sent_24h} pkts/24h")
 
         # Channel util
         if node.channel_utilization is not None:
             parts.append(f"util {node.channel_utilization:.0f}%")
 
         # Neighbors
-        if unified and unified.neighbor_count > 0:
-            parts.append(f"{unified.neighbor_count} nbrs")
+        if node.neighbor_count > 0:
+            parts.append(f"{node.neighbor_count} nbrs")
 
         line1 = " | ".join(parts)
 
@@ -1312,7 +1333,7 @@ class MeshReporter:
             warnings.append("! OFFLINE")
         elif node.battery_percent is not None and node.battery_percent <= 20 and node.battery_percent <= 100:
             warnings.append("! LOW BAT")
-        if node.non_text_packets > self.health_engine.packet_threshold:
+        if (node.packets_sent_24h - node.text_messages_24h) > self.health_engine.packet_threshold:
             warnings.append("! HIGH TRAFFIC")
 
         if warnings:
@@ -1351,7 +1372,7 @@ class MeshReporter:
 
         return None
 
-    def _find_node(self, identifier: str) -> Optional["NodeHealth"]:
+    def _find_node(self, identifier: str) -> Optional["UnifiedNode"]:
         """Find a node by shortname, longname, nodeId, or nodeNum."""
         health = self.health_engine.mesh_health
         if not health:
