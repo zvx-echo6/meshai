@@ -291,7 +291,7 @@ class MeshReporter:
 
             region_coverage = {}
             for n in nodes_with_gw:
-                health_node = health.nodes.get(n.node_num)
+                health_node = health.nodes.get(str(n.node_num))
                 region = health_node.region if health_node else "Unlocated"
                 if not region:
                     region = "Unlocated"
