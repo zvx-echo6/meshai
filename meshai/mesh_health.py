@@ -292,37 +292,57 @@ class MeshHealthEngine:
             else:
                 unlocated.append(str(node_num))
 
-        # Build neighbor map from edges
-        # First, create a mapping from numeric node_id to hex id
-        numeric_to_hex: dict[str, str] = {}
-        for node in all_nodes:
-            hex_id = node.get("id")
-            num_id = node.get("node_id")
-            if hex_id and num_id:
-                numeric_to_hex[str(num_id)] = str(hex_id)
+        # Build BIDIRECTIONAL neighbor map from ALL sources:
+        # 1. Each node's own neighbor list (from NeighborInfo packets)
+        # 2. REVERSE: if A lists B as neighbor, B also sees A
+        # 3. Edges from traceroutes and other connections
+        all_neighbor_map: dict[int, set[int]] = {}
 
+        # First: add each node's own neighbor list AND reverse relationships
+        for node_num, node in nodes.items():
+            if node.neighbors:
+                if node_num not in all_neighbor_map:
+                    all_neighbor_map[node_num] = set()
+                for nb_num in node.neighbors:
+                    all_neighbor_map[node_num].add(nb_num)
+                    # REVERSE: if this node sees nb_num, nb_num also "sees" this node
+                    if nb_num not in all_neighbor_map:
+                        all_neighbor_map[nb_num] = set()
+                    all_neighbor_map[nb_num].add(node_num)
+
+        # Second: add from edges (connections from traceroutes, etc.)
+        if hasattr(data_store, 'edges'):
+            for edge in data_store.edges:
+                from_num = edge.from_node
+                to_num = edge.to_node
+                if from_num not in all_neighbor_map:
+                    all_neighbor_map[from_num] = set()
+                if to_num not in all_neighbor_map:
+                    all_neighbor_map[to_num] = set()
+                all_neighbor_map[from_num].add(to_num)
+                all_neighbor_map[to_num].add(from_num)
+
+        # Also add from raw edges API
         all_edges = source_manager.get_all_edges()
-        neighbors: dict[str, set[str]] = {}
         for edge in all_edges:
-            # Get edge endpoints (may be numeric)
             from_raw = edge.get("from") or edge.get("from_node") or edge.get("source")
             to_raw = edge.get("to") or edge.get("to_node") or edge.get("target")
             if not from_raw or not to_raw:
                 continue
+            try:
+                from_num = int(from_raw) if not str(from_raw).startswith("!") else int(str(from_raw)[1:], 16)
+                to_num = int(to_raw) if not str(to_raw).startswith("!") else int(str(to_raw)[1:], 16)
+            except (ValueError, TypeError):
+                continue
+            if from_num not in all_neighbor_map:
+                all_neighbor_map[from_num] = set()
+            if to_num not in all_neighbor_map:
+                all_neighbor_map[to_num] = set()
+            all_neighbor_map[from_num].add(to_num)
+            all_neighbor_map[to_num].add(from_num)
 
-            # Convert to hex ID format if numeric
-            from_id = numeric_to_hex.get(str(from_raw), str(from_raw))
-            to_id = numeric_to_hex.get(str(to_raw), str(to_raw))
-
-            if from_id not in neighbors:
-                neighbors[from_id] = set()
-            if to_id not in neighbors:
-                neighbors[to_id] = set()
-            neighbors[from_id].add(to_id)
-            neighbors[to_id].add(from_id)
-
-        # Second pass: Assign unlocated nodes based on neighbor regions
-        # Repeat until no more assignments
+        # Second pass: Assign unlocated nodes based on BIDIRECTIONAL neighbor map
+        # This catches nodes that OTHER nodes list as neighbors
         max_iterations = 10
         for _ in range(max_iterations):
             newly_assigned = []
@@ -337,19 +357,11 @@ class MeshHealthEngine:
                 if node.region:
                     continue  # Already assigned
 
-                # Count neighbor regions
-                neighbor_ids = neighbors.get(node_id_str, set())
+                # Use the BIDIRECTIONAL neighbor map
+                neighbor_nums = all_neighbor_map.get(node_num, set())
                 region_counts: dict[str, int] = {}
-                for nid in neighbor_ids:
-                    # Convert string ID to int for nodes lookup
-                    try:
-                        if nid.startswith("!"):
-                            nid_int = int(nid[1:], 16)
-                        else:
-                            nid_int = int(nid)
-                    except (ValueError, AttributeError):
-                        continue
-                    neighbor_node = nodes.get(nid_int)
+                for neighbor_num in neighbor_nums:
+                    neighbor_node = nodes.get(neighbor_num)
                     if neighbor_node and neighbor_node.region:
                         r = neighbor_node.region
                         region_counts[r] = region_counts.get(r, 0) + 1

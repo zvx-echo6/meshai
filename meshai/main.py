@@ -250,7 +250,8 @@ class MeshAI:
         # Mesh reporter (for LLM prompt injection and commands)
         if self.health_engine and self.data_store:
             from .mesh_reporter import MeshReporter
-            self.mesh_reporter = MeshReporter(self.health_engine, self.data_store)
+            mi_regions = self.config.mesh_intelligence.regions if self.config.mesh_intelligence else []
+            self.mesh_reporter = MeshReporter(self.health_engine, self.data_store, region_configs=mi_regions)
             logger.info("Mesh reporter enabled")
         else:
             self.mesh_reporter = None

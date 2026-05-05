@@ -124,69 +124,41 @@ _CITY_TO_REGION = {
 }
 
 # Mesh awareness instruction for LLM
+# Mesh awareness instruction for LLM
 _MESH_AWARENESS_PROMPT = """
 MESH DATA RESPONSE RULES (OVERRIDE brevity rules for mesh/network questions):
 
 RESPONSE STYLE:
 - Give DETAILED, data-driven responses with actual numbers
-- Talk in GEOGRAPHIC terms — reference cities, valleys, corridors people know
-- Name specific infrastructure nodes by their long name, not just shortnames
+- Talk in GEOGRAPHIC terms — use the local names and cities from REGION GEOGRAPHY below
+- Name specific infrastructure nodes by their long name
 - Include scores, percentages, node counts, battery levels, gateway counts
 - You CAN use 3-5 messages if needed — LoRa chunking handles splitting
 - No markdown formatting — plain text only
-- Be specific and data-driven. Do NOT compress to vague one-liners
-
-REGION GEOGRAPHY — use these local names and landmarks:
-
-IDAHO:
-- Northern ID: "North Idaho" or "the Panhandle" — Coeur d'Alene, Moscow, Lewiston, Sandpoint. Along I-90/US-95.
-- Central ID: Idaho backcountry — Salmon, Stanley, McCall, Challis. Remote, mountainous, very sparse. Frank Church wilderness.
-- South Western ID: "Treasure Valley" — Boise, Meridian, Nampa, Caldwell, Eagle, Mountain Home. Idaho's most populated region along I-84. Do NOT call this "southern Idaho."
-- South Central ID: "Magic Valley" — Twin Falls, Burley, Jerome, Hailey, Gooding, Shoshone, Sun Valley. Snake River Canyon corridor along I-84/US-93. When locals say "southern Idaho" they usually mean this area.
-- South Eastern ID: "Eastern Idaho" — Idaho Falls, Pocatello, Rexburg, Blackfoot. Upper Snake River Plain, gateway to Yellowstone.
-
-IMPORTANT IDAHO GEOGRAPHY:
-- "Southern Idaho" is ambiguous. Do NOT lump Treasure Valley (Boise), Magic Valley (Twin Falls), and Eastern Idaho together. They are distinct areas 100+ miles apart.
-- If someone says "southern Idaho" they most likely mean the Magic Valley (South Central ID — Twin Falls area).
-- If unclear, describe each region separately rather than grouping.
-- "Treasure Valley" always means the Boise metro area (South Western ID).
-- "Magic Valley" always means the Twin Falls area (South Central ID).
-- "Eastern Idaho" means Idaho Falls/Pocatello area (South Eastern ID).
-
-UTAH:
-- Northern UT: Ogden, Logan, Brigham City, Cache Valley. Northern Wasatch Front.
-- Central UT: "The Wasatch Front" or "Salt Lake" — Salt Lake City, Provo, Park City, Orem. About 2/3 of Utah's population lives here.
-- Eastern UT: Vernal and the Uinta Basin in the north, Moab and canyon country in the south. Dinosaur NM, Arches, Canyonlands.
-- Western UT: Tooele, Wendover. West desert, Bonneville Salt Flats. Very sparse.
-- Southern UT: "Dixie" or "Color Country" — St. George, Cedar City, Hurricane. Zion, Bryce Canyon country. Fastest growing area in Utah.
 
 ANSWERING COVERAGE QUESTIONS:
-- Reference the geographic area by local name: "Coverage across the Magic Valley from Burley through Twin Falls to Jerome..."
-- Name infrastructure nodes by long name: "Mount Harrison Router, Indian Springs Router, Two Towers, and North Shoshone relay provide backbone coverage"
-- Give avg gateways AND explain what it means: "nodes reach an average of 5.7 gateways — excellent redundancy"
-- Identify single-gateway nodes as risks: "28 nodes in the Treasure Valley only reach 1 gateway"
-- For "where do we need more infrastructure" — name the geographic area, explain how many nodes are underserved
-- Do NOT recommend infrastructure for "Unlocated" nodes — those have no known position
+- Reference geographic areas by local name from the region config
+- Name infrastructure nodes by long name
+- Give avg gateways AND explain meaning
+- Identify single-gateway nodes as risks
+- For "where do we need infrastructure" — name the geographic area, not "Unknown"
+- Do NOT recommend infrastructure for Unlocated nodes
 
 ANSWERING NODE QUESTIONS:
-- Include: hardware model, role, region with local name ("in the Magic Valley near Twin Falls"), battery status, channel utilization, TX airtime, coverage (X/Y gateways), neighbor count, recent traffic with packet breakdown
-- Name neighbors by long name
-- Compare metrics to thresholds: "18.5% channel utilization is moderate — approaching the 20% caution threshold"
-- If the node has environmental sensors, include readings
+- Include: hardware, role, region with local name, battery, channel util, TX airtime, coverage, neighbors, traffic breakdown
+- Compare metrics to thresholds
 
-ANSWERING MESH OVERVIEW QUESTIONS:
-- Lead with composite score and tier
-- Break down all 5 pillars with actual scores
-- Highlight problem areas by geographic/local name
-- Include top senders, coverage gaps, battery warnings by name
-- Include traffic trends and sensor data if available
+ANSWERING MESH OVERVIEW:
+- Lead with composite score and 5 pillars
+- Break down by region using local names
+- Highlight problems with specific nodes/areas
 
 ABOUT UNLOCATED NODES:
-- About 280 nodes have no GPS position and no neighbor data
-- These are stale, transient, or from sources that don't track position
-- Do NOT recommend infrastructure for "Unknown" or "Unlocated" areas
-- When asked about coverage gaps, focus ONLY on located regions
-- If asked about unlocated nodes specifically, explain they're nodes without position data that can't be placed on the map
+- Nodes with no GPS and no neighbor data cannot be placed on the map
+- Do NOT recommend infrastructure for these areas
+- Focus coverage gaps on located regions only
+
+IMPORTANT: Do NOT lump different regions together just because they share directional words. Each region is a distinct geographic area.
 """
 
 
@@ -630,6 +602,21 @@ class MessageRouter:
 
             # Add mesh awareness instructions
             system_prompt += _MESH_AWARENESS_PROMPT
+
+            # Build region geography from config dynamically
+            if self.config.mesh_intelligence and self.config.mesh_intelligence.regions:
+                geo_lines = ["", "REGION GEOGRAPHY (use local names when discussing these regions):"]
+                for region in self.config.mesh_intelligence.regions:
+                    local = getattr(region, "local_name", "") or ""
+                    local_str = f' "{local}"' if local else ""
+                    desc = getattr(region, "description", "") or ""
+                    desc_str = f" — {desc}" if desc else ""
+                    aliases = getattr(region, "aliases", []) or []
+                    alias_str = ""
+                    if aliases:
+                        alias_str = f'\n    People may call this: {", ".join(aliases)}'
+                    geo_lines.append(f"  - {region.name}{local_str}{desc_str}{alias_str}")
+                system_prompt += "\n".join(geo_lines)
 
             # Update mesh context tracking
             self._update_user_mesh_context(

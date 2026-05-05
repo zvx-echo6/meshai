@@ -30,6 +30,9 @@ from .sources.meshview import MeshviewSource
 
 logger = logging.getLogger(__name__)
 
+# Nodes not heard in this many days are excluded from live model
+STALE_NODE_THRESHOLD_DAYS = 7
+
 # Meshtastic role enum mapping (integer -> string)
 MESHTASTIC_ROLE_MAP = {
     0: "CLIENT",
@@ -351,6 +354,31 @@ class MeshDataStore:
     # Source Management
     # =========================================================================
 
+
+    def _purge_stale_nodes(self):
+        """Remove nodes not heard from in more than 7 days.
+
+        These nodes are stale — they inflate counts, create false
+        coverage gaps, and waste LLM tokens. They still exist in
+        SQLite historical data, just not in the live model.
+        """
+        import time
+        cutoff = time.time() - (STALE_NODE_THRESHOLD_DAYS * 86400)
+
+        stale_nums = []
+        for node_num, node in self._nodes.items():
+            if node.last_heard and node.last_heard < cutoff:
+                stale_nums.append(node_num)
+            elif not node.last_heard or node.last_heard == 0:
+                # No last_heard data at all — also consider stale
+                stale_nums.append(node_num)
+
+        for num in stale_nums:
+            del self._nodes[num]
+
+        if stale_nums:
+            logger.info(f"Purged {len(stale_nums)} stale nodes (not heard in {STALE_NODE_THRESHOLD_DAYS} days)")
+
     def refresh(self) -> bool:
         """Refresh data from all sources if interval has elapsed.
 
@@ -403,6 +431,7 @@ class MeshDataStore:
 
         if refreshed > 0:
             self._rebuild()
+            self._purge_stale_nodes()  # Remove nodes not heard in 7+ days
             self._store_snapshot()
             self._purge_old_data()
             self._last_refresh = time.time()

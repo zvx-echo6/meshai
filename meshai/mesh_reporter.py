@@ -36,21 +36,6 @@ PORTNUM_DISPLAY = {
     "ATAK_FORWARDER": "ATAK",
 }
 
-# Geographic context for region names
-REGION_CONTEXT = {
-    "South Central ID": "Magic Valley (Twin Falls area)",
-    "South Western ID": "Treasure Valley (Boise metro)",
-    "South Eastern ID": "Eastern Idaho (Idaho Falls area)",
-    "Central ID": "Idaho backcountry (Salmon area)",
-    "Northern ID": "North Idaho (Panhandle)",
-    "Northern UT": "Northern Utah (Ogden/Logan)",
-    "Central UT": "Wasatch Front (Salt Lake City)",
-    "Eastern UT": "Eastern Utah (Vernal/Moab)",
-    "Western UT": "Western Utah (Tooele)",
-    "Southern UT": "Southern Utah / Dixie (St. George)",
-}
-
-
 def _clean_portnum(portnum: str) -> str:
     """Convert raw portnum to display name."""
     return PORTNUM_DISPLAY.get(portnum, portnum.replace("_APP", "").replace("_", " ").title())
@@ -167,15 +152,28 @@ def _is_valid_temperature(temp_c: Optional[float]) -> bool:
 class MeshReporter:
     """Builds text blocks for mesh health prompt injection."""
 
-    def __init__(self, health_engine: "MeshHealthEngine", data_store: "MeshDataStore"):
+    def __init__(self, health_engine: "MeshHealthEngine", data_store: "MeshDataStore", region_configs=None):
         """Initialize reporter.
 
         Args:
             health_engine: MeshHealthEngine instance
             data_store: MeshDataStore instance
+            region_configs: Optional list of RegionAnchor configs for local names
         """
         self.health_engine = health_engine
         self.data_store = data_store
+        self._region_configs = {r.name: r for r in (region_configs or [])}
+
+    def _region_context(self, region_name: str) -> str:
+        """Get display context for a region from config."""
+        cfg = self._region_configs.get(region_name)
+        if not cfg:
+            return ""
+        local = getattr(cfg, "local_name", "") or ""
+        desc = getattr(cfg, "description", "") or ""
+        if local and desc:
+            return f"{local} ({desc})"
+        return local or desc
 
     def build_tier1_summary(self) -> str:
         """Build compact mesh summary for LLM injection (~500-800 tokens).
@@ -294,7 +292,9 @@ class MeshReporter:
         lines.append(f"MQTT Uplinks: {health.uplink_node_count} nodes")
 
         # Coverage by region - show geographic breakdown
-        all_nodes = list(self.data_store.nodes.values())
+        # MUST use health.nodes (not data_store.nodes) because region is set by health engine
+        health = self.health_engine.mesh_health
+        all_nodes = list(health.nodes.values()) if health else []
         nodes_with_gw = [n for n in all_nodes if n.avg_gateways is not None]
         if nodes_with_gw:
             total_sources = len(self.data_store._sources)
@@ -306,7 +306,7 @@ class MeshReporter:
 
             region_coverage = {}
             for n in nodes_with_gw:
-                health_node = health.nodes.get(str(n.node_num))
+                health_node = health.nodes.get(n.node_num)
                 region = health_node.region if health_node else "Unlocated"
                 if not region:
                     region = "Unlocated"
@@ -323,7 +323,7 @@ class MeshReporter:
                 single = sum(1 for c in counts if c <= 1.0)
                 flag = " !!" if avg < 2.0 else ""
                 single_str = f" ({single} 1-gw)" if single > 0 else ""
-                context = REGION_CONTEXT.get(region, "")
+                context = self._region_context(region)
                 context_str = f" ({context})" if context else ""
                 lines.append(f"    {region}{context_str}: {len(counts)} nodes, {avg:.1f} avg{single_str}{flag}")
             # Show unlocated as informational (no coverage recommendations for these)
@@ -344,7 +344,7 @@ class MeshReporter:
             rs = region.score
             flag = _tier_flag(rs.tier)
             infra_str = f"{rs.infra_online}/{rs.infra_total} infra"
-            context = REGION_CONTEXT.get(region.name, "")
+            context = self._region_context(region.name)
             context_str = f" ({context})" if context else ""
             lines.append(
                 f"  {region.name}{context_str}: {rs.composite:.0f}/100 - {infra_str}, {rs.util_percent:.0f}% util{flag}"
@@ -556,7 +556,7 @@ class MeshReporter:
             return f"REGION DETAIL: {region_name}\nRegion not found."
 
         rs = region.score
-        context = REGION_CONTEXT.get(region.name, "")
+        context = self._region_context(region.name)
         context_str = f" — {context}" if context else ""
         lines = [
             f"REGION DETAIL: {region.name}{context_str}",

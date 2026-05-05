@@ -179,11 +179,15 @@ class MeshSourceConfig:
 
 @dataclass
 class RegionAnchor:
-    """A fixed region anchor point."""
+    """A fixed region anchor point with geographic context."""
 
     name: str = ""
     lat: float = 0.0
     lon: float = 0.0
+    local_name: str = ""           # e.g., "Magic Valley"
+    description: str = ""          # e.g., "Twin Falls, Burley, Jerome along I-84/US-93"
+    aliases: list[str] = field(default_factory=list)  # e.g., ["southern Idaho", "magic valley"]
+    cities: list[str] = field(default_factory=list)   # e.g., ["Twin Falls", "Burley", "Jerome"]
 
 
 @dataclass
