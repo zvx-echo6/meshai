@@ -128,6 +128,15 @@ class UnifiedNode:
     is_mqtt_gateway: bool = False
     via_mqtt: bool = False
 
+    # Health scoring (set by MeshHealthEngine)
+    is_infrastructure: bool = False
+    health_score: float = 100.0
+    infra_score: float = 100.0
+    util_score: float = 100.0
+    coverage_score_node: float = 100.0
+    behavior_score: float = 100.0
+    power_score: float = 100.0
+
 
 @dataclass
 class UnifiedEdge:

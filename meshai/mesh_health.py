@@ -35,11 +35,12 @@ UTIL_CAUTION = 20
 UTIL_WARNING = 25
 UTIL_UNHEALTHY = 35
 
-# Pillar weights
-WEIGHT_INFRASTRUCTURE = 0.40
+# Pillar weights (5-pillar system)
+WEIGHT_INFRASTRUCTURE = 0.30
 WEIGHT_UTILIZATION = 0.25
-WEIGHT_BEHAVIOR = 0.20
-WEIGHT_POWER = 0.15
+WEIGHT_COVERAGE = 0.20
+WEIGHT_BEHAVIOR = 0.15
+WEIGHT_POWER = 0.10
 
 
 @dataclass
@@ -48,6 +49,7 @@ class HealthScore:
 
     infrastructure: float = 100.0  # 0-100
     utilization: float = 100.0  # 0-100
+    coverage: float = 100.0  # 0-100 (NEW: 5th pillar)
     behavior: float = 100.0  # 0-100
     power: float = 100.0  # 0-100
 
@@ -55,12 +57,16 @@ class HealthScore:
     infra_online: int = 0
     infra_total: int = 0
     util_percent: float = 0.0
+    coverage_avg_gateways: float = 0.0
+    coverage_single_gw_count: int = 0
+    coverage_full_count: int = 0
     flagged_nodes: int = 0
     battery_warnings: int = 0
     solar_index: float = 100.0
 
     # Flag to indicate if utilization data is available
     util_data_available: bool = False
+    coverage_data_available: bool = False
 
     @property
     def composite(self) -> float:
@@ -68,6 +74,7 @@ class HealthScore:
         return (
             self.infrastructure * WEIGHT_INFRASTRUCTURE +
             self.utilization * WEIGHT_UTILIZATION +
+            self.coverage * WEIGHT_COVERAGE +
             self.behavior * WEIGHT_BEHAVIOR +
             self.power * WEIGHT_POWER
         )
@@ -301,15 +308,18 @@ class MeshHealthEngine:
 
         return nearest
 
-    def compute(self, source_manager) -> MeshHealth:
-        """Compute mesh health from source data.
+    def compute(self, data_store) -> MeshHealth:
+        """Compute mesh health from data store.
 
         Args:
-            source_manager: MeshSourceManager with fetched data
+            data_store: MeshDataStore with aggregated mesh data
 
         Returns:
             MeshHealth with computed scores
         """
+        # Store data_store reference for coverage calculations
+        self.data_store = data_store
+        source_manager = data_store  # Alias for backwards compat with method body
         now = time.time()
         offline_threshold = now - (self.offline_threshold_hours * 3600)
 
@@ -698,6 +708,23 @@ class MeshHealthEngine:
 
         self._mesh_health = mesh_health
 
+        # Sync health scores back to UnifiedNode objects
+        if data_store:
+            for node_id_str, node_health in nodes.items():
+                try:
+                    node_num = int(node_id_str)
+                    unified = data_store.nodes.get(node_num)
+                    if unified:
+                        unified.is_infrastructure = node_health.is_infrastructure
+                        unified.health_score = node_health.score.composite
+                        unified.infra_score = node_health.score.infrastructure
+                        unified.util_score = node_health.score.utilization
+                        unified.coverage_score_node = node_health.score.coverage
+                        unified.behavior_score = node_health.score.behavior
+                        unified.power_score = node_health.score.power
+                except (ValueError, TypeError):
+                    pass
+
         # Log computation summary with data availability
         data_sources = []
         if has_packet_data:
@@ -838,18 +865,60 @@ class MeshHealthEngine:
 
         solar_index = 100.0
 
+
+        # Coverage scoring (5th pillar) - gateway redundancy
+        coverage_score = 100.0
+        coverage_avg_gw = 0.0
+        coverage_single = 0
+        coverage_full = 0
+        coverage_available = False
+
+        if hasattr(self, 'data_store') and self.data_store:
+            total_sources = len(self.data_store._sources) if hasattr(self.data_store, '_sources') else 0
+            nodes_with_coverage = []
+
+            for n in node_list:
+                node_num = n.node_num
+                unified = self.data_store.nodes.get(node_num)
+                if unified and unified.avg_gateways is not None:
+                    nodes_with_coverage.append(unified)
+
+            if nodes_with_coverage and total_sources > 0:
+                coverage_available = True
+                coverage_avg_gw = sum(u.avg_gateways for u in nodes_with_coverage) / len(nodes_with_coverage)
+                coverage_single = sum(1 for u in nodes_with_coverage if u.avg_gateways <= 1.0)
+                coverage_full = sum(1 for u in nodes_with_coverage if u.avg_gateways >= total_sources)
+
+                # Score: penalize single-gateway nodes heavily
+                coverage_ratio = coverage_avg_gw / total_sources
+                single_penalty = (coverage_single / len(nodes_with_coverage)) * 40 if nodes_with_coverage else 0
+
+                if coverage_ratio >= 1.0:
+                    coverage_score = 100.0 - single_penalty
+                elif coverage_ratio >= 0.7:
+                    coverage_score = max(0, 90.0 - single_penalty - ((1.0 - coverage_ratio) * 30))
+                elif coverage_ratio >= 0.5:
+                    coverage_score = max(0, 70.0 - single_penalty - ((0.7 - coverage_ratio) * 50))
+                else:
+                    coverage_score = max(0, 50.0 - single_penalty - ((0.5 - coverage_ratio) * 100))
+
         return HealthScore(
             infrastructure=infra_score,
             utilization=util_score,
+            coverage=coverage_score,
             behavior=behavior_score,
             power=power_score,
             infra_online=infra_online,
             infra_total=infra_total,
             util_percent=util_percent,
+            coverage_avg_gateways=coverage_avg_gw,
+            coverage_single_gw_count=coverage_single,
+            coverage_full_count=coverage_full,
             flagged_nodes=flagged_count,
             battery_warnings=battery_warnings,
             solar_index=solar_index,
             util_data_available=has_packet_data,
+            coverage_data_available=coverage_available,
         )
 
     def get_region(self, name: str) -> Optional[RegionHealth]:
