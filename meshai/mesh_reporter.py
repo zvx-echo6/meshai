@@ -177,6 +177,52 @@ class MeshReporter:
         return local or desc
 
 
+    def _find_node(self, identifier: str) -> "UnifiedNode | None":
+        """Find a node by any identifier (shortname, longname, node_num, hex ID).
+
+        Delegates to health_engine.get_node() which searches all formats.
+        """
+        return self.health_engine.get_node(identifier)
+
+    def _find_region(self, region_name: str) -> "RegionHealth | None":
+        """Find a region by name (fuzzy match).
+
+        Tries exact match, then substring, then alias from config.
+        """
+        health = self.health_engine.mesh_health
+        if not health:
+            return None
+
+        name_lower = region_name.lower().strip()
+
+        # Exact match
+        for region in health.regions:
+            if region.name.lower() == name_lower:
+                return region
+
+        # Substring match (longest region name first to avoid partial matches)
+        for region in sorted(health.regions, key=lambda r: len(r.name), reverse=True):
+            if name_lower in region.name.lower() or region.name.lower() in name_lower:
+                return region
+
+        # Check config aliases
+        for region_cfg_name, cfg in self._region_configs.items():
+            aliases = getattr(cfg, 'aliases', []) or []
+            cities = getattr(cfg, 'cities', []) or []
+            local_name = getattr(cfg, 'local_name', '') or ''
+
+            all_matches = [a.lower() for a in aliases] + [c.lower() for c in cities]
+            if local_name:
+                all_matches.append(local_name.lower())
+
+            if name_lower in all_matches or any(name_lower in m for m in all_matches):
+                # Found config match, now find the region
+                for region in health.regions:
+                    if region.name == region_cfg_name:
+                        return region
+
+        return None
+
     def _build_source_health_section(self) -> list[str]:
         """Build source health section for Tier 1."""
         lines = []
@@ -312,7 +358,7 @@ class MeshReporter:
                         single_client_nodes = [n for n in single_gw_nodes if not n.is_infrastructure]
                         lines.append(f"      Single-gw clients ({single_clients}):")
                         for scn in single_client_nodes[:10]:
-                            scn_name = _node_display_name(scn.long_name, scn.short_name, str(scn.node~um))
+                            scn_name = _node_display_name(scn.long_name, scn.short_name, str(scn.node_num))
                             src_info = f" via {scn.sources[0]}" if len(scn.sources) == 1 else ""
                             lines.append(f"        {scn_name}{src_info}")
                         if len(single_client_nodes) > 10:
@@ -592,17 +638,25 @@ class MeshReporter:
         # Infrastructure issues (offline nodes)
         for region in health.regions:
             offline_infra = []
-            for nid in region.node_ids:
+            for nid_str in region.node_ids:
+                try:
+                    nid = int(nid_str)
+                except (ValueError, TypeError):
+                    continue
                 node = health.nodes.get(nid)
                 if node and node.is_infrastructure and not node.is_online:
-                    name = _node_display_name(node.long_name, node.short_name, nid)
+                    name = _node_display_name(node.long_name, node.short_name, str(nid))
                     offline_infra.append(name)
             if offline_infra:
-                total_infra = sum(
-                    1
-                    for nid in region.node_ids
-                    if health.nodes.get(nid) and health.nodes[nid].is_infrastructure
-                )
+                total_infra = 0
+                for nid_str in region.node_ids:
+                    try:
+                        nid = int(nid_str)
+                    except (ValueError, TypeError):
+                        continue
+                    node = health.nodes.get(nid)
+                    if node and node.is_infrastructure:
+                        total_infra += 1
                 issues.append(
                     f"{region.name}: {len(offline_infra)}/{total_infra} infrastructure offline "
                     f"({', '.join(offline_infra[:3])})"
@@ -717,11 +771,15 @@ class MeshReporter:
             lines.append("Channel Utilization: No data available")
 
         # MQTT uplink stats for region
-        uplink_nodes = [
-            health.nodes.get(nid)
-            for nid in region.node_ids
-            if health.nodes.get(nid) and health.nodes[nid].uplink_enabled
-        ]
+        uplink_nodes = []
+        for nid_str in region.node_ids:
+            try:
+                nid = int(nid_str)
+            except (ValueError, TypeError):
+                continue
+            node = health.nodes.get(nid)
+            if node and node.uplink_enabled:
+                uplink_nodes.append(node)
         lines.append("")
         lines.append(f"MQTT Uplinks: {len(uplink_nodes)} nodes")
 
@@ -1085,7 +1143,7 @@ class MeshReporter:
 
             # Check if trending up
             trend_note = ""
-            if unified:
+            if node:
                 avg_7d = node.packets_sent_7d / 7 if node.packets_sent_7d else 0
                 if avg_7d > 0 and node.packets_sent_24h > avg_7d * 1.5:
                     trend_note = " (trending up vs 7d avg)"
@@ -1144,30 +1202,30 @@ class MeshReporter:
             )
 
         # Environmental recommendations
-            # Freezing temperature warning for battery nodes
-            if node.temperature is not None and node.temperature < 0:
-                if node.battery_percent is not None and node.battery_percent <= 100:
-                    recs.append(
-                        f"Temperature {node.temperature:.1f}C - below freezing reduces battery capacity 20-40%."
-                    )
-
-            # High humidity condensation risk
-            if node.humidity is not None and node.humidity > 90:
+        # Freezing temperature warning for battery nodes
+        if node.temperature is not None and node.temperature < 0:
+            if node.battery_percent is not None and node.battery_percent <= 100:
                 recs.append(
-                    f"Humidity at {node.humidity:.0f}% - condensation risk. Ensure enclosure is sealed."
+                    f"Temperature {node.temperature:.1f}C - below freezing reduces battery capacity 20-40%."
                 )
 
-            # Poor air quality
-            if node.pm2_5 is not None and node.pm2_5 > 35:
-                recs.append(
-                    f"PM2.5 at {node.pm2_5:.1f} ug/m3 - unhealthy air quality in this area."
-                )
+        # High humidity condensation risk
+        if node.humidity is not None and node.humidity > 90:
+            recs.append(
+                f"Humidity at {node.humidity:.0f}% - condensation risk. Ensure enclosure is sealed."
+            )
 
-            # High wind
-            if node.wind_speed is not None and node.wind_speed > 20:
-                recs.append(
-                    f"Wind speed {node.wind_speed:.1f} m/s - check antenna mounting and cable strain relief."
-                )
+        # Poor air quality
+        if node.pm2_5 is not None and node.pm2_5 > 35:
+            recs.append(
+                f"PM2.5 at {node.pm2_5:.1f} ug/m3 - unhealthy air quality in this area."
+            )
+
+        # High wind
+        if node.wind_speed is not None and node.wind_speed > 20:
+            recs.append(
+                f"Wind speed {node.wind_speed:.1f} m/s - check antenna mounting and cable strain relief."
+            )
 
         return recs
 
@@ -1245,11 +1303,12 @@ class MeshReporter:
         for nid_str in region.node_ids:
             try:
                 nid = int(nid_str)
-            except ValueError:
+            except (ValueError, TypeError):
                 continue
             node = health.nodes.get(nid)
             if node:
-                est = node.estimated_position_interval
+                pos_count = node.packets_by_type.get("POSITION_APP", 0)
+                est = 86400 / pos_count if pos_count > 0 else None
                 if est is not None and est < 300:
                     aggressive_interval_nodes.append(node)
         if aggressive_interval_nodes:
@@ -1262,11 +1321,15 @@ class MeshReporter:
             )
 
         # Check MQTT/uplink coverage in region
-        infra_nodes = [
-            health.nodes.get(nid)
-            for nid in region.node_ids
-            if health.nodes.get(nid) and health.nodes[nid].is_infrastructure
-        ]
+        infra_nodes = []
+        for nid_str in region.node_ids:
+            try:
+                nid = int(nid_str)
+            except (ValueError, TypeError):
+                continue
+            node = health.nodes.get(nid)
+            if node and node.is_infrastructure:
+                infra_nodes.append(node)
         uplink_count = sum(1 for n in infra_nodes if n and n.uplink_enabled)
         if infra_nodes and uplink_count == 0:
             recs.append(
