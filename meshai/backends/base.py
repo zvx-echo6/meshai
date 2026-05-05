@@ -12,7 +12,7 @@ class LLMBackend(ABC):
         self,
         messages: list[dict],
         system_prompt: str,
-        max_tokens: int = 300,
+        max_tokens: int = 8192,
         user_id: Optional[str] = None,
     ) -> str:
         """Generate a response from the LLM.

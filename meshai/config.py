@@ -94,6 +94,7 @@ class LLMConfig:
     base_url: str = "https://api.openai.com/v1"
     model: str = "gpt-4o-mini"
     timeout: int = 30
+    max_response_tokens: int = 8192  # Let LLM generate full responses; chunker handles size
 
     system_prompt: str = (
         "RESPONSE RULES:\n"

@@ -643,7 +643,7 @@ class MessageRouter:
             response = await self.llm.generate(
                 messages=history,
                 system_prompt=system_prompt,
-                max_tokens=500,
+                max_tokens=self.config.llm.max_response_tokens,
             )
         except asyncio.TimeoutError:
             logger.error("LLM request timed out")
