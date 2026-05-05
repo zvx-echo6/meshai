@@ -96,23 +96,15 @@ class LLMConfig:
     timeout: int = 30
 
     system_prompt: str = (
-        "YOUR COMMANDS (handled directly by you via DM):\n"
-        "!help — List available commands.\n"
-        "!ping — Connectivity test, responds with pong.\n"
-        "!status — Shows your version, uptime, user count, and message count.\n"
-        "!weather [location] — Weather lookup using Open-Meteo API.\n"
-        "!reset — Clears conversation history and memory.\n"
-        "!clear — Same as !reset.\n\n"
-        "YOUR ARCHITECTURE: Modular Python — pluggable LLM backends (OpenAI, Anthropic, "
-        "Google, local), per-user SQLite conversation history, rolling summary memory, "
-        "passive mesh context buffer (observes channel traffic), smart chunking for LoRa "
-        "message limits, prompt injection defense, advBBS filtering.\n\n"
         "RESPONSE RULES:\n"
         "- For casual conversation, keep responses brief (1-2 sentences).\n"
         "- For mesh health questions, give detailed data-driven responses.\n"
         "- Be concise but friendly. No markdown formatting.\n"
         "- If asked about mesh activity and no recent traffic is shown, say you haven't "
         "observed any yet.\n"
+        "- When asked about yourself or commands, answer conversationally based on "
+        "the command list provided below. Don't dump lists unless asked.\n"
+        "- You are part of the freq51 mesh.\n"
         "- When asked about yourself or commands, answer conversationally. Don't dump lists.\n"
         "- You are part of the freq51 mesh in the Twin Falls, Idaho area."
     )

@@ -268,6 +268,19 @@ class MeshReporter:
                 total_gw = len(self.data_store._sources)
                 lines.append(f"    Coverage: {len(region_gw)} nodes, avg {avg_gw:.1f}/{total_gw} gw, {single} single-gateway")
 
+                # Name single-gateway INFRASTRUCTURE nodes (critical risks)
+                if single > 0:
+                    single_gw_nodes = [n for n in region_gw if n.avg_gateways is not None and n.avg_gateways <= 1.0]
+                    single_infra = [n for n in single_gw_nodes if n.is_infrastructure]
+                    single_clients = len(single_gw_nodes) - len(single_infra)
+
+                    if single_infra:
+                        for sgn in single_infra:
+                            sgn_name = _node_display_name(sgn.long_name, sgn.short_name, str(sgn.node_num))
+                            lines.append(f"      INFRA at risk: {sgn_name} - only 1 gateway")
+                    if single_clients > 0:
+                        lines.append(f"      + {single_clients} client nodes at single gateway")
+
             env_in_region = []
             for nid_str in region.node_ids:
                 try:
@@ -306,7 +319,7 @@ class MeshReporter:
                 lines.append(f"  [OFFLINE] {name}: infra offline for {age}, {region}")
 
         critical_bat = [n for n in health.nodes.values()
-                        if n.battery_percent is not None and 0 < n.battery_percent < 10]
+                        if n.is_infrastructure and n.battery_percent is not None and 0 < n.battery_percent < 10]
         if critical_bat:
             problems_found = True
             for node in sorted(critical_bat, key=lambda n: n.battery_percent):
@@ -316,7 +329,7 @@ class MeshReporter:
                 lines.append(f"  [CRITICAL] {name}: battery {node.battery_percent:.0f}%{trend}, {region}")
 
         low_bat = [n for n in health.nodes.values()
-                   if n.battery_percent is not None and 10 <= n.battery_percent < 20]
+                   if n.is_infrastructure and n.battery_percent is not None and 10 <= n.battery_percent < 20]
         if low_bat:
             problems_found = True
             for node in sorted(low_bat, key=lambda n: n.battery_percent)[:5]:
@@ -375,6 +388,16 @@ class MeshReporter:
             lines.append(f"  Full coverage ({total_sources}/{total_sources} gw): {full_gw} nodes")
             lines.append(f"  Single gateway (1/{total_sources} gw): {single_gw} nodes - at risk if gateway drops")
 
+            # Name single-gateway infra nodes (these are critical risks)
+            single_gw_infra = [n for n in nodes_with_gw
+                              if n.avg_gateways is not None and n.avg_gateways <= 1.0 and n.is_infrastructure]
+            if single_gw_infra:
+                lines.append(f"  Single-gateway INFRASTRUCTURE (critical - if gateway drops, these go dark):")
+                for n in single_gw_infra:
+                    name = _node_display_name(n.long_name, n.short_name, str(n.node_num))
+                    region = n.region or "Unlocated"
+                    lines.append(f"    {name} [{region}]")
+
         if health.has_traceroute_data:
             lines.append("")
             lines.append(f"NETWORK TOPOLOGY: {health.traceroute_count} traceroutes, avg {health.avg_hop_count:.1f} hops, max {health.max_hop_count}")
@@ -397,7 +420,7 @@ class MeshReporter:
             if pb["ok"]: parts.append(f"{pb['ok']} battery ok")
             if pb["low"]: parts.append(f"{pb['low']} battery low")
             if pb["critical"]: parts.append(f"{pb['critical']} battery critical")
-            lines.append(f"POWER: {', '.join(parts)}")
+            lines.append(f"POWER (infra): {', '.join(parts)}")
 
         lines.append("")
         lines.append(f"TOTAL: {health.total_nodes} nodes across {health.total_regions} regions.")
@@ -420,6 +443,8 @@ class MeshReporter:
         critical = 0
 
         for node in health.nodes.values():
+            if not node.is_infrastructure:
+                continue  # Only track power for infrastructure
             if node.battery_percent is None:
                 continue
             if node.battery_percent > 100:

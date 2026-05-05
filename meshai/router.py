@@ -498,6 +498,31 @@ class MessageRouter:
 
         system_prompt = identity + static_prompt
 
+        # 2b. Dynamic command list (only shows enabled commands)
+        if self.dispatcher:
+            commands = self.dispatcher.get_commands()
+            if commands:
+                # Deduplicate aliases
+                seen_names = set()
+                unique_commands = []
+                for cmd in commands:
+                    name_lower = cmd.name.lower()
+                    if name_lower not in seen_names:
+                        seen_names.add(name_lower)
+                        unique_commands.append(cmd)
+
+                cmd_lines = [
+                    "\nYOUR COMMANDS (only mention these - do NOT mention any commands not listed here):"
+                ]
+                for cmd in sorted(unique_commands, key=lambda c: c.name):
+                    cmd_lines.append(f"  !{cmd.name} - {cmd.description}")
+                cmd_lines.append("")
+                cmd_lines.append(
+                    "CRITICAL: ONLY mention commands in the list above when asked about commands. "
+                    "If a command is not listed here, it does NOT exist. Do not invent commands."
+                )
+                system_prompt += "\n".join(cmd_lines)
+
         # 3. MeshMonitor info (only when enabled)
         if (
             self.meshmonitor_sync
@@ -509,7 +534,7 @@ class MessageRouter:
                 "meshtasticd node. MeshMonitor handles web dashboard, maps, telemetry, "
                 "traceroutes, security scanning, and auto-responder commands. Its trigger "
                 "commands are listed below ??? if someone asks what commands are available, "
-                "mention both yours and MeshMonitor's. If someone asks where to get "
+                "ONLY list YOUR commands from YOUR COMMANDS above. If someone asks where to get "
                 "MeshMonitor, direct them to github.com/Yeraze/meshmonitor"
             )
             system_prompt += meshmonitor_intro
