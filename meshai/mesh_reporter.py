@@ -760,7 +760,7 @@ class MeshReporter:
             f"ID: !{node.node_num:08x} (dec: {node.node_num})",
             f"Hardware: {node.hw_model or 'Unknown'}",
             f"Role: {node.role} ({'Infrastructure' if node.is_infrastructure else 'Client'})",
-            f"Region: {node.region or 'Unknown'}{' — ' + REGION_CONTEXT.get(node.region, '') if node.region and REGION_CONTEXT.get(node.region) else ''} / Locality: {node.locality or 'Unknown'}",
+            f"Region: {node.region or 'Unknown'}{' — ' + self._region_context(node.region) if node.region and self._region_context(node.region) else ''} / Locality: {node.locality or 'Unknown'}",
         ]
 
         if node.latitude and node.longitude:

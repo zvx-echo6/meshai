@@ -88,40 +88,7 @@ _MESH_PHRASES = [
 ]
 
 # City name to region mapping (hardcoded fallback)
-_CITY_TO_REGION = {
-    # Idaho
-    "twin falls": "South Central ID",
-    "boise": "South Western ID",
-    "nampa": "South Western ID",
-    "meridian": "South Western ID",
-    "caldwell": "South Western ID",
-    "idaho falls": "South Eastern ID",
-    "pocatello": "South Eastern ID",
-    "coeur d'alene": "Northern ID",
-    "cda": "Northern ID",
-    "post falls": "Northern ID",
-    "moscow": "Northern ID",
-    "lewiston": "Northern ID",
-    "salmon": "Central ID",
-    "sun valley": "Central ID",
-    "ketchum": "Central ID",
-    # Utah
-    "ogden": "Northern UT",
-    "logan": "Northern UT",
-    "salt lake": "Central UT",
-    "salt lake city": "Central UT",
-    "slc": "Central UT",
-    "provo": "Central UT",
-    "orem": "Central UT",
-    "vernal": "Eastern UT",
-    "moab": "Eastern UT",
-    "price": "Eastern UT",
-    "tooele": "Western UT",
-    "wendover": "Western UT",
-    "st george": "Southern UT",
-    "st. george": "Southern UT",
-    "cedar city": "Southern UT",
-}
+# City/alias mapping now built from config - see _build_alias_map()
 
 # Mesh awareness instruction for LLM
 # Mesh awareness instruction for LLM
@@ -242,6 +209,28 @@ class MessageRouter:
             region_names = [r.name for r in self.health_engine.regions]
             self._region_abbrevs = _build_region_abbreviations(region_names)
             logger.debug(f"Built region abbreviations: {self._region_abbrevs}")
+
+        # Build city/alias mapping from config
+        self._alias_map = self._build_alias_map()
+        if self._alias_map:
+            logger.debug(f"Built alias map with {len(self._alias_map)} entries")
+
+    def _build_alias_map(self) -> dict[str, str]:
+        """Build city/alias to region mapping from config."""
+        alias_map = {}
+        if self.config.mesh_intelligence and self.config.mesh_intelligence.regions:
+            for region in self.config.mesh_intelligence.regions:
+                # Add aliases
+                for alias in (getattr(region, 'aliases', []) or []):
+                    alias_map[alias.lower()] = region.name
+                # Add cities  
+                for city in (getattr(region, 'cities', []) or []):
+                    alias_map[city.lower()] = region.name
+                # Add local_name
+                local = getattr(region, 'local_name', '') or ''
+                if local:
+                    alias_map[local.lower()] = region.name
+        return alias_map
 
     def should_respond(self, message: MeshMessage) -> bool:
         """Determine if we should respond to this message.
@@ -418,9 +407,9 @@ class MessageRouter:
                 if re.search(pattern, msg_lower):
                     return ("region", region_name)
 
-            # 2. Check city names
-            for city, region_name in _CITY_TO_REGION.items():
-                if city in msg_lower:
+            # 2. Check city names and aliases from config
+            for alias, region_name in self._alias_map.items():
+                if alias in msg_lower:
                     return ("region", region_name)
 
             # 3. Full region name matching (SORTED BY LENGTH - longest first)
