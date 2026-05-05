@@ -297,6 +297,8 @@ class MeshReporter:
         lines.append("REGIONS:")
 
         for region in health.regions:
+            if not region.node_ids:
+                continue
             rs = region.score
             context = self._region_context(region.name)
             context_str = f" - {context}" if context else ""
@@ -708,6 +710,8 @@ class MeshReporter:
 
         # Utilization issues
         for region in health.regions:
+            if not region.node_ids:
+                continue
             if region.score.util_percent >= 25:
                 issues.append(
                     f"{region.name}: channel utilization at {region.score.util_percent:.0f}% (High)"
@@ -1491,33 +1495,120 @@ class MeshReporter:
         return recs
 
     def build_lora_compact(self, scope: str, scope_value: str = None) -> str:
-        """Build LoRa-optimized compact summary for !health command."""
+        """Build LoRa-optimized summary with personality for !health command."""
         health = self.health_engine.mesh_health
         if not health:
-            return "Mesh: No data"
+            return "📡 No mesh data yet."
+
         if scope == "region" and scope_value:
             region = self._find_region(scope_value)
             if not region:
-                return f"Region '{scope_value}' not found"
+                return f"Region '{scope_value}' not found."
+            return self._region_lora_compact(region)
+
+        if scope == "node" and scope_value:
+            return self.build_node_compact(scope_value)
+
+        s = health.score
+
+        if s.composite >= 90:
+            header = f"📡 freq51 looking great — {s.composite:.0f}/100"
+        elif s.composite >= 75:
+            header = f"📡 freq51 running solid — {s.composite:.0f}/100"
+        elif s.composite >= 60:
+            header = f"📡 freq51 needs attention — {s.composite:.0f}/100"
+        else:
+            header = f"🚨 freq51 struggling — {s.composite:.0f}/100"
+
+        lines = [header, ""]
+
+        offline_infra = [n for n in health.nodes.values() if n.is_infrastructure and not n.is_online]
+        if offline_infra:
+            offline_names = ", ".join(n.short_name or str(n.node_num) for n in offline_infra[:3])
+            more = f" +{len(offline_infra)-3}" if len(offline_infra) > 3 else ""
+            lines.append(f"🏗️ {s.infra_online}/{s.infra_total} routers up")
+            lines.append(f"  ❌ Down: {offline_names}{more}")
+        else:
+            lines.append(f"🏗️ All {s.infra_total} routers up ✅")
+
+        nodes_with_gw = [n for n in health.nodes.values() if n.avg_gateways is not None]
+        if nodes_with_gw:
+            total_sources = len(self.data_store._sources)
+            full = sum(1 for n in nodes_with_gw if n.avg_gateways >= total_sources)
+            single = sum(1 for n in nodes_with_gw if n.avg_gateways <= 1.0)
+            if single > 0:
+                lines.append(f"📶 {full} nodes full coverage, {single} on thin ice with 1 gw")
+            else:
+                lines.append(f"📶 {full} nodes full coverage ✅")
+
+        high_util = [n for n in health.nodes.values()
+                     if n.channel_utilization is not None and n.channel_utilization > 15]
+        if high_util:
+            worst = max(high_util, key=lambda n: n.channel_utilization)
+            lines.append(f"🔥 {worst.short_name} running hot at {worst.channel_utilization:.0f}% util")
+
+        infra_nodes = [n for n in health.nodes.values() if n.is_infrastructure]
+        bat_low = [n for n in infra_nodes if n.battery_percent is not None and 0 < n.battery_percent < 20]
+        if bat_low:
+            low_names = ", ".join(n.short_name for n in bat_low)
+            lines.append(f"🔋 ⚠️ {low_names} low battery")
+        else:
+            lines.append(f"🔋 All infra powered up ✅")
+
+        env_nodes = [n for n in health.nodes.values() if n.has_environment_sensor]
+        if env_nodes:
+            temps = [n.temperature for n in env_nodes if _is_valid_temperature(n.temperature)]
+            if temps:
+                lines.append(f"🌡️ {min(temps):.0f}–{max(temps):.0f}°C across {len(env_nodes)} sensors")
+
+        lines.append("")
+        region_parts = []
+        for region in health.regions:
+            if not region.node_ids:
+                continue
             rs = region.score
             context = self._region_context(region.name)
             name = context.split("(")[0].strip() if context else region.name
-            return f"{name} {rs.composite:.0f}/100 | {rs.infra_online}/{rs.infra_total} infra | {rs.util_percent:.0f}% util"
-        if scope == "node" and scope_value:
-            return self.build_node_compact(scope_value)
-        s = health.score
-        lines = [f"Mesh {s.composite:.0f}/100 | {s.infra_online}/{s.infra_total} infra | {s.util_percent:.0f}% util"]
-        for region in health.regions:
-            if region.score.composite < 60:
-                offline = region.score.infra_total - region.score.infra_online
-                context = self._region_context(region.name)
-                name = context.split("(")[0].strip() if context else region.name
-                lines.append(f"! {name} {region.score.composite:.0f}/100 - {offline} infra offline")
-        battery_warnings = self.health_engine.get_battery_warnings()
-        for node in battery_warnings[:2]:
-            if node.is_infrastructure:
-                lines.append(f"! {node.short_name or str(node.node_num)} bat {node.battery_percent:.0f}%")
-        return "\n".join(lines[:5])
+            if rs.composite >= 90:
+                region_parts.append(f"{name} ✅")
+            elif rs.composite >= 70:
+                region_parts.append(f"{name} ⚠️")
+            else:
+                region_parts.append(f"{name} ❌")
+        if region_parts:
+            lines.append(" | ".join(region_parts))
+
+        return "\n".join(lines)
+
+    def _region_lora_compact(self, region) -> str:
+        """Compact region display for !region [name]."""
+        rs = region.score
+        context = self._region_context(region.name)
+        name = context.split("(")[0].strip() if context else region.name
+
+        if rs.composite >= 90:
+            header = f"📡 {name} looking good — {rs.composite:.0f}/100"
+        elif rs.composite >= 70:
+            header = f"📡 {name} needs attention — {rs.composite:.0f}/100"
+        else:
+            header = f"🚨 {name} in trouble — {rs.composite:.0f}/100"
+
+        lines = [header]
+        lines.append(f"🏗️ {rs.infra_online}/{rs.infra_total} infra | 📡 {rs.util_percent:.0f}% util")
+
+        offline = []
+        for nid_str in region.node_ids:
+            try:
+                nid = int(nid_str)
+            except (ValueError, TypeError):
+                continue
+            node = self.health_engine.mesh_health.nodes.get(nid)
+            if node and node.is_infrastructure and not node.is_online:
+                offline.append(node.short_name or str(nid))
+        if offline:
+            lines.append(f"  ❌ Down: {', '.join(offline)}")
+
+        return "\n".join(lines)
 
     def list_regions_compact(self) -> str:
         """List all regions with scores for !region command."""
@@ -1526,6 +1617,8 @@ class MeshReporter:
             return "No regions configured."
         lines = ["Regions:"]
         for region in health.regions:
+            if not region.node_ids:
+                continue
             s = region.score
             flag = _tier_flag(s.tier)
             context = self._region_context(region.name)
