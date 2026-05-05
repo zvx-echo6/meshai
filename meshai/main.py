@@ -295,7 +295,7 @@ class MeshAI:
             context=self.context,
             meshmonitor_sync=self.meshmonitor_sync,
             knowledge=self.knowledge,
-            data_store=self.data_store,
+            source_manager=self.data_store,
             health_engine=self.health_engine,
             mesh_reporter=self.mesh_reporter,
         )
