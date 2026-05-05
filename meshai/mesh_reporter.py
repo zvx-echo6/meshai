@@ -282,6 +282,11 @@ class MeshReporter:
 
         score = health.score
 
+        # Get AIDA's position for distance calculations
+        aida_node = health.nodes.get(0x27780c47)  # AIDA-N2
+        aida_lat = aida_node.latitude if aida_node else None
+        aida_lon = aida_node.longitude if aida_node else None
+
         lines = [
             f"LIVE MESH HEALTH DATA (as of {age_str}):",
             "",
@@ -343,6 +348,10 @@ class MeshReporter:
                         parts.append(f"{node.packets_sent_24h} pkts/24h")
                     if node.uplink_enabled:
                         parts.append("MQTT")
+
+                    if aida_lat and aida_lon and node.latitude and node.longitude and node.node_num != 0x27780c47:
+                        km = _haversine_km(node.latitude, node.longitude, aida_lat, aida_lon)
+                        parts.append(f"{_format_distance(km)} from AIDA")
 
                     lines.append(f"      [{status}] {name}: {', '.join(parts)}")
             else:
@@ -1511,25 +1520,33 @@ class MeshReporter:
 
         s = health.score
 
-        if s.composite >= 90:
-            header = f"📡 freq51 looking great — {s.composite:.0f}/100"
+        # Color dot — no numbers shown
+        if s.composite >= 100:
+            dot = "🔵"
+            mood = "perfect"
         elif s.composite >= 75:
-            header = f"📡 freq51 running solid — {s.composite:.0f}/100"
-        elif s.composite >= 60:
-            header = f"📡 freq51 needs attention — {s.composite:.0f}/100"
+            dot = "🟢"
+            mood = "healthy"
+        elif s.composite >= 50:
+            dot = "🟠"
+            mood = "needs attention"
         else:
-            header = f"🚨 freq51 struggling — {s.composite:.0f}/100"
+            dot = "🔴"
+            mood = "critical"
 
-        lines = [header, ""]
+        # Each line ends with period so chunker sends each as separate message
+        lines = [f"📡 freq51 {dot} {mood}."]
 
         offline_infra = [n for n in health.nodes.values() if n.is_infrastructure and not n.is_online]
         if offline_infra:
-            offline_names = ", ".join(n.short_name or str(n.node_num) for n in offline_infra[:3])
+            offline_names = ", ".join(
+                (n.long_name or n.short_name or str(n.node_num)) for n in offline_infra[:3]
+            )
             more = f" +{len(offline_infra)-3}" if len(offline_infra) > 3 else ""
-            lines.append(f"🏗️ {s.infra_online}/{s.infra_total} routers up")
-            lines.append(f"  ❌ Down: {offline_names}{more}")
+            lines.append(f"🏗️ {s.infra_online}/{s.infra_total} routers up.")
+            lines.append(f"❌ Down: {offline_names}{more}.")
         else:
-            lines.append(f"🏗️ All {s.infra_total} routers up ✅")
+            lines.append(f"🏗️ All {s.infra_total} routers up ✅.")
 
         nodes_with_gw = [n for n in health.nodes.values() if n.avg_gateways is not None]
         if nodes_with_gw:
@@ -1537,31 +1554,31 @@ class MeshReporter:
             full = sum(1 for n in nodes_with_gw if n.avg_gateways >= total_sources)
             single = sum(1 for n in nodes_with_gw if n.avg_gateways <= 1.0)
             if single > 0:
-                lines.append(f"📶 {full} nodes full coverage, {single} on thin ice with 1 gw")
+                lines.append(f"📶 {full} nodes full coverage, {single} on thin ice with 1 gw.")
             else:
-                lines.append(f"📶 {full} nodes full coverage ✅")
+                lines.append(f"📶 {full} nodes full coverage ✅.")
 
         high_util = [n for n in health.nodes.values()
                      if n.channel_utilization is not None and n.channel_utilization > 15]
         if high_util:
             worst = max(high_util, key=lambda n: n.channel_utilization)
-            lines.append(f"🔥 {worst.short_name} running hot at {worst.channel_utilization:.0f}% util")
+            worst_name = worst.long_name or worst.short_name or str(worst.node_num)
+            lines.append(f"🔥 {worst_name} running hot at {worst.channel_utilization:.0f}% util.")
 
         infra_nodes = [n for n in health.nodes.values() if n.is_infrastructure]
         bat_low = [n for n in infra_nodes if n.battery_percent is not None and 0 < n.battery_percent < 20]
         if bat_low:
-            low_names = ", ".join(n.short_name for n in bat_low)
-            lines.append(f"🔋 ⚠️ {low_names} low battery")
+            low_names = ", ".join(n.long_name or n.short_name or str(n.node_num) for n in bat_low)
+            lines.append(f"🔋 ⚠️ {low_names} low battery.")
         else:
-            lines.append(f"🔋 All infra powered up ✅")
+            lines.append(f"🔋 All infra powered up ✅.")
 
         env_nodes = [n for n in health.nodes.values() if n.has_environment_sensor]
         if env_nodes:
             temps = [n.temperature for n in env_nodes if _is_valid_temperature(n.temperature)]
             if temps:
-                lines.append(f"🌡️ {min(temps):.0f}–{max(temps):.0f}°C across {len(env_nodes)} sensors")
+                lines.append(f"🌡️ {min(temps):.0f}–{max(temps):.0f}°C across {len(env_nodes)} sensors.")
 
-        lines.append("")
         region_parts = []
         for region in health.regions:
             if not region.node_ids:
@@ -1569,14 +1586,16 @@ class MeshReporter:
             rs = region.score
             context = self._region_context(region.name)
             name = context.split("(")[0].strip() if context else region.name
-            if rs.composite >= 90:
-                region_parts.append(f"{name} ✅")
-            elif rs.composite >= 70:
-                region_parts.append(f"{name} ⚠️")
+            if rs.composite >= 100:
+                region_parts.append(f"{name} 🔵")
+            elif rs.composite >= 75:
+                region_parts.append(f"{name} 🟢")
+            elif rs.composite >= 50:
+                region_parts.append(f"{name} 🟠")
             else:
-                region_parts.append(f"{name} ❌")
+                region_parts.append(f"{name} 🔴")
         if region_parts:
-            lines.append(" | ".join(region_parts))
+            lines.append(" | ".join(region_parts) + ".")
 
         return "\n".join(lines)
 
@@ -1586,15 +1605,17 @@ class MeshReporter:
         context = self._region_context(region.name)
         name = context.split("(")[0].strip() if context else region.name
 
-        if rs.composite >= 90:
-            header = f"📡 {name} looking good — {rs.composite:.0f}/100"
-        elif rs.composite >= 70:
-            header = f"📡 {name} needs attention — {rs.composite:.0f}/100"
+        if rs.composite >= 100:
+            dot = "🔵"
+        elif rs.composite >= 75:
+            dot = "🟢"
+        elif rs.composite >= 50:
+            dot = "🟠"
         else:
-            header = f"🚨 {name} in trouble — {rs.composite:.0f}/100"
+            dot = "🔴"
 
-        lines = [header]
-        lines.append(f"🏗️ {rs.infra_online}/{rs.infra_total} infra | 📡 {rs.util_percent:.0f}% util")
+        lines = [f"📡 {name} {dot}."]
+        lines.append(f"🏗️ {rs.infra_online}/{rs.infra_total} infra | 📡 {rs.util_percent:.0f}% util.")
 
         offline = []
         for nid_str in region.node_ids:
@@ -1604,9 +1625,9 @@ class MeshReporter:
                 continue
             node = self.health_engine.mesh_health.nodes.get(nid)
             if node and node.is_infrastructure and not node.is_online:
-                offline.append(node.short_name or str(nid))
+                offline.append(node.long_name or node.short_name or str(nid))
         if offline:
-            lines.append(f"  ❌ Down: {', '.join(offline)}")
+            lines.append(f"❌ Down: {', '.join(offline)}.")
 
         return "\n".join(lines)
 

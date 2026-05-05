@@ -465,6 +465,54 @@ class MessageRouter:
                 ctx["last_was_mesh"] = False
                 ctx["last_scope"] = ("mesh", None)
 
+    def _try_compute_distance(self, query: str) -> str:
+        """Extract two node names from a distance question and compute distance."""
+        if not self.mesh_reporter:
+            return ""
+
+        health = self.mesh_reporter.health_engine.mesh_health
+        if not health:
+            return ""
+
+        query_lower = query.lower()
+
+        # Build name -> node lookup
+        node_names = {}
+        for node in health.nodes.values():
+            if node.short_name:
+                node_names[node.short_name.lower()] = node
+            if node.long_name:
+                node_names[node.long_name.lower()] = node
+
+        # AIDA aliases
+        aida_node = health.nodes.get(0x27780c47)
+        if aida_node:
+            for alias in ["aida", "aida-n2", "me", "my node", "yourself", "your position", "you"]:
+                node_names[alias] = aida_node
+
+        # Find mentioned nodes (longest names first)
+        found_nodes = []
+        for name in sorted(node_names.keys(), key=len, reverse=True):
+            if name in query_lower and len(name) >= 2:
+                node = node_names[name]
+                if not any(n.node_num == node.node_num for n in found_nodes):
+                    found_nodes.append(node)
+                if len(found_nodes) >= 2:
+                    break
+
+        if len(found_nodes) == 2:
+            return self.mesh_reporter.build_distance(
+                str(found_nodes[0].node_num),
+                str(found_nodes[1].node_num)
+            )
+        elif len(found_nodes) == 1 and aida_node:
+            return self.mesh_reporter.build_distance(
+                str(found_nodes[0].node_num),
+                str(aida_node.node_num)
+            )
+
+        return ""
+
     async def generate_llm_response(self, message: MeshMessage, query: str) -> str:
         """Generate LLM response for a message.
 
@@ -641,6 +689,13 @@ class MessageRouter:
 
         # DEBUG: Log system prompt status
         logger.debug(f"System prompt length: {len(system_prompt)} chars")
+
+        # Detect distance questions and inject computed distance
+        distance_keywords = ["how far", "distance", "how close", "miles from", "km from", "away from"]
+        if any(kw in query.lower() for kw in distance_keywords):
+            distance_result = self._try_compute_distance(query)
+            if distance_result:
+                system_prompt += f"\n\nDISTANCE CALCULATION:\n{distance_result}\n"
 
         try:
             response = await self.llm.generate(
