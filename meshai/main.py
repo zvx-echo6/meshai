@@ -39,9 +39,11 @@ class MeshAI:
         self.context: Optional[MeshContext] = None
         self.meshmonitor_sync = None
         self.knowledge = None
-        self.source_manager = None
+        self.data_store = None  # Replaces source_manager
         self.health_engine = None
         self.mesh_reporter = None
+        self.subscription_manager = None
+        self._last_sub_check: float = 0.0
         self.router: Optional[MessageRouter] = None
         self.responder: Optional[Responder] = None
         self._running = False
@@ -83,13 +85,19 @@ class MeshAI:
             if self.meshmonitor_sync:
                 self.meshmonitor_sync.maybe_refresh()
 
-            # Periodic mesh source refresh and health computation
-            if self.source_manager:
-                refreshed = self.source_manager.refresh_all()
-                # Recompute health after source refresh
-                if refreshed > 0 and self.health_engine:
-                    self.health_engine.compute(self.source_manager)
+            # Periodic data store refresh and health computation
+            if self.data_store:
+                refreshed = self.data_store.refresh()
+                # Recompute health after refresh
+                if refreshed and self.health_engine:
+                    self.health_engine.compute(self.data_store)
                     self._last_health_compute = time.time()
+
+            # Check scheduled subscriptions (every 60 seconds)
+            if self.subscription_manager and self.mesh_reporter:
+                if time.time() - self._last_sub_check >= 60:
+                    await self._check_scheduled_subs()
+                    self._last_sub_check = time.time()
 
             # Periodic cleanup
             if time.time() - self._last_cleanup >= 3600:
@@ -113,6 +121,10 @@ class MeshAI:
             await self.llm.close()
         if self.knowledge:
             self.knowledge.close()
+        if self.data_store:
+            self.data_store.close()
+        if self.subscription_manager:
+            self.subscription_manager.close()
 
         self._remove_pid()
         logger.info("MeshAI stopped")
@@ -184,15 +196,22 @@ class MeshAI:
         else:
             self.meshmonitor_sync = None
 
-        # Mesh data sources
-        enabled_sources = [s for s in self.config.mesh_sources if s.enabled]
+        # Mesh data store (replaces MeshSourceManager)
+        # mesh_sources may be dicts or MeshSourceConfig objects depending on config version
+        enabled_sources = [
+            s for s in self.config.mesh_sources
+            if (s.enabled if hasattr(s, 'enabled') else s.get('enabled', True))
+        ]
         if enabled_sources:
-            from .mesh_sources import MeshSourceManager
-            self.source_manager = MeshSourceManager(enabled_sources)
-            # Initial fetch
-            self.source_manager.refresh_all()
+            from .mesh_data_store import MeshDataStore
+            self.data_store = MeshDataStore(
+                source_configs=enabled_sources,
+                db_path="/data/mesh_history.db",
+            )
+            # Initial fetch and backfill
+            self.data_store.force_refresh()
             # Log status
-            for status in self.source_manager.get_status():
+            for status in self.data_store.get_status():
                 if status["is_loaded"]:
                     logger.info(
                         f"Mesh source '{status['name']}' ({status['type']}): "
@@ -204,11 +223,11 @@ class MeshAI:
                         f"failed - {status.get('last_error', 'unknown error')}"
                     )
         else:
-            self.source_manager = None
+            self.data_store = None
 
         # Mesh health engine
         mi_cfg = self.config.mesh_intelligence
-        if mi_cfg.enabled and self.source_manager:
+        if mi_cfg.enabled and self.data_store:
             from .mesh_health import MeshHealthEngine
             self.health_engine = MeshHealthEngine(
                 regions=mi_cfg.regions,
@@ -218,7 +237,7 @@ class MeshAI:
                 battery_warning_percent=mi_cfg.battery_warning_percent,
             )
             # Initial health computation
-            mesh_health = self.health_engine.compute(self.source_manager)
+            mesh_health = self.health_engine.compute(self.data_store)
             self._last_health_compute = time.time()
             logger.info(
                 f"Mesh intelligence enabled: {mesh_health.total_nodes} nodes, "
@@ -229,21 +248,33 @@ class MeshAI:
             self.health_engine = None
 
         # Mesh reporter (for LLM prompt injection and commands)
-        if self.health_engine and self.source_manager:
+        if self.health_engine and self.data_store:
             from .mesh_reporter import MeshReporter
-            self.mesh_reporter = MeshReporter(self.health_engine, self.source_manager)
+            self.mesh_reporter = MeshReporter(self.health_engine, self.data_store)
             logger.info("Mesh reporter enabled")
         else:
             self.mesh_reporter = None
 
-        # Knowledge base
+        # Subscription manager (uses same db as data_store)
+        if self.data_store:
+            from .subscriptions import SubscriptionManager
+            self.subscription_manager = SubscriptionManager(db_path="/data/mesh_history.db")
+            logger.info("Subscription manager enabled")
+        else:
+            self.subscription_manager = None
+
+        # Knowledge base (optional - gracefully degrade if deps missing)
         kb_cfg = self.config.knowledge
         if kb_cfg.enabled and kb_cfg.db_path:
-            from .knowledge import KnowledgeSearch
-            self.knowledge = KnowledgeSearch(
-                db_path=kb_cfg.db_path,
-                top_k=kb_cfg.top_k,
-            )
+            try:
+                from .knowledge import KnowledgeSearch
+                self.knowledge = KnowledgeSearch(
+                    db_path=kb_cfg.db_path,
+                    top_k=kb_cfg.top_k,
+                )
+            except ImportError as e:
+                logger.warning(f"Knowledge base disabled - missing dependencies: {e}")
+                self.knowledge = None
         else:
             self.knowledge = None
 
@@ -253,6 +284,9 @@ class MeshAI:
             disabled_commands=self.config.commands.disabled_commands,
             custom_commands=self.config.commands.custom_commands,
             mesh_reporter=self.mesh_reporter,
+            data_store=self.data_store,
+            health_engine=self.health_engine,
+            subscription_manager=self.subscription_manager,
         )
 
         # Message router
@@ -261,7 +295,7 @@ class MeshAI:
             context=self.context,
             meshmonitor_sync=self.meshmonitor_sync,
             knowledge=self.knowledge,
-            source_manager=self.source_manager,
+            data_store=self.data_store,
             health_engine=self.health_engine,
             mesh_reporter=self.mesh_reporter,
         )
@@ -372,6 +406,80 @@ class MeshAI:
         pid_file = Path("/tmp/meshai.pid")
         if pid_file.exists():
             pid_file.unlink()
+
+    async def _check_scheduled_subs(self) -> None:
+        """Check for and deliver due scheduled reports."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/Boise")
+        now = datetime.now(tz)
+        current_hhmm = now.strftime("%H%M")
+        current_day = now.strftime("%a").lower()
+
+        due_subs = self.subscription_manager.get_due_subscriptions(current_hhmm, current_day)
+
+        for sub in due_subs:
+            try:
+                # Generate report based on scope
+                report = self._generate_sub_report(sub)
+                if not report:
+                    continue
+
+                # Send DM to subscriber
+                user_id = sub["user_id"]
+                await self._send_sub_dm(user_id, report)
+
+                # Mark as sent
+                self.subscription_manager.mark_sent(sub["id"])
+                logger.info(f"Delivered {sub['sub_type']} report to {user_id}")
+
+            except Exception as e:
+                logger.error(f"Error delivering subscription {sub['id']}: {e}")
+
+    def _generate_sub_report(self, sub: dict) -> str:
+        """Generate report content for a subscription."""
+        if not self.mesh_reporter:
+            return None
+
+        sub_type = sub["sub_type"]
+        scope_type = sub.get("scope_type", "mesh")
+        scope_value = sub.get("scope_value")
+
+        if scope_type == "region" and scope_value:
+            # Region-scoped report
+            region = self.mesh_reporter._find_region(scope_value)
+            if region:
+                return self.mesh_reporter.build_region_compact(region.name)
+            return None
+        elif scope_type == "node" and scope_value:
+            # Node-scoped report
+            return self.mesh_reporter.build_node_compact(scope_value)
+        else:
+            # Mesh-wide report
+            return self.mesh_reporter.build_lora_compact(scope="mesh")
+
+    async def _send_sub_dm(self, node_num: str, message: str) -> None:
+        """Send a subscription DM to a node."""
+        if not self.connector:
+            return
+
+        # Convert node_num to destination format
+        try:
+            dest = int(node_num)
+        except ValueError:
+            dest = node_num
+
+        # Send via responder for proper chunking
+        if self.responder:
+            await self.responder.send_response(
+                message,
+                destination=dest,
+                channel=0,  # DM channel
+            )
+        else:
+            # Fallback to direct send
+            self.connector.send_message(message, destination=dest)
 
 
 def setup_logging(verbose: bool = False) -> None:
