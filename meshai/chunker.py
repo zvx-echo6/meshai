@@ -24,12 +24,25 @@ CONTINUATION_PROMPT = "Want me to keep going?"
 
 
 def split_sentences(text: str) -> list[str]:
-    """Split text into sentences, preserving abbreviations and decimals."""
-    # Split on . ! ? followed by space or end of string
-    # But not on decimals (4.8) or common abbreviations (e.g. Dr. Mr. etc.)
-    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-    # Filter empty strings
-    return [s.strip() for s in sentences if s.strip()]
+    """Split text into sentences on periods, newlines, or question marks."""
+    # First split on newlines (each line is a chunk candidate)
+    lines = text.strip().split('\n')
+
+    sentences = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        # Then split on sentence boundaries within each line
+        parts = re.split(r'(?<=[.!?])\s+', line)
+        sentences.extend(p.strip() for p in parts if p.strip())
+
+    return sentences
+
+
+def _byte_len(s: str) -> int:
+    """Get UTF-8 byte length of a string."""
+    return len(s.encode('utf-8'))
 
 
 def chunk_response(
@@ -41,7 +54,7 @@ def chunk_response(
 
     Args:
         text: Full LLM response text
-        max_chars: Maximum characters per message
+        max_chars: Maximum BYTES per message (LoRa limit, not characters)
         max_messages: Maximum messages to send before prompting
 
     Returns:
@@ -51,22 +64,27 @@ def chunk_response(
     """
     sentences = split_sentences(text)
     if not sentences:
-        return [text[:max_chars]], ""
+        truncated = text[:max_chars]
+        while _byte_len(truncated) > max_chars and truncated:
+            truncated = truncated[:-1]
+        return [truncated], ""
 
     messages = []
     current_msg = []
-    current_len = 0
+    current_bytes = 0
     sentence_idx = 0
 
     while sentence_idx < len(sentences) and len(messages) < max_messages:
         sentence = sentences[sentence_idx]
+        sentence_bytes = _byte_len(sentence)
 
         # Would this sentence fit in the current message?
-        added_len = len(sentence) + (1 if current_msg else 0)  # +1 for space
+        # +1 byte for space between sentences
+        added_bytes = sentence_bytes + (1 if current_msg else 0)
 
-        if current_len + added_len <= max_chars:
+        if current_bytes + added_bytes <= max_chars:
             current_msg.append(sentence)
-            current_len += added_len
+            current_bytes += added_bytes
             sentence_idx += 1
         else:
             # Sentence doesn't fit
@@ -74,17 +92,36 @@ def chunk_response(
                 # Flush current message, start new one with this sentence
                 messages.append(" ".join(current_msg))
                 current_msg = []
-                current_len = 0
+                current_bytes = 0
                 # Don't increment sentence_idx — retry this sentence in next message
             else:
                 # Single sentence exceeds max_chars — split at last word boundary
-                break_point = sentence[:max_chars].rfind(' ')
-                if break_point <= 0:
-                    break_point = max_chars
-                messages.append(sentence[:break_point].rstrip())
-                leftover = sentence[break_point:].lstrip()
-                if leftover:
-                    sentences.insert(sentence_idx + 1, leftover)
+                # Find break point that fits in byte budget
+                words = sentence.split(' ')
+                fit_words = []
+                fit_bytes = 0
+                for word in words:
+                    word_bytes = _byte_len(word) + (1 if fit_words else 0)
+                    if fit_bytes + word_bytes <= max_chars:
+                        fit_words.append(word)
+                        fit_bytes += word_bytes
+                    else:
+                        break
+
+                if fit_words:
+                    messages.append(" ".join(fit_words))
+                    leftover = " ".join(words[len(fit_words):])
+                    if leftover:
+                        sentences.insert(sentence_idx + 1, leftover)
+                else:
+                    # Even first word doesn't fit — truncate it
+                    truncated = sentence
+                    while _byte_len(truncated) > max_chars and truncated:
+                        truncated = truncated[:-1]
+                    messages.append(truncated)
+                    leftover = sentence[len(truncated):].lstrip()
+                    if leftover:
+                        sentences.insert(sentence_idx + 1, leftover)
                 sentence_idx += 1
 
     # Flush any remaining buffered message
@@ -108,7 +145,7 @@ def chunk_response(
         last_msg = messages[-1] if messages else ""
 
         # Check if we can append the prompt to the last message
-        if len(last_msg) + 1 + len(prompt) <= max_chars:
+        if _byte_len(last_msg) + 1 + _byte_len(prompt) <= max_chars:
             messages[-1] = last_msg + " " + prompt
         else:
             # Need to shorten the last message to fit the prompt
@@ -116,7 +153,7 @@ def chunk_response(
             last_sentences = split_sentences(last_msg)
             while last_sentences:
                 test = " ".join(last_sentences) + " " + prompt
-                if len(test) <= max_chars:
+                if _byte_len(test) <= max_chars:
                     # Put removed sentences back into remaining
                     messages[-1] = test
                     break

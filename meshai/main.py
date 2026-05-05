@@ -344,7 +344,17 @@ class MeshAI:
 
             # Determine response
             if result.route_type == RouteType.COMMAND:
-                messages = result.response  # Commands return single string
+                # Chunk command output same as LLM responses
+                from .chunker import chunk_response
+                raw = result.response if isinstance(result.response, str) else str(result.response)
+                messages, remaining = chunk_response(
+                    raw,
+                    max_chars=self.config.response.max_length,
+                    max_messages=self.config.response.max_messages,
+                )
+                # Store remaining for continuation
+                if remaining:
+                    self.router.continuations.store(message.sender_id, remaining)
             elif result.route_type == RouteType.LLM:
                 messages = await self.router.generate_llm_response(message, result.query)
             else:
