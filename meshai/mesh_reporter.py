@@ -4,6 +4,7 @@ Refactored to consume MeshDataStore and UnifiedNode directly.
 """
 
 import logging
+import math
 import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
@@ -148,6 +149,24 @@ def _is_valid_temperature(temp_c: Optional[float]) -> bool:
     if temp_c is None:
         return False
     return -50 <= temp_c <= 60
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Calculate distance between two GPS points in km."""
+    R = 6371  # Earth radius in km
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+    c = 2 * math.asin(math.sqrt(a))
+    return R * c
+
+
+def _format_distance(km: float) -> str:
+    """Format distance as km/miles."""
+    miles = km * 0.621371
+    if km < 1:
+        return f"{km*1000:.0f}m ({miles*5280:.0f}ft)"
+    return f"{km:.1f}km ({miles:.1f}mi)"
 
 
 class MeshReporter:
@@ -356,11 +375,36 @@ class MeshReporter:
                             lines.append(f"      INFRA at risk: {sgn_name} - only 1 gateway{src_info}")
                     if single_clients > 0:
                         single_client_nodes = [n for n in single_gw_nodes if not n.is_infrastructure]
+                        # Find nearest infra with GPS for distance reference
+                        ref_node = None
+                        for inf in single_infra if single_infra else []:
+                            if inf.latitude and inf.longitude:
+                                ref_node = inf
+                                break
+                        if not ref_node:
+                            for nid_str in region.node_ids:
+                                try:
+                                    nid = int(nid_str)
+                                except (ValueError, TypeError):
+                                    continue
+                                inf = health.nodes.get(nid)
+                                if inf and inf.is_infrastructure and inf.latitude and inf.longitude:
+                                    ref_node = inf
+                                    break
+
                         lines.append(f"      Single-gw clients ({single_clients}):")
                         for scn in single_client_nodes[:10]:
                             scn_name = _node_display_name(scn.long_name, scn.short_name, str(scn.node_num))
                             src_info = f" via {scn.sources[0]}" if len(scn.sources) == 1 else ""
-                            lines.append(f"        {scn_name}{src_info}")
+
+                            dist_str = ""
+                            if scn.latitude and scn.longitude and ref_node:
+                                km = _haversine_km(scn.latitude, scn.longitude, ref_node.latitude, ref_node.longitude)
+                                dist_str = f" ~{_format_distance(km)} from {ref_node.short_name}"
+                            elif scn.hops_away is not None:
+                                dist_str = f" {scn.hops_away} hops"
+
+                            lines.append(f"        {scn_name}{src_info}{dist_str}")
                         if len(single_client_nodes) > 10:
                             lines.append(f"        ...and {len(single_client_nodes) - 10} more")
 
@@ -922,6 +966,18 @@ class MeshReporter:
         if node.latitude and node.longitude:
             lines.append(f"Position: {node.latitude:.4f}, {node.longitude:.4f}")
 
+            # Distance from nearest infra node
+            nearest_infra = None
+            nearest_dist = float('inf')
+            for n in self.health_engine.mesh_health.nodes.values():
+                if n.is_infrastructure and n.latitude and n.longitude and n.node_num != node.node_num:
+                    d = _haversine_km(node.latitude, node.longitude, n.latitude, n.longitude)
+                    if d < nearest_dist:
+                        nearest_dist = d
+                        nearest_infra = n
+            if nearest_infra and nearest_dist < 500:
+                lines.append(f"  Nearest infra: {nearest_infra.short_name} at {_format_distance(nearest_dist)}")
+
         age = _format_age(node.last_heard)
         status = "Online" if node.is_online else "OFFLINE"
         lines.append(f"Last Seen: {age} ({status})")
@@ -992,6 +1048,8 @@ class MeshReporter:
         # Connectivity
         lines.append("")
         lines.append("Connectivity:")
+        if node.hops_away is not None:
+            lines.append(f"  Hops: {node.hops_away}")
         lines.append(f"  MQTT Uplink: {'Enabled' if node.uplink_enabled else 'Disabled'}")
 
         # Coverage
