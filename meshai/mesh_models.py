@@ -118,6 +118,13 @@ class UnifiedNode:
 
     # Deliverability / Coverage (from Meshview gateway counts)
     avg_gateways: Optional[float] = None  # Avg unique gateways that hear this node's packets
+
+    # Feeder-level gateway awareness (from /api/packets_seen across sources)
+    feeder_gateways: list = field(default_factory=list)
+        # Each entry: {"gateway_id": str, "gateway_name": str, "avg_rssi": float, "avg_snr": float, "packet_count": int}
+    feeder_count: int = 0               # Number of unique physical gateways that hear this node
+    feeder_best: Optional[str] = None   # Gateway with strongest signal to this node
+    feeder_worst: Optional[str] = None  # Gateway with weakest signal
     deliverability_score: Optional[float] = None  # % of packets reaching 2+ gateways (0-100)
     max_gateways: Optional[int] = None  # Max gateways any single packet reached
     source_reach: Optional[float] = None  # Avg number of Meshview sources that see this node's packets

@@ -529,6 +529,22 @@ class MeshDataStore:
     # Normalization
     # =========================================================================
 
+
+    def _normalize_node_id(self, raw) -> Optional[int]:
+        """Convert raw node ID (hex string, decimal string, int) to int node_num."""
+        if isinstance(raw, int):
+            return raw
+        if isinstance(raw, str):
+            stripped = raw.lstrip("!")
+            try:
+                # Check if hex
+                if any(c in "abcdefABCDEF" for c in stripped):
+                    return int(stripped, 16)
+                return int(stripped)
+            except ValueError:
+                return None
+        return None
+
     def _extract_node_num(self, raw: dict) -> Optional[int]:
         """Extract canonical node number from various formats."""
         # MeshMonitor: nodeNum is the canonical field
@@ -864,6 +880,9 @@ class MeshDataStore:
 
         # Enrich with deliverability metrics
         self._enrich_deliverability()
+
+        # Enrich with feeder gateway data
+        self._enrich_feeder_data()
 
         # Enrich edges with SNR from traceroutes and node data
         self._enrich_edges_from_traceroutes()
@@ -1316,6 +1335,100 @@ class MeshDataStore:
 
         except Exception as e:
             logger.warning(f"Failed to enrich environmental data: {e}")
+
+
+    def _enrich_feeder_data(self):
+        """Populate feeder gateway info on UnifiedNode from source sampling.
+
+        Each Meshview source has ONE gateway feeding it. By aggregating
+        packets_seen data from ALL sources for the same sender node,
+        we discover which gateways hear that node.
+        """
+        # First, build a map of gateway node_id -> node info for name lookup
+        gateway_names = {}
+        for node in self._nodes.values():
+            gateway_names[node.node_num] = node.short_name or node.long_name or ""
+
+        # Aggregate feeder data from all sources
+        # Key insight: each source's feeder_data tells us that source's gateway heard certain nodes
+        for source_name, source in self._sources.items():
+            if not hasattr(source, 'feeder_data'):
+                continue
+
+            feeder_data = source.feeder_data
+            if not feeder_data:
+                continue
+
+            for from_node_raw, gateways in feeder_data.items():
+                # Normalize from_node to int
+                node_num = self._normalize_node_id(from_node_raw)
+                if node_num is None or node_num not in self._nodes:
+                    continue
+
+                node = self._nodes[node_num]
+
+                # Merge gateways from this source
+                existing_gw_ids = {g["gateway_id"] for g in node.feeder_gateways}
+
+                for gw in gateways:
+                    gw_id = gw["gateway_id"]
+                    if gw_id in existing_gw_ids:
+                        # Merge signal data for existing gateway
+                        for existing_gw in node.feeder_gateways:
+                            if existing_gw["gateway_id"] == gw_id:
+                                # Average the signal values
+                                if gw.get("avg_rssi") is not None:
+                                    if existing_gw.get("avg_rssi") is not None:
+                                        existing_gw["avg_rssi"] = (existing_gw["avg_rssi"] + gw["avg_rssi"]) / 2
+                                    else:
+                                        existing_gw["avg_rssi"] = gw["avg_rssi"]
+                                if gw.get("avg_snr") is not None:
+                                    if existing_gw.get("avg_snr") is not None:
+                                        existing_gw["avg_snr"] = (existing_gw["avg_snr"] + gw["avg_snr"]) / 2
+                                    else:
+                                        existing_gw["avg_snr"] = gw["avg_snr"]
+                                existing_gw["packet_count"] = existing_gw.get("packet_count", 0) + gw.get("packet_count", 1)
+                                break
+                    else:
+                        # Add new gateway entry
+                        gw_node_id = self._normalize_node_id(gw_id)
+                        gw_name = gw.get("gateway_name") or ""
+                        if not gw_name and gw_node_id:
+                            gw_name = gateway_names.get(gw_node_id, gw.get("gateway_hex", gw_id))
+
+                        node.feeder_gateways.append({
+                            "gateway_id": gw_id,
+                            "gateway_name": gw_name,
+                            "avg_rssi": gw.get("avg_rssi"),
+                            "avg_snr": gw.get("avg_snr"),
+                            "packet_count": gw.get("packet_count", 1),
+                            "source": source_name,
+                        })
+                        existing_gw_ids.add(gw_id)
+
+        # Update summary fields for all nodes with feeder data
+        for node in self._nodes.values():
+            if not node.feeder_gateways:
+                continue
+
+            node.feeder_count = len(node.feeder_gateways)
+
+            # Best = strongest average RSSI (closest to 0)
+            with_rssi = [g for g in node.feeder_gateways if g.get("avg_rssi") is not None]
+            if with_rssi:
+                best = max(with_rssi, key=lambda g: g["avg_rssi"])
+                worst = min(with_rssi, key=lambda g: g["avg_rssi"])
+                node.feeder_best = best.get("gateway_name") or best["gateway_id"]
+                node.feeder_worst = worst.get("gateway_name") or worst["gateway_id"]
+
+        # Log summary
+        nodes_with_feeders = sum(1 for n in self._nodes.values() if n.feeder_count > 0)
+        if nodes_with_feeders > 0:
+            total_gw = set()
+            for n in self._nodes.values():
+                for gw in n.feeder_gateways:
+                    total_gw.add(gw["gateway_id"])
+            logger.info(f"Feeder enrichment: {nodes_with_feeders} nodes, {len(total_gw)} unique gateways")
 
     def _enrich_deliverability(self) -> None:
         """Compute deliverability metrics from node source overlap.
@@ -2298,6 +2411,56 @@ class MeshDataStore:
                     "cached_nodes": len(source.nodes),
                 })
         return health
+
+
+    def get_feeder_map(self) -> dict:
+        """Get which gateways hear which nodes.
+
+        Returns:
+            {
+                "gateway_name": {
+                    "gateway_id": str,
+                    "nodes_heard": int,
+                    "avg_rssi": float,
+                    "regions_covered": list[str],
+                },
+                ...
+            }
+        """
+        gw_map = {}
+        for node in self._nodes.values():
+            for gw in node.feeder_gateways:
+                gw_name = gw.get("gateway_name") or gw["gateway_id"]
+                if gw_name not in gw_map:
+                    gw_map[gw_name] = {
+                        "gateway_id": gw["gateway_id"],
+                        "nodes_heard": 0,
+                        "rssi_values": [],
+                        "regions": set(),
+                    }
+                gw_map[gw_name]["nodes_heard"] += 1
+                if gw.get("avg_rssi") is not None:
+                    gw_map[gw_name]["rssi_values"].append(gw["avg_rssi"])
+                if node.region:
+                    gw_map[gw_name]["regions"].add(node.region)
+
+        # Compute averages
+        result = {}
+        for name, data in gw_map.items():
+            result[name] = {
+                "gateway_id": data["gateway_id"],
+                "nodes_heard": data["nodes_heard"],
+                "avg_rssi": sum(data["rssi_values"]) / len(data["rssi_values"]) if data["rssi_values"] else None,
+                "regions_covered": sorted(data["regions"]),
+            }
+        return result
+
+    def get_node_feeders(self, node_num: int) -> list:
+        """Get feeder gateways for a specific node, sorted by signal strength."""
+        node = self._nodes.get(node_num)
+        if node and node.feeder_gateways:
+            return sorted(node.feeder_gateways, key=lambda g: g.get("avg_rssi") or -999, reverse=True)
+        return []
 
     def close(self) -> None:
         """Close database connection."""

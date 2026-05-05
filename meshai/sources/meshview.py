@@ -26,6 +26,7 @@ class MeshviewSource:
         ("edges",       6),   # Every 6 ticks (3 min)
         ("counts",      8),   # Every 8 ticks (4 min)
         ("traceroutes", 10),  # Every 10 ticks (5 min)
+        ("feeders",     20),  # Every 20 ticks (10 min) — sample packets_seen for gateway data
     ]
 
     def __init__(self, url: str, refresh_interval: int = 30, polite_mode: bool = False):
@@ -64,11 +65,15 @@ class MeshviewSource:
         self._is_loaded: bool = False
         self._data_changed: bool = False
 
+        # Feeder gateway data from packets_seen
+        self._feeder_data: dict = {}  # {from_node: [{gateway_id, gateway_name, avg_rssi, avg_snr, packet_count}]}
+
         # Capabilities (discovered on first fetch)
         self._capabilities: dict = {
             "packets": True,
             "packets_since": False,
             "traceroutes": True,
+            "packets_seen": True,
         }
         self._capabilities_probed: bool = False
 
@@ -180,6 +185,8 @@ class MeshviewSource:
             success = self._fetch_counts()
         elif endpoint == "traceroutes":
             success = self._fetch_traceroutes()
+        elif endpoint == "feeders":
+            success = self._fetch_feeders()
 
         if success:
             self._consecutive_errors = 0
@@ -388,6 +395,124 @@ class MeshviewSource:
             self._data_changed = True
             return True
         return False
+
+
+    def _fetch_feeders(self) -> bool:
+        """Sample recent packets to discover which gateway hears them.
+
+        Calls /api/packets_seen/{packet_id} for a sample of recent packets.
+        Builds a per-node gateway map with signal quality.
+
+        Note: Each Meshview source has ONE gateway feeding it. To get multiple
+        gateways, the data store aggregates feeder data across all sources.
+        """
+        if not self._packets:
+            return False
+
+        if not self._capabilities.get("packets_seen", True):
+            return False
+
+        # Sample 20 recent packets spread across different senders
+        by_sender = {}
+        for pkt in reversed(self._packets):  # Most recent first
+            sender = pkt.get("from_node") or pkt.get("from") or pkt.get("from_node_id")
+            if sender and sender not in by_sender:
+                by_sender[sender] = pkt
+            if len(by_sender) >= 20:
+                break
+
+        sample_packets = list(by_sender.values())
+        if not sample_packets:
+            return False
+
+        # Build: node_gateways[from_node] = {gateway_id: {"rssi_values": [], "snr_values": []}}
+        node_gateways: dict = {}
+        errors = 0
+
+        for pkt in sample_packets:
+            pkt_id = pkt.get("packet_id") or pkt.get("id")
+            from_node = pkt.get("from_node") or pkt.get("from") or pkt.get("from_node_id")
+            if not pkt_id or not from_node:
+                continue
+
+            seen_data = self._fetch_with_tracking(f"/api/packets_seen/{pkt_id}")
+            if seen_data is None:
+                errors += 1
+                if errors >= 3:
+                    # Endpoint probably doesn't exist
+                    self._capabilities["packets_seen"] = False
+                    logger.info(f"Meshview {self._url}: packets_seen not available, disabling")
+                    return False
+                continue
+
+            # Extract gateway list from {"seen": [...]}
+            gateways = []
+            if isinstance(seen_data, dict):
+                gateways = seen_data.get("seen", [])
+            elif isinstance(seen_data, list):
+                gateways = seen_data
+
+            if not gateways:
+                continue
+
+            if from_node not in node_gateways:
+                node_gateways[from_node] = {}
+
+            for gw in gateways:
+                # Fields from API: node_id, rx_snr, rx_rssi, topic
+                gw_node_id = gw.get("node_id")
+                if not gw_node_id:
+                    continue
+
+                gw_id = str(gw_node_id)
+                rssi = gw.get("rx_rssi")
+                snr = gw.get("rx_snr")
+
+                # Extract hex ID from topic for gateway name lookup
+                # topic format: "msh/US/2/e/Freq51/!27780c47"
+                topic = gw.get("topic", "")
+                gw_hex = ""
+                if topic and "!" in topic:
+                    gw_hex = topic.split("!")[-1] if "!" in topic else ""
+                    gw_hex = "!" + gw_hex if gw_hex else ""
+
+                if gw_id not in node_gateways[from_node]:
+                    node_gateways[from_node][gw_id] = {
+                        "gateway_id": gw_id,
+                        "gateway_hex": gw_hex,
+                        "rssi_values": [],
+                        "snr_values": [],
+                    }
+
+                if rssi is not None:
+                    node_gateways[from_node][gw_id]["rssi_values"].append(rssi)
+                if snr is not None:
+                    node_gateways[from_node][gw_id]["snr_values"].append(snr)
+
+        # Aggregate into feeder_data
+        self._feeder_data = {}
+        for from_node, gateways in node_gateways.items():
+            self._feeder_data[from_node] = []
+            for gw_id, gw_info in gateways.items():
+                avg_rssi = sum(gw_info["rssi_values"]) / len(gw_info["rssi_values"]) if gw_info["rssi_values"] else None
+                avg_snr = sum(gw_info["snr_values"]) / len(gw_info["snr_values"]) if gw_info["snr_values"] else None
+                self._feeder_data[from_node].append({
+                    "gateway_id": gw_id,
+                    "gateway_hex": gw_info["gateway_hex"],
+                    "gateway_name": "",  # Will be filled in by data store from node lookup
+                    "avg_rssi": avg_rssi,
+                    "avg_snr": avg_snr,
+                    "packet_count": len(gw_info["rssi_values"]) or len(gw_info["snr_values"]) or 1,
+                })
+
+        self._data_changed = True
+        logger.info(f"Feeder sampling: {len(sample_packets)} packets, {len(self._feeder_data)} nodes with gateway data")
+        return True
+
+    @property
+    def feeder_data(self) -> dict:
+        """Get per-node feeder gateway data."""
+        return self._feeder_data
 
     def fetch_all(self) -> bool:
         """Fetch all data at once. Used for initial load and force refresh."""

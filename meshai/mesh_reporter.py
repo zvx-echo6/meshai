@@ -457,6 +457,19 @@ class MeshReporter:
             if pb["critical"]: parts.append(f"{pb['critical']} battery critical")
             lines.append(f"POWER (infra): {', '.join(parts)}")
 
+        # Feeder gateway summary
+        all_nodes = list(health.nodes.values())
+        nodes_with_feeders = [n for n in all_nodes if getattr(n, 'feeder_count', 0) > 0]
+        if nodes_with_feeders:
+            total_unique_gw = set()
+            for n in nodes_with_feeders:
+                for gw in n.feeder_gateways:
+                    total_unique_gw.add(gw["gateway_id"])
+
+            avg_feeders = sum(n.feeder_count for n in nodes_with_feeders) / len(nodes_with_feeders)
+            lines.append("")
+            lines.append(f"FEEDERS: {len(total_unique_gw)} physical gateways, avg {avg_feeders:.1f} per node ({len(nodes_with_feeders)} nodes sampled)")
+
         # Source health section
         lines.extend(self._build_source_health_section())
 
@@ -934,6 +947,27 @@ class MeshReporter:
             # Source visibility
             if node.sources:
                 lines.append(f"  Seen by: {', '.join(node.sources)} ({len(node.sources)} sources)")
+
+            # Feeder gateways
+            if node.feeder_gateways:
+                lines.append(f"  Feeders ({node.feeder_count} gateways):")
+                # Sort by signal strength (best RSSI first, closest to 0)
+                sorted_gw = sorted(
+                    node.feeder_gateways,
+                    key=lambda g: g.get("avg_rssi") or -999,
+                    reverse=True
+                )
+                for gw in sorted_gw[:8]:  # Top 8
+                    name_str = gw.get("gateway_name") or gw["gateway_id"]
+                    parts = []
+                    if gw.get("avg_rssi") is not None:
+                        parts.append(f"RSSI {gw['avg_rssi']:.0f}")
+                    if gw.get("avg_snr") is not None:
+                        parts.append(f"SNR {gw['avg_snr']:.1f}")
+                    sig_str = f" [{', '.join(parts)}]" if parts else ""
+                    lines.append(f"    {name_str}{sig_str}")
+                if len(sorted_gw) > 8:
+                    lines.append(f"    ...and {len(sorted_gw) - 8} more")
 
         # Neighbors section
         if node.neighbors:
