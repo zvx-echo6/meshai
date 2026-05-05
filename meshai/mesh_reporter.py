@@ -176,125 +176,193 @@ class MeshReporter:
         return local or desc
 
     def build_tier1_summary(self) -> str:
-        """Build compact mesh summary for LLM injection (~500-800 tokens).
-
-        Returns:
-            Formatted summary string
-        """
+        """Build comprehensive mesh health summary with full data for LLM context."""
         health = self.health_engine.mesh_health
         if not health:
-            return "LIVE MESH HEALTH DATA: No data available yet."
+            return "MESH HEALTH: No data available."
+
+        import time
+        now = time.time()
+        age_seconds = now - health.last_computed if health.last_computed else 0
+        age_str = f"{int(age_seconds)}s ago" if age_seconds < 120 else f"{int(age_seconds/60)}m ago"
 
         score = health.score
-        data_age = self.data_store.data_age_seconds
-        if data_age < 60:
-            age_str = f"{int(data_age)}s ago"
-        elif data_age < 3600:
-            age_str = f"{int(data_age / 60)}m ago"
-        else:
-            age_str = f"{int(data_age / 3600)}h ago"
-
-        # Infrastructure stats
-        infra_online = score.infra_online
-        infra_total = score.infra_total
-        infra_pct = int((infra_online / infra_total * 100) if infra_total > 0 else 100)
-
-        # Utilization - prefer device-reported
-        util = score.util_percent
-        util_data_available = score.util_data_available
-        if not util_data_available:
-            util_label = "N/A"
-        elif util < 15:
-            util_label = "Low"
-        elif util < 20:
-            util_label = "Moderate"
-        elif util < 25:
-            util_label = "Elevated"
-        else:
-            util_label = "High"
-
-        # Power breakdown
-        power_breakdown = self._get_power_breakdown()
 
         lines = [
             f"LIVE MESH HEALTH DATA (as of {age_str}):",
             "",
-            f"Overall: {score.composite:.0f}/100 ({score.tier})",
-            f"Infrastructure: {infra_online}/{infra_total} online ({infra_pct}%)",
+            f"OVERALL: {score.composite:.0f}/100 ({score.tier})",
+            f"  Infrastructure: {score.infrastructure:.0f}/100 ({score.infra_online}/{score.infra_total} online) - weight 30%",
+            f"  Utilization: {score.utilization:.0f}/100 ({score.util_percent:.1f}% avg) - weight 25%",
+            f"  Coverage: {score.coverage:.0f}/100 - weight 20%",
+            f"  Behavior: {score.behavior:.0f}/100 ({score.flagged_nodes} flagged) - weight 15%",
+            f"  Power: {score.power:.0f}/100 - weight 10%",
         ]
 
-        # Channel Utilization with data availability
-        if util_data_available:
-            lines.append(f"Channel Utilization: {util:.1f}% avg ({util_label})")
-        else:
-            lines.append("Channel Utilization: No data available")
+        lines.append("")
+        lines.append("REGIONS:")
 
-        lines.append(f"Node Behavior: {score.flagged_nodes} nodes flagged")
+        for region in health.regions:
+            rs = region.score
+            context = self._region_context(region.name)
+            context_str = f" - {context}" if context else ""
 
-        # Power breakdown with USB/ok/low/critical counts
-        if power_breakdown["total"] > 0:
-            parts = []
-            if power_breakdown["usb"] > 0:
-                parts.append(f"{power_breakdown['usb']} USB")
-            if power_breakdown["ok"] > 0:
-                parts.append(f"{power_breakdown['ok']} ok")
-            if power_breakdown["low"] > 0:
-                parts.append(f"{power_breakdown['low']} low")
-            if power_breakdown["critical"] > 0:
-                parts.append(f"{power_breakdown['critical']} critical")
-            power_str = ", ".join(parts) if parts else "No battery data"
-            lines.append(f"Power: {power_str} ({score.solar_index:.0f}% solar)")
-        else:
-            lines.append(f"Power: No battery data ({score.solar_index:.0f}% solar)")
+            lines.append("")
+            lines.append(f"  {region.name}{context_str}: {rs.composite:.0f}/100")
 
-        # Traffic trend
-        traffic_trend = self._get_traffic_trend_summary()
-        if traffic_trend:
-            lines.append(f"Traffic Trend: {traffic_trend}")
+            infra_nodes = []
+            client_nodes = []
+            for nid_str in region.node_ids:
+                try:
+                    nid = int(nid_str)
+                except (ValueError, TypeError):
+                    continue
+                node = health.nodes.get(nid)
+                if not node:
+                    continue
+                if node.is_infrastructure:
+                    infra_nodes.append(node)
+                else:
+                    client_nodes.append(node)
 
-        # Top Senders section (packets sent = "noisy")
+            if infra_nodes:
+                online = sum(1 for n in infra_nodes if n.is_online)
+                lines.append(f"    Infrastructure ({online}/{len(infra_nodes)}):")
+                for node in sorted(infra_nodes, key=lambda n: (not n.is_online, n.short_name or '')):
+                    status = "OK" if node.is_online else "OFFLINE"
+                    name = _node_display_name(node.long_name, node.short_name, str(node.node_num))
+                    age = _format_age(node.last_heard) if node.last_heard else "?"
+
+                    parts = [f"seen {age}"]
+                    if node.battery_percent is not None:
+                        parts.append(_format_battery(node.battery_percent, node.voltage))
+                    if node.channel_utilization is not None:
+                        parts.append(f"util {node.channel_utilization:.1f}%")
+                    if node.avg_gateways is not None:
+                        total_gw = len(self.data_store._sources)
+                        parts.append(f"{node.avg_gateways:.0f}/{total_gw} gw")
+                    if node.neighbor_count > 0:
+                        parts.append(f"{node.neighbor_count} neighbors")
+                    if node.packets_sent_24h > 0:
+                        parts.append(f"{node.packets_sent_24h} pkts/24h")
+                    if node.uplink_enabled:
+                        parts.append("MQTT")
+
+                    lines.append(f"      [{status}] {name}: {', '.join(parts)}")
+            else:
+                lines.append(f"    Infrastructure: none in region")
+
+            region_gw = []
+            for nid_str in region.node_ids:
+                try:
+                    nid = int(nid_str)
+                except (ValueError, TypeError):
+                    continue
+                node = health.nodes.get(nid)
+                if node and node.avg_gateways is not None:
+                    region_gw.append(node)
+
+            if region_gw:
+                avg_gw = sum(n.avg_gateways for n in region_gw) / len(region_gw)
+                single = sum(1 for n in region_gw if n.avg_gateways <= 1.0)
+                total_gw = len(self.data_store._sources)
+                lines.append(f"    Coverage: {len(region_gw)} nodes, avg {avg_gw:.1f}/{total_gw} gw, {single} single-gateway")
+
+            env_in_region = []
+            for nid_str in region.node_ids:
+                try:
+                    nid = int(nid_str)
+                except (ValueError, TypeError):
+                    continue
+                node = health.nodes.get(nid)
+                if node and node.has_environment_sensor:
+                    env_in_region.append(node)
+
+            if env_in_region:
+                temps = [n.temperature for n in env_in_region if _is_valid_temperature(n.temperature)]
+                if temps:
+                    avg_t = sum(temps) / len(temps)
+                    lines.append(f"    Environment: {len(env_in_region)} sensors, temp {min(temps):.1f}-{max(temps):.1f}C (avg {avg_t:.1f}C)")
+
+            lines.append(f"    Clients: {len(client_nodes)} nodes")
+
+        unlocated_count = len(health.unlocated_nodes)
+        if unlocated_count > 0:
+            lines.append(f"")
+            lines.append(f"  Unlocated: {unlocated_count} nodes (no GPS or neighbor data)")
+
+        lines.append("")
+        lines.append("PROBLEM NODES:")
+
+        problems_found = False
+
+        offline_infra = [n for n in health.nodes.values() if n.is_infrastructure and not n.is_online]
+        if offline_infra:
+            problems_found = True
+            for node in offline_infra:
+                name = _node_display_name(node.long_name, node.short_name, str(node.node_num))
+                age = _format_age(node.last_heard) if node.last_heard else "unknown"
+                region = node.region or "Unlocated"
+                lines.append(f"  [OFFLINE] {name}: infra offline for {age}, {region}")
+
+        critical_bat = [n for n in health.nodes.values()
+                        if n.battery_percent is not None and 0 < n.battery_percent < 10]
+        if critical_bat:
+            problems_found = True
+            for node in sorted(critical_bat, key=lambda n: n.battery_percent):
+                name = _node_display_name(node.long_name, node.short_name, str(node.node_num))
+                region = node.region or "Unlocated"
+                trend = f", trend: {node.battery_trend}" if node.battery_trend else ""
+                lines.append(f"  [CRITICAL] {name}: battery {node.battery_percent:.0f}%{trend}, {region}")
+
+        low_bat = [n for n in health.nodes.values()
+                   if n.battery_percent is not None and 10 <= n.battery_percent < 20]
+        if low_bat:
+            problems_found = True
+            for node in sorted(low_bat, key=lambda n: n.battery_percent)[:5]:
+                name = _node_display_name(node.long_name, node.short_name, str(node.node_num))
+                region = node.region or "Unlocated"
+                lines.append(f"  [LOW BAT] {name}: battery {node.battery_percent:.0f}%, {region}")
+            if len(low_bat) > 5:
+                lines.append(f"  ...and {len(low_bat) - 5} more low battery nodes")
+
+        high_util = [n for n in health.nodes.values()
+                     if n.channel_utilization is not None and n.channel_utilization > 15]
+        if high_util:
+            problems_found = True
+            for node in sorted(high_util, key=lambda n: n.channel_utilization or 0, reverse=True)[:5]:
+                name = _node_display_name(node.long_name, node.short_name, str(node.node_num))
+                region = node.region or "Unlocated"
+                lines.append(f"  [HIGH UTIL] {name}: channel util {node.channel_utilization:.1f}%, {region}")
+
+        single_gw_infra = [n for n in health.nodes.values()
+                           if n.is_infrastructure and n.is_online and n.avg_gateways is not None and n.avg_gateways <= 1.0]
+        if single_gw_infra:
+            problems_found = True
+            for node in single_gw_infra:
+                name = _node_display_name(node.long_name, node.short_name, str(node.node_num))
+                region = node.region or "Unlocated"
+                lines.append(f"  [1-GW RISK] {name}: infra only reaches 1 gateway, {region}")
+
+        if not problems_found:
+            lines.append("  None - all nodes healthy")
+
         top_senders = self.data_store.get_top_senders(5)
         if top_senders:
             lines.append("")
-            lines.append("Top Senders (24h):")
+            lines.append("TOP SENDERS (24h):")
             for node in top_senders:
                 if node.packets_sent_24h > 0:
-                    # Build portnum breakdown with clean names
                     breakdown = []
-                    for portnum, count in sorted(
-                        node.packets_by_type.items(), key=lambda x: -x[1]
-                    )[:3]:
-                        clean_name = _clean_portnum(portnum)
-                        breakdown.append(f"{clean_name}: {count}")
+                    for portnum, count in sorted(node.packets_by_type.items(), key=lambda x: -x[1])[:3]:
+                        breakdown.append(f"{_clean_portnum(portnum)}: {count}")
                     breakdown_str = f" ({', '.join(breakdown)})" if breakdown else ""
-                    display_name = _node_display_name(node.long_name, node.short_name, node.node_id_hex or "")
-                    lines.append(
-                        f"  {display_name}: {node.packets_sent_24h} pkts{breakdown_str}"
-                    )
+                    name = _node_display_name(node.long_name, node.short_name, node.node_id_hex or "")
+                    region = node.region or ""
+                    region_str = f" [{region}]" if region else ""
+                    lines.append(f"  {name}: {node.packets_sent_24h} pkts{breakdown_str}{region_str}")
 
-        # Device-reported channel utilization (RF airspace busyness)
-        util_data = self.data_store.get_mesh_utilization()
-        if util_data["node_count"] > 0:
-            lines.append("")
-            lines.append("Channel Utilization (device-reported RF busyness):")
-            lines.append(f"  Mesh avg: {util_data['avg']:.1f}%")
-            lines.append(f"  Highest: {util_data['max_node']} at {util_data['max']:.1f}%")
-
-        # Network topology stats (if available)
-        if health.has_traceroute_data:
-            lines.append("")
-            lines.append(
-                f"Routing: {health.traceroute_count} traceroutes, "
-                f"avg {health.avg_hop_count:.1f} hops, max {health.max_hop_count}"
-            )
-
-        # MQTT uplink stats
-        lines.append(f"MQTT Uplinks: {health.uplink_node_count} nodes")
-
-        # Coverage by region - show geographic breakdown
-        # MUST use health.nodes (not data_store.nodes) because region is set by health engine
-        health = self.health_engine.mesh_health
-        all_nodes = list(health.nodes.values()) if health else []
+        all_nodes = list(health.nodes.values())
         nodes_with_gw = [n for n in all_nodes if n.avg_gateways is not None]
         if nodes_with_gw:
             total_sources = len(self.data_store._sources)
@@ -302,87 +370,37 @@ class MeshReporter:
             single_gw = sum(1 for n in nodes_with_gw if n.avg_gateways <= 1.0)
             full_gw = sum(1 for n in nodes_with_gw if n.avg_gateways >= total_sources)
 
-            lines.append(f"Coverage: {mesh_avg:.1f} avg gw | {full_gw} full | {single_gw} single-gw")
-
-            region_coverage = {}
-            for n in nodes_with_gw:
-                health_node = health.nodes.get(n.node_num)
-                region = health_node.region if health_node else "Unlocated"
-                if not region:
-                    region = "Unlocated"
-                region_coverage.setdefault(region, []).append(n.avg_gateways)
-
-            # Sort regions but handle Unlocated separately
-            sorted_regions = sorted(
-                [(r, c) for r, c in region_coverage.items() if r not in ("Unlocated", "", "Unknown", None)],
-                key=lambda x: sum(x[1])/len(x[1])
-            )
-            lines.append("  By region:")
-            for region, counts in sorted_regions[:6]:
-                avg = sum(counts) / len(counts)
-                single = sum(1 for c in counts if c <= 1.0)
-                flag = " !!" if avg < 2.0 else ""
-                single_str = f" ({single} 1-gw)" if single > 0 else ""
-                context = self._region_context(region)
-                context_str = f" ({context})" if context else ""
-                lines.append(f"    {region}{context_str}: {len(counts)} nodes, {avg:.1f} avg{single_str}{flag}")
-            # Show unlocated as informational (no coverage recommendations for these)
-            if "Unlocated" in region_coverage:
-                unl = region_coverage["Unlocated"]
-                lines.append(f"    Unlocated: {len(unl)} nodes (no GPS — stale or transient)")
-        else:
-            deliver = self.data_store.get_mesh_deliverability()
-            if deliver.get("avg_gateways") is not None:
-                avg_gw = deliver["avg_gateways"]
-                lines.append(f"Coverage: avg {avg_gw:.1f} gateways")
-
-        lines.append("")
-        lines.append("Regions:")
-
-        # Region summaries
-        for region in health.regions:
-            rs = region.score
-            flag = _tier_flag(rs.tier)
-            infra_str = f"{rs.infra_online}/{rs.infra_total} infra"
-            context = self._region_context(region.name)
-            context_str = f" ({context})" if context else ""
-            lines.append(
-                f"  {region.name}{context_str}: {rs.composite:.0f}/100 - {infra_str}, {rs.util_percent:.0f}% util{flag}"
-            )
-
-        # Top issues
-        issues = self._gather_top_issues(health)
-        if issues:
             lines.append("")
-            lines.append("Top Issues:")
-            for i, issue in enumerate(issues[:5], 1):
-                lines.append(f"  {i}. {issue}")
+            lines.append(f"COVERAGE SUMMARY: {mesh_avg:.1f} avg gateways across {total_sources} sources")
+            lines.append(f"  Full coverage ({total_sources}/{total_sources} gw): {full_gw} nodes")
+            lines.append(f"  Single gateway (1/{total_sources} gw): {single_gw} nodes - at risk if gateway drops")
 
-        # Sensor summary
+        if health.has_traceroute_data:
+            lines.append("")
+            lines.append(f"NETWORK TOPOLOGY: {health.traceroute_count} traceroutes, avg {health.avg_hop_count:.1f} hops, max {health.max_hop_count}")
+
+        lines.append(f"MQTT UPLINKS: {health.uplink_node_count} nodes")
+
         env_nodes = self.data_store.get_sensor_nodes("environment")
-        aq_nodes = self.data_store.get_sensor_nodes("air_quality")
-        wx_nodes = self.data_store.get_sensor_nodes("weather")
-        if env_nodes or aq_nodes or wx_nodes:
-            lines.append("")
-            sensor_parts = []
-            if env_nodes:
-                sensor_parts.append(f"{len(env_nodes)} env")
-            if aq_nodes:
-                sensor_parts.append(f"{len(aq_nodes)} air quality")
-            if wx_nodes:
-                sensor_parts.append(f"{len(wx_nodes)} weather")
-            lines.append(f"Sensors: {', '.join(sensor_parts)}")
-
-            # Show temp range if available (filter outliers)
+        if env_nodes:
             valid_temps = [n.temperature for n in env_nodes if _is_valid_temperature(n.temperature)]
+            lines.append("")
+            lines.append(f"SENSORS: {len(env_nodes)} environment")
             if valid_temps:
                 lines.append(f"  Temp range: {min(valid_temps):.1f}-{max(valid_temps):.1f}C")
 
+        pb = self._get_power_breakdown()
+        if pb["total"] > 0:
+            lines.append("")
+            parts = []
+            if pb["usb"]: parts.append(f"{pb['usb']} USB powered")
+            if pb["ok"]: parts.append(f"{pb['ok']} battery ok")
+            if pb["low"]: parts.append(f"{pb['low']} battery low")
+            if pb["critical"]: parts.append(f"{pb['critical']} battery critical")
+            lines.append(f"POWER: {', '.join(parts)}")
+
         lines.append("")
-        lines.append(
-            f"{health.total_nodes} nodes across {health.total_regions} regions. "
-            f"User can ask about any region, locality, or node for details."
-        )
+        lines.append(f"TOTAL: {health.total_nodes} nodes across {health.total_regions} regions.")
 
         return "\n".join(lines)
 
@@ -1073,7 +1091,7 @@ class MeshReporter:
             return ""
 
         lines = ["OPTIMIZATION RECOMMENDATIONS:"]
-        for rec in recs[:5]:
+        for rec in recs[:10]:
             lines.append(f"  - {rec}")
 
         return "\n".join(lines)
@@ -1158,297 +1176,91 @@ class MeshReporter:
         return recs
 
     def _mesh_recommendations(self, health) -> list[str]:
-        """Generate mesh-wide recommendations with trend awareness."""
+        """Generate mesh-wide recommendations with specifics."""
         recs = []
 
-        # Overall utilization
-        if health.score.util_percent >= 20:
-            recs.append(
-                f"Mesh-wide utilization at {health.score.util_percent:.0f}%. "
-                f"Consider reducing position/telemetry broadcast frequency."
-            )
+        # Coverage gaps by region - be SPECIFIC
+        for region in health.regions:
+            region_nodes = []
+            for nid_str in region.node_ids:
+                try:
+                    nid = int(nid_str)
+                except (ValueError, TypeError):
+                    continue
+                node = health.nodes.get(nid)
+                if node and node.avg_gateways is not None:
+                    region_nodes.append(node)
 
-        # Traffic trend recommendation
-        trend = self._get_traffic_trend_summary()
-        if "up" in trend and "15" in trend:  # Significant increase
-            recs.append(
-                f"Traffic {trend}. Review recently added nodes or changed settings."
-            )
+            if not region_nodes:
+                continue
 
-        # Multiple regions with issues
-        problem_regions = [r for r in health.regions if r.score.composite < 75]
-        if len(problem_regions) > 1:
-            names = ", ".join(r.name for r in problem_regions[:3])
-            recs.append(
-                f"Multiple regions degraded ({names}). Prioritize infrastructure improvements."
-            )
+            avg_gw = sum(n.avg_gateways for n in region_nodes) / len(region_nodes)
+            single_gw = [n for n in region_nodes if n.avg_gateways <= 1.0]
+            offline_infra = [n for n in region_nodes if n.is_infrastructure and not n.is_online]
 
-        # High packet nodes mesh-wide
-        flagged = self.health_engine.get_flagged_nodes()
-        if len(flagged) > 3:
-            total_excess = sum(
-                n.non_text_packets - self.health_engine.packet_threshold for n in flagged
-            )
-            recs.append(
-                f"{len(flagged)} nodes exceeding packet threshold ({total_excess} excess packets/day). "
-                f"Review default telemetry intervals."
-            )
+            context = self._region_context(region.name)
+            region_label = f"{region.name} ({context})" if context else region.name
 
-        # Battery warnings (exclude USB-powered)
-        battery_warnings = [
-            n for n in self.health_engine.get_battery_warnings()
-            if n.battery_percent is not None and n.battery_percent <= 100
-        ]
-        if len(battery_warnings) > 2:
-            recs.append(
-                f"{len(battery_warnings)} nodes with low battery. "
-                f"Consider solar additions for remote nodes."
-            )
-
-        # Hop count recommendation from traceroutes
-        if health.has_traceroute_data:
-            if health.avg_hop_count > 4:
+            # Single-gateway concentration
+            if len(single_gw) >= 3:
                 recs.append(
-                    f"Average hop count {health.avg_hop_count:.1f} is high. "
-                    f"Consider adding infrastructure to reduce latency."
-                )
-            elif health.max_hop_count > 6:
-                recs.append(
-                    f"Max hop count {health.max_hop_count} indicates long routes. "
-                    f"Strategic node placement could improve reach."
+                    f"Coverage gap in {region_label}: {len(single_gw)} nodes only reach 1 gateway. "
+                    f"A new MQTT feeder in this area would add monitoring redundancy."
                 )
 
-        # MQTT uplink coverage
-        if health.uplink_node_count == 0:
-            total_infra = sum(1 for n in health.nodes.values() if n.is_infrastructure)
-            if total_infra > 0:
+            # Offline infrastructure
+            if offline_infra:
+                names = ", ".join(_node_display_name(n.long_name, n.short_name, str(n.node_num)) for n in offline_infra[:3])
                 recs.append(
-                    "No MQTT uplinks detected. Enable on infrastructure nodes for better mesh visibility."
-                )
-        elif health.total_regions > 0:
-            uplinks_per_region = health.uplink_node_count / health.total_regions
-            if uplinks_per_region < 1:
-                recs.append(
-                    f"Only {health.uplink_node_count} MQTT uplinks across "
-                    f"{health.total_regions} regions. Consider adding redundancy."
+                    f"{region_label}: {len(offline_infra)} infrastructure offline ({names}). "
+                    f"Restoring these would improve routing and coverage."
                 )
 
-        # Mesh-wide deliverability/coverage
+        # Battery predictions
+        critical = [n for n in health.nodes.values()
+                    if n.battery_percent is not None and 0 < n.battery_percent < 10]
+        for node in critical[:3]:
+            name = _node_display_name(node.long_name, node.short_name, str(node.node_num))
+            trend = f" and {node.battery_trend}" if node.battery_trend else ""
+            recs.append(f"{name} at {node.battery_percent:.0f}% battery{trend}. Likely offline soon.")
+
+        # High utilization
+        high_util = [n for n in health.nodes.values()
+                     if n.channel_utilization is not None and n.channel_utilization > 18]
+        if high_util:
+            names = ", ".join(_node_display_name(n.long_name, n.short_name, str(n.node_num)) for n in high_util[:3])
+            recs.append(
+                f"High channel utilization on {names}. "
+                f"Check for aggressive broadcast intervals or nearby interference."
+            )
+
+        # MQTT uplink gaps
+        for region in health.regions:
+            infra_in_region = []
+            for nid_str in region.node_ids:
+                try:
+                    nid = int(nid_str)
+                except (ValueError, TypeError):
+                    continue
+                node = health.nodes.get(nid)
+                if node and node.is_infrastructure:
+                    infra_in_region.append(node)
+
+            uplinks = [n for n in infra_in_region if n and n.uplink_enabled]
+            if infra_in_region and not uplinks:
+                context = self._region_context(region.name)
+                recs.append(
+                    f"No MQTT uplinks in {region.name} ({context}). "
+                    f"Enable on at least one infrastructure node for monitoring visibility."
+                )
+
+        # Overall deliverability
         deliver = self.data_store.get_mesh_deliverability()
-        if deliver.get("avg_gateways") is not None:
-            avg_gw = deliver["avg_gateways"]
-            if avg_gw < 1.5:
-                recs.append(
-                    f"Mesh-wide average is {avg_gw:.1f} gateways per packet. "
-                    f"Adding MQTT feeders would improve monitoring reliability."
-                )
-
-        # Coverage gaps
-        if hasattr(self.data_store, "get_coverage_gaps"):
-            gaps = self.data_store.get_coverage_gaps()
-            if gaps:
-                gap_regions = {}
-                for g in gaps:
-                    node_num = g.get("node_num")
-                    health_node = health.nodes.get(node_num) if node_num else None
-                    region = health_node.region if health_node else "Unknown"
-                    gap_regions.setdefault(region or "Unknown", []).append(g)
-
-                for region, nodes in sorted(gap_regions.items(), key=lambda x: -len(x[1])):
-                    if len(nodes) >= 3:
-                        recs.append(
-                            f"{region}: {len(nodes)} nodes with thin coverage. "
-                            f"A new gateway here would improve monitoring."
-                        )
-                        break
+        if deliver.get("avg_gateways") is not None and deliver["avg_gateways"] < 2.0:
+            recs.append(
+                f"Mesh-wide average is {deliver['avg_gateways']:.1f} gateways per packet. "
+                f"Adding MQTT feeders would improve monitoring reliability across the mesh."
+            )
 
         return recs
 
-    def build_lora_compact(self, scope: str, scope_value: str = None) -> str:
-        """Build LoRa-optimized compact summary (~200 chars)."""
-        health = self.health_engine.mesh_health
-        if not health:
-            return "Mesh: No data"
-
-        if scope == "region" and scope_value:
-            region = self._find_region(scope_value)
-            if not region:
-                return f"Region '{scope_value}' not found"
-            rs = region.score
-            return (
-                f"{region.name} {rs.composite:.0f}/100 | "
-                f"{rs.infra_online}/{rs.infra_total} infra | {rs.util_percent:.0f}% util"
-            )
-
-        # Mesh summary
-        s = health.score
-        lines = [
-            f"Mesh {s.composite:.0f}/100 | {s.infra_online}/{s.infra_total} infra | {s.util_percent:.0f}% util"
-        ]
-
-        # Add warnings for problem regions/nodes
-        warnings = []
-        for region in health.regions:
-            if region.score.composite < 60:
-                offline = region.score.infra_total - region.score.infra_online
-                warnings.append(
-                    f"! {region.name} {region.score.composite:.0f}/100 - {offline} infra offline"
-                )
-
-        # Battery warnings (skip USB-powered)
-        battery_warnings = [
-            n for n in self.health_engine.get_battery_warnings()
-            if n.battery_percent is not None and n.battery_percent <= 100
-        ]
-        for node in battery_warnings[:2]:
-            name = node.short_name or node.node_id_hex[:4]
-            warnings.append(
-                f"! {name} bat {node.battery_percent:.0f}%"
-            )
-
-        for w in warnings[:2]:
-            lines.append(w)
-
-        return "\n".join(lines)
-
-    def build_node_compact(self, node_identifier: str) -> str:
-        """Build compact node status for subscription DMs (~200 chars)."""
-        health = self.health_engine.mesh_health
-        if not health:
-            return "Node: No data"
-
-        node = self._find_node(node_identifier)
-        if not node:
-            return f"Node '{node_identifier}' not found"
-
-        # All fields now directly on node (UnifiedNode)
-        unified = node
-
-        # Build compact status
-        display_name = node.short_name or node.long_name or f"!{node.node_num:08x}"
-        status = "ON" if node.is_online else "OFF"
-        age = _format_age(node.last_heard)
-
-        parts = [f"{display_name} [{status}]"]
-
-        # Battery (skip USB)
-        if node.battery_percent is not None:
-            if node.battery_percent > 100:
-                parts.append("USB")
-            else:
-                parts.append(f"bat {node.battery_percent:.0f}%")
-
-        # Last seen
-        parts.append(f"seen {age}")
-
-        # Traffic
-        if node.packets_sent_24h > 0:
-            parts.append(f"{node.packets_sent_24h} pkts/24h")
-
-        # Channel util
-        if node.channel_utilization is not None:
-            parts.append(f"util {node.channel_utilization:.0f}%")
-
-        # Neighbors
-        if node.neighbor_count > 0:
-            parts.append(f"{node.neighbor_count} nbrs")
-
-        line1 = " | ".join(parts)
-
-        # Warnings if any
-        warnings = []
-        if not node.is_online:
-            warnings.append("! OFFLINE")
-        elif node.battery_percent is not None and node.battery_percent <= 20 and node.battery_percent <= 100:
-            warnings.append("! LOW BAT")
-        if (node.packets_sent_24h - node.text_messages_24h) > self.health_engine.packet_threshold:
-            warnings.append("! HIGH TRAFFIC")
-
-        if warnings:
-            return f"{line1}\n{' '.join(warnings)}"
-        return line1
-
-    def build_region_compact(self, region_name: str) -> str:
-        """Build compact region status for subscription DMs (~200 chars)."""
-        return self.build_lora_compact(scope="region", scope_value=region_name)
-
-    def _find_region(self, name: str) -> Optional["RegionHealth"]:
-        """Find a region by fuzzy name match."""
-        health = self.health_engine.mesh_health
-        if not health:
-            return None
-
-        name_lower = name.lower().strip()
-
-        # Exact match first
-        for region in health.regions:
-            if region.name.lower() == name_lower:
-                return region
-
-        # Substring match
-        for region in health.regions:
-            if name_lower in region.name.lower():
-                return region
-
-        # Try matching against anchor city names
-        for anchor in self.health_engine.regions:
-            anchor_name_lower = anchor.name.lower()
-            if name_lower in anchor_name_lower:
-                for region in health.regions:
-                    if region.name == anchor.name:
-                        return region
-
-        return None
-
-    def _find_node(self, identifier: str) -> Optional["UnifiedNode"]:
-        """Find a node by shortname, longname, nodeId, or nodeNum."""
-        health = self.health_engine.mesh_health
-        if not health:
-            return None
-
-        identifier = identifier.strip()
-        id_lower = identifier.lower()
-
-        # Try shortname (case-insensitive)
-        for node in health.nodes.values():
-            if node.short_name and node.short_name.lower() == id_lower:
-                return node
-
-        # Try longname (substring)
-        for node in health.nodes.values():
-            if node.long_name and id_lower in node.long_name.lower():
-                return node
-
-        # Try exact nodeId
-        if identifier in health.nodes:
-            return health.nodes[identifier]
-
-        # Try hex nodeId with ! prefix
-        if identifier.startswith("!"):
-            hex_id = identifier[1:]
-            for nid, node in health.nodes.items():
-                if nid.lower() == hex_id.lower():
-                    return node
-
-        # Try decimal nodeNum
-        if identifier.isdigit():
-            node_num = int(identifier)
-            node_id = str(node_num)
-            if node_num in health.nodes:
-                return health.nodes[node_num]
-
-        return None
-
-    def list_regions_compact(self) -> str:
-        """List all regions with scores in compact format."""
-        health = self.health_engine.mesh_health
-        if not health or not health.regions:
-            return "No regions configured."
-
-        lines = ["Regions:"]
-        for region in health.regions:
-            s = region.score
-            flag = _tier_flag(s.tier)
-            lines.append(f"  {region.name}: {s.composite:.0f}/100{flag}")
-
-        return "\n".join(lines)

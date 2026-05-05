@@ -95,38 +95,27 @@ _MESH_PHRASES = [
 _MESH_AWARENESS_PROMPT = """
 MESH DATA RESPONSE RULES (OVERRIDE brevity rules for mesh/network questions):
 
+The data blocks above contain detailed information about every region, infrastructure node,
+coverage gap, and problem node on the mesh. USE THIS DATA in your response.
+
 RESPONSE STYLE:
-- Give DETAILED, data-driven responses with actual numbers
-- Talk in GEOGRAPHIC terms — use the local names and cities from REGION GEOGRAPHY below
-- Name specific infrastructure nodes by their long name
-- Include scores, percentages, node counts, battery levels, gateway counts
-- You CAN use 3-5 messages if needed — LoRa chunking handles splitting
-- No markdown formatting — plain text only
-- CRITICAL: Keep every sentence under 150 characters. Break long thoughts into multiple short sentences. The message system handles multiple sentences perfectly but will truncate a single long sentence.
+- DETAILED, data-driven responses. Reference specific node names, scores, gateway counts.
+- Use LOCAL NAMES from the region descriptions (Magic Valley, Treasure Valley, etc.)
+- When discussing infrastructure, name the actual nodes (Mount Harrison Router, not just "5 infra")
+- When discussing coverage gaps, explain WHERE and HOW MANY nodes are affected
+- When discussing problems, name the node and explain the impact
+- You CAN use 3-5 messages. Keep each sentence under 150 characters.
+- No markdown formatting - plain text only
 
-ANSWERING COVERAGE QUESTIONS:
-- Reference geographic areas by local name from the region config
-- Name infrastructure nodes by long name
-- Give avg gateways AND explain meaning
-- Identify single-gateway nodes as risks
-- For "where do we need infrastructure" — name the geographic area, not "Unknown"
-- Do NOT recommend infrastructure for Unlocated nodes
+QUESTION TYPES:
+- "How's the mesh?" -> Lead with composite score. Highlight 1-2 biggest issues by name. Summarize each region briefly.
+- "Where do we need coverage?" -> Name regions with single-gateway nodes. Name offline infra. Suggest specific locations.
+- "Tell me about [node]" -> Give full detail from the data above.
+- "How is [region]?" -> Give that region's infrastructure status, coverage, issues.
+- "What's wrong?" -> List problem nodes by name with specifics.
 
-ANSWERING NODE QUESTIONS:
-- Include: hardware, role, region with local name, battery, channel util, TX airtime, coverage, neighbors, traffic breakdown
-- Compare metrics to thresholds
-
-ANSWERING MESH OVERVIEW:
-- Lead with composite score and 5 pillars
-- Break down by region using local names
-- Highlight problems with specific nodes/areas
-
-ABOUT UNLOCATED NODES:
-- Nodes with no GPS and no neighbor data cannot be placed on the map
-- Do NOT recommend infrastructure for these areas
-- Focus coverage gaps on located regions only
-
-IMPORTANT: Do NOT lump different regions together just because they share directional words. Each region is a distinct geographic area.
+IMPORTANT: Do NOT lump different regions together. Each is a distinct area.
+Do NOT recommend infrastructure for "Unlocated" nodes - they have no known position.
 """
 
 
