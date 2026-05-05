@@ -2097,6 +2097,47 @@ class MeshDataStore:
             }
             result.append(edge_dict)
         return result
+
+    def get_all_traceroutes(self) -> list[dict]:
+        """Get all traceroutes as list of dicts (backwards compatibility).
+
+        Returns traceroutes in the format expected by mesh_health.py.
+        """
+        result = []
+        for tr in self._traceroutes:
+            tr_dict = {
+                "from_node": tr.from_node,
+                "to_node": tr.to_node,
+                "route": tr.route,
+                "route_back": tr.route_back,
+                "snr_towards": tr.snr_towards,
+                "snr_back": tr.snr_back,
+                "timestamp": tr.timestamp,
+                "request_id": tr.request_id,
+            }
+            result.append(tr_dict)
+        return result
+
+
+    def get_all_channels(self) -> list[dict]:
+        """Get all channels as list of dicts (backwards compatibility).
+
+        Returns channels in the format expected by mesh_health.py.
+        """
+        result = []
+        for ch in self._channels:
+            ch_dict = {
+                "channel_id": ch.channel_id,
+                "name": ch.name,
+                "role": ch.role,
+                "role_name": ch.role_name,
+                "uplink_enabled": ch.uplink_enabled,
+                "downlink_enabled": ch.downlink_enabled,
+                "position_precision": ch.position_precision,
+            }
+            result.append(ch_dict)
+        return result
+
     def close(self) -> None:
         """Close database connection."""
         if self._db:
