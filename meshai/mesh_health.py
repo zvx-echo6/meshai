@@ -96,6 +96,7 @@ class NodeHealth:
     short_name: str = ""
     long_name: str = ""
     role: str = ""
+    hw_model: str = ""
     is_infrastructure: bool = False
     last_seen: float = 0.0
     is_online: bool = True
@@ -117,6 +118,8 @@ class NodeHealth:
     air_util_tx: Optional[float] = None  # From device telemetry
     has_solar: bool = False
     uplink_enabled: bool = False
+    neighbor_count: int = 0
+    packets_sent_24h: int = 0
 
     # Packet breakdown by portnum
     packets_by_portnum: dict[str, int] = field(default_factory=dict)
@@ -142,6 +145,31 @@ class NodeHealth:
         if self.position_packet_count_24h > 0:
             return 86400 / self.position_packet_count_24h
         return None
+
+    @property
+    def node_id_hex(self) -> str:
+        """Return node_id in hex format with ! prefix."""
+        if self.node_id.startswith("!"):
+            return self.node_id
+        try:
+            return f"!{int(self.node_id):08x}"
+        except:
+            return self.node_id
+
+    @property
+    def battery_trend(self) -> str:
+        """Return battery trend indicator."""
+        return ""  # Not tracked yet
+
+    @property
+    def packets_by_type(self) -> dict:
+        """Alias for packets_by_portnum."""
+        return self.packets_by_portnum
+
+    @property
+    def predicted_depletion_hours(self) -> Optional[float]:
+        """Predict hours until battery depletion."""
+        return None  # Not tracked yet
 
 
 @dataclass
@@ -317,7 +345,8 @@ class MeshHealthEngine:
             # Extract fields (handle different API formats)
             short_name = node.get("shortName") or node.get("short_name") or ""
             long_name = node.get("longName") or node.get("long_name") or ""
-            role = node.get("role") or node.get("hwModel") or ""
+            role = node.get("role") or ""
+            hw_model = node.get("hwModel") or node.get("hw_model") or ""
 
             # Determine if infrastructure
             is_infra = str(role).upper() in INFRASTRUCTURE_ROLES
@@ -361,6 +390,7 @@ class MeshHealthEngine:
                 short_name=short_name,
                 long_name=long_name,
                 role=role,
+                hw_model=hw_model,
                 is_infrastructure=is_infra,
                 last_seen=last_seen,
                 is_online=is_online,
