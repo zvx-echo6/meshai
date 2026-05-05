@@ -663,7 +663,7 @@ class MeshReporter:
             lines.append("")
             lines.append("Power Warnings:")
             bat_str = ", ".join(
-                f"{_node_display_name(n.long_name, n.short_name, n.node_id)} at {n.battery_percent:.0f}%"
+                f"{_node_display_name(n.long_name, n.short_name, n.node_id_hex)} at {n.battery_percent:.0f}%"
                 for n in low_bat[:4]
             )
             lines.append(f"  Low battery: {bat_str}")
@@ -1082,7 +1082,7 @@ class MeshReporter:
                 flagged.append(node)
         if flagged:
             names = ", ".join(
-                _node_display_name(n.long_name, n.short_name, n.node_id)
+                _node_display_name(n.long_name, n.short_name, n.node_id_hex)
                 for n in flagged[:3]
             )
             recs.append(
@@ -1103,7 +1103,7 @@ class MeshReporter:
                     aggressive_interval_nodes.append(node)
         if aggressive_interval_nodes:
             names = ", ".join(
-                _node_display_name(n.long_name, n.short_name, n.node_id)
+                _node_display_name(n.long_name, n.short_name, n.node_id_hex)
                 for n in aggressive_interval_nodes[:3]
             )
             recs.append(
@@ -1273,7 +1273,7 @@ class MeshReporter:
             if n.battery_percent is not None and n.battery_percent <= 100
         ]
         for node in battery_warnings[:2]:
-            name = node.short_name or node.node_id[:4]
+            name = node.short_name or node.node_id_hex[:4]
             warnings.append(
                 f"! {name} bat {node.battery_percent:.0f}%"
             )
@@ -1406,8 +1406,8 @@ class MeshReporter:
         if identifier.isdigit():
             node_num = int(identifier)
             node_id = str(node_num)
-            if node_id in health.nodes:
-                return health.nodes[node_id]
+            if node_num in health.nodes:
+                return health.nodes[node_num]
 
         return None
 
