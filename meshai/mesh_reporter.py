@@ -36,6 +36,20 @@ PORTNUM_DISPLAY = {
     "ATAK_FORWARDER": "ATAK",
 }
 
+# Geographic context for region names
+REGION_CONTEXT = {
+    "South Central ID": "Magic Valley (Twin Falls area)",
+    "South Western ID": "Treasure Valley (Boise metro)",
+    "South Eastern ID": "Eastern Idaho (Idaho Falls area)",
+    "Central ID": "Idaho backcountry (Salmon area)",
+    "Northern ID": "North Idaho (Panhandle)",
+    "Northern UT": "Northern Utah (Ogden/Logan)",
+    "Central UT": "Wasatch Front (Salt Lake City)",
+    "Eastern UT": "Eastern Utah (Vernal/Moab)",
+    "Western UT": "Western Utah (Tooele)",
+    "Southern UT": "Southern Utah / Dixie (St. George)",
+}
+
 
 def _clean_portnum(portnum: str) -> str:
     """Convert raw portnum to display name."""
@@ -298,14 +312,24 @@ class MeshReporter:
                     region = "Unlocated"
                 region_coverage.setdefault(region, []).append(n.avg_gateways)
 
-            sorted_regions = sorted(region_coverage.items(), key=lambda x: sum(x[1])/len(x[1]))
+            # Sort regions but handle Unlocated separately
+            sorted_regions = sorted(
+                [(r, c) for r, c in region_coverage.items() if r not in ("Unlocated", "", "Unknown", None)],
+                key=lambda x: sum(x[1])/len(x[1])
+            )
             lines.append("  By region:")
             for region, counts in sorted_regions[:6]:
                 avg = sum(counts) / len(counts)
                 single = sum(1 for c in counts if c <= 1.0)
                 flag = " !!" if avg < 2.0 else ""
                 single_str = f" ({single} 1-gw)" if single > 0 else ""
-                lines.append(f"    {region}: {len(counts)} nodes, {avg:.1f} avg{single_str}{flag}")
+                context = REGION_CONTEXT.get(region, "")
+                context_str = f" ({context})" if context else ""
+                lines.append(f"    {region}{context_str}: {len(counts)} nodes, {avg:.1f} avg{single_str}{flag}")
+            # Show unlocated as informational (no coverage recommendations for these)
+            if "Unlocated" in region_coverage:
+                unl = region_coverage["Unlocated"]
+                lines.append(f"    Unlocated: {len(unl)} nodes (no GPS — stale or transient)")
         else:
             deliver = self.data_store.get_mesh_deliverability()
             if deliver.get("avg_gateways") is not None:
@@ -320,8 +344,10 @@ class MeshReporter:
             rs = region.score
             flag = _tier_flag(rs.tier)
             infra_str = f"{rs.infra_online}/{rs.infra_total} infra"
+            context = REGION_CONTEXT.get(region.name, "")
+            context_str = f" ({context})" if context else ""
             lines.append(
-                f"  {region.name}: {rs.composite:.0f}/100 - {infra_str}, {rs.util_percent:.0f}% util{flag}"
+                f"  {region.name}{context_str}: {rs.composite:.0f}/100 - {infra_str}, {rs.util_percent:.0f}% util{flag}"
             )
 
         # Top issues
@@ -530,8 +556,10 @@ class MeshReporter:
             return f"REGION DETAIL: {region_name}\nRegion not found."
 
         rs = region.score
+        context = REGION_CONTEXT.get(region.name, "")
+        context_str = f" — {context}" if context else ""
         lines = [
-            f"REGION DETAIL: {region.name}",
+            f"REGION DETAIL: {region.name}{context_str}",
             f"Score: {rs.composite:.0f}/100 ({rs.tier})",
             "",
             f"Infrastructure ({rs.infra_online}/{rs.infra_total}):",
@@ -732,7 +760,7 @@ class MeshReporter:
             f"ID: !{node.node_num:08x} (dec: {node.node_num})",
             f"Hardware: {node.hw_model or 'Unknown'}",
             f"Role: {node.role} ({'Infrastructure' if node.is_infrastructure else 'Client'})",
-            f"Region: {node.region or 'Unknown'} / Locality: {node.locality or 'Unknown'}",
+            f"Region: {node.region or 'Unknown'}{' — ' + REGION_CONTEXT.get(node.region, '') if node.region and REGION_CONTEXT.get(node.region) else ''} / Locality: {node.locality or 'Unknown'}",
         ]
 
         if node.latitude and node.longitude:
