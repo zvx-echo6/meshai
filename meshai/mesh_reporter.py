@@ -279,7 +279,13 @@ class MeshReporter:
                             sgn_name = _node_display_name(sgn.long_name, sgn.short_name, str(sgn.node_num))
                             lines.append(f"      INFRA at risk: {sgn_name} - only 1 gateway")
                     if single_clients > 0:
-                        lines.append(f"      + {single_clients} client nodes at single gateway")
+                        single_client_nodes = [n for n in single_gw_nodes if not n.is_infrastructure]
+                        lines.append(f"      Single-gw clients ({single_clients}):")
+                        for scn in single_client_nodes[:10]:
+                            scn_name = _node_display_name(scn.long_name, scn.short_name, str(scn.node_num))
+                            lines.append(f"        {scn_name}")
+                        if len(single_client_nodes) > 10:
+                            lines.append(f"        ...and {len(single_client_nodes) - 10} more")
 
             env_in_region = []
             for nid_str in region.node_ids:
