@@ -278,13 +278,38 @@ class MeshReporter:
         # MQTT uplink stats
         lines.append(f"MQTT Uplinks: {health.uplink_node_count} nodes")
 
-        # Coverage/deliverability stats
-        deliver = self.data_store.get_mesh_deliverability()
-        if deliver.get("avg_gateways") is not None:
-            avg_gw = deliver["avg_gateways"]
-            total_seen = deliver.get("total_seen", 0)
-            total_pkts = deliver.get("total_packets", 0)
-            lines.append(f"Coverage: avg {avg_gw:.1f} gateways/packet ({total_seen}/{total_pkts} seen/sent)")
+        # Coverage by region - show geographic breakdown
+        all_nodes = list(self.data_store.nodes.values())
+        nodes_with_gw = [n for n in all_nodes if n.avg_gateways is not None]
+        if nodes_with_gw:
+            total_sources = len(self.data_store._sources)
+            mesh_avg = sum(n.avg_gateways for n in nodes_with_gw) / len(nodes_with_gw)
+            single_gw = sum(1 for n in nodes_with_gw if n.avg_gateways <= 1.0)
+            full_gw = sum(1 for n in nodes_with_gw if n.avg_gateways >= total_sources)
+
+            lines.append(f"Coverage: {mesh_avg:.1f} avg gw | {full_gw} full | {single_gw} single-gw")
+
+            region_coverage = {}
+            for n in nodes_with_gw:
+                health_node = health.nodes.get(n.node_num)
+                region = health_node.region if health_node else "Unlocated"
+                if not region:
+                    region = "Unlocated"
+                region_coverage.setdefault(region, []).append(n.avg_gateways)
+
+            sorted_regions = sorted(region_coverage.items(), key=lambda x: sum(x[1])/len(x[1]))
+            lines.append("  By region:")
+            for region, counts in sorted_regions[:6]:
+                avg = sum(counts) / len(counts)
+                single = sum(1 for c in counts if c <= 1.0)
+                flag = " !!" if avg < 2.0 else ""
+                single_str = f" ({single} 1-gw)" if single > 0 else ""
+                lines.append(f"    {region}: {len(counts)} nodes, {avg:.1f} avg{single_str}{flag}")
+        else:
+            deliver = self.data_store.get_mesh_deliverability()
+            if deliver.get("avg_gateways") is not None:
+                avg_gw = deliver["avg_gateways"]
+                lines.append(f"Coverage: avg {avg_gw:.1f} gateways")
 
         lines.append("")
         lines.append("Regions:")
@@ -571,6 +596,29 @@ class MeshReporter:
         lines.append("")
         lines.append(f"MQTT Uplinks: {len(uplink_nodes)} nodes")
 
+        # Coverage in region
+        region_nodes_gw = [
+            self.data_store.nodes.get(nid) for nid in region.node_ids
+            if self.data_store.nodes.get(nid) and self.data_store.nodes.get(nid).avg_gateways is not None
+        ]
+        if region_nodes_gw:
+            total_sources = len(self.data_store._sources)
+            avg = sum(n.avg_gateways for n in region_nodes_gw) / len(region_nodes_gw)
+            single = [n for n in region_nodes_gw if n.avg_gateways <= 1.0]
+            full = [n for n in region_nodes_gw if n.avg_gateways >= total_sources]
+
+            lines.append("")
+            lines.append(f"Coverage ({len(region_nodes_gw)} nodes):")
+            lines.append(f"  Avg gateways: {avg:.1f} / {total_sources}")
+            lines.append(f"  Full coverage: {len(full)} nodes")
+            if single:
+                lines.append(f"  Single gateway ({len(single)}):")
+                for n in single[:5]:
+                    name = f"{n.long_name} ({n.short_name})" if n.long_name else n.short_name
+                    lines.append(f"    {name}")
+                if len(single) > 5:
+                    lines.append(f"    ...and {len(single) - 5} more")
+
         # Flagged nodes in this region
         flagged_in_region = []
         for nid in region.node_ids:
@@ -747,6 +795,18 @@ class MeshReporter:
         lines.append("")
         lines.append("Connectivity:")
         lines.append(f"  MQTT Uplink: {'Enabled' if node.uplink_enabled else 'Disabled'}")
+
+        # Coverage
+        if unified and unified.avg_gateways is not None:
+            total_gw = len(self.data_store._sources)
+            pct = (unified.avg_gateways / total_gw * 100) if total_gw > 0 else 0
+            if unified.avg_gateways >= total_gw:
+                status = "Full"
+            elif unified.avg_gateways >= 2:
+                status = "Partial"
+            else:
+                status = "Single gateway - node goes dark if that gateway fails"
+            lines.append(f"  Coverage: {unified.avg_gateways:.0f}/{total_gw} gateways ({pct:.0f}%) - {status}")
 
         # Neighbors section
         if unified and unified.neighbors:
@@ -1134,6 +1194,25 @@ class MeshReporter:
                     f"Mesh-wide average is {avg_gw:.1f} gateways per packet. "
                     f"Adding MQTT feeders would improve monitoring reliability."
                 )
+
+        # Coverage gaps
+        if hasattr(self.data_store, "get_coverage_gaps"):
+            gaps = self.data_store.get_coverage_gaps()
+            if gaps:
+                gap_regions = {}
+                for g in gaps:
+                    node_num = g.get("node_num")
+                    health_node = health.nodes.get(node_num) if node_num else None
+                    region = health_node.region if health_node else "Unknown"
+                    gap_regions.setdefault(region or "Unknown", []).append(g)
+
+                for region, nodes in sorted(gap_regions.items(), key=lambda x: -len(x[1])):
+                    if len(nodes) >= 3:
+                        recs.append(
+                            f"{region}: {len(nodes)} nodes with thin coverage. "
+                            f"A new gateway here would improve monitoring."
+                        )
+                        break
 
         return recs
 
