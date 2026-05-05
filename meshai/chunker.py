@@ -77,8 +77,14 @@ def chunk_response(
                 current_len = 0
                 # Don't increment sentence_idx — retry this sentence in next message
             else:
-                # Single sentence exceeds max_chars — truncate it
-                messages.append(sentence[:max_chars])
+                # Single sentence exceeds max_chars — split at last word boundary
+                break_point = sentence[:max_chars].rfind(' ')
+                if break_point <= 0:
+                    break_point = max_chars
+                messages.append(sentence[:break_point].rstrip())
+                leftover = sentence[break_point:].lstrip()
+                if leftover:
+                    sentences.insert(sentence_idx + 1, leftover)
                 sentence_idx += 1
 
     # Flush any remaining buffered message

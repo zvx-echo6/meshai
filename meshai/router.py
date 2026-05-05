@@ -102,6 +102,7 @@ RESPONSE STYLE:
 - Include scores, percentages, node counts, battery levels, gateway counts
 - You CAN use 3-5 messages if needed — LoRa chunking handles splitting
 - No markdown formatting — plain text only
+- CRITICAL: Keep every sentence under 150 characters. Break long thoughts into multiple short sentences. The message system handles multiple sentences perfectly but will truncate a single long sentence.
 
 ANSWERING COVERAGE QUESTIONS:
 - Reference geographic areas by local name from the region config
