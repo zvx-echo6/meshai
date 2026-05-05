@@ -306,13 +306,15 @@ class MeshReporter:
                     if single_infra:
                         for sgn in single_infra:
                             sgn_name = _node_display_name(sgn.long_name, sgn.short_name, str(sgn.node_num))
-                            lines.append(f"      INFRA at risk: {sgn_name} - only 1 gateway")
+                            src_info = f" via {sgn.sources[0]}" if len(sgn.sources) == 1 else ""
+                            lines.append(f"      INFRA at risk: {sgn_name} - only 1 gateway{src_info}")
                     if single_clients > 0:
                         single_client_nodes = [n for n in single_gw_nodes if not n.is_infrastructure]
                         lines.append(f"      Single-gw clients ({single_clients}):")
                         for scn in single_client_nodes[:10]:
-                            scn_name = _node_display_name(scn.long_name, scn.short_name, str(scn.node_num))
-                            lines.append(f"        {scn_name}")
+                            scn_name = _node_display_name(scn.long_name, scn.short_name, str(scn.node~um))
+                            src_info = f" via {scn.sources[0]}" if len(scn.sources) == 1 else ""
+                            lines.append(f"        {scn_name}{src_info}")
                         if len(single_client_nodes) > 10:
                             lines.append(f"        ...and {len(single_client_nodes) - 10} more")
 
@@ -431,7 +433,8 @@ class MeshReporter:
                 for n in single_gw_infra:
                     name = _node_display_name(n.long_name, n.short_name, str(n.node_num))
                     region = n.region or "Unlocated"
-                    lines.append(f"    {name} [{region}]")
+                    src_info = f" via {n.sources[0]}" if len(n.sources) == 1 else ""
+                    lines.append(f"    {name} [{region}]{src_info}")
 
         if health.has_traceroute_data:
             lines.append("")
@@ -741,7 +744,8 @@ class MeshReporter:
                 lines.append(f"  Single gateway ({len(single)}):")
                 for n in single[:5]:
                     name = f"{n.long_name} ({n.short_name})" if n.long_name else n.short_name
-                    lines.append(f"    {name}")
+                    src_info = f" via {n.sources[0]}" if len(n.sources) == 1 else ""
+                    lines.append(f"    {name}{src_info}")
                 if len(single) > 5:
                     lines.append(f"    ...and {len(single) - 5} more")
 
