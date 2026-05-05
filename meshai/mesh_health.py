@@ -125,6 +125,13 @@ class NodeHealth:
     score: HealthScore = field(default_factory=HealthScore)
 
     @property
+    def node_num(self) -> int:
+        """Convert node_id hex string to integer."""
+        if self.node_id.startswith("!"): 
+            return int(self.node_id[1:], 16)
+        return int(self.node_id, 16)
+
+    @property
     def non_text_packets(self) -> int:
         """Non-text packets in 24h."""
         return self.packet_count_24h - self.text_packet_count_24h
