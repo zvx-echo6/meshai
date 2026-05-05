@@ -36,8 +36,9 @@ PORTNUM_DISPLAY = {
     "ATAK_FORWARDER": "ATAK",
 }
 
-def _clean_portnum(portnum: str) -> str:
+def _clean_portnum(portnum) -> str:
     """Convert raw portnum to display name."""
+    if isinstance(portnum, int): portnum = str(portnum)
     return PORTNUM_DISPLAY.get(portnum, portnum.replace("_APP", "").replace("_", " ").title())
 
 
@@ -174,6 +175,34 @@ class MeshReporter:
         if local and desc:
             return f"{local} ({desc})"
         return local or desc
+
+
+    def _build_source_health_section(self) -> list[str]:
+        """Build source health section for Tier 1."""
+        lines = []
+        lines.append("")
+        lines.append("DATA SOURCES:")
+
+        for name, source in self.data_store._sources.items():
+            if hasattr(source, 'health_status'):
+                status = source.health_status
+                err_str = f" - {status['last_error']}" if status.get('last_error') else ""
+                backed = " [BACKED OFF]" if status.get('backed_off') else ""
+                polite = " [POLITE]" if status.get('polite_mode') else ""
+                lines.append(
+                    f"  {name}: {status.get('cached_nodes', 0)} nodes, "
+                    f"{status.get('cached_packets', 0)} pkts, "
+                    f"avg {status.get('avg_response_ms', 0)}ms"
+                    f"{polite}{backed}{err_str}"
+                )
+            else:
+                # Legacy source without health_status
+                node_count = len(source.nodes) if hasattr(source, 'nodes') else 0
+                loaded = "OK" if source.is_loaded else "ERR"
+                err = f" - {source.last_error}" if source.last_error else ""
+                lines.append(f"  {name}: [{loaded}] {node_count} nodes{err}")
+
+        return lines
 
     def build_tier1_summary(self) -> str:
         """Build comprehensive mesh health summary with full data for LLM context."""
@@ -427,6 +456,9 @@ class MeshReporter:
             if pb["low"]: parts.append(f"{pb['low']} battery low")
             if pb["critical"]: parts.append(f"{pb['critical']} battery critical")
             lines.append(f"POWER (infra): {', '.join(parts)}")
+
+        # Source health section
+        lines.extend(self._build_source_health_section())
 
         lines.append("")
         lines.append(f"TOTAL: {health.total_nodes} nodes across {health.total_regions} regions.")
@@ -898,6 +930,10 @@ class MeshReporter:
             else:
                 status = "Single gateway - node goes dark if that gateway fails"
             lines.append(f"  Coverage: {node.avg_gateways:.0f}/{total_gw} gateways ({pct:.0f}%) - {status}")
+
+            # Source visibility
+            if node.sources:
+                lines.append(f"  Seen by: {', '.join(node.sources)} ({len(node.sources)} sources)")
 
         # Neighbors section
         if node.neighbors:

@@ -298,19 +298,23 @@ class MeshDataStore:
 
         try:
             if src_type == "meshview":
+                polite = getattr(cfg, 'polite_mode', False) if not isinstance(cfg, dict) else cfg.get('polite_mode', False)
                 self._sources[name] = MeshviewSource(
                     url=url,
                     refresh_interval=refresh_interval,
+                    polite_mode=polite,
                 )
-                logger.info(f"Registered Meshview source '{name}' -> {url}")
+                logger.info(f"Registered Meshview source '{name}' -> {url} (polite={polite})")
 
             elif src_type == "meshmonitor":
+                polite = getattr(cfg, 'polite_mode', False) if not isinstance(cfg, dict) else cfg.get('polite_mode', False)
                 self._sources[name] = MeshMonitorDataSource(
                     url=url,
                     api_token=api_token,
                     refresh_interval=refresh_interval,
+                    polite_mode=polite,
                 )
-                logger.info(f"Registered MeshMonitor source '{name}' -> {url}")
+                logger.info(f"Registered MeshMonitor source '{name}' -> {url} (polite={polite})")
 
             else:
                 logger.warning(f"Unknown source type '{src_type}' for '{name}'")
@@ -380,16 +384,53 @@ class MeshDataStore:
             logger.info(f"Purged {len(stale_nums)} stale nodes (not heard in {STALE_NODE_THRESHOLD_DAYS} days)")
 
     def refresh(self) -> bool:
-        """Refresh data from all sources if interval has elapsed.
+        """Tick-based refresh. Called every second from the main loop.
+
+        Delegates to source tick() for sources that support it.
+        Only does a full rebuild when nodes/edges/topology change.
+        Only does a lightweight update when only packets change.
 
         Returns:
-            True if any source was refreshed
+            True if any data changed
         """
         now = time.time()
-        if now - self._last_refresh < self._refresh_interval:
-            return False
+        any_changed = False
+        needs_rebuild = False
+        needs_packet_update = False
 
-        return self._do_refresh()
+        for name, source in self._sources.items():
+            # Check if this source supports tick-based polling
+            if hasattr(source, 'tick') and hasattr(source, '_tick_interval'):
+                if now - source._last_tick >= source._tick_interval:
+                    endpoint = source.tick()
+                    if endpoint:
+                        any_changed = True
+                        # Major changes require full rebuild
+                        if endpoint in ("nodes", "edges", "traceroutes", "topology", "telemetry"):
+                            needs_rebuild = True
+                        # Packet-only changes are lightweight
+                        elif endpoint in ("packets",):
+                            needs_packet_update = True
+                        # stats, counts, channels, solar, network just update cached data
+            else:
+                # Legacy fallback for sources without tick support
+                if source.maybe_refresh():
+                    any_changed = True
+                    needs_rebuild = True
+
+        if needs_rebuild:
+            self._rebuild()
+            self._purge_stale_nodes()
+            self._store_snapshot()
+            self._purge_old_data()
+            self._last_refresh = now
+            self._is_loaded = True
+        elif needs_packet_update:
+            # Lightweight: just update packet-derived metrics without full rebuild
+            self._update_packet_metrics()
+            self._last_refresh = now
+
+        return any_changed
 
     def force_refresh(self) -> bool:
         """Force an immediate refresh, bypassing the interval timer.
@@ -406,6 +447,50 @@ class MeshDataStore:
 
         self._last_force_refresh = now
         return self._do_refresh(force=True)
+
+
+    def _update_packet_metrics(self):
+        """Lightweight update when only new packets arrived.
+
+        Updates:
+        - Per-node packet counts
+        - Top senders
+        - Deliverability (source overlap)
+        Does NOT rebuild the full node model.
+        """
+        # Recount packets per node from all sources
+        packet_counts: dict[int, int] = {}
+        packets_by_type: dict[int, dict[str, int]] = {}
+
+        for name, source in self._sources.items():
+            for pkt in (source.packets if hasattr(source, 'packets') else []):
+                from_node = pkt.get("from_node") or pkt.get("from_node_id") or pkt.get("from")
+                if from_node is None:
+                    continue
+
+                # Normalize to int
+                if isinstance(from_node, str):
+                    stripped = from_node.lstrip("!")
+                    try:
+                        from_node = int(stripped, 16) if not stripped.isdigit() else int(stripped)
+                    except ValueError:
+                        continue
+
+                packet_counts[from_node] = packet_counts.get(from_node, 0) + 1
+
+                portnum = pkt.get("portnum") or pkt.get("portnum_name") or pkt.get("type") or "UNKNOWN"
+                if from_node not in packets_by_type:
+                    packets_by_type[from_node] = {}
+                packets_by_type[from_node][portnum] = packets_by_type[from_node].get(portnum, 0) + 1
+
+        # Update nodes
+        for node_num, count in packet_counts.items():
+            if node_num in self._nodes:
+                self._nodes[node_num].packets_sent_24h = count
+                if node_num in packets_by_type:
+                    self._nodes[node_num].packets_by_type = packets_by_type[node_num]
+
+        logger.debug(f"Packet metrics updated: {sum(packet_counts.values())} packets across {len(packet_counts)} nodes")
 
     def _do_refresh(self, force: bool = False) -> bool:
         """Perform the actual refresh.
@@ -2166,6 +2251,53 @@ class MeshDataStore:
             }
             result.append(ch_dict)
         return result
+
+
+    def get_source_coverage(self) -> dict:
+        """Get per-source node coverage.
+
+        Returns:
+            {
+                "meshview-local": {"node_count": 200, "unique_nodes": 50, "shared_nodes": 150},
+                "meshview-freq51": {"node_count": 800, "unique_nodes": 400, "shared_nodes": 400},
+                ...
+            }
+        """
+        coverage = {}
+        for name in self._sources:
+            nodes_in_source = [n for n in self._nodes.values() if name in n.sources]
+            unique = [n for n in nodes_in_source if len(n.sources) == 1]
+            coverage[name] = {
+                "node_count": len(nodes_in_source),
+                "unique_nodes": len(unique),
+                "shared_nodes": len(nodes_in_source) - len(unique),
+            }
+        return coverage
+
+    def get_nodes_by_source(self, source_name: str) -> list:
+        """Get all nodes visible to a specific source."""
+        return [n for n in self._nodes.values() if source_name in n.sources]
+
+    def get_exclusive_nodes(self, source_name: str) -> list:
+        """Get nodes ONLY visible to this source (not seen by any other)."""
+        return [n for n in self._nodes.values() if n.sources == [source_name]]
+
+    def get_source_health(self) -> list[dict]:
+        """Get health status of all sources."""
+        health = []
+        for name, source in self._sources.items():
+            if hasattr(source, 'health_status'):
+                status = source.health_status
+                status["name"] = name
+                health.append(status)
+            else:
+                health.append({
+                    "name": name,
+                    "is_loaded": source.is_loaded,
+                    "last_error": source.last_error,
+                    "cached_nodes": len(source.nodes),
+                })
+        return health
 
     def close(self) -> None:
         """Close database connection."""

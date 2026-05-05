@@ -145,7 +145,8 @@ class MeshMonitorConfig:
     enabled: bool = False
     url: str = ""  # e.g., http://100.64.0.11:3333
     inject_into_prompt: bool = True  # Tell LLM about MeshMonitor commands
-    refresh_interval: int = 300  # Seconds between refreshes
+    refresh_interval: int = 30     # Tick interval in seconds (default 30)
+    polite_mode: bool = False      # Reduces polling frequency for shared instances  # Seconds between refreshes
 
 
 @dataclass
@@ -165,7 +166,8 @@ class MeshSourceConfig:
     type: str = ""  # "meshview" or "meshmonitor"
     url: str = ""
     api_token: str = ""  # MeshMonitor only, supports ${ENV_VAR}
-    refresh_interval: int = 300
+    refresh_interval: int = 30     # Tick interval in seconds (default 30)
+    polite_mode: bool = False      # Reduces polling frequency for shared instances
     enabled: bool = True
 
 
