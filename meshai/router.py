@@ -125,14 +125,19 @@ _CITY_TO_REGION = {
 
 # Mesh awareness instruction for LLM
 _MESH_AWARENESS_PROMPT = """
-When the user asks about mesh health, network status, or optimization:
-- Use the LIVE MESH HEALTH DATA injected above to answer with real numbers
-- Be specific: name nodes, cite utilization percentages, reference actual scores
-- Give actionable recommendations based on the data
-- If asked about a region or node you have detail for, use that detail
-- If asked about something the data doesn't cover, say so - don't fabricate
-- Keep responses concise - these go over LoRa with limited message size
-- Users can run !health for a quick mesh summary or !region [name] for regional info
+MESH DATA RESPONSE RULES (these OVERRIDE the brevity rules above for mesh questions):
+- When answering about mesh health, nodes, coverage, or network status: give DETAILED responses
+- Include actual numbers: scores, percentages, node names, packet counts, battery levels
+- Use the data injected above — don't summarize it to one sentence
+- Structure your response with the key data points the user asked about
+- For node questions: include hardware, region, battery, channel utilization, coverage, neighbors, packets
+- For region questions: include score, infrastructure status, coverage breakdown, flagged nodes, environment
+- For mesh questions: include overall score by pillar, regional breakdown, top issues, coverage gaps
+- For coverage questions: break down by region showing node counts, avg gateways, single-gateway nodes
+- For "where do we need infrastructure": name specific regions with poor coverage, how many nodes are affected
+- You CAN use 3-5 messages if needed — LoRa chunking handles splitting
+- Be specific and data-driven, not vague summaries
+- Still no markdown formatting — plain text only
 """
 
 
