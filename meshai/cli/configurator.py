@@ -1042,6 +1042,7 @@ class Configurator:
             table.add_row("7", "Critical Nodes", ", ".join(crit_nodes) if crit_nodes else "[dim]none[/dim]")
             table.add_row("8", "Alert Channel", f"Channel {alert_ch}" if alert_ch >= 0 else "[dim]disabled[/dim]")
             table.add_row("9", "Alert Cooldown (min)", str(alert_cd))
+            table.add_row("10", "Alert Rules", "Configure conditions")
             table.add_row("0", "Back", "")
 
             console.print(table)
@@ -1096,6 +1097,8 @@ class Configurator:
                         self.modified = True
                 except ValueError:
                     pass
+            elif choice == 10:
+                self._edit_alert_rules()
 
     def _edit_critical_nodes(self) -> None:
         """Edit critical node list."""
@@ -1138,6 +1141,86 @@ class Configurator:
                             self.modified = True
                     except (ValueError, IndexError):
                         pass
+
+    def _edit_alert_rules(self) -> None:
+        """Edit per-condition alert toggles."""
+        mi = self.config.mesh_intelligence
+        rules = mi.alert_rules
+
+        while True:
+            self._clear()
+            console.print("[bold]Alert Rules[/bold]")
+            console.print("[dim]Toggle individual alert conditions on/off.[/dim]")
+            console.print()
+
+            table = Table(box=box.ROUNDED)
+            table.add_column("#", style="cyan", width=3)
+            table.add_column("Category", style="white")
+            table.add_column("Condition", style="white")
+            table.add_column("Status", style="green")
+
+            # Infrastructure
+            table.add_row("1", "Infra", "Router offline", self._status_icon(rules.infra_offline))
+            table.add_row("2", "Infra", "Router recovery", self._status_icon(rules.infra_recovery))
+            table.add_row("3", "Infra", "New router appears", self._status_icon(rules.new_router))
+
+            # Power
+            table.add_row("4", "Power", f"Battery warning (<{rules.battery_warning_threshold}%)", self._status_icon(rules.battery_warning))
+            table.add_row("5", "Power", f"Battery critical (<{rules.battery_critical_threshold}%)", self._status_icon(rules.battery_critical))
+            table.add_row("6", "Power", f"Battery emergency (<{rules.battery_emergency_threshold}%)", self._status_icon(rules.battery_emergency))
+            table.add_row("7", "Power", "7-day declining trend", self._status_icon(rules.battery_trend_declining))
+            table.add_row("8", "Power", "USB to battery (power outage)", self._status_icon(rules.power_source_change))
+            table.add_row("9", "Power", "Solar not charging", self._status_icon(rules.solar_not_charging))
+
+            # Utilization
+            table.add_row("10", "Util", f"Sustained >{rules.high_util_threshold}% for {rules.high_util_hours}h", self._status_icon(rules.sustained_high_util))
+            table.add_row("11", "Util", f"Packet flood (>{rules.packet_flood_threshold}/24h)", self._status_icon(rules.packet_flood))
+
+            # Coverage
+            table.add_row("12", "Coverage", "Infra drops to 1 gateway", self._status_icon(rules.infra_single_gateway))
+            table.add_row("13", "Coverage", "Feeder gateway offline", self._status_icon(rules.feeder_offline))
+            table.add_row("14", "Coverage", "Region total blackout", self._status_icon(rules.region_total_blackout))
+
+            # Health scores
+            table.add_row("15", "Scores", f"Mesh score <{rules.mesh_score_threshold}", self._status_icon(rules.mesh_score_alert))
+            table.add_row("16", "Scores", f"Region score <{rules.region_score_threshold}", self._status_icon(rules.region_score_alert))
+
+            table.add_row("", "", "", "")
+            table.add_row("0", "", "Back", "")
+
+            console.print(table)
+            console.print()
+
+            choice = IntPrompt.ask("Toggle option (0 to go back)", default=0)
+
+            if choice == 0:
+                return
+
+            # Map choice to field toggle
+            toggles = {
+                1: "infra_offline",
+                2: "infra_recovery",
+                3: "new_router",
+                4: "battery_warning",
+                5: "battery_critical",
+                6: "battery_emergency",
+                7: "battery_trend_declining",
+                8: "power_source_change",
+                9: "solar_not_charging",
+                10: "sustained_high_util",
+                11: "packet_flood",
+                12: "infra_single_gateway",
+                13: "feeder_offline",
+                14: "region_total_blackout",
+                15: "mesh_score_alert",
+                16: "region_score_alert",
+            }
+
+            field = toggles.get(choice)
+            if field and hasattr(rules, field):
+                current = getattr(rules, field)
+                setattr(rules, field, not current)
+                self.modified = True
 
     def _edit_regions(self) -> None:
         """Edit region anchor points."""

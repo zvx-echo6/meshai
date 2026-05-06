@@ -188,6 +188,45 @@ class RegionAnchor:
 
 
 @dataclass
+class AlertRulesConfig:
+    """Per-condition alert toggles and thresholds."""
+
+    # Infrastructure
+    infra_offline: bool = True
+    infra_recovery: bool = True
+    new_router: bool = True
+
+    # Power
+    battery_trend_declining: bool = True
+    battery_warning: bool = True
+    battery_critical: bool = True
+    battery_emergency: bool = True
+    battery_warning_threshold: int = 50
+    battery_critical_threshold: int = 25
+    battery_emergency_threshold: int = 10
+    power_source_change: bool = True
+    solar_not_charging: bool = True
+
+    # Utilization
+    sustained_high_util: bool = True
+    high_util_threshold: float = 20.0
+    high_util_hours: int = 6
+    packet_flood: bool = True
+    packet_flood_threshold: int = 500
+
+    # Coverage
+    infra_single_gateway: bool = True
+    feeder_offline: bool = True
+    region_total_blackout: bool = True
+
+    # Health Scores
+    mesh_score_alert: bool = True
+    mesh_score_threshold: int = 70
+    region_score_alert: bool = True
+    region_score_threshold: int = 60
+
+
+@dataclass
 class MeshIntelligenceConfig:
     """Mesh intelligence and health scoring settings."""
 
@@ -202,6 +241,7 @@ class MeshIntelligenceConfig:
     critical_nodes: list[str] = field(default_factory=list)  # Short names of critical nodes (e.g., ["MHR", "HPR"])
     alert_channel: int = -1  # Channel to broadcast alerts on. -1 = disabled, 0+ = channel index
     alert_cooldown_minutes: int = 30  # Min minutes between repeated alerts for same condition
+    alert_rules: AlertRulesConfig = field(default_factory=AlertRulesConfig)
 
 
 @dataclass
@@ -272,6 +312,9 @@ def _dict_to_dataclass(cls, data: dict):
                 if isinstance(item, dict) else item
                 for item in value
             ]
+        # Handle AlertRulesConfig
+        elif key == "alert_rules" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(AlertRulesConfig, value)
         else:
             kwargs[key] = value
 

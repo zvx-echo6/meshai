@@ -279,10 +279,10 @@ class MeshAI:
                 health_engine=self.health_engine,
                 reporter=self.mesh_reporter,
                 subscription_manager=self.subscription_manager,
-                critical_nodes=getattr(mi, 'critical_nodes', []),
-                alert_cooldown_minutes=getattr(mi, 'alert_cooldown_minutes', 30),
+                config=mi,
+                db_path="/data/mesh_history.db",
             )
-            logger.info(f"Alert engine initialized (critical nodes: {getattr(mi, 'critical_nodes', [])})")
+            logger.info(f"Alert engine initialized (critical: {mi.critical_nodes}, channel: {mi.alert_channel})")
 
         # Knowledge base (optional - gracefully degrade if deps missing)
         kb_cfg = self.config.knowledge
