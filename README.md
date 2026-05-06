@@ -1,180 +1,235 @@
 # MeshAI
 
-LLM-powered assistant for Meshtastic mesh networks.
+LLM-powered mesh intelligence assistant for Meshtastic networks. MeshAI connects to your mesh as a physical node, monitors network health in real-time, and answers questions about your infrastructure over LoRa.
 
-## Features
+## What It Does
 
-- **LLM Chat**: Responds to @mentions and DMs with AI-generated responses
-- **Multi-backend**: Supports OpenAI, Anthropic Claude, Google Gemini, and local LLMs via LiteLLM
-- **Knowledge Base (RAG)**: Hybrid FTS5 + vector search over Meshtastic documentation
-- **Message Chunking**: Sentence-aware splitting with continuation prompts for long responses
-- **Bang Commands**: `!help`, `!ping`, `!reset`, `!status`, `!weather`
-- **Conversation History**: Per-user context maintained in SQLite
-- **Rate Limiting**: Configurable delays to avoid flooding the mesh
-- **advBBS Compatible**: Runs alongside [advBBS](https://github.com/zvx-echo6/advbbs) on the same node — protocol sync messages and mail notifications are automatically filtered
-- **Rich Configurator**: Interactive TUI for easy setup
-- **MeshMonitor Integration**: Syncs with [MeshMonitor](https://github.com/Yeraze/meshmonitor) by Yeraze to avoid duplicate responses
+MeshAI runs on your Meshtastic node and provides:
 
-## Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/zvx-echo6/meshai.git
-cd meshai
-
-# Install with pip
-pip install -e .
-
-# Or install dependencies manually
-pip install -r requirements.txt
-```
+- **Mesh Intelligence** — 5-pillar health scoring, per-region breakdowns, infrastructure monitoring, coverage gap analysis, and environmental sensing
+- **Conversational Queries** — ask "how's the mesh?" or "tell me about MHR" and get data-driven answers over LoRa
+- **Node Distance** — GPS-based distance calculations between any two nodes on the mesh
+- **Multi-Source Awareness** — aggregates data from multiple Meshview instances and MeshMonitor with staggered polling
+- **Feeder Gateway Tracking** — identifies which physical MQTT gateways hear each node and signal quality
+- **Subscriptions** — scheduled daily/weekly health reports and instant alerts delivered via DM
+- **LLM Chat** — general conversation, knowledge base lookups, and weather queries
+- **Multi-Backend** — supports Google Gemini, OpenAI, Anthropic Claude, and local LLMs via LiteLLM
 
 ## Quick Start
 
 ```bash
-# Run the configurator
+# Clone
+git clone https://github.com/zvx-echo6/meshai.git
+cd meshai
+
+# Install
+pip install -e .
+
+# Configure (interactive TUI)
 meshai --config
 
-# Or copy and edit the example config
-cp config.example.yaml config.yaml
-# Edit config.yaml with your settings
-
-# Run the bot
+# Run
 meshai
 ```
 
-## Configuration
+Or with Docker:
 
-Run `meshai --config` to launch the interactive configurator, or edit `config.yaml` directly.
-
-### Key Settings
-
-```yaml
-bot:
-  name: "ai"                    # @mention trigger
-  respond_to_mentions: true
-  respond_to_dms: true
-
-connection:
-  type: "serial"               # serial or tcp
-  serial_port: "/dev/ttyUSB0"
-
-llm:
-  backend: "openai"            # openai, anthropic, google
-  api_key: "your-api-key"
-  model: "gpt-4o-mini"
+```bash
+mkdir -p meshai/data && cd meshai
+curl -O https://raw.githubusercontent.com/zvx-echo6/meshai/main/docker-compose.yml
+curl -o data/config.yaml https://raw.githubusercontent.com/zvx-echo6/meshai/main/config.example.yaml
+# Edit data/config.yaml
+docker compose up -d
 ```
-
-### Using Local LLMs
-
-MeshAI works with any OpenAI-compatible API, including:
-
-- **LiteLLM**: `base_url: "http://localhost:4000/v1"`
-- **Open WebUI**: `base_url: "http://localhost:3000/api"`
-- **Ollama**: `base_url: "http://localhost:11434/v1"`
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
+| `!health` | Mesh health overview with colored status dots |
+| `!region` | List all regions with health status |
+| `!region [name]` | Detailed region breakdown |
+| `!neighbors [node]` | Top infrastructure neighbors with signal quality |
+| `!sub daily 6pm` | Subscribe to daily health reports |
+| `!sub weekly 8am sun` | Subscribe to weekly digest |
+| `!sub alerts` | Subscribe to instant alerts on issues |
+| `!unsub [type]` | Remove a subscription |
+| `!mysubs` | List your active subscriptions |
+| `!clear` | Clear conversation history |
 | `!help` | Show available commands |
-| `!ping` | Test connectivity |
-| `!reset` | Clear your conversation history |
-| `!status` | Show bot status and stats |
-| `!weather [location]` | Get weather (uses GPS if no location given) |
+| `!help [cmd]` | Detailed help for a command |
 
-## Usage Examples
+Commands can be disabled in config if another service (like MeshMonitor) handles them.
 
-**Chat via @mention:**
-```
-@ai What's the weather like today?
-> Seattle: 52F, Partly Cloudy, Wind 8mph
-```
+## Mesh Intelligence
 
-**Direct message:**
-```
-DM: Tell me a short joke
-> Why don't scientists trust atoms? They make up everything!
-```
+MeshAI continuously polls mesh data sources and computes a 5-pillar health score:
 
-**Weather command:**
-```
-!weather Portland
-> Portland: 48F, Rain, Wind 12mph
-```
+| Pillar | Weight | What It Measures |
+|--------|--------|------------------|
+| Infrastructure | 30% | Router uptime — how many infra nodes are online |
+| Utilization | 25% | Channel busyness — RF congestion across the mesh |
+| Coverage | 20% | Gateway reach — how many monitoring sources see each node |
+| Behavior | 15% | Traffic patterns — detecting noisy or misconfigured nodes |
+| Power | 10% | Battery health — infrastructure nodes only |
 
-## Architecture
+### Health Display
+
+`!health` shows a compact overview with personality:
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                           MeshAI                                  │
-├──────────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐    ┌─────────────┐    ┌──────────────────────┐ │
-│  │  Meshtastic │    │   Message   │    │    LLM Backend       │ │
-│  │  Connector  │───▶│   Router    │───▶│    (pluggable)       │ │
-│  │ Serial/TCP  │    │             │    │                      │ │
-│  └─────────────┘    └──────┬──────┘    └──────────────────────┘ │
-│         │                  │                     │               │
-│         │           ┌──────▼──────┐              │               │
-│         │           │ Conversation│              │               │
-│         │           │   History   │◀─────────────┘               │
-│         │           │  (SQLite)   │                              │
-│         │           └─────────────┘                              │
-│         │                  │                                     │
-│         │           ┌──────▼──────┐    ┌──────────────────────┐ │
-│         │           │  Knowledge  │───▶│  Hybrid FTS5+Vector  │ │
-│         │           │    Base     │    │  (sqlite-vec + BGE)  │ │
-│         │           └─────────────┘    └──────────────────────┘ │
-│         │                                                        │
-│         ▼                                                        │
-│  ┌─────────────┐    ┌─────────────┐                             │
-│  │  Responder  │───▶│   Chunker   │  Sentence-aware splitting   │
-│  │             │    │             │  + continuation prompts     │
-│  └─────────────┘    └─────────────┘                             │
-└──────────────────────────────────────────────────────────────────┘
+📡 Mesh 🟢 healthy
+🏗️ 15/16 routers up
+❌ Down: TVM Tablerock Relay
+📶 152 full coverage, 94 on thin ice
+🔥 Hayden Peak Router at 21% util
+🔋 All infra powered ✅
+🌡️ 29-34°C across 2 sensors
+Treasure Valley 🟢 | Magic Valley 🟢
+```
+
+Status dots: 🔵 perfect (100) · 🟢 healthy (75+) · 🟠 warning (50+) · 🔴 critical (<50)
+
+### Monitoring Rules
+
+Infrastructure nodes (routers, repeaters) are monitored individually with full detail — battery, offline alerts, coverage, neighbors, hardware. Client nodes dying is normal and not tracked. Channel utilization and environmental sensors are monitored for all nodes.
+
+### Conversational Queries
+
+Ask questions naturally over LoRa:
+
+- "how's the mesh?" → health overview with top issues
+- "tell me about MHR" → full node detail with neighbors, coverage, feeders
+- "where do we need more coverage?" → named gaps with specific nodes
+- "how far is MHR from AIDA?" → GPS distance calculation
+- "which nodes only reach one gateway?" → named nodes with their gateway
+- "which gateway has the best signal?" → feeder comparison
+
+### Geographic Regions
+
+Regions are configurable with local names, descriptions, aliases, and cities — all manageable through the TUI. No hardcoded geography in the code.
+
+```yaml
+mesh_intelligence:
+  regions:
+    - name: "South Central ID"
+      local_name: "Magic Valley"
+      description: "Twin Falls area"
+      aliases: ["southern Idaho", "magic valley"]
+      cities: ["Twin Falls", "Burley", "Jerome"]
+      lat: 42.5
+      lon: -114.5
+      radius_km: 80
+```
+
+## Data Sources
+
+MeshAI aggregates from multiple sources using staggered tick-based polling (one API call per 30-second tick):
+
+### Meshview
+
+Unauthenticated REST API. Supports multiple instances.
+
+| Endpoint | Interval | Data |
+|----------|----------|------|
+| `/api/packets` | 30s | Near real-time packet feed |
+| `/api/nodes` | 2 min | Node list with metadata |
+| `/api/stats` | 3 min | Traffic statistics |
+| `/api/edges` | 3 min | Node-to-node connections |
+| `/api/traceroutes` | 5 min | Route data |
+| `/api/packets_seen` | 10 min | Per-gateway RSSI/SNR (sampled) |
+
+### MeshMonitor
+
+Authenticated (Bearer token). Single instance.
+
+| Endpoint | Interval | Data |
+|----------|----------|------|
+| `/api/v1/packets` | 60s | Packet feed |
+| `/api/v1/nodes` | 2 min | Nodes with battery, utilization, hardware |
+| `/api/v1/telemetry` | 2 min | Environmental sensors, device metrics |
+| `/api/v1/traceroutes` | 5 min | Route data |
+| `/api/v1/channels` | 5 min | Channel configuration |
+| `/api/v1/network` | 5 min | Network statistics |
+| `/api/v1/solar` | 10 min | Solar estimates |
+
+### Rate Limiting
+
+Built-in protection for all sources: HTTP 429 backoff with Retry-After, exponential backoff on consecutive errors, slow response warnings, and optional polite mode for shared instances.
+
+### Source Configuration
+
+```yaml
+mesh_sources:
+  - name: "local-meshview"
+    type: meshview
+    url: "http://192.168.1.100:8080"
+    enabled: true
+
+  - name: "meshmonitor"
+    type: meshmonitor
+    url: "http://192.168.1.100:3333"
+    api_token: "your-bearer-token"
+    enabled: true
 ```
 
 ## Knowledge Base (RAG)
 
-MeshAI can answer questions using a local knowledge base built from Meshtastic documentation. The system uses hybrid search combining:
-
-- **FTS5 keyword search** — fast exact term matching with domain-aware query construction
-- **Vector embeddings** — semantic similarity using `bge-small-en-v1.5` (384 dimensions)
-- **Reciprocal Rank Fusion** — merges results from both methods for best relevance
-
-**Building the knowledge base:**
+MeshAI answers questions using a local knowledge base built from Meshtastic documentation. The system uses hybrid search combining FTS5 keyword search, vector embeddings via `bge-small-en-v1.5`, and Reciprocal Rank Fusion for best relevance.
 
 ```bash
-# Extract from Meshtastic ZIM file
+# Build from Meshtastic ZIM file
 python scripts/zim_to_knowledge.py meshtastic.zim --output knowledge.db
 
 # Or from markdown files
 python scripts/md_to_knowledge.py docs/ --output knowledge.db
 ```
 
-**Configuration:**
-
 ```yaml
 knowledge:
   enabled: true
   db_path: /data/meshai_knowledge.db
-  top_k: 5              # Number of chunks to retrieve
-  fts_weight: 0.5       # Weight for keyword matches (0-1)
-  vector_weight: 0.5    # Weight for semantic matches (0-1)
+  top_k: 5
+  fts_weight: 0.5
+  vector_weight: 0.5
 ```
 
-The knowledge base requires `sqlite-vec` and `fastembed` (installed automatically with requirements.txt).
+Requires `sqlite-vec` and `fastembed` (installed with requirements.txt).
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                              MeshAI                                  │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  DATA SOURCES              INTELLIGENCE              DELIVERY        │
+│  ┌─────────────┐          ┌──────────────┐         ┌────────────┐   │
+│  │ Meshview ×N  │─────┐   │ Health Engine │────────▶│  Reporter  │   │
+│  │ (staggered)  │     │   │ 5-pillar     │         │ Tier 1/2   │   │
+│  └─────────────┘     ▼   │ scoring      │         └─────┬──────┘   │
+│  ┌─────────────┐  ┌──────┴──┐ │              │               │          │
+│  │ MeshMonitor │─▶│  Data   │─┘              │         ┌─────▼──────┐   │
+│  │ (staggered) │  │  Store  │                │         │   Router   │   │
+│  └─────────────┘  │ SQLite  │                │         │ scope/dist │   │
+│                   └─────────┘                │         └─────┬──────┘   │
+│                        │                     │               │          │
+│                   ┌────▼────┐          ┌─────▼──────┐  ┌────▼────┐    │
+│                   │ Feeder  │          │    LLM     │  │ Chunker │    │
+│                   │ Sampling│          │  Backend   │  │LoRa-fit │    │
+│                   └─────────┘          └────────────┘  └────┬────┘    │
+│                                                             │         │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐   ┌────▼────┐   │
+│  │  Knowledge  │  │ Conversation│  │ Subscription │   │Responder│   │
+│  │  Base (RAG) │  │   History   │  │   Manager    │   │  DM/CH  │   │
+│  └─────────────┘  └─────────────┘  └─────────────┘   └─────────┘   │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
+```
 
 ## Message Chunking
 
-Long LLM responses are automatically split into mesh-friendly chunks:
-
-- **Sentence-aware** — never splits a sentence across messages
-- **Configurable limits** — max characters per message, max messages per response
-- **Continuation prompts** — if content remains, asks "Want me to keep going?"
-- **Natural follow-ups** — responds to "yes", "ok", "continue", "more", etc.
-
-**Configuration:**
+Long responses are split into mesh-friendly chunks with sentence-aware splitting, configurable limits, and continuation prompts. Command output (like `!health`) packs multiple lines into 2-3 messages using newlines within each message to minimize airtime usage.
 
 ```yaml
 response:
@@ -182,97 +237,64 @@ response:
   max_messages: 3       # Messages before continuation prompt
 ```
 
-## Docker
+## LLM Configuration
 
-### Quick Start with Docker
-
-```bash
-# Create working directory
-mkdir -p meshai/data && cd meshai
-
-# Download docker-compose file
-curl -O https://raw.githubusercontent.com/zvx-echo6/meshai/main/docker-compose.yml
-
-# Copy and edit config
-curl -o data/config.yaml https://raw.githubusercontent.com/zvx-echo6/meshai/main/config.example.yaml
-# Edit data/config.yaml with your settings
-
-# Start
-docker compose up -d
-
-# View logs
-docker compose logs -f
+```yaml
+llm:
+  backend: "google"            # openai, anthropic, google
+  api_key: "your-api-key"
+  model: "gemini-2.0-flash"
 ```
 
-### Docker Configuration
+### Local LLMs
 
-**TCP Connection** (recommended for Docker):
+MeshAI works with any OpenAI-compatible API:
+
+- **LiteLLM**: `base_url: "http://localhost:4000/v1"`
+- **Open WebUI**: `base_url: "http://localhost:3000/api"`
+- **Ollama**: `base_url: "http://localhost:11434/v1"`
+
+## Docker
+
+### TCP Connection (recommended)
+
 ```yaml
-# data/config.yaml
 connection:
   type: "tcp"
-  tcp_host: "192.168.1.100"  # Your Meshtastic node IP
+  tcp_host: "192.168.1.100"
   tcp_port: 4403
 ```
 
-**Serial Connection**:
+### Serial Connection
+
 ```yaml
-# data/config.yaml
 connection:
   type: "serial"
   serial_port: "/dev/ttyUSB0"
 ```
 
-Then edit `docker-compose.serial.yml` to match your device path.
+Edit `docker-compose.serial.yml` to match your device path.
 
 ### Environment Variables
-
-You can pass the API key via environment variable instead of config file:
 
 ```bash
 LLM_API_KEY=your-key-here docker compose up -d
 ```
 
-Or create a `.env` file:
-```bash
-LLM_API_KEY=your-key-here
-```
+## Running Alongside Other Services
 
-### View Logs
+### advBBS
 
-```bash
-docker compose logs -f meshai
-```
-
-## Running Alongside advBBS
-
-MeshAI is designed to coexist with [advBBS](https://github.com/zvx-echo6/advbbs) on the same Meshtastic node. Both connect via TCP to meshtasticd and share the radio, but MeshAI automatically ignores advBBS traffic:
-
-- **Sync protocol** — `MAILREQ|`, `MAILACK|`, `MAILDAT|`, `BOARDREQ|`, etc.
-- **RAP protocol** — `advBBS|` pings, pongs, and route advertisements
-- **Mail notifications** — `[MAIL]` new message alerts
-- **Bang commands in DMs** — `!mail`, `!board`, etc. are left for advBBS to handle
-
-No special configuration is needed. The filter is enabled by default and can be toggled in `config.yaml`:
+MeshAI coexists with [advBBS](https://github.com/zvx-echo6/advbbs) on the same node. BBS protocol messages (sync, RAP, mail notifications) are automatically filtered. No configuration needed.
 
 ```yaml
 bot:
-  filter_bbs_protocols: true   # set false to disable
+  filter_bbs_protocols: true
 ```
 
-Plain-text BBS responses (e.g. "Welcome back, matt!") are indistinguishable from normal user messages and will be processed normally — this is a known and accepted limitation.
+### MeshMonitor
 
-## MeshMonitor Integration
-
-MeshAI integrates with [MeshMonitor](https://github.com/Yeraze/meshmonitor), a comprehensive Meshtastic monitoring platform by Yeraze. When enabled, MeshAI automatically fetches MeshMonitor's auto-responder trigger patterns and ignores messages that MeshMonitor handles, preventing duplicate responses on the mesh.
-
-**Features:**
-- Automatic trigger discovery via MeshMonitor's HTTP API
-- Dynamic ignore list — no manual sync needed
-- Trigger list injected into the LLM prompt so MeshAI can discuss MeshMonitor commands conversationally
-- Configurable via TUI (option 9) or config.yaml
-
-**Configuration:**
+MeshAI integrates with [MeshMonitor](https://github.com/Yeraze/meshmonitor) at two levels: it fetches MeshMonitor's auto-responder patterns to avoid duplicate responses, and it uses MeshMonitor's API as a data source for mesh intelligence (battery, telemetry, traceroutes, solar).
 
 ```yaml
 meshmonitor:
@@ -282,15 +304,12 @@ meshmonitor:
   refresh_interval: 300
 ```
 
-MeshMonitor is a separate project — get it at https://github.com/Yeraze/meshmonitor
-
 ## Running as a Service
 
-Create `/etc/systemd/system/meshai.service`:
-
 ```ini
+# /etc/systemd/system/meshai.service
 [Unit]
-Description=MeshAI - Meshtastic LLM Assistant
+Description=MeshAI - Meshtastic Mesh Intelligence
 After=network.target
 
 [Service]
@@ -305,7 +324,6 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
-Then:
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable meshai
@@ -315,7 +333,7 @@ sudo systemctl start meshai
 ## Acknowledgments
 
 - [Meshtastic](https://meshtastic.org/) — the mesh networking platform
-- [MeshMonitor](https://github.com/Yeraze/meshmonitor) by Yeraze — monitoring integration
+- [MeshMonitor](https://github.com/Yeraze/meshmonitor) by Yeraze — monitoring integration and data source
 - [advBBS](https://github.com/zvx-echo6/advbbs) — BBS coexistence design
 - [sqlite-vec](https://github.com/asg017/sqlite-vec) by Alex Garcia — vector search in SQLite
 - [fastembed](https://github.com/qdrant/fastembed) by Qdrant — fast local embeddings
