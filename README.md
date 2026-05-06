@@ -175,26 +175,51 @@ mesh_sources:
 
 ## Knowledge Base (RAG)
 
-MeshAI answers questions using a local knowledge base built from Meshtastic documentation. The system uses hybrid search combining FTS5 keyword search, vector embeddings via `bge-small-en-v1.5`, and Reciprocal Rank Fusion for best relevance.
+MeshAI uses a hybrid knowledge retrieval system with two backends:
+
+### Primary: RECON Qdrant Backend
+
+Queries [RECON](https://forge.echo6.co/matt/recon)'s knowledge extraction pipeline — 2.8M+ vectors covering survival skills, communications, medical, technical documentation, Meshtastic docs, and more. Uses the same embedding infrastructure as RECON:
+
+- **Dense embeddings**: TEI service with BAAI/bge-m3 (1024-dim)
+- **Sparse embeddings**: bge-m3-sparse with IDF modifier
+- **Search**: Qdrant hybrid with Reciprocal Rank Fusion (dense + sparse)
+
+No data is copied — MeshAI queries RECON's Qdrant and TEI services over the network.
+
+```yaml
+knowledge:
+  enabled: true
+  backend: auto            # "qdrant", "sqlite", or "auto" (try qdrant, fall back)
+  qdrant_host: "192.168.1.150"
+  qdrant_port: 6333
+  qdrant_collection: "recon_knowledge_hybrid"
+  tei_host: "192.168.1.150"
+  tei_port: 8090
+  sparse_host: "192.168.1.150"
+  sparse_port: 8091
+  use_sparse: true
+  top_k: 5
+```
+
+### Fallback: Local SQLite
+
+If the Qdrant backend is unreachable, MeshAI falls back to a local SQLite knowledge base using FTS5 keyword search and `bge-small-en-v1.5` vector embeddings (384-dim).
 
 ```bash
 # Build from Meshtastic ZIM file
 python scripts/zim_to_knowledge.py meshtastic.zim --output knowledge.db
-
-# Or from markdown files
-python scripts/md_to_knowledge.py docs/ --output knowledge.db
 ```
 
 ```yaml
 knowledge:
   enabled: true
+  backend: sqlite
   db_path: /data/meshai_knowledge.db
   top_k: 5
-  fts_weight: 0.5
-  vector_weight: 0.5
 ```
 
-Requires `sqlite-vec` and `fastembed` (installed with requirements.txt).
+Requires `sqlite-vec` and `fastembed` for the SQLite backend.
 
 ## Architecture
 
@@ -208,23 +233,39 @@ Requires `sqlite-vec` and `fastembed` (installed with requirements.txt).
 │  │ Meshview ×N  │─────┐   │ Health Engine │────────▶│  Reporter  │   │
 │  │ (staggered)  │     │   │ 5-pillar     │         │ Tier 1/2   │   │
 │  └─────────────┘     ▼   │ scoring      │         └─────┬──────┘   │
-│  ┌─────────────┐  ┌──────┴──┐ │              │               │          │
-│  │ MeshMonitor │─▶│  Data   │─┘              │         ┌─────▼──────┐   │
-│  │ (staggered) │  │  Store  │                │         │   Router   │   │
-│  └─────────────┘  │ SQLite  │                │         │ scope/dist │   │
-│                   └─────────┘                │         └─────┬──────┘   │
-│                        │                     │               │          │
-│                   ┌────▼────┐          ┌─────▼──────┐  ┌────▼────┐    │
-│                   │ Feeder  │          │    LLM     │  │ Chunker │    │
-│                   │ Sampling│          │  Backend   │  │LoRa-fit │    │
-│                   └─────────┘          └────────────┘  └────┬────┘    │
-│                                                             │         │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐   ┌────▼────┐   │
-│  │  Knowledge  │  │ Conversation│  │ Subscription │   │Responder│   │
-│  │  Base (RAG) │  │   History   │  │   Manager    │   │  DM/CH  │   │
-│  └─────────────┘  └─────────────┘  └─────────────┘   └─────────┘   │
-│                                                                      │
-└──────────────────────────────────────────────────────────────────────┘
+│  ┌─────────────┐  ┌──────┴──┐            │               │          │
+│  │ MeshMonitor │─▶│  Data   │─┘          │         ┌─────▼──────┐   │
+│  │ (staggered) │  │  Store  │            │         │   Router   │   │
+│  └─────────────┘  │ SQLite  │            │         │ scope/dist │   │
+│                   └─────────┘            │         └─────┬──────┘   │
+│                        │                 │               │          │
+│                   ┌────▼────┐      ┌─────▼──────┐  ┌────▼────┐    │
+│                   │ Feeder  │      │    LLM     │  │ Chunker │    │
+│                   │ Sampling│      │  Backend   │  │LoRa-fit │    │
+│                   └─────────┘      └────────────┘  └────┬────┘    │
+│                                                         │         │
+│  KNOWLEDGE             ALERTS             DELIVERY      │         │
+│  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐    │         │
+│  │ RECON/Qdrant│  │   Alert     │  │ Subscription │    │         │
+│  │ 2.8M vectors│  │   Engine    │  │   Manager    │    │         │
+│  │ (network)   │  │ 17 triggers │  │ daily/weekly │    │         │
+│  ├─────────────┤  │  scaling    │  │   alerts     │    │         │
+│  │ SQLite FTS5 │  │  cooldown   │  └──────┬───────┘    │         │
+│  │ (fallback)  │  └──────┬──────┘         │            │         │
+│  └─────────────┘         │          ┌─────▼────────┐   │         │
+│                          └─────────▶│  Responder   │◀──┘         │
+│  ┌─────────────┐                    │ ACK-paced DM │             │
+│  │ Conversation│                    │ Channel alert│             │
+│  │   History   │                    └──────────────┘             │
+│  └─────────────┘                                                 │
+│                                                                   │
+└───────────────────────────────────────────────────────────────────┘
+         │                    │
+    ┌────▼────┐          ┌────▼────┐
+    │  TEI    │          │ Qdrant  │
+    │ bge-m3  │          │ hybrid  │
+    │ cortex  │          │ cortex  │
+    └─────────┘          └─────────┘
 ```
 
 ## Message Chunking
@@ -236,6 +277,60 @@ response:
   max_length: 200       # Max chars per message
   max_messages: 3       # Messages before continuation prompt
 ```
+
+## Alerting
+
+Real-time alerts when mesh conditions change, with scaling cooldowns to prevent spam.
+
+### Alert Conditions (17 total, each toggleable)
+
+| Pillar | Condition | Default Threshold |
+|--------|-----------|-------------------|
+| Infrastructure | Router goes offline | — |
+| Infrastructure | Router recovery | — |
+| Infrastructure | New router appears | — |
+| Power | Battery warning | <50% |
+| Power | Battery critical | <25% |
+| Power | Battery emergency | <10% |
+| Power | 7-day declining trend | >10% drop with rate |
+| Power | USB → battery (power outage) | — |
+| Power | Solar not charging during day | — |
+| Utilization | Sustained high utilization | >20% for 6h |
+| Utilization | Packet flood | >500 pkts/24h |
+| Coverage | Infra drops to single gateway | — |
+| Coverage | Feeder gateway stops responding | — |
+| Coverage | Region total blackout | All infra offline |
+| Scores | Mesh health score drop | <70/100 |
+| Scores | Region health score drop | <60/100 |
+
+### Scaling Cooldown
+
+Alerts don't spam. When a condition triggers:
+1. **Alert 1**: fires immediately
+2. **Alert 2**: 12 hours later (if still in condition)
+3. **Alert 3**: 24 hours after that
+4. **Alert 4**: 48 hours after that
+5. **Stops** until condition resolves
+
+When the condition clears, one recovery notification fires and the tracker resets.
+
+### Delivery
+
+Alerts are delivered two ways:
+- **Channel broadcast**: configurable channel index for mesh-wide visibility
+- **DM to subscribers**: users who ran `!sub alerts` receive DMs matching their scope
+
+### Critical Nodes
+
+Designate important infrastructure (e.g., MHR, HPR) as critical. When a critical node goes offline, alerts use priority formatting.
+
+```yaml
+mesh_intelligence:
+  critical_nodes: ["MHR", "HPR"]
+  alert_channel: 0        # Channel for broadcast alerts (-1 = disabled)
+```
+
+All conditions and thresholds are configurable via the TUI under Mesh Intelligence → Alert Rules.
 
 ## LLM Configuration
 
