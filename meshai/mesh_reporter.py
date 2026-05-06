@@ -1596,7 +1596,28 @@ class MeshReporter:
         if region_parts:
             lines.append(" | ".join(region_parts))
 
-        return lines
+        # Pack lines into 2-3 messages under 220 bytes each
+        MAX_BYTES = 220
+        messages = []
+        current_lines = []
+        current_bytes = 0
+
+        for line in lines:
+            line_bytes = len(line.encode('utf-8'))
+            separator_bytes = 1 if current_lines else 0
+
+            if current_bytes + separator_bytes + line_bytes > MAX_BYTES and current_lines:
+                messages.append("\n".join(current_lines))
+                current_lines = [line]
+                current_bytes = line_bytes
+            else:
+                current_lines.append(line)
+                current_bytes += separator_bytes + line_bytes
+
+        if current_lines:
+            messages.append("\n".join(current_lines))
+
+        return messages
 
     def _region_lora_compact(self, region) -> list[str]:
         """Compact region display. Returns list of messages."""
