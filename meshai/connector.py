@@ -304,7 +304,7 @@ class MeshConnector:
         ack_event = threading.Event()
         ack_success = [False]
 
-        def on_response(packet):
+        def onAckNak(packet):
             # Check if this is an ACK (not a NACK or error)
             routing = packet.get("decoded", {}).get("routing", {})
             error_reason = routing.get("errorReason")
@@ -326,7 +326,7 @@ class MeshConnector:
                     destinationId=dest_num,
                     channelIndex=channel,
                     wantAck=True,
-                    onResponse=on_response,
+                    onResponse=onAckNak,
                 )
             else:
                 self._interface.sendText(
@@ -334,7 +334,7 @@ class MeshConnector:
                     destinationId=BROADCAST_NUM,
                     channelIndex=channel,
                     wantAck=True,
-                    onResponse=on_response,
+                    onResponse=onAckNak,
                 )
 
             # Wait for ACK or timeout
