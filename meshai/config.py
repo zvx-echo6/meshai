@@ -36,7 +36,7 @@ class ResponseConfig:
     """Response behavior settings."""
 
     delay_min: float = 3.0
-    delay_max: float = 3.0
+    delay_max: float = 5.0
     max_length: int = 200
     max_messages: int = 3
 
