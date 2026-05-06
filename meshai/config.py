@@ -198,6 +198,11 @@ class MeshIntelligenceConfig:
     packet_threshold: int = 500  # Non-text packets per 24h to flag
     battery_warning_percent: int = 20  # Battery level for warnings
 
+    # Alert settings
+    critical_nodes: list[str] = field(default_factory=list)  # Short names of critical nodes (e.g., ["MHR", "HPR"])
+    alert_channel: int = -1  # Channel to broadcast alerts on. -1 = disabled, 0+ = channel index
+    alert_cooldown_minutes: int = 30  # Min minutes between repeated alerts for same condition
+
 
 @dataclass
 class Config:

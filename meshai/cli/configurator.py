@@ -1036,6 +1036,12 @@ class Configurator:
             table.add_row("4", "Offline Threshold (hours)", str(mi.offline_threshold_hours))
             table.add_row("5", "Packet Threshold (24h)", str(mi.packet_threshold))
             table.add_row("6", "Battery Warning (%)", str(mi.battery_warning_percent))
+            crit_nodes = getattr(mi, 'critical_nodes', [])
+            alert_ch = getattr(mi, 'alert_channel', -1)
+            alert_cd = getattr(mi, 'alert_cooldown_minutes', 30)
+            table.add_row("7", "Critical Nodes", ", ".join(crit_nodes) if crit_nodes else "[dim]none[/dim]")
+            table.add_row("8", "Alert Channel", f"Channel {alert_ch}" if alert_ch >= 0 else "[dim]disabled[/dim]")
+            table.add_row("9", "Alert Cooldown (min)", str(alert_cd))
             table.add_row("0", "Back", "")
 
             console.print(table)
@@ -1070,6 +1076,68 @@ class Configurator:
                 if value != mi.battery_warning_percent:
                     mi.battery_warning_percent = value
                     self.modified = True
+            elif choice == 7:
+                self._edit_critical_nodes()
+            elif choice == 8:
+                ch = Prompt.ask("Alert channel (-1 to disable)", default=str(getattr(mi, 'alert_channel', -1)))
+                try:
+                    new_ch = int(ch)
+                    if new_ch != getattr(mi, 'alert_channel', -1):
+                        mi.alert_channel = new_ch
+                        self.modified = True
+                except ValueError:
+                    pass
+            elif choice == 9:
+                mins = Prompt.ask("Alert cooldown (minutes)", default=str(getattr(mi, 'alert_cooldown_minutes', 30)))
+                try:
+                    new_mins = int(mins)
+                    if new_mins != getattr(mi, 'alert_cooldown_minutes', 30):
+                        mi.alert_cooldown_minutes = new_mins
+                        self.modified = True
+                except ValueError:
+                    pass
+
+    def _edit_critical_nodes(self) -> None:
+        """Edit critical node list."""
+        mi = self.config.mesh_intelligence
+
+        while True:
+            self._clear()
+            console.print("[bold]Critical Nodes[/bold]")
+            console.print("[dim]These nodes trigger priority alerts when they go offline.[/dim]")
+
+            crit_nodes = getattr(mi, 'critical_nodes', None)
+            if crit_nodes is None:
+                mi.critical_nodes = []
+                crit_nodes = mi.critical_nodes
+
+            if crit_nodes:
+                for i, name in enumerate(crit_nodes, 1):
+                    console.print(f"  {i}. {name}")
+            else:
+                console.print("  [dim]No critical nodes configured[/dim]")
+
+            console.print("[cyan]A[/cyan] Add  [cyan]R[/cyan] Remove  [cyan]B[/cyan] Back")
+            choice = Prompt.ask("Choice", default="b").strip().lower()
+
+            if choice == "b" or choice == "":
+                break
+            elif choice == "a":
+                name = Prompt.ask("Node short name (e.g., MHR)")
+                if name and name.strip():
+                    mi.critical_nodes.append(name.strip())
+                    self.modified = True
+            elif choice == "r":
+                if crit_nodes:
+                    idx = Prompt.ask("Number to remove")
+                    try:
+                        idx = int(idx)
+                        if 1 <= idx <= len(crit_nodes):
+                            removed = mi.critical_nodes.pop(idx - 1)
+                            console.print(f"Removed: {removed}")
+                            self.modified = True
+                    except (ValueError, IndexError):
+                        pass
 
     def _edit_regions(self) -> None:
         """Edit region anchor points."""

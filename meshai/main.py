@@ -43,6 +43,7 @@ class MeshAI:
         self.health_engine = None
         self.mesh_reporter = None
         self.subscription_manager = None
+        self.alert_engine = None
         self._last_sub_check: float = 0.0
         self.router: Optional[MessageRouter] = None
         self.responder: Optional[Responder] = None
@@ -92,6 +93,12 @@ class MeshAI:
                 if refreshed and self.health_engine:
                     self.health_engine.compute(self.data_store)
                     self._last_health_compute = time.time()
+
+                    # Check for alertable conditions
+                    if self.alert_engine:
+                        alerts = self.alert_engine.check()
+                        if alerts:
+                            await self._dispatch_alerts(alerts)
 
             # Check scheduled subscriptions (every 60 seconds)
             if self.subscription_manager and self.mesh_reporter:
@@ -264,6 +271,19 @@ class MeshAI:
         else:
             self.subscription_manager = None
 
+        # Alert engine (needs health engine, reporter, and subscription manager)
+        if self.health_engine and self.mesh_reporter and self.subscription_manager:
+            from .alert_engine import AlertEngine
+            mi = self.config.mesh_intelligence
+            self.alert_engine = AlertEngine(
+                health_engine=self.health_engine,
+                reporter=self.mesh_reporter,
+                subscription_manager=self.subscription_manager,
+                critical_nodes=getattr(mi, 'critical_nodes', []),
+                alert_cooldown_minutes=getattr(mi, 'alert_cooldown_minutes', 30),
+            )
+            logger.info(f"Alert engine initialized (critical nodes: {getattr(mi, 'critical_nodes', [])})")
+
         # Knowledge base (optional - gracefully degrade if deps missing)
         kb_cfg = self.config.knowledge
         if kb_cfg.enabled and kb_cfg.db_path:
@@ -419,6 +439,40 @@ class MeshAI:
         pid_file = Path("/tmp/meshai.pid")
         if pid_file.exists():
             pid_file.unlink()
+
+    async def _dispatch_alerts(self, alerts: list[dict]) -> None:
+        """Dispatch alerts to subscribers and alert channel."""
+        mi = self.config.mesh_intelligence
+        alert_channel = getattr(mi, 'alert_channel', -1)
+
+        for alert in alerts:
+            message = alert["message"]
+            logger.info(f"ALERT: {message}")
+
+            # Send to alert channel if configured
+            if alert_channel >= 0 and self.connector:
+                try:
+                    self.connector.send_message(
+                        text=message,
+                        destination=None,  # Broadcast
+                        channel=alert_channel,
+                    )
+                    logger.info(f"Alert sent to channel {alert_channel}")
+                except Exception as e:
+                    logger.error(f"Failed to send channel alert: {e}")
+
+            # Send DMs to matching subscribers
+            if self.alert_engine and self.subscription_manager:
+                subscribers = self.alert_engine.get_subscribers_for_alert(alert)
+                for sub in subscribers:
+                    user_id = sub["user_id"]
+                    try:
+                        await self._send_sub_dm(user_id, message)
+                        logger.info(f"Alert DM sent to {user_id}: {alert['type']}")
+                    except Exception as e:
+                        logger.error(f"Failed to send alert DM to {user_id}: {e}")
+
+        self.alert_engine.clear_pending()
 
     async def _check_scheduled_subs(self) -> None:
         """Check for and deliver due scheduled reports."""
