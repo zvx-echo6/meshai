@@ -476,13 +476,21 @@ class MessageRouter:
 
         query_lower = query.lower()
 
-        # Build name -> node lookup
+        # Build name -> node lookup (include partial long_name matches)
         node_names = {}
         for node in health.nodes.values():
             if node.short_name:
                 node_names[node.short_name.lower()] = node
             if node.long_name:
-                node_names[node.long_name.lower()] = node
+                full = node.long_name.lower()
+                node_names[full] = node
+                # Add partial matches: "TVM Pearl Relay" also matches "TVM Pearl"
+                words = full.split()
+                if len(words) >= 2:
+                    for i in range(2, len(words) + 1):
+                        partial = " ".join(words[:i])
+                        if partial not in node_names:
+                            node_names[partial] = node
 
         # AIDA aliases
         aida_node = health.nodes.get(0x27780c47)
@@ -492,6 +500,7 @@ class MessageRouter:
 
         # Find mentioned nodes (longest names first)
         found_nodes = []
+
         for name in sorted(node_names.keys(), key=len, reverse=True):
             if name in query_lower and len(name) >= 2:
                 node = node_names[name]
@@ -499,6 +508,38 @@ class MessageRouter:
                     found_nodes.append(node)
                 if len(found_nodes) >= 2:
                     break
+
+        # If we only found one or zero nodes, check for ambiguous short terms
+        if len(found_nodes) < 2:
+            query_words = query_lower.replace("?", "").replace("!", "").split()
+            candidate_terms = list(query_words)
+            for i in range(len(query_words) - 1):
+                candidate_terms.append(f"{query_words[i]} {query_words[i+1]}")
+
+            skip_words = {"how", "far", "is", "from", "the", "to", "and", "between", "what",
+                         "distance", "away", "are", "apart", "tell", "me", "about", "a", "an"}
+
+            for term in candidate_terms:
+                if term in skip_words or len(term) < 2:
+                    continue
+                matches = []
+                seen_nums = set()
+                for node in health.nodes.values():
+                    if node.node_num in seen_nums:
+                        continue
+                    name_lower = (node.long_name or "").lower()
+                    short_lower = (node.short_name or "").lower()
+                    if term in name_lower or term == short_lower:
+                        matches.append(node)
+                        seen_nums.add(node.node_num)
+
+                if len(matches) > 1:
+                    names = [f"  - {n.long_name or n.short_name} ({n.short_name})"
+                             for n in matches[:6]]
+                    return (
+                        f"AMBIGUOUS: '{term}' matches multiple nodes. "
+                        f"Ask the user which one they mean:\n" + "\n".join(names)
+                    )
 
         if len(found_nodes) == 2:
             return self.mesh_reporter.build_distance(
@@ -512,6 +553,7 @@ class MessageRouter:
             )
 
         return ""
+
 
     async def generate_llm_response(self, message: MeshMessage, query: str) -> str:
         """Generate LLM response for a message.
