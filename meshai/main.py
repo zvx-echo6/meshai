@@ -284,20 +284,41 @@ class MeshAI:
             )
             logger.info(f"Alert engine initialized (critical: {mi.critical_nodes}, channel: {mi.alert_channel})")
 
-        # Knowledge base (optional - gracefully degrade if deps missing)
+        # Knowledge base (optional - Qdrant with SQLite fallback)
         kb_cfg = self.config.knowledge
-        if kb_cfg.enabled and kb_cfg.db_path:
-            try:
-                from .knowledge import KnowledgeSearch
-                self.knowledge = KnowledgeSearch(
-                    db_path=kb_cfg.db_path,
-                    top_k=kb_cfg.top_k,
-                )
-            except ImportError as e:
-                logger.warning(f"Knowledge base disabled - missing dependencies: {e}")
-                self.knowledge = None
-        else:
-            self.knowledge = None
+        self.knowledge = None
+        if kb_cfg.enabled:
+            # Try Qdrant first if configured
+            if kb_cfg.backend in ("qdrant", "auto") and kb_cfg.qdrant_host:
+                try:
+                    from .knowledge import QdrantKnowledgeSearch
+                    qdrant = QdrantKnowledgeSearch(
+                        qdrant_host=kb_cfg.qdrant_host,
+                        qdrant_port=kb_cfg.qdrant_port,
+                        collection=kb_cfg.qdrant_collection,
+                        tei_host=kb_cfg.tei_host,
+                        tei_port=kb_cfg.tei_port,
+                        sparse_host=kb_cfg.sparse_host,
+                        sparse_port=kb_cfg.sparse_port,
+                        use_sparse=kb_cfg.use_sparse,
+                        top_k=kb_cfg.top_k,
+                    )
+                    if qdrant.available:
+                        self.knowledge = qdrant
+                        logger.info("Using Qdrant knowledge backend (RECON hybrid)")
+                except Exception as e:
+                    logger.warning(f"Qdrant knowledge unavailable: {e}")
+
+            # Fall back to SQLite if Qdrant failed or not configured
+            if not self.knowledge and kb_cfg.backend in ("sqlite", "auto") and kb_cfg.db_path:
+                try:
+                    from .knowledge import KnowledgeSearch
+                    self.knowledge = KnowledgeSearch(
+                        db_path=kb_cfg.db_path,
+                        top_k=kb_cfg.top_k,
+                    )
+                except ImportError as e:
+                    logger.warning(f"SQLite knowledge disabled - missing dependencies: {e}")
 
         # Command dispatcher (needs mesh_reporter for health commands)
         self.dispatcher = create_dispatcher(

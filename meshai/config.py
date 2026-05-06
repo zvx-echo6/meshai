@@ -154,9 +154,22 @@ class MeshMonitorConfig:
 
 @dataclass
 class KnowledgeConfig:
-    """FTS5 knowledge base settings."""
+    """Knowledge base settings."""
 
     enabled: bool = False
+    backend: str = "auto"  # "qdrant", "sqlite", or "auto" (try qdrant, fall back to sqlite)
+
+    # Qdrant / RECON settings
+    qdrant_host: str = ""           # e.g., "192.168.1.150"
+    qdrant_port: int = 6333
+    qdrant_collection: str = "recon_knowledge_hybrid"
+    tei_host: str = ""              # TEI embedding service host
+    tei_port: int = 8090
+    sparse_host: str = ""           # Sparse embedding service host
+    sparse_port: int = 8091
+    use_sparse: bool = True         # Enable hybrid dense+sparse search
+
+    # SQLite fallback settings
     db_path: str = ""
     top_k: int = 5
 
