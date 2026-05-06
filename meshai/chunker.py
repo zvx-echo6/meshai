@@ -13,6 +13,30 @@ import re
 
 logger = logging.getLogger(__name__)
 
+
+def strip_markdown(text: str) -> str:
+    """Remove markdown formatting from LLM output.
+
+    LLMs often ignore 'no markdown' instructions.
+    This strips it before sending over LoRa.
+    """
+    # Remove bold **text**
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+    # Remove italic *text*
+    text = re.sub(r'\*(.*?)\*', r'\1', text)
+    # Remove headers (## Header)
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    # Remove bullet points at line start (- item or * item)
+    text = re.sub(r'^\s*[-*]\s+', '', text, flags=re.MULTILINE)
+    # Remove numbered lists at line start (1. item)
+    text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
+    # Remove code blocks
+    text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
+    # Remove inline code
+    text = re.sub(r'`(.*?)`', r'\1', text)
+    return text.strip()
+
+
 # Phrases that trigger continuation of a previous response
 CONTINUE_PHRASES = {
     "yes", "yeah", "yep", "yea", "sure", "ok", "okay", "go on",

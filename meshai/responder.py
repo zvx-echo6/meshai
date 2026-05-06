@@ -24,17 +24,11 @@ class Responder:
         destination: Optional[str] = None,
         channel: int = 0,
     ) -> bool:
-        """Send response messages with human-pacing delays.
+        """Send response messages with ACK waiting and retry.
 
-        Args:
-            messages: Pre-chunked messages list, or single string (legacy)
-            destination: Node ID for DM, or None for channel broadcast
-            channel: Channel to send on
-
-        Returns:
-            True if all messages sent successfully
+        For DMs: waits for ACK before sending next message, retries once on failure.
+        For broadcasts: uses delay-based pacing (no ACK for broadcasts).
         """
-        # Handle legacy single string
         if isinstance(messages, str):
             messages = [messages]
 
@@ -42,24 +36,50 @@ class Responder:
             return True
 
         success = True
+        is_dm = destination is not None
+
         for i, msg in enumerate(messages):
-            # Apply delay before sending (except first message)
+            # Randomized delay before sending (except first message)
             if i > 0:
                 delay = random.uniform(self.config.delay_min, self.config.delay_max)
                 await asyncio.sleep(delay)
 
-            # Send message
-            sent = self.connector.send_message(
-                text=msg,
-                destination=destination,
-                channel=channel,
-            )
+            if is_dm and hasattr(self.connector, 'send_and_wait_ack'):
+                # DMs: send and wait for ACK
+                ack = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    self.connector.send_and_wait_ack,
+                    msg, destination, channel, 30.0,
+                )
 
-            if not sent:
-                logger.error(f"Failed to send message {i + 1}/{len(messages)}")
-                success = False
-                break
+                if not ack:
+                    # Retry once
+                    logger.warning(f"No ACK for msg {i+1}/{len(messages)}, retrying...")
+                    await asyncio.sleep(random.uniform(3.0, 5.0))
+                    ack = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        self.connector.send_and_wait_ack,
+                        msg, destination, channel, 30.0,
+                    )
+                    if not ack:
+                        logger.error(f"No ACK after retry for msg {i+1}/{len(messages)}, skipping remaining")
+                        success = False
+                        break
 
-            logger.debug(f"Sent message {i + 1}/{len(messages)}: {msg[:50]}...")
+                logger.debug(f"Sent+ACK msg {i+1}/{len(messages)}: {msg[:50]}...")
+            else:
+                # Broadcasts or fallback: fire and delay
+                sent = self.connector.send_message(
+                    text=msg,
+                    destination=destination,
+                    channel=channel,
+                )
+                if not sent:
+                    logger.error(f"Failed to send message {i+1}/{len(messages)}")
+                    success = False
+                    break
+
+                logger.debug(f"Sent msg {i+1}/{len(messages)}: {msg[:50]}...")
 
         return success
+

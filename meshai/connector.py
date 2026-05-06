@@ -279,3 +279,78 @@ class MeshConnector:
         """
         with self._lock:
             return self._node_names.get(node_id, node_id)
+    def send_and_wait_ack(
+        self,
+        text: str,
+        destination: Optional[str] = None,
+        channel: int = 0,
+        timeout: float = 30.0,
+    ) -> bool:
+        """Send a text message and wait for ACK.
+
+        Args:
+            text: Message text
+            destination: Node ID for DM
+            channel: Channel index
+            timeout: Seconds to wait for ACK
+
+        Returns:
+            True if ACK received, False if timeout
+        """
+        if not self._interface:
+            logger.error("Cannot send: not connected")
+            return False
+
+        ack_event = threading.Event()
+        ack_success = [False]
+
+        def on_response(packet):
+            # Check if this is an ACK (not a NACK or error)
+            routing = packet.get("decoded", {}).get("routing", {})
+            error_reason = routing.get("errorReason")
+            if error_reason is None or error_reason == "NONE":
+                ack_success[0] = True
+            else:
+                logger.warning(f"Message NACK: {error_reason}")
+            ack_event.set()
+
+        try:
+            if destination:
+                if destination.startswith("!"):
+                    dest_num = int(destination[1:], 16)
+                else:
+                    dest_num = int(destination, 16)
+
+                self._interface.sendText(
+                    text=text,
+                    destinationId=dest_num,
+                    channelIndex=channel,
+                    wantAck=True,
+                    onResponse=on_response,
+                )
+            else:
+                self._interface.sendText(
+                    text=text,
+                    destinationId=BROADCAST_NUM,
+                    channelIndex=channel,
+                    wantAck=True,
+                    onResponse=on_response,
+                )
+
+            # Wait for ACK or timeout
+            received = ack_event.wait(timeout=timeout)
+
+            if received and ack_success[0]:
+                logger.debug(f"ACK received for message to {destination or 'broadcast'}")
+                return True
+            elif received:
+                logger.warning(f"NACK received for message to {destination or 'broadcast'}")
+                return False
+            else:
+                logger.warning(f"ACK timeout ({timeout}s) for message to {destination or 'broadcast'}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to send message: {e}")
+            return False
+

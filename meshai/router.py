@@ -110,6 +110,9 @@ RESPONSE STYLE:
 - When discussing problems, name the node and explain the impact
 - You CAN use 3-5 messages. Keep each sentence under 150 characters.
 - No markdown formatting - plain text only
+- ABSOLUTELY NO markdown. No asterisks, no bold, no bullet points with * or -, no numbered lists with 1. 2. 3. Just plain text sentences.
+- NEVER say "Want me to keep going?" — the message system adds this automatically when needed. If you say it yourself, users see it twice.
+- When explaining "X/Y gateways" (like 7/7), explain that it means the node is visible to X out of Y data sources (Meshview and MeshMonitor instances that monitor the mesh). It does NOT mean infrastructure routers or regional gateways.
 
 QUESTION TYPES:
 - "How's the mesh?" -> Lead with composite score. Highlight 1-2 biggest issues by name. Summarize each region briefly.
@@ -757,6 +760,10 @@ class MessageRouter:
 
         # Persist summary if one was created/updated
         await self._persist_summary(message.sender_id)
+
+        # Strip any markdown the LLM ignored instructions about
+        from .chunker import strip_markdown
+        response = strip_markdown(response)
 
         # Chunk the response with sentence awareness
         messages, remaining = chunk_response(

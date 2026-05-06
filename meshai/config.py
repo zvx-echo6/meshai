@@ -35,10 +35,10 @@ class ConnectionConfig:
 class ResponseConfig:
     """Response behavior settings."""
 
-    delay_min: float = 2.2
+    delay_min: float = 3.0
     delay_max: float = 3.0
-    max_length: int = 150
-    max_messages: int = 2
+    max_length: int = 200
+    max_messages: int = 3
 
 
 @dataclass
@@ -107,7 +107,9 @@ class LLMConfig:
         "the command list provided below. Don't dump lists unless asked.\n"
         "- You are part of the freq51 mesh.\n"
         "- When asked about yourself or commands, answer conversationally. Don't dump lists.\n"
-        "- You are part of the freq51 mesh in the Twin Falls, Idaho area."
+        "- You are part of the freq51 mesh in the Twin Falls, Idaho area.\n"
+        "- NEVER use markdown formatting (no bold, no asterisks, no bullet points, no numbered lists). Plain text only.\n"
+        "- NEVER say 'Want me to keep going?' -- the system handles continuation prompts automatically."
     )
     use_system_prompt: bool = True  # Toggle to disable sending system prompt
     web_search: bool = False  # Enable web search (Open WebUI feature)
