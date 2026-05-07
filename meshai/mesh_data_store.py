@@ -458,12 +458,20 @@ class MeshDataStore:
         - Deliverability (source overlap)
         Does NOT rebuild the full node model.
         """
-        # Recount packets per node from all sources
+        # Recount packets per node from all sources (deduped by packet ID)
         packet_counts: dict[int, int] = {}
         packets_by_type: dict[int, dict[str, int]] = {}
+        seen_packet_ids: set = set()
 
         for name, source in self._sources.items():
             for pkt in (source.packets if hasattr(source, 'packets') else []):
+                # Dedup: skip packets already seen from another source
+                pkt_id = pkt.get("packet_id") or pkt.get("id")
+                if pkt_id is not None:
+                    if pkt_id in seen_packet_ids:
+                        continue
+                    seen_packet_ids.add(pkt_id)
+
                 from_node = pkt.get("from_node") or pkt.get("from_node_id") or pkt.get("from")
                 if from_node is None:
                     continue
@@ -478,7 +486,7 @@ class MeshDataStore:
 
                 packet_counts[from_node] = packet_counts.get(from_node, 0) + 1
 
-                portnum = pkt.get("portnum") or pkt.get("portnum_name") or pkt.get("type") or "UNKNOWN"
+                portnum = str(pkt.get("portnum") or pkt.get("portnum_name") or pkt.get("type") or "UNKNOWN")
                 if from_node not in packets_by_type:
                     packets_by_type[from_node] = {}
                 packets_by_type[from_node][portnum] = packets_by_type[from_node].get(portnum, 0) + 1

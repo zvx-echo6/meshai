@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Portnum display names (from Meshtastic protobufs)
 PORTNUM_DISPLAY = {
+    # String names (from some APIs)
     "TEXT_MESSAGE_APP": "Text",
     "POSITION_APP": "Position",
     "NODEINFO_APP": "NodeInfo",
@@ -35,6 +36,29 @@ PORTNUM_DISPLAY = {
     "REMOTE_HARDWARE_APP": "RemoteHW",
     "ATAK_PLUGIN": "ATAK",
     "ATAK_FORWARDER": "ATAK",
+    # Numeric port numbers (from other APIs)
+    "0": "Unknown",
+    "1": "Text",
+    "3": "Position",
+    "4": "NodeInfo",
+    "5": "Routing",
+    "6": "Admin",
+    "7": "Waypoint",
+    "8": "Audio",
+    "33": "Reply",
+    "34": "IP Tunnel",
+    "64": "Serial",
+    "65": "Store&Fwd",
+    "66": "RangeTest",
+    "67": "Telemetry",
+    "68": "Sensor",
+    "69": "PaxCounter",
+    "70": "Traceroute",
+    "71": "Neighbors",
+    "72": "ATAK",
+    "73": "MapReport",
+    "256": "Private",
+    "257": "ATAK Fwd",
 }
 
 def _clean_portnum(portnum) -> str:
