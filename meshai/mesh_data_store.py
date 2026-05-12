@@ -27,6 +27,7 @@ from .mesh_models import (
 )
 from .sources.meshmonitor_data import MeshMonitorDataSource
 from .sources.meshview import MeshviewSource
+from .sources.mqtt_source import MQTTSource
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +237,7 @@ class MeshDataStore:
             source_configs: List of source configurations
             db_path: Path to SQLite database for historical data
         """
-        self._sources: dict[str, MeshviewSource | MeshMonitorDataSource] = {}
+        self._sources: dict[str, MeshviewSource | MeshMonitorDataSource | MQTTSource] = {}
         self._db_path = db_path
         self._db: Optional[sqlite3.Connection] = None
 
@@ -316,6 +317,42 @@ class MeshDataStore:
                 )
                 logger.info(f"Registered MeshMonitor source '{name}' -> {url} (polite={polite})")
 
+            elif src_type == "mqtt":
+                # Extract MQTT-specific config
+                if isinstance(cfg, dict):
+                    host = cfg.get('host', '')
+                    port = cfg.get('port', 1883)
+                    username = cfg.get('username', '')
+                    password = cfg.get('password', '')
+                    topic_root = cfg.get('topic_root', 'msh/US')
+                    use_tls = cfg.get('use_tls', False)
+                else:
+                    host = getattr(cfg, 'host', '')
+                    port = getattr(cfg, 'port', 1883)
+                    username = getattr(cfg, 'username', '')
+                    password = getattr(cfg, 'password', '')
+                    topic_root = getattr(cfg, 'topic_root', 'msh/US')
+                    use_tls = getattr(cfg, 'use_tls', False)
+
+                if not host:
+                    logger.warning(f"MQTT source '{name}' missing host, skipping")
+                    return
+
+                self._sources[name] = MQTTSource(
+                    host=host,
+                    port=port,
+                    username=username,
+                    password=password,
+                    topic_root=topic_root,
+                    use_tls=use_tls,
+                    name=name,
+                )
+                # Track MQTT sources separately for async start
+                if not hasattr(self, '_mqtt_sources'):
+                    self._mqtt_sources = []
+                self._mqtt_sources.append(name)
+                logger.info(f"Registered MQTT source '{name}' -> {host}:{port} topic={topic_root}")
+
             else:
                 logger.warning(f"Unknown source type '{src_type}' for '{name}'")
 
@@ -358,6 +395,24 @@ class MeshDataStore:
     # Source Management
     # =========================================================================
 
+
+    async def start_mqtt_sources(self) -> None:
+        """Start all MQTT source subscription loops."""
+        if not hasattr(self, '_mqtt_sources'):
+            return
+        for name in self._mqtt_sources:
+            source = self._sources.get(name)
+            if source and hasattr(source, 'start'):
+                await source.start()
+
+    async def stop_mqtt_sources(self) -> None:
+        """Stop all MQTT source subscription loops."""
+        if not hasattr(self, '_mqtt_sources'):
+            return
+        for name in self._mqtt_sources:
+            source = self._sources.get(name)
+            if source and hasattr(source, 'stop'):
+                await source.stop()
 
     def _purge_stale_nodes(self):
         """Remove nodes not heard from in more than 7 days.
@@ -2120,11 +2175,19 @@ class MeshDataStore:
         """Get status of all sources."""
         status_list = []
         for name, source in self._sources.items():
+            # Determine source type
+            if isinstance(source, MeshviewSource):
+                src_type = "meshview"
+            elif isinstance(source, MeshMonitorDataSource):
+                src_type = "meshmonitor"
+            elif isinstance(source, MQTTSource):
+                src_type = "mqtt"
+            else:
+                src_type = "unknown"
+
             status = {
                 "name": name,
-                "type": "meshview"
-                if isinstance(source, MeshviewSource)
-                else "meshmonitor",
+                "type": src_type,
                 "enabled": True,
                 "is_loaded": source.is_loaded,
                 "last_refresh": source.last_refresh,
@@ -2138,6 +2201,14 @@ class MeshDataStore:
                 status["telemetry_count"] = len(source.telemetry)
                 status["traceroute_count"] = len(source.traceroutes)
                 status["channel_count"] = len(source.channels)
+            elif isinstance(source, MQTTSource):
+                health = source.health_status
+                status["is_connected"] = health.get("is_connected", False)
+                status["message_count"] = health.get("message_count", 0)
+                status["last_message"] = health.get("last_message", 0)
+                status["host"] = health.get("host", "")
+                status["port"] = health.get("port", 0)
+                status["topic_root"] = health.get("topic_root", "")
 
             status_list.append(status)
 

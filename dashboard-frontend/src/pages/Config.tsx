@@ -111,6 +111,13 @@ interface MeshSourceConfig {
   refresh_interval: number
   polite_mode: boolean
   enabled: boolean
+  // MQTT-specific fields
+  host?: string
+  port?: number
+  username?: string
+  password?: string
+  topic_root?: string
+  use_tls?: boolean
 }
 
 interface RegionAnchor {
@@ -697,12 +704,29 @@ function MeshSourceCard({ source, onChange, onDelete }: {
               options={[
                 { value: 'meshview', label: 'MeshView' },
                 { value: 'meshmonitor', label: 'MeshMonitor' },
+                { value: 'mqtt', label: 'MQTT Broker' },
               ]}
             />
           </div>
-          <TextInput label="URL" value={source.url} onChange={(v) => onChange({ ...source, url: v })} />
+          {source.type !== 'mqtt' && (
+            <TextInput label="URL" value={source.url} onChange={(v) => onChange({ ...source, url: v })} />
+          )}
           {source.type === 'meshmonitor' && (
             <TextInput label="API Token" value={source.api_token} onChange={(v) => onChange({ ...source, api_token: v })} type="password" />
+          )}
+          {source.type === 'mqtt' && (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <TextInput label="Host" value={source.host || ''} onChange={(v) => onChange({ ...source, host: v })} />
+                <NumberInput label="Port" value={source.port || 1883} onChange={(v) => onChange({ ...source, port: v })} min={1} max={65535} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <TextInput label="Username" value={source.username || ''} onChange={(v) => onChange({ ...source, username: v })} />
+                <TextInput label="Password" value={source.password || ''} onChange={(v) => onChange({ ...source, password: v })} type="password" />
+              </div>
+              <TextInput label="Topic Root" value={source.topic_root || 'msh/US'} onChange={(v) => onChange({ ...source, topic_root: v })} />
+              <Toggle label="Use TLS" checked={source.use_tls || false} onChange={(v) => onChange({ ...source, use_tls: v })} />
+            </>
           )}
           <NumberInput label="Refresh Interval (sec)" value={source.refresh_interval} onChange={(v) => onChange({ ...source, refresh_interval: v })} min={10} />
           <Toggle label="Enabled" checked={source.enabled} onChange={(v) => onChange({ ...source, enabled: v })} />
@@ -723,6 +747,12 @@ function MeshSourcesSection({ data, onChange }: { data: MeshSourceConfig[]; onCh
       refresh_interval: 30,
       polite_mode: false,
       enabled: true,
+      host: '',
+      port: 1883,
+      username: '',
+      password: '',
+      topic_root: 'msh/US',
+      use_tls: false,
     }])
   }
 

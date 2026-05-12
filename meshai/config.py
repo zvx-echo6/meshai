@@ -60,6 +60,14 @@ class MemoryConfig:
     """Rolling summary memory settings."""
 
     enabled: bool = True  # Enable memory optimization
+
+    # MQTT-specific fields (type=mqtt only)
+    host: str = ""              # MQTT broker hostname
+    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
+    username: str = ""         # MQTT username (optional)
+    password: str = ""         # MQTT password (optional, supports )
+    topic_root: str = "msh/US"  # Topic root to subscribe to
+    use_tls: bool = False       # Enable TLS for MQTT connection
     window_size: int = 4  # Recent message pairs to keep in full
     summarize_threshold: int = 8  # Messages before re-summarizing
 
@@ -69,6 +77,14 @@ class ContextConfig:
     """Passive mesh context settings."""
 
     enabled: bool = True
+
+    # MQTT-specific fields (type=mqtt only)
+    host: str = ""              # MQTT broker hostname
+    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
+    username: str = ""         # MQTT username (optional)
+    password: str = ""         # MQTT password (optional, supports )
+    topic_root: str = "msh/US"  # Topic root to subscribe to
+    use_tls: bool = False       # Enable TLS for MQTT connection
     observe_channels: list[int] = field(default_factory=list)  # Empty = all channels
     ignore_nodes: list[str] = field(default_factory=list)  # Node IDs to ignore
     max_age: int = 2_592_000  # 30 days in seconds
@@ -80,6 +96,14 @@ class CommandsConfig:
     """Command settings."""
 
     enabled: bool = True
+
+    # MQTT-specific fields (type=mqtt only)
+    host: str = ""              # MQTT broker hostname
+    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
+    username: str = ""         # MQTT username (optional)
+    password: str = ""         # MQTT password (optional, supports )
+    topic_root: str = "msh/US"  # Topic root to subscribe to
+    use_tls: bool = False       # Enable TLS for MQTT connection
     prefix: str = "!"
     disabled_commands: list[str] = field(default_factory=list)
     custom_commands: dict = field(default_factory=dict)
@@ -179,12 +203,20 @@ class MeshSourceConfig:
     """Configuration for a mesh data source."""
 
     name: str = ""
-    type: str = ""  # "meshview" or "meshmonitor"
+    type: str = ""  # "meshview", "meshmonitor", or "mqtt"
     url: str = ""
     api_token: str = ""  # MeshMonitor only, supports ${ENV_VAR}
     refresh_interval: int = 30     # Tick interval in seconds (default 30)
     polite_mode: bool = False      # Reduces polling frequency for shared instances
     enabled: bool = True
+
+    # MQTT-specific fields (type=mqtt only)
+    host: str = ""              # MQTT broker hostname
+    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
+    username: str = ""         # MQTT username (optional)
+    password: str = ""         # MQTT password (optional, supports )
+    topic_root: str = "msh/US"  # Topic root to subscribe to
+    use_tls: bool = False       # Enable TLS for MQTT connection
 
 
 @dataclass
@@ -263,6 +295,14 @@ class NWSConfig:
     """NWS weather alerts settings."""
 
     enabled: bool = True
+
+    # MQTT-specific fields (type=mqtt only)
+    host: str = ""              # MQTT broker hostname
+    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
+    username: str = ""         # MQTT username (optional)
+    password: str = ""         # MQTT password (optional, supports )
+    topic_root: str = "msh/US"  # Topic root to subscribe to
+    use_tls: bool = False       # Enable TLS for MQTT connection
     tick_seconds: int = 60
     areas: list = field(default_factory=lambda: ["ID"])
     severity_min: str = "moderate"
@@ -275,12 +315,28 @@ class SWPCConfig:
 
     enabled: bool = True
 
+    # MQTT-specific fields (type=mqtt only)
+    host: str = ""              # MQTT broker hostname
+    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
+    username: str = ""         # MQTT username (optional)
+    password: str = ""         # MQTT password (optional, supports )
+    topic_root: str = "msh/US"  # Topic root to subscribe to
+    use_tls: bool = False       # Enable TLS for MQTT connection
+
 
 @dataclass
 class DuctingConfig:
     """Tropospheric ducting settings."""
 
     enabled: bool = True
+
+    # MQTT-specific fields (type=mqtt only)
+    host: str = ""              # MQTT broker hostname
+    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
+    username: str = ""         # MQTT username (optional)
+    password: str = ""         # MQTT password (optional, supports )
+    topic_root: str = "msh/US"  # Topic root to subscribe to
+    use_tls: bool = False       # Enable TLS for MQTT connection
     tick_seconds: int = 10800  # 3 hours
     latitude: float = 42.56  # Twin Falls area default
     longitude: float = -114.47
@@ -323,6 +379,14 @@ class DashboardConfig:
     """Web dashboard settings."""
 
     enabled: bool = True
+
+    # MQTT-specific fields (type=mqtt only)
+    host: str = ""              # MQTT broker hostname
+    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
+    username: str = ""         # MQTT username (optional)
+    password: str = ""         # MQTT password (optional, supports )
+    topic_root: str = "msh/US"  # Topic root to subscribe to
+    use_tls: bool = False       # Enable TLS for MQTT connection
     port: int = 8080
     host: str = "0.0.0.0"
 

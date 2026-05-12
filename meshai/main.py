@@ -178,6 +178,7 @@ class MeshAI:
         if self.knowledge:
             self.knowledge.close()
         if self.data_store:
+            await self.data_store.stop_mqtt_sources()
             self.data_store.close()
         if self.subscription_manager:
             self.subscription_manager.close()
@@ -266,6 +267,8 @@ class MeshAI:
             )
             # Initial fetch and backfill
             self.data_store.force_refresh()
+            # Start MQTT source subscription loops
+            await self.data_store.start_mqtt_sources()
             # Log status
             for status in self.data_store.get_status():
                 if status["is_loaded"]:

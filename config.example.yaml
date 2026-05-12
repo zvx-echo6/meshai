@@ -99,6 +99,16 @@ knowledge:
 #     api_token: "${MM_API_TOKEN}"
 #     refresh_interval: 300
 #     enabled: true
+#
+#   - name: "mqtt-broker"
+#     type: mqtt
+#     host: "mqtt.meshtastic.org"
+#     port: 1883
+#     username: "meshdev"
+#     password: "large4cats"
+#     topic_root: "msh/US"
+#     use_tls: false
+#     enabled: true
 mesh_sources: []
 
 # === MESH INTELLIGENCE ===
