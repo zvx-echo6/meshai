@@ -59,6 +59,19 @@ export interface EdgeInfo {
   quality: string
 }
 
+export interface RegionInfo {
+  name: string
+  local_name: string
+  node_count: number
+  infra_count: number
+  infra_online: number
+  online_count: number
+  score: number
+  tier: string
+  center_lat: number
+  center_lon: number
+}
+
 export interface SourceHealth {
   name: string
   type: string
@@ -222,6 +235,6 @@ export async function fetchDucting(): Promise<DuctingStatus> {
   return fetchJson<DuctingStatus>('/api/env/ducting')
 }
 
-export async function fetchRegions(): Promise<unknown[]> {
-  return fetchJson<unknown[]>('/api/regions')
+export async function fetchRegions(): Promise<RegionInfo[]> {
+  return fetchJson<RegionInfo[]>('/api/regions')
 }
