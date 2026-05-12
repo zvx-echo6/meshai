@@ -1,0 +1,256 @@
+"""NOAA Space Weather Prediction Center adapter."""
+
+import json
+import logging
+import time
+from typing import TYPE_CHECKING
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+if TYPE_CHECKING:
+    from ..config import SWPCConfig
+
+logger = logging.getLogger(__name__)
+
+
+class SWPCAdapter:
+    """NOAA Space Weather -- multi-endpoint with staggered ticks."""
+
+    # Endpoint definitions: (url, interval_seconds)
+    ENDPOINTS = {
+        "scales": ("https://services.swpc.noaa.gov/products/noaa-scales.json", 300),
+        "kp": ("https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json", 600),
+        "alerts": ("https://services.swpc.noaa.gov/products/alerts.json", 120),
+        "f107": ("https://services.swpc.noaa.gov/json/f107_cm_flux.json", 86400),
+    }
+
+    def __init__(self, config: "SWPCConfig"):
+        self._last_tick = {}  # endpoint -> last_tick timestamp
+        self._status = {}
+        self._events = []
+        self._consecutive_errors = 0
+        self._last_error = None
+        self._is_loaded = False
+
+        # Initialize tick times to 0
+        for endpoint in self.ENDPOINTS:
+            self._last_tick[endpoint] = 0.0
+
+    def tick(self) -> bool:
+        """Execute one polling tick.
+
+        Returns:
+            True if data changed
+        """
+        changed = False
+        now = time.time()
+
+        for endpoint, (url, interval) in self.ENDPOINTS.items():
+            if now - self._last_tick[endpoint] >= interval:
+                self._last_tick[endpoint] = now
+                if self._fetch_endpoint(endpoint, url):
+                    changed = True
+
+        if changed:
+            self._update_assessment()
+
+        return changed
+
+    def _fetch_endpoint(self, endpoint: str, url: str) -> bool:
+        """Fetch a single endpoint.
+
+        Returns:
+            True on success
+        """
+        headers = {
+            "User-Agent": "MeshAI/1.0",
+            "Accept": "application/json",
+        }
+
+        try:
+            req = Request(url, headers=headers)
+            with urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+
+        except HTTPError as e:
+            logger.warning(f"SWPC {endpoint} HTTP error: {e.code}")
+            self._last_error = f"{endpoint}: HTTP {e.code}"
+            self._consecutive_errors += 1
+            return False
+
+        except URLError as e:
+            logger.warning(f"SWPC {endpoint} connection error: {e.reason}")
+            self._last_error = f"{endpoint}: {e.reason}"
+            self._consecutive_errors += 1
+            return False
+
+        except Exception as e:
+            logger.warning(f"SWPC {endpoint} error: {e}")
+            self._last_error = f"{endpoint}: {e}"
+            self._consecutive_errors += 1
+            return False
+
+        # Parse based on endpoint
+        try:
+            if endpoint == "scales":
+                self._parse_scales(data)
+            elif endpoint == "kp":
+                self._parse_kp(data)
+            elif endpoint == "alerts":
+                self._parse_alerts(data)
+            elif endpoint == "f107":
+                self._parse_f107(data)
+
+            self._consecutive_errors = 0
+            self._last_error = None
+            self._is_loaded = True
+            return True
+
+        except Exception as e:
+            logger.warning(f"SWPC {endpoint} parse error: {e}")
+            self._last_error = f"{endpoint}: parse error"
+            return False
+
+    def _parse_scales(self, data):
+        """Parse noaa-scales.json.
+
+        Data format: {""-1": {...}, "0": {...}, "1": {...}, ...}
+        "0" is current.
+        """
+        current = data.get("0", {})
+
+        r_data = current.get("R", {})
+        s_data = current.get("S", {})
+        g_data = current.get("G", {})
+
+        # Handle empty string or None Scale values
+        def parse_scale(val):
+            if val is None or val == "":
+                return 0
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                return 0
+
+        self._status["r_scale"] = parse_scale(r_data.get("Scale"))
+        self._status["s_scale"] = parse_scale(s_data.get("Scale"))
+        self._status["g_scale"] = parse_scale(g_data.get("Scale"))
+
+    def _parse_kp(self, data):
+        """Parse noaa-planetary-k-index.json.
+
+        Data format: array of arrays
+        First row is header: ["time_tag", "Kp", "a_running", "station_count"]
+        Last row is most recent.
+        """
+        if not data or len(data) < 2:
+            return
+
+        # Find Kp column index from header
+        header = data[0]
+        try:
+            kp_idx = header.index("Kp")
+        except ValueError:
+            kp_idx = 1
+
+        # Get last row
+        last_row = data[-1]
+        if len(last_row) > kp_idx:
+            try:
+                self._status["kp_current"] = float(last_row[kp_idx])
+            except (ValueError, TypeError):
+                pass
+
+        # Get timestamp
+        if len(last_row) > 0:
+            self._status["kp_timestamp"] = last_row[0]
+
+    def _parse_alerts(self, data):
+        """Parse alerts.json.
+
+        Data format: array of objects with product_id, issue_datetime, message
+        """
+        warnings = []
+        if isinstance(data, list):
+            for alert in data[:5]:  # Keep most recent 5
+                message = alert.get("message", "")
+                # Extract first line as headline
+                headline = message.split("\n")[0].strip()
+                if headline:
+                    warnings.append(headline)
+
+        self._status["active_warnings"] = warnings
+
+    def _parse_f107(self, data):
+        """Parse f107_cm_flux.json.
+
+        Data format: array of objects with time_tag, flux
+        """
+        if not data:
+            return
+
+        # Get most recent entry (last in list)
+        if isinstance(data, list) and data:
+            last = data[-1]
+            if isinstance(last, dict):
+                try:
+                    self._status["sfi"] = float(last.get("flux", 0))
+                except (ValueError, TypeError):
+                    pass
+
+    def _update_assessment(self):
+        """Compute band assessment from SFI and Kp."""
+        sfi = self._status.get("sfi", 0)
+        kp = self._status.get("kp_current", 0)
+
+        # Band assessment formula
+        if sfi > 150 and kp <= 1:
+            assessment = "Excellent"
+            detail = "Upper HF bands (10m-20m) open, solid DX conditions"
+        elif sfi >= 100 and kp <= 3:
+            assessment = "Good"
+            detail = "Upper HF bands (10m-20m) open, solid DX conditions"
+        elif sfi >= 80 and kp <= 4:
+            assessment = "Fair"
+            detail = "Mid HF bands (20m-40m) usable, upper bands marginal"
+        else:
+            assessment = "Poor"
+            detail = "HF conditions degraded, stick to lower bands (40m-80m)"
+
+        self._status["band_assessment"] = assessment
+        self._status["band_detail"] = detail
+
+        # Generate events for R-scale >= 3
+        self._events = []
+        r_scale = self._status.get("r_scale", 0)
+        if r_scale >= 3:
+            self._events.append({
+                "source": "swpc",
+                "event_id": f"swpc_r{r_scale}_{int(time.time())}",
+                "event_type": f"R{r_scale} Radio Blackout",
+                "severity": "warning" if r_scale >= 3 else "advisory",
+                "headline": f"R{r_scale} HF Radio Blackout -- HF comms degraded",
+                "expires": time.time() + 3600,  # 1hr TTL
+                "areas": [],
+                "fetched_at": time.time(),
+            })
+
+    def get_status(self) -> dict:
+        """Get current SWPC status."""
+        return self._status
+
+    def get_events(self) -> list:
+        """Get current alert events."""
+        return self._events
+
+    @property
+    def health_status(self) -> dict:
+        """Get adapter health status."""
+        return {
+            "source": "swpc",
+            "is_loaded": self._is_loaded,
+            "last_error": str(self._last_error) if self._last_error else None,
+            "consecutive_errors": self._consecutive_errors,
+            "event_count": len(self._events),
+            "last_fetch": max(self._last_tick.values()) if self._last_tick else 0,
+        }

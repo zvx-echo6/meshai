@@ -4,10 +4,12 @@ import {
   fetchSources,
   fetchAlerts,
   fetchEnvStatus,
+  fetchRFPropagation,
   type MeshHealth,
   type SourceHealth,
   type Alert,
   type EnvStatus,
+  type RFPropagation,
 } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import {
@@ -19,6 +21,7 @@ import {
   Cpu,
   Activity,
   MapPin,
+  Zap,
 } from 'lucide-react'
 
 function HealthGauge({ health }: { health: MeshHealth }) {
@@ -174,7 +177,7 @@ function SourceCard({ source }: { source: SourceHealth }) {
       <div className="flex-1 min-w-0">
         <div className="text-sm text-slate-200 truncate">{source.name}</div>
         <div className="text-xs text-slate-500">
-          {source.node_count} nodes • {source.type}
+          {source.node_count} nodes * {source.type}
         </div>
       </div>
     </div>
@@ -206,11 +209,121 @@ function StatCard({
   )
 }
 
+function RFPropagationCard({ propagation }: { propagation: RFPropagation | null }) {
+  if (!propagation) {
+    return (
+      <div className="bg-bg-card border border-border rounded-lg p-6">
+        <h2 className="text-sm font-medium text-slate-400 mb-4">
+          RF Propagation
+        </h2>
+        <div className="text-slate-500">
+          <p>Loading propagation data...</p>
+        </div>
+      </div>
+    )
+  }
+
+  const hf = propagation.hf
+  const ducting = propagation.uhf_ducting
+
+  const getAssessmentColor = (assessment?: string) => {
+    if (!assessment) return 'text-slate-400'
+    switch (assessment.toLowerCase()) {
+      case 'excellent':
+        return 'text-green-400'
+      case 'good':
+        return 'text-green-500'
+      case 'fair':
+        return 'text-amber-500'
+      case 'poor':
+        return 'text-red-500'
+      default:
+        return 'text-slate-400'
+    }
+  }
+
+  const getDuctingColor = (condition?: string) => {
+    if (!condition) return 'text-slate-400'
+    switch (condition) {
+      case 'normal':
+        return 'text-green-500'
+      case 'super_refraction':
+        return 'text-amber-500'
+      case 'surface_duct':
+      case 'elevated_duct':
+        return 'text-blue-400'
+      default:
+        return 'text-slate-400'
+    }
+  }
+
+  const hasHF = hf && (hf.band_assessment || hf.sfi || hf.kp_current !== undefined)
+  const hasDucting = ducting && ducting.condition
+
+  return (
+    <div className="bg-bg-card border border-border rounded-lg p-6">
+      <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
+        <Zap size={14} />
+        RF Propagation
+      </h2>
+
+      {/* HF Section */}
+      <div className="mb-4">
+        <div className="text-xs text-slate-500 mb-1">HF Bands</div>
+        {hasHF ? (
+          <div className="space-y-1">
+            <div className={`text-sm font-medium ${getAssessmentColor(hf.band_assessment)}`}>
+              {hf.band_assessment || 'Unknown'}
+            </div>
+            <div className="text-xs text-slate-400">
+              SFI {hf.sfi?.toFixed(0) || '?'} / Kp {hf.kp_current?.toFixed(1) || '?'}
+            </div>
+            {hf.r_scale !== undefined && hf.r_scale > 0 && (
+              <div className="text-xs text-amber-500">
+                R{hf.r_scale} Radio Blackout
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-sm text-slate-500">No HF data</div>
+        )}
+      </div>
+
+      {/* UHF Ducting Section */}
+      <div>
+        <div className="text-xs text-slate-500 mb-1">UHF 906 MHz</div>
+        {hasDucting ? (
+          <div className="space-y-1">
+            <div className={`text-sm font-medium ${getDuctingColor(ducting.condition)}`}>
+              {ducting.condition === 'normal'
+                ? 'Normal'
+                : ducting.condition?.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+            </div>
+            {ducting.condition !== 'normal' && ducting.min_gradient !== undefined && (
+              <div className="text-xs text-slate-400">
+                dM/dz: {ducting.min_gradient} M-units/km
+              </div>
+            )}
+            {ducting.condition !== 'normal' && (
+              <div className="text-xs text-blue-400">
+                Extended range likely
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-sm text-slate-500">No ducting data</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function Dashboard() {
   const [health, setHealth] = useState<MeshHealth | null>(null)
   const [sources, setSources] = useState<SourceHealth[]>([])
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [envStatus, setEnvStatus] = useState<EnvStatus | null>(null)
+  const [rfProp, setRFProp] = useState<RFPropagation | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -222,12 +335,14 @@ export default function Dashboard() {
       fetchSources(),
       fetchAlerts(),
       fetchEnvStatus(),
+      fetchRFPropagation().catch(() => null),
     ])
-      .then(([h, src, a, e]) => {
+      .then(([h, src, a, e, rf]) => {
         setHealth(h)
         setSources(src)
         setAlerts(a)
         setEnvStatus(e)
+        setRFProp(rf)
         setLoading(false)
       })
       .catch((err) => {
@@ -360,22 +475,14 @@ export default function Dashboard() {
           <div className="text-slate-500">
             <p>Environmental feeds not enabled.</p>
             <p className="text-xs mt-2">
-              Enable in Config → Mesh Intelligence
+              Enable in config.yaml
             </p>
           </div>
         )}
       </div>
 
-      {/* HF Propagation placeholder */}
-      <div className="bg-bg-card border border-border rounded-lg p-6">
-        <h2 className="text-sm font-medium text-slate-400 mb-4">
-          HF Propagation
-        </h2>
-        <div className="text-slate-500">
-          <p>Space weather data not enabled.</p>
-          <p className="text-xs mt-2">Coming in Phase 1</p>
-        </div>
-      </div>
+      {/* RF Propagation */}
+      <RFPropagationCard propagation={rfProp} />
     </div>
   )
 }

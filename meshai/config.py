@@ -257,6 +257,65 @@ class MeshIntelligenceConfig:
     alert_rules: AlertRulesConfig = field(default_factory=AlertRulesConfig)
 
 
+# Environmental feed configs
+@dataclass
+class NWSConfig:
+    """NWS weather alerts settings."""
+
+    enabled: bool = True
+    tick_seconds: int = 60
+    areas: list = field(default_factory=lambda: ["ID"])
+    severity_min: str = "moderate"
+    user_agent: str = ""
+
+
+@dataclass
+class SWPCConfig:
+    """NOAA Space Weather settings."""
+
+    enabled: bool = True
+
+
+@dataclass
+class DuctingConfig:
+    """Tropospheric ducting settings."""
+
+    enabled: bool = True
+    tick_seconds: int = 10800  # 3 hours
+    latitude: float = 42.56  # Twin Falls area default
+    longitude: float = -114.47
+
+
+@dataclass
+class NICFFiresConfig:
+    """NIFC fire perimeters settings (Phase 2)."""
+
+    enabled: bool = False
+    tick_seconds: int = 600
+    state: str = "US-ID"
+
+
+@dataclass
+class AvalancheConfig:
+    """Avalanche advisory settings (Phase 2)."""
+
+    enabled: bool = False
+    tick_seconds: int = 1800
+    center_ids: list = field(default_factory=lambda: ["SNFAC"])
+    season_months: list = field(default_factory=lambda: [12, 1, 2, 3, 4])
+
+
+@dataclass
+class EnvironmentalConfig:
+    """Environmental feeds settings."""
+
+    enabled: bool = False
+    nws_zones: list = field(default_factory=lambda: ["IDZ016", "IDZ030"])
+    nws: NWSConfig = field(default_factory=NWSConfig)
+    swpc: SWPCConfig = field(default_factory=SWPCConfig)
+    ducting: DuctingConfig = field(default_factory=DuctingConfig)
+    fires: NICFFiresConfig = field(default_factory=NICFFiresConfig)
+    avalanche: AvalancheConfig = field(default_factory=AvalancheConfig)
 
 
 @dataclass
@@ -284,6 +343,7 @@ class Config:
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
     mesh_sources: list[MeshSourceConfig] = field(default_factory=list)
     mesh_intelligence: MeshIntelligenceConfig = field(default_factory=MeshIntelligenceConfig)
+    environmental: EnvironmentalConfig = field(default_factory=EnvironmentalConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
 
     _config_path: Optional[Path] = field(default=None, repr=False)
@@ -339,6 +399,17 @@ def _dict_to_dataclass(cls, data: dict):
         # Handle AlertRulesConfig
         elif key == "alert_rules" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(AlertRulesConfig, value)
+        # Handle nested environmental configs
+        elif key == "nws" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(NWSConfig, value)
+        elif key == "swpc" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(SWPCConfig, value)
+        elif key == "ducting" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(DuctingConfig, value)
+        elif key == "fires" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(NICFFiresConfig, value)
+        elif key == "avalanche" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(AvalancheConfig, value)
         else:
             kwargs[key] = value
 

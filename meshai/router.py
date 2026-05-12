@@ -87,6 +87,15 @@ _MESH_PHRASES = [
     "how are",
 ]
 
+# Keywords that indicate environmental/weather/propagation questions
+_ENV_KEYWORDS = {
+    "weather", "alert", "warning", "fire", "smoke", "road", "closure",
+    "snow", "avalanche", "avy", "solar", "hf", "propagation", "kp",
+    "aurora", "blackout", "flood", "stream", "river", "ducting",
+    "tropo", "duct", "uhf", "vhf", "906", "band", "conditions",
+    "forecast", "sfi", "ionosphere", "geomagnetic", "storm",
+}
+
 # City name to region mapping (hardcoded fallback)
 # City/alias mapping now built from config - see _build_alias_map()
 
@@ -187,6 +196,7 @@ class MessageRouter:
         source_manager=None,
         health_engine=None,
         mesh_reporter=None,
+        env_store=None,
     ):
         self.config = config
         self.connector = connector
@@ -199,6 +209,7 @@ class MessageRouter:
         self.source_manager = source_manager
         self.health_engine = health_engine
         self.mesh_reporter = mesh_reporter
+        self.env_store = env_store
         self.continuations = ContinuationState(max_continuations=3)
 
         # Per-user mesh context tracking for follow-up handling
@@ -736,6 +747,16 @@ class MessageRouter:
         else:
             # Not a mesh question
             self._update_user_mesh_context(message.sender_id, is_mesh=False)
+
+        # 7. Environmental context injection
+        if self.env_store:
+            query_lower = query.lower() if query else ""
+            env_relevant = any(kw in query_lower for kw in _ENV_KEYWORDS)
+            # Also inject env context if mesh context is being injected
+            if env_relevant or should_inject_mesh:
+                env_summary = self.env_store.get_summary()
+                if env_summary:
+                    system_prompt += "\n\n" + env_summary
 
         # DEBUG: Log system prompt status
         logger.debug(f"System prompt length: {len(system_prompt)} chars")

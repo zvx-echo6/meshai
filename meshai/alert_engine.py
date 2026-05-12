@@ -581,3 +581,84 @@ class AlertEngine:
             scope_type=alert.get("scope_type"),
             scope_value=alert.get("scope_value"),
         )
+
+    def check_environmental(self, env_store) -> list[dict]:
+        """Check environmental feeds for alertable conditions.
+
+        Args:
+            env_store: EnvironmentalStore instance
+
+        Returns:
+            List of alert dicts
+        """
+        alerts = []
+        now = time.time()
+
+        # NWS severe weather affecting mesh zones
+        mesh_zones = set(getattr(env_store, "_mesh_zones", []))
+        for evt in env_store.get_active(source="nws"):
+            if evt.get("severity") not in ("severe", "extreme", "warning"):
+                continue
+            event_zones = set(evt.get("areas", []))
+            if mesh_zones and not (event_zones & mesh_zones):
+                continue
+            key = f"env_nws_{evt['event_id']}"
+            state = self._get_state(key)
+            if not state.should_fire(now):
+                continue
+            state.fire(now)
+            alerts.append({
+                "type": "weather_warning",
+                "message": f"Warning: {evt['event_type']}: {evt.get('headline', '')[:150]}",
+                "severity": evt["severity"],
+                "node_num": None,
+                "node_name": evt["event_type"],
+                "node_short": "NWS",
+                "region": "",
+                "scope_type": "mesh",
+                "scope_value": None,
+                "is_critical": evt["severity"] in ("extreme", "emergency"),
+            })
+
+        # SWPC R-scale >= 3 (HF blackout affecting mesh backhaul)
+        swpc = env_store.get_swpc_status()
+        if swpc and swpc.get("r_scale", 0) >= 3:
+            r_scale = swpc["r_scale"]
+            key = f"env_swpc_r{r_scale}"
+            state = self._get_state(key)
+            if state.should_fire(now):
+                state.fire(now)
+                alerts.append({
+                    "type": "hf_blackout",
+                    "message": f"Warning: R{r_scale} HF Radio Blackout -- mesh backhaul links may degrade",
+                    "severity": "warning",
+                    "node_num": None,
+                    "node_name": f"R{r_scale} Blackout",
+                    "node_short": "SWPC",
+                    "region": "",
+                    "scope_type": "mesh",
+                    "scope_value": None,
+                    "is_critical": r_scale >= 4,
+                })
+
+        # UHF ducting (informational -- not critical but operators want to know)
+        ducting = env_store.get_ducting_status()
+        if ducting and ducting.get("condition") in ("surface_duct", "elevated_duct"):
+            key = "env_ducting_active"
+            state = self._get_state(key)
+            if state.should_fire(now):
+                state.fire(now)
+                alerts.append({
+                    "type": "uhf_ducting",
+                    "message": "UHF ducting detected -- 906 MHz range may be extended, expect distant nodes",
+                    "severity": "info",
+                    "node_num": None,
+                    "node_name": "Ducting",
+                    "node_short": "UHF",
+                    "region": "",
+                    "scope_type": "mesh",
+                    "scope_value": None,
+                    "is_critical": False,
+                })
+
+        return alerts

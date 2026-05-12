@@ -44,6 +44,7 @@ class MeshAI:
         self.mesh_reporter = None
         self.subscription_manager = None
         self.alert_engine = None
+        self.env_store = None  # Environmental feeds store
         self._last_sub_check: float = 0.0
         self.router: Optional[MessageRouter] = None
         self.responder: Optional[Responder] = None
@@ -125,6 +126,28 @@ class MeshAI:
                                     await self.broadcaster.broadcast("alert_fired", alert)
                                 except Exception:
                                     pass
+
+            # Environmental feed refresh
+            if self.env_store:
+                try:
+                    env_changed = self.env_store.refresh()
+                    if env_changed and self.alert_engine:
+                        env_alerts = self.alert_engine.check_environmental(self.env_store)
+                        if env_alerts:
+                            await self._dispatch_alerts(env_alerts)
+                            if self.broadcaster:
+                                for ea in env_alerts:
+                                    await self.broadcaster.broadcast("alert_fired", ea)
+
+                    # Broadcast env updates to dashboard
+                    if env_changed and self.broadcaster:
+                        await self.broadcaster.broadcast("env_update", {
+                            "active_count": len(self.env_store.get_active()),
+                            "swpc": self.env_store.get_swpc_status(),
+                            "ducting": self.env_store.get_ducting_status(),
+                        })
+                except Exception as e:
+                    logger.debug("Env refresh error: %s", e)
 
             # Check scheduled subscriptions (every 60 seconds)
             if self.subscription_manager and self.mesh_reporter:
@@ -310,6 +333,15 @@ class MeshAI:
             )
             logger.info(f"Alert engine initialized (critical: {mi.critical_nodes}, channel: {mi.alert_channel})")
 
+        # Environmental feeds
+        env_cfg = self.config.environmental
+        if env_cfg.enabled:
+            from .env.store import EnvironmentalStore
+            self.env_store = EnvironmentalStore(config=env_cfg)
+            logger.info(f"Environmental feeds enabled ({len(self.env_store._adapters)} adapters)")
+        else:
+            self.env_store = None
+
         # Knowledge base (optional - Qdrant with SQLite fallback)
         kb_cfg = self.config.knowledge
         self.knowledge = None
@@ -355,6 +387,7 @@ class MeshAI:
             data_store=self.data_store,
             health_engine=self.health_engine,
             subscription_manager=self.subscription_manager,
+            env_store=self.env_store,
         )
 
         # Message router
@@ -366,6 +399,7 @@ class MeshAI:
             source_manager=self.data_store,
             health_engine=self.health_engine,
             mesh_reporter=self.mesh_reporter,
+            env_store=self.env_store,
         )
 
         # Responder

@@ -82,12 +82,70 @@ export interface Alert {
 
 export interface EnvStatus {
   enabled: boolean
-  feeds: unknown[]
+  feeds: EnvFeedHealth[]
+}
+
+export interface EnvFeedHealth {
+  source: string
+  is_loaded: boolean
+  last_error: string | null
+  consecutive_errors: number
+  event_count: number
+  last_fetch: number
 }
 
 export interface EnvEvent {
-  type: string
+  source: string
+  event_id: string
+  event_type: string
+  severity: string
+  headline: string
+  description?: string
+  expires?: number
+  fetched_at: number
   [key: string]: unknown
+}
+
+export interface SWPCStatus {
+  enabled: boolean
+  kp_current?: number
+  kp_timestamp?: string
+  sfi?: number
+  r_scale?: number
+  s_scale?: number
+  g_scale?: number
+  band_assessment?: string
+  band_detail?: string
+  active_warnings?: string[]
+}
+
+export interface DuctingStatus {
+  enabled: boolean
+  condition?: string
+  min_gradient?: number
+  duct_thickness_m?: number | null
+  duct_base_m?: number | null
+  assessment?: string
+  last_update?: string
+}
+
+export interface RFPropagation {
+  hf: {
+    kp_current?: number
+    sfi?: number
+    r_scale?: number
+    s_scale?: number
+    g_scale?: number
+    band_assessment?: string
+    band_detail?: string
+    active_warnings?: string[]
+  }
+  uhf_ducting: {
+    condition?: string
+    min_gradient?: number
+    duct_thickness_m?: number | null
+    assessment?: string
+  }
 }
 
 // API fetch helpers
@@ -150,6 +208,18 @@ export async function fetchEnvStatus(): Promise<EnvStatus> {
 
 export async function fetchEnvActive(): Promise<EnvEvent[]> {
   return fetchJson<EnvEvent[]>('/api/env/active')
+}
+
+export async function fetchRFPropagation(): Promise<RFPropagation> {
+  return fetchJson<RFPropagation>('/api/env/propagation')
+}
+
+export async function fetchSWPC(): Promise<SWPCStatus> {
+  return fetchJson<SWPCStatus>('/api/env/swpc')
+}
+
+export async function fetchDucting(): Promise<DuctingStatus> {
+  return fetchJson<DuctingStatus>('/api/env/ducting')
 }
 
 export async function fetchRegions(): Promise<unknown[]> {
