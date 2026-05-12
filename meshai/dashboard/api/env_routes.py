@@ -106,3 +106,35 @@ async def get_avalanche_data(request: Request):
         "off_season": False,
         "advisories": env_store.get_active(source="avalanche"),
     }
+
+@router.get("/env/streams")
+async def get_streams_data(request: Request):
+    """Get USGS stream gauge readings."""
+    env_store = getattr(request.app.state, "env_store", None)
+
+    if not env_store:
+        return []
+
+    return env_store.get_active(source="usgs")
+
+
+@router.get("/env/traffic")
+async def get_traffic_data(request: Request):
+    """Get TomTom traffic flow data."""
+    env_store = getattr(request.app.state, "env_store", None)
+
+    if not env_store:
+        return []
+
+    return env_store.get_active(source="traffic")
+
+
+@router.get("/env/roads")
+async def get_roads_data(request: Request):
+    """Get 511 road conditions."""
+    env_store = getattr(request.app.state, "env_store", None)
+
+    if not env_store:
+        return []
+
+    return env_store.get_active(source="511")

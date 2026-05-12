@@ -10,6 +10,8 @@ import {
   Wind,
   Flame,
   Mountain,
+  Droplets,
+  Car,
 } from 'lucide-react'
 import {
   fetchEnvStatus,
@@ -18,12 +20,18 @@ import {
   fetchDucting,
   fetchFires,
   fetchAvalanche,
+  fetchStreams,
+  fetchTraffic,
+  fetchRoads,
   type EnvStatus,
   type EnvEvent,
   type SWPCStatus,
   type DuctingStatus,
   type FireEvent,
   type AvalancheResponse,
+  type StreamGaugeEvent,
+  type TrafficEvent,
+  type RoadEvent,
 } from '@/lib/api'
 
 function FeedStatusCard({ feed }: { feed: { source: string; is_loaded: boolean; last_error: string | null; consecutive_errors: number; event_count: number; last_fetch: number } }) {
@@ -348,6 +356,9 @@ export default function Environment() {
   const [ducting, setDucting] = useState<DuctingStatus | null>(null)
   const [fires, setFires] = useState<FireEvent[]>([])
   const [avalanche, setAvalanche] = useState<AvalancheResponse | null>(null)
+  const [streams, setStreams] = useState<StreamGaugeEvent[]>([])
+  const [traffic, setTraffic] = useState<TrafficEvent[]>([])
+  const [roads, setRoads] = useState<RoadEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -359,14 +370,20 @@ export default function Environment() {
       fetchDucting().catch(() => null),
       fetchFires().catch(() => []),
       fetchAvalanche().catch(() => null),
+      fetchStreams().catch(() => []),
+      fetchTraffic().catch(() => []),
+      fetchRoads().catch(() => []),
     ])
-      .then(([status, active, swpcData, ductingData, firesData, avyData]) => {
+      .then(([status, active, swpcData, ductingData, firesData, avyData, streamsData, trafficData, roadsData]) => {
         setEnvStatus(status)
         setEvents(active)
         setSWPC(swpcData)
         setDucting(ductingData)
         setFires(firesData)
         setAvalanche(avyData)
+        setStreams(streamsData || [])
+        setTraffic(trafficData || [])
+        setRoads(roadsData || [])
         setLoading(false)
       })
       .catch((err) => {
@@ -562,6 +579,116 @@ export default function Environment() {
           )}
         </div>
       </div>
+
+      {/* Stream Gauges */}
+      {streams.length > 0 && (
+        <div className="bg-bg-card border border-border rounded-lg p-6">
+          <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
+            <Droplets size={14} />
+            Stream Gauges ({streams.length})
+          </h2>
+          <div className="space-y-2">
+            {streams.map((stream) => (
+              <div
+                key={stream.event_id}
+                className={`p-3 rounded-lg ${
+                  stream.severity === 'warning'
+                    ? 'bg-amber-500/10 border-l-2 border-amber-500'
+                    : 'bg-blue-500/10 border-l-2 border-blue-500'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-200">
+                    {stream.properties?.site_name || 'Unknown Site'}
+                  </span>
+                  <span className="text-sm font-mono text-slate-300">
+                    {stream.properties?.value?.toLocaleString()} {stream.properties?.unit}
+                  </span>
+                </div>
+                <div className="text-xs text-slate-500 mt-1">
+                  {stream.properties?.parameter}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Road Conditions */}
+      {(traffic.length > 0 || roads.length > 0) && (
+        <div className="bg-bg-card border border-border rounded-lg p-6">
+          <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
+            <Car size={14} />
+            Road Conditions
+          </h2>
+          {traffic.length > 0 && (
+            <div className="mb-4">
+              <div className="text-xs text-slate-500 mb-2 uppercase">Traffic Flow</div>
+              <div className="space-y-2">
+                {traffic.map((t) => (
+                  <div
+                    key={t.event_id}
+                    className={`p-3 rounded-lg ${
+                      t.properties?.roadClosure
+                        ? 'bg-red-500/10 border-l-2 border-red-500'
+                        : t.properties?.speedRatio < 0.5
+                        ? 'bg-amber-500/10 border-l-2 border-amber-500'
+                        : t.properties?.speedRatio < 0.8
+                        ? 'bg-yellow-500/10 border-l-2 border-yellow-500'
+                        : 'bg-green-500/10 border-l-2 border-green-500'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-slate-200">
+                        {t.properties?.corridor || 'Unknown'}
+                      </span>
+                      <span className="text-sm font-mono text-slate-300">
+                        {t.properties?.roadClosure ? 'CLOSED' : `${Math.round(t.properties?.currentSpeed || 0)}mph`}
+                      </span>
+                    </div>
+                    {!t.properties?.roadClosure && (
+                      <div className="text-xs text-slate-500 mt-1">
+                        {Math.round((t.properties?.speedRatio || 1) * 100)}% of free flow ({Math.round(t.properties?.freeFlowSpeed || 0)}mph)
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {roads.length > 0 && (
+            <div>
+              <div className="text-xs text-slate-500 mb-2 uppercase">Road Events</div>
+              <div className="space-y-2">
+                {roads.map((r) => (
+                  <div
+                    key={r.event_id}
+                    className={`p-3 rounded-lg ${
+                      r.properties?.is_closure
+                        ? 'bg-red-500/10 border-l-2 border-red-500'
+                        : 'bg-amber-500/10 border-l-2 border-amber-500'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      {r.properties?.is_closure && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-400">
+                          CLOSURE
+                        </span>
+                      )}
+                      <span className="text-sm text-slate-200 line-clamp-1">
+                        {r.headline}
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1 uppercase">
+                      {r.event_type}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Active Events */}
       <div className="bg-bg-card border border-border rounded-lg p-6">

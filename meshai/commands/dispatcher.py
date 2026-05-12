@@ -281,6 +281,24 @@ def create_dispatcher(
         avalanche_cmd.name = "avalanche"
         dispatcher.register(avalanche_cmd)
 
+        # Register streams command
+        from .streams_cmd import StreamsCommand
+        streams_cmd = StreamsCommand(env_store)
+        dispatcher.register(streams_cmd)
+        for alias in getattr(streams_cmd, 'aliases', []):
+            alias_handler = StreamsCommand(env_store)
+            alias_handler.name = alias
+            dispatcher.register(alias_handler)
+
+        # Register roads command
+        from .roads_cmd import RoadsCommand
+        roads_cmd = RoadsCommand(env_store)
+        dispatcher.register(roads_cmd)
+        for alias in getattr(roads_cmd, 'aliases', []):
+            alias_handler = RoadsCommand(env_store)
+            alias_handler.name = alias
+            dispatcher.register(alias_handler)
+
     # Register custom commands
     if custom_commands:
         for name, response in custom_commands.items():

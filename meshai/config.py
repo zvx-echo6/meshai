@@ -362,6 +362,38 @@ class AvalancheConfig:
 
 
 @dataclass
+class USGSConfig:
+    """USGS stream gauge settings."""
+
+    enabled: bool = False
+    tick_seconds: int = 900  # Minimum 15 min per USGS guidelines
+    sites: list = field(default_factory=list)  # Site IDs, e.g. ["13090500"]
+    flood_thresholds: dict = field(default_factory=dict)  # {site_id: {flow: X, height: Y}}
+
+
+@dataclass
+class TomTomConfig:
+    """TomTom traffic flow settings."""
+
+    enabled: bool = False
+    tick_seconds: int = 300
+    api_key: str = ""  # Supports ${ENV_VAR}
+    corridors: list = field(default_factory=list)  # [{name, lat, lon}, ...]
+
+
+@dataclass
+class Roads511Config:
+    """511 road conditions settings."""
+
+    enabled: bool = False
+    tick_seconds: int = 300
+    api_key: str = ""  # Supports ${ENV_VAR}
+    base_url: str = ""  # State-specific, e.g. "https://511.idaho.gov/api/v2"
+    endpoints: list = field(default_factory=lambda: ["/get/event"])
+    bbox: list = field(default_factory=list)  # [west, south, east, north]
+
+
+@dataclass
 class EnvironmentalConfig:
     """Environmental feeds settings."""
 
@@ -372,6 +404,9 @@ class EnvironmentalConfig:
     ducting: DuctingConfig = field(default_factory=DuctingConfig)
     fires: NICFFiresConfig = field(default_factory=NICFFiresConfig)
     avalanche: AvalancheConfig = field(default_factory=AvalancheConfig)
+    usgs: USGSConfig = field(default_factory=USGSConfig)
+    traffic: TomTomConfig = field(default_factory=TomTomConfig)
+    roads511: Roads511Config = field(default_factory=Roads511Config)
 
 
 @dataclass
@@ -477,6 +512,12 @@ def _dict_to_dataclass(cls, data: dict):
             kwargs[key] = _dict_to_dataclass(NICFFiresConfig, value)
         elif key == "avalanche" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(AvalancheConfig, value)
+        elif key == "usgs" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(USGSConfig, value)
+        elif key == "traffic" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(TomTomConfig, value)
+        elif key == "roads511" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(Roads511Config, value)
         else:
             kwargs[key] = value
 

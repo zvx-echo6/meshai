@@ -42,6 +42,18 @@ class EnvironmentalStore:
             from .avalanche import AvalancheAdapter
             self._adapters["avalanche"] = AvalancheAdapter(config.avalanche)
 
+        if config.usgs.enabled:
+            from .usgs import USGSStreamsAdapter
+            self._adapters["usgs"] = USGSStreamsAdapter(config.usgs)
+
+        if config.traffic.enabled:
+            from .traffic import TomTomTrafficAdapter
+            self._adapters["traffic"] = TomTomTrafficAdapter(config.traffic)
+
+        if config.roads511.enabled:
+            from .roads511 import Roads511Adapter
+            self._adapters["roads511"] = Roads511Adapter(config.roads511)
+
         logger.info(f"EnvironmentalStore initialized with {len(self._adapters)} adapters")
 
     def refresh(self) -> bool:
@@ -190,6 +202,27 @@ class EnvironmentalStore:
                 zone = a.get("zone_name", "Unknown")
                 danger = a.get("danger_name", "Unknown")
                 lines.append(f"  - {zone}: {danger}")
+
+        # Stream gauges
+        streams = self.get_active(source="usgs")
+        if streams:
+            lines.append(f"Stream Gauges: {len(streams)} readings")
+            for s in streams[:2]:
+                lines.append(f"  - {s['headline']}")
+
+        # Traffic flow
+        traffic = self.get_active(source="traffic")
+        if traffic:
+            lines.append(f"Traffic: {len(traffic)} corridors")
+            for t in traffic[:2]:
+                lines.append(f"  - {t['headline']}")
+
+        # 511 road events
+        roads = self.get_active(source="511")
+        if roads:
+            lines.append(f"Road Events: {len(roads)} active")
+            for r in roads[:2]:
+                lines.append(f"  - {r['headline'][:60]}")
 
         return "\n".join(lines)
 

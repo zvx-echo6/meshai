@@ -176,6 +176,33 @@ environmental:
     center_ids: ["SNFAC"]
     season_months: [12, 1, 2, 3, 4]
 
+  # USGS Stream Gauges (waterservices.usgs.gov)
+  # Find site IDs at https://waterdata.usgs.gov/nwis
+  usgs:
+    enabled: false
+    tick_seconds: 900   # Min 15 min per USGS guidelines
+    sites: []           # e.g. ["13090500", "13088000"]
+
+  # TomTom Traffic Flow (api.tomtom.com, requires API key)
+  traffic:
+    enabled: false
+    tick_seconds: 300
+    api_key: ""         # Get key at developer.tomtom.com
+    corridors: []
+    # Example corridors:
+    # - name: "I-84 Twin Falls"
+    #   lat: 42.56
+    #   lon: -114.47
+
+  # 511 Road Conditions (state-specific, configurable base URL)
+  roads511:
+    enabled: false
+    tick_seconds: 300
+    api_key: ""
+    base_url: ""        # e.g. "https://511.idaho.gov/api/v2"
+    endpoints: ["/get/event"]
+    bbox: []            # [west, south, east, north]
+
 # === WEB DASHBOARD ===
 dashboard:
   enabled: true

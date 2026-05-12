@@ -270,6 +270,66 @@ export interface AvalancheEvent {
   fetched_at: number
 }
 
+export interface StreamGaugeEvent {
+  source: string
+  event_id: string
+  event_type: string
+  headline: string
+  severity: string
+  lat?: number
+  lon?: number
+  expires: number
+  fetched_at: number
+  properties: {
+    site_id: string
+    site_name: string
+    parameter: string
+    value: number
+    unit: string
+    timestamp: string
+  }
+}
+
+export interface TrafficEvent {
+  source: string
+  event_id: string
+  event_type: string
+  headline: string
+  severity: string
+  lat?: number
+  lon?: number
+  expires: number
+  fetched_at: number
+  properties: {
+    corridor: string
+    currentSpeed: number
+    freeFlowSpeed: number
+    speedRatio: number
+    currentTravelTime: number
+    freeFlowTravelTime: number
+    confidence: number
+    roadClosure: boolean
+  }
+}
+
+export interface RoadEvent {
+  source: string
+  event_id: string
+  event_type: string
+  headline: string
+  description?: string
+  severity: string
+  lat?: number
+  lon?: number
+  expires: number
+  fetched_at: number
+  properties: {
+    roadway: string
+    is_closure: boolean
+    last_updated?: string
+  }
+}
+
 export interface AvalancheResponse {
   off_season: boolean
   advisories: AvalancheEvent[]
@@ -281,6 +341,18 @@ export async function fetchFires(): Promise<FireEvent[]> {
 
 export async function fetchAvalanche(): Promise<AvalancheResponse> {
   return fetchJson<AvalancheResponse>('/api/env/avalanche')
+}
+
+export async function fetchStreams(): Promise<StreamGaugeEvent[]> {
+  return fetchJson<StreamGaugeEvent[]>('/api/env/streams')
+}
+
+export async function fetchTraffic(): Promise<TrafficEvent[]> {
+  return fetchJson<TrafficEvent[]>('/api/env/traffic')
+}
+
+export async function fetchRoads(): Promise<RoadEvent[]> {
+  return fetchJson<RoadEvent[]>('/api/env/roads')
 }
 
 export async function fetchRegions(): Promise<RegionInfo[]> {
