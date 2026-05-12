@@ -226,22 +226,6 @@ function RFPropagationCard({ propagation }: { propagation: RFPropagation | null 
   const hf = propagation.hf
   const ducting = propagation.uhf_ducting
 
-  const getAssessmentColor = (assessment?: string) => {
-    if (!assessment) return 'text-slate-400'
-    switch (assessment.toLowerCase()) {
-      case 'excellent':
-        return 'text-green-400'
-      case 'good':
-        return 'text-green-500'
-      case 'fair':
-        return 'text-amber-500'
-      case 'poor':
-        return 'text-red-500'
-      default:
-        return 'text-slate-400'
-    }
-  }
-
   const getDuctingColor = (condition?: string) => {
     if (!condition) return 'text-slate-400'
     switch (condition) {
@@ -257,7 +241,7 @@ function RFPropagationCard({ propagation }: { propagation: RFPropagation | null 
     }
   }
 
-  const hasHF = hf && (hf.band_assessment || hf.sfi || hf.kp_current !== undefined)
+  const hasHF = hf && (hf.sfi || hf.kp_current !== undefined)
   const hasDucting = ducting && ducting.condition
 
   return (
@@ -267,16 +251,16 @@ function RFPropagationCard({ propagation }: { propagation: RFPropagation | null 
         RF Propagation
       </h2>
 
-      {/* HF Section */}
+      {/* Solar/Geomagnetic Indices */}
       <div className="mb-4">
-        <div className="text-xs text-slate-500 mb-1">HF Bands</div>
+        <div className="text-xs text-slate-500 mb-1">Solar/Geomagnetic</div>
         {hasHF ? (
           <div className="space-y-1">
-            <div className={`text-sm font-medium ${getAssessmentColor(hf.band_assessment)}`}>
-              {hf.band_assessment || 'Unknown'}
+            <div className="text-sm font-mono text-slate-200">
+              SFI {hf.sfi?.toFixed(0) || '?'} / Kp {hf.kp_current?.toFixed(1) || '?'}
             </div>
             <div className="text-xs text-slate-400">
-              SFI {hf.sfi?.toFixed(0) || '?'} / Kp {hf.kp_current?.toFixed(1) || '?'}
+              R{hf.r_scale ?? 0} / S{hf.s_scale ?? 0} / G{hf.g_scale ?? 0}
             </div>
             {hf.r_scale !== undefined && hf.r_scale > 0 && (
               <div className="text-xs text-amber-500">
@@ -285,13 +269,13 @@ function RFPropagationCard({ propagation }: { propagation: RFPropagation | null 
             )}
           </div>
         ) : (
-          <div className="text-sm text-slate-500">No HF data</div>
+          <div className="text-sm text-slate-500">No data</div>
         )}
       </div>
 
-      {/* UHF Ducting Section */}
+      {/* Tropospheric Ducting */}
       <div>
-        <div className="text-xs text-slate-500 mb-1">UHF 906 MHz</div>
+        <div className="text-xs text-slate-500 mb-1">Tropospheric</div>
         {hasDucting ? (
           <div className="space-y-1">
             <div className={`text-sm font-medium ${getDuctingColor(ducting.condition)}`}>
@@ -299,14 +283,12 @@ function RFPropagationCard({ propagation }: { propagation: RFPropagation | null 
                 ? 'Normal'
                 : ducting.condition?.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
             </div>
-            {ducting.condition !== 'normal' && ducting.min_gradient !== undefined && (
+            <div className="text-xs text-slate-400 font-mono">
+              dM/dz: {ducting.min_gradient ?? '?'} M-units/km
+            </div>
+            {ducting.duct_thickness_m && (
               <div className="text-xs text-slate-400">
-                dM/dz: {ducting.min_gradient} M-units/km
-              </div>
-            )}
-            {ducting.condition !== 'normal' && (
-              <div className="text-xs text-blue-400">
-                Extended range likely
+                Duct: ~{ducting.duct_thickness_m}m thick
               </div>
             )}
           </div>

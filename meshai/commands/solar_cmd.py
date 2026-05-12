@@ -20,44 +20,36 @@ class SolarCommand(CommandHandler):
 
         lines = []
 
-        # HF section
+        # Space weather indices (raw data - no band conclusions)
         s = self._env_store.get_swpc_status()
         if s:
-            assessment = s.get("band_assessment", "Unknown")
             kp = s.get("kp_current", "?")
             sfi = s.get("sfi", "?")
             r = s.get("r_scale", 0)
             s_sc = s.get("s_scale", 0)
             g = s.get("g_scale", 0)
 
-            lines.append(f"HF: {assessment} -- SFI {sfi}, Kp {kp}")
+            lines.append(f"Solar: SFI {sfi}, Kp {kp}")
             lines.append(f"  R{r}/S{s_sc}/G{g} scales")
-
-            if assessment in ("Excellent", "Good"):
-                lines.append("  10m-20m open, solid DX")
-            elif assessment == "Fair":
-                lines.append("  20m-40m usable, upper bands marginal")
-            else:
-                lines.append("  Degraded -- lower bands only")
 
             warnings = s.get("active_warnings", [])
             for w in warnings[:2]:
                 lines.append(f"  Warning: {w[:100]}")
         else:
-            lines.append("HF: Data not available")
+            lines.append("Solar: Data not available")
 
-        # UHF ducting section
+        # Tropospheric ducting (raw data - no frequency conclusions)
         d = self._env_store.get_ducting_status()
         if d:
             cond = d.get("condition", "unknown")
+            gradient = d.get("min_gradient", "?")
             if cond == "normal":
-                lines.append("UHF: Normal propagation (906 MHz)")
+                lines.append(f"Ducting: Normal (dM/dz {gradient})")
             else:
-                gradient = d.get("min_gradient", "?")
-                lines.append(f"UHF: {cond.replace('_', ' ').title()} (906 MHz)")
-                lines.append(f"  dM/dz: {gradient} M-units/km")
-                lines.append("  Extended range -- expect distant nodes")
+                thickness = d.get("duct_thickness_m", "?")
+                lines.append(f"Ducting: {cond.replace('_', ' ').title()}")
+                lines.append(f"  dM/dz: {gradient} M-units/km, ~{thickness}m thick")
         else:
-            lines.append("UHF: Ducting data not available")
+            lines.append("Ducting: Data not available")
 
         return "\n".join(lines)

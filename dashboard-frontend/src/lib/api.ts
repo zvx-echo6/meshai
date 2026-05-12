@@ -127,8 +127,6 @@ export interface SWPCStatus {
   r_scale?: number
   s_scale?: number
   g_scale?: number
-  band_assessment?: string
-  band_detail?: string
   active_warnings?: string[]
 }
 
@@ -138,7 +136,6 @@ export interface DuctingStatus {
   min_gradient?: number
   duct_thickness_m?: number | null
   duct_base_m?: number | null
-  assessment?: string
   last_update?: string
 }
 
@@ -149,15 +146,12 @@ export interface RFPropagation {
     r_scale?: number
     s_scale?: number
     g_scale?: number
-    band_assessment?: string
-    band_detail?: string
     active_warnings?: string[]
   }
   uhf_ducting: {
     condition?: string
     min_gradient?: number
     duct_thickness_m?: number | null
-    assessment?: string
   }
 }
 

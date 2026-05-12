@@ -134,32 +134,32 @@ class EnvironmentalStore:
         else:
             lines.append("NWS: No active alerts for mesh area.")
 
-        # HF
+        # Space weather indices (raw - LLM interprets)
         s = self._swpc_status
         if s:
             kp = s.get("kp_current", "?")
             sfi = s.get("sfi", "?")
-            assessment = s.get("band_assessment", "Unknown")
-            lines.append(f"HF: {assessment} -- SFI {sfi}, Kp {kp}")
+            r = s.get("r_scale", 0)
+            g = s.get("g_scale", 0)
+            lines.append(f"Space Weather: SFI {sfi}, Kp {kp}, R{r}/G{g}")
             warnings = s.get("active_warnings", [])
             if warnings:
                 for w in warnings[:2]:
                     lines.append(f"  Warning: {w}")
         else:
-            lines.append("HF: Space weather data not available.")
+            lines.append("Space Weather: Data not available.")
 
-        # UHF ducting
+        # Tropospheric ducting (raw - LLM interprets)
         d = self._ducting_status
         if d:
             condition = d.get("condition", "unknown")
+            gradient = d.get("min_gradient", "?")
             if condition == "normal":
-                lines.append("UHF Ducting: Normal propagation, no ducting detected.")
-            elif condition in ("super_refraction", "ducting", "surface_duct", "elevated_duct"):
-                gradient = d.get("min_gradient", "?")
+                lines.append(f"Tropospheric: Normal (dM/dz {gradient} M-units/km)")
+            else:
                 thickness = d.get("duct_thickness_m", "?")
-                lines.append(f"UHF Ducting: {condition.replace('_', ' ').title()} detected")
+                lines.append(f"Tropospheric: {condition.replace('_', ' ').title()}")
                 lines.append(f"  dM/dz: {gradient} M-units/km, duct ~{thickness}m thick")
-                lines.append("  Extended range likely on 906 MHz -- expect distant nodes")
 
         return "\n".join(lines)
 

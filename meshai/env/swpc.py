@@ -52,7 +52,7 @@ class SWPCAdapter:
                     changed = True
 
         if changed:
-            self._update_assessment()
+            self._update_events()
 
         return changed
 
@@ -197,29 +197,9 @@ class SWPCAdapter:
                 except (ValueError, TypeError):
                     pass
 
-    def _update_assessment(self):
-        """Compute band assessment from SFI and Kp."""
-        sfi = self._status.get("sfi", 0)
-        kp = self._status.get("kp_current", 0)
-
-        # Band assessment formula
-        if sfi > 150 and kp <= 1:
-            assessment = "Excellent"
-            detail = "Upper HF bands (10m-20m) open, solid DX conditions"
-        elif sfi >= 100 and kp <= 3:
-            assessment = "Good"
-            detail = "Upper HF bands (10m-20m) open, solid DX conditions"
-        elif sfi >= 80 and kp <= 4:
-            assessment = "Fair"
-            detail = "Mid HF bands (20m-40m) usable, upper bands marginal"
-        else:
-            assessment = "Poor"
-            detail = "HF conditions degraded, stick to lower bands (40m-80m)"
-
-        self._status["band_assessment"] = assessment
-        self._status["band_detail"] = detail
-
-        # Generate events for R-scale >= 3
+    def _update_events(self):
+        """Generate events for significant space weather conditions."""
+        # Generate events for R-scale >= 3 (radio blackout)
         self._events = []
         r_scale = self._status.get("r_scale", 0)
         if r_scale >= 3:
@@ -228,7 +208,7 @@ class SWPCAdapter:
                 "event_id": f"swpc_r{r_scale}_{int(time.time())}",
                 "event_type": f"R{r_scale} Radio Blackout",
                 "severity": "warning" if r_scale >= 3 else "advisory",
-                "headline": f"R{r_scale} HF Radio Blackout -- HF comms degraded",
+                "headline": f"R{r_scale} Radio Blackout in progress",
                 "expires": time.time() + 3600,  # 1hr TTL
                 "areas": [],
                 "fetched_at": time.time(),

@@ -641,20 +641,22 @@ class AlertEngine:
                     "is_critical": r_scale >= 4,
                 })
 
-        # UHF ducting (informational -- not critical but operators want to know)
+        # Tropospheric ducting (informational -- not critical but operators want to know)
         ducting = env_store.get_ducting_status()
         if ducting and ducting.get("condition") in ("surface_duct", "elevated_duct"):
             key = "env_ducting_active"
             state = self._get_state(key)
             if state.should_fire(now):
                 state.fire(now)
+                condition = ducting.get("condition", "ducting").replace("_", " ")
+                gradient = ducting.get("min_gradient", "?")
                 alerts.append({
-                    "type": "uhf_ducting",
-                    "message": "UHF ducting detected -- 906 MHz range may be extended, expect distant nodes",
+                    "type": "tropospheric_ducting",
+                    "message": f"Tropospheric {condition} detected (dM/dz {gradient} M-units/km)",
                     "severity": "info",
                     "node_num": None,
                     "node_name": "Ducting",
-                    "node_short": "UHF",
+                    "node_short": "TROPO",
                     "region": "",
                     "scope_type": "mesh",
                     "scope_value": None,
