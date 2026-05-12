@@ -663,4 +663,54 @@ class AlertEngine:
                     "is_critical": False,
                 })
 
+        # Wildfire proximity alerts
+        fires = env_store.get_active(source="nifc")
+        for fire in fires:
+            distance_km = fire.get("distance_km")
+            if distance_km is None:
+                continue
+
+            name = fire.get("name", "Unknown")
+            acres = fire.get("acres", 0)
+            pct = fire.get("pct_contained", 0)
+            anchor = fire.get("nearest_anchor", "mesh area")
+
+            if distance_km < 25:
+                # Critical - fire within 25km
+                key = f"env_fire_critical_{name}"
+                state = self._get_state(key)
+                if state.should_fire(now):
+                    state.fire(now)
+                    alerts.append({
+                        "type": "wildfire_proximity",
+                        "message": f"Wildfire '{name}' within {int(distance_km)} km of {anchor} -- {int(acres):,} ac, {int(pct)}% contained",
+                        "severity": "critical",
+                        "node_num": None,
+                        "node_name": name,
+                        "node_short": "FIRE",
+                        "region": anchor,
+                        "scope_type": "mesh",
+                        "scope_value": None,
+                        "is_critical": True,
+                    })
+
+            elif distance_km < 50:
+                # Warning - fire within 50km
+                key = f"env_fire_warning_{name}"
+                state = self._get_state(key)
+                if state.should_fire(now):
+                    state.fire(now)
+                    alerts.append({
+                        "type": "wildfire_proximity",
+                        "message": f"Wildfire '{name}' {int(distance_km)} km from {anchor} -- {int(acres):,} ac, {int(pct)}% contained",
+                        "severity": "warning",
+                        "node_num": None,
+                        "node_name": name,
+                        "node_short": "FIRE",
+                        "region": anchor,
+                        "scope_type": "mesh",
+                        "scope_value": None,
+                        "is_critical": False,
+                    })
+
         return alerts

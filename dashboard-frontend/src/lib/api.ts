@@ -229,6 +229,60 @@ export async function fetchDucting(): Promise<DuctingStatus> {
   return fetchJson<DuctingStatus>('/api/env/ducting')
 }
 
+export interface FireEvent {
+  source: string
+  event_id: string
+  event_type: string
+  severity: string
+  headline: string
+  name: string
+  acres: number
+  pct_contained: number
+  lat: number | null
+  lon: number | null
+  distance_km: number | null
+  nearest_anchor: string | null
+  state: string
+  expires: number
+  fetched_at: number
+  polygon?: number[][][]
+}
+
+export interface AvalancheEvent {
+  source: string
+  event_id: string
+  event_type: string
+  severity: string
+  headline: string
+  zone_name: string
+  center: string
+  center_id: string
+  center_link: string
+  forecast_link: string
+  danger: string
+  danger_level: number
+  danger_name: string
+  travel_advice: string
+  state: string
+  lat: number | null
+  lon: number | null
+  expires: number
+  fetched_at: number
+}
+
+export interface AvalancheResponse {
+  off_season: boolean
+  advisories: AvalancheEvent[]
+}
+
+export async function fetchFires(): Promise<FireEvent[]> {
+  return fetchJson<FireEvent[]>('/api/env/fires')
+}
+
+export async function fetchAvalanche(): Promise<AvalancheResponse> {
+  return fetchJson<AvalancheResponse>('/api/env/avalanche')
+}
+
 export async function fetchRegions(): Promise<RegionInfo[]> {
   return fetchJson<RegionInfo[]>('/api/regions')
 }

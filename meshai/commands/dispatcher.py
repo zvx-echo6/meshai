@@ -266,6 +266,21 @@ def create_dispatcher(
         wx_cmd.name = "wx-alerts"
         dispatcher.register(wx_cmd)
 
+        # Register fire command
+        from .fire_cmd import FireCommand
+        fire_cmd = FireCommand(env_store)
+        dispatcher.register(fire_cmd)
+
+        # Register avalanche command
+        from .avy_cmd import AvalancheCommand
+        avy_cmd = AvalancheCommand(env_store)
+        dispatcher.register(avy_cmd)
+
+        # Register !avalanche as alias for !avy
+        avalanche_cmd = AvalancheCommand(env_store)
+        avalanche_cmd.name = "avalanche"
+        dispatcher.register(avalanche_cmd)
+
     # Register custom commands
     if custom_commands:
         for name, response in custom_commands.items():

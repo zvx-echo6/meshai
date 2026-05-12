@@ -8,16 +8,22 @@ import {
   CheckCircle,
   Activity,
   Wind,
+  Flame,
+  Mountain,
 } from 'lucide-react'
 import {
   fetchEnvStatus,
   fetchEnvActive,
   fetchSWPC,
   fetchDucting,
+  fetchFires,
+  fetchAvalanche,
   type EnvStatus,
   type EnvEvent,
   type SWPCStatus,
   type DuctingStatus,
+  type FireEvent,
+  type AvalancheResponse,
 } from '@/lib/api'
 
 function FeedStatusCard({ feed }: { feed: { source: string; is_loaded: boolean; last_error: string | null; consecutive_errors: number; event_count: number; last_fetch: number } }) {
@@ -340,6 +346,8 @@ export default function Environment() {
   const [events, setEvents] = useState<EnvEvent[]>([])
   const [swpc, setSWPC] = useState<SWPCStatus | null>(null)
   const [ducting, setDucting] = useState<DuctingStatus | null>(null)
+  const [fires, setFires] = useState<FireEvent[]>([])
+  const [avalanche, setAvalanche] = useState<AvalancheResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -349,12 +357,16 @@ export default function Environment() {
       fetchEnvActive().catch(() => []),
       fetchSWPC().catch(() => null),
       fetchDucting().catch(() => null),
+      fetchFires().catch(() => []),
+      fetchAvalanche().catch(() => null),
     ])
-      .then(([status, active, swpcData, ductingData]) => {
+      .then(([status, active, swpcData, ductingData, firesData, avyData]) => {
         setEnvStatus(status)
         setEvents(active)
         setSWPC(swpcData)
         setDucting(ductingData)
+        setFires(firesData)
+        setAvalanche(avyData)
         setLoading(false)
       })
       .catch((err) => {
@@ -426,6 +438,129 @@ export default function Environment() {
 
         {/* Tropospheric Ducting */}
         <DuctingPanel ducting={ducting} />
+      </div>
+
+      {/* Fires and Avalanche */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Wildfires */}
+        <div className="bg-bg-card border border-border rounded-lg p-6">
+          <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
+            <Flame size={14} />
+            Active Wildfires ({fires.length})
+          </h2>
+          {fires.length > 0 ? (
+            <div className="space-y-3">
+              {fires.map((fire) => (
+                <div
+                  key={fire.event_id}
+                  className={`p-3 rounded-lg ${
+                    fire.severity === 'warning'
+                      ? 'bg-red-500/10 border-l-2 border-red-500'
+                      : fire.severity === 'watch'
+                      ? 'bg-amber-500/10 border-l-2 border-amber-500'
+                      : 'bg-slate-500/10 border-l-2 border-slate-500'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm font-medium text-slate-200">
+                      {fire.name}
+                    </span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded ${
+                      fire.severity === 'warning'
+                        ? 'bg-red-500/20 text-red-400'
+                        : fire.severity === 'watch'
+                        ? 'bg-amber-500/20 text-amber-400'
+                        : 'bg-slate-500/20 text-slate-400'
+                    }`}>
+                      {fire.severity}
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-400 space-y-1">
+                    <div>{fire.acres.toLocaleString()} acres, {fire.pct_contained}% contained</div>
+                    {fire.distance_km && fire.nearest_anchor && (
+                      <div>{Math.round(fire.distance_km)} km from {fire.nearest_anchor}</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-slate-500 py-4">
+              <CheckCircle size={16} className="text-green-500" />
+              <span>No active wildfires in the area</span>
+            </div>
+          )}
+        </div>
+
+        {/* Avalanche */}
+        <div className="bg-bg-card border border-border rounded-lg p-6">
+          <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
+            <Mountain size={14} />
+            Avalanche Advisories
+          </h2>
+          {avalanche?.off_season ? (
+            <div className="text-slate-500 py-4">
+              <p>Off season - check back in December</p>
+            </div>
+          ) : avalanche && avalanche.advisories.length > 0 ? (
+            <div className="space-y-3">
+              {avalanche.advisories.map((avy) => (
+                <div
+                  key={avy.event_id}
+                  className={`p-3 rounded-lg ${
+                    avy.danger_level >= 4
+                      ? 'bg-red-500/10 border-l-2 border-red-500'
+                      : avy.danger_level >= 3
+                      ? 'bg-amber-500/10 border-l-2 border-amber-500'
+                      : avy.danger_level >= 2
+                      ? 'bg-yellow-500/10 border-l-2 border-yellow-500'
+                      : 'bg-green-500/10 border-l-2 border-green-500'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm font-medium text-slate-200">
+                      {avy.zone_name}
+                    </span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded ${
+                      avy.danger_level >= 4
+                        ? 'bg-red-500/20 text-red-400'
+                        : avy.danger_level >= 3
+                        ? 'bg-amber-500/20 text-amber-400'
+                        : avy.danger_level >= 2
+                        ? 'bg-yellow-500/20 text-yellow-400'
+                        : 'bg-green-500/20 text-green-400'
+                    }`}>
+                      {avy.danger_name}
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-400">
+                    {avy.center}
+                  </div>
+                  {avy.travel_advice && (
+                    <div className="text-xs text-slate-500 mt-2 line-clamp-2">
+                      {avy.travel_advice}
+                    </div>
+                  )}
+                </div>
+              ))}
+              {avalanche.advisories[0]?.center_link && (
+                <a
+                  href={avalanche.advisories[0].center_link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-blue-400 hover:underline"
+                >
+                  View full forecast
+                </a>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-slate-500 py-4">
+              <CheckCircle size={16} className="text-green-500" />
+              <span>No avalanche advisories</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Active Events */}

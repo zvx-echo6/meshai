@@ -89,11 +89,12 @@ _MESH_PHRASES = [
 
 # Keywords that indicate environmental/weather/propagation questions
 _ENV_KEYWORDS = {
-    "weather", "alert", "warning", "fire", "smoke", "road", "closure",
-    "snow", "avalanche", "avy", "solar", "hf", "propagation", "kp",
-    "aurora", "blackout", "flood", "stream", "river", "ducting",
-    "tropo", "duct", "uhf", "vhf", "906", "band", "conditions",
-    "forecast", "sfi", "ionosphere", "geomagnetic", "storm",
+    "weather", "alert", "warning", "fire", "wildfire", "smoke", "burn",
+    "road", "closure", "snow", "avalanche", "avy", "backcountry",
+    "solar", "hf", "propagation", "kp", "aurora", "blackout",
+    "flood", "stream", "river", "ducting", "tropo", "duct",
+    "uhf", "vhf", "band", "conditions", "forecast", "sfi",
+    "ionosphere", "geomagnetic", "storm",
 }
 
 # City name to region mapping (hardcoded fallback)

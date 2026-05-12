@@ -13,12 +13,13 @@ logger = logging.getLogger(__name__)
 class EnvironmentalStore:
     """Cache and tick-driver for all environmental feed adapters."""
 
-    def __init__(self, config: "EnvironmentalConfig"):
+    def __init__(self, config: "EnvironmentalConfig", region_anchors: list = None):
         self._adapters = {}  # name -> adapter instance
         self._events = {}  # (source, event_id) -> event dict
         self._swpc_status = {}  # Kp/SFI/scales snapshot
         self._ducting_status = {}  # tropo ducting assessment
         self._mesh_zones = config.nws_zones or []
+        self._region_anchors = region_anchors or []
 
         # Create adapter instances based on config
         if config.nws.enabled:
@@ -32,6 +33,14 @@ class EnvironmentalStore:
         if config.ducting.enabled:
             from .ducting import DuctingAdapter
             self._adapters["ducting"] = DuctingAdapter(config.ducting)
+
+        if config.fires.enabled:
+            from .fires import NICFFiresAdapter
+            self._adapters["nifc"] = NICFFiresAdapter(config.fires, self._region_anchors)
+
+        if config.avalanche.enabled:
+            from .avalanche import AvalancheAdapter
+            self._adapters["avalanche"] = AvalancheAdapter(config.avalanche)
 
         logger.info(f"EnvironmentalStore initialized with {len(self._adapters)} adapters")
 
@@ -160,6 +169,27 @@ class EnvironmentalStore:
                 thickness = d.get("duct_thickness_m", "?")
                 lines.append(f"Tropospheric: {condition.replace('_', ' ').title()}")
                 lines.append(f"  dM/dz: {gradient} M-units/km, duct ~{thickness}m thick")
+
+        # Active fires
+        fires = self.get_active(source="nifc")
+        if fires:
+            lines.append(f"Wildfires: {len(fires)} active")
+            for f in fires[:2]:
+                name = f.get("name", "Unknown")
+                acres = f.get("acres", 0)
+                pct = f.get("pct_contained", 0)
+                dist = f.get("distance_km")
+                lines.append(f"  - {name}: {int(acres):,} ac, {int(pct)}% contained" +
+                            (f" ({int(dist)} km)" if dist else ""))
+
+        # Avalanche advisories
+        avy = self.get_active(source="avalanche")
+        if avy:
+            lines.append(f"Avalanche: {len(avy)} zone(s) with advisories")
+            for a in avy[:2]:
+                zone = a.get("zone_name", "Unknown")
+                danger = a.get("danger_name", "Unknown")
+                lines.append(f"  - {zone}: {danger}")
 
         return "\n".join(lines)
 

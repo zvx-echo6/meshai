@@ -75,3 +75,34 @@ async def get_ducting_data(request: Request):
         "enabled": True,
         **status,
     }
+
+
+@router.get("/env/fires")
+async def get_fires_data(request: Request):
+    """Get active wildfire perimeters."""
+    env_store = getattr(request.app.state, "env_store", None)
+
+    if not env_store:
+        return []
+
+    return env_store.get_active(source="nifc")
+
+
+@router.get("/env/avalanche")
+async def get_avalanche_data(request: Request):
+    """Get avalanche advisories."""
+    env_store = getattr(request.app.state, "env_store", None)
+
+    if not env_store:
+        return {"off_season": True, "advisories": []}
+
+    adapters = getattr(env_store, "_adapters", {})
+    avy_adapter = adapters.get("avalanche")
+
+    if avy_adapter and avy_adapter.is_off_season():
+        return {"off_season": True, "advisories": []}
+
+    return {
+        "off_season": False,
+        "advisories": env_store.get_active(source="avalanche"),
+    }

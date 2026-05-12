@@ -337,7 +337,9 @@ class MeshAI:
         env_cfg = self.config.environmental
         if env_cfg.enabled:
             from .env.store import EnvironmentalStore
-            self.env_store = EnvironmentalStore(config=env_cfg)
+            # Pass region anchors for fire proximity calculation
+            region_anchors = self.config.mesh_intelligence.regions if self.config.mesh_intelligence.enabled else []
+            self.env_store = EnvironmentalStore(config=env_cfg, region_anchors=region_anchors)
             logger.info(f"Environmental feeds enabled ({len(self.env_store._adapters)} adapters)")
         else:
             self.env_store = None
