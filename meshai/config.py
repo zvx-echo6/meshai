@@ -330,6 +330,9 @@ class DashboardConfig:
 class Config:
     """Main configuration container."""
 
+    # Global settings
+    timezone: str = "America/Boise"  # IANA timezone for local time display
+
     bot: BotConfig = field(default_factory=BotConfig)
     connection: ConnectionConfig = field(default_factory=ConnectionConfig)
     response: ResponseConfig = field(default_factory=ResponseConfig)

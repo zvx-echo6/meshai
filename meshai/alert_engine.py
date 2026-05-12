@@ -68,6 +68,7 @@ class AlertEngine:
         subscription_manager: "SubscriptionManager",
         config: "MeshIntelligenceConfig",
         db_path: str = "",
+        timezone: str = "America/Boise",
     ):
         self._health = health_engine
         self._reporter = reporter
@@ -75,6 +76,7 @@ class AlertEngine:
         self._rules = config.alert_rules
         self._critical_nodes = set(n.upper() for n in (config.critical_nodes or []))
         self._db_path = db_path
+        self._timezone = timezone
 
         self._states: dict[str, AlertState] = {}
         self._prev_infra_online: dict[int, bool] = {}
@@ -266,7 +268,7 @@ class AlertEngine:
             if self._rules.solar_not_charging and getattr(node, "has_solar", False) and 0 < bat <= 100:
                 try:
                     from zoneinfo import ZoneInfo
-                    tz = ZoneInfo("America/Boise")
+                    tz = ZoneInfo(self._timezone)
                     hour = datetime.now(tz).hour
                     if 8 <= hour <= 18:
                         prev_bat = self._prev_battery.get(node_num)

@@ -110,8 +110,8 @@ coverage gap, and problem node on the mesh. USE THIS DATA in your response.
 
 RESPONSE STYLE:
 - DETAILED, data-driven responses. Reference specific node names, scores, gateway counts.
-- Use LOCAL NAMES from the region descriptions (Magic Valley, Treasure Valley, etc.)
-- ALWAYS use local region names: say "Treasure Valley" not "South Western ID", say "Magic Valley" not "South Central ID". The code names mean nothing to users.
+- Use LOCAL NAMES from the region descriptions when available.
+{region_name_instructions}
 - When listing nodes, be concise: "BT Base c8d5 — via AIDA" not "BT Base c8d5 (c8d5) is connected via AIDA-MeshMonitor in the South Western ID region."
 - Don't repeat the region on every line when listing multiple nodes in the same region. Say the region once at the top, then just list the nodes.
 - Don't include shortnames in parentheses when you're already giving the full name — it's noise.
@@ -721,8 +721,21 @@ class MessageRouter:
             if recommendations:
                 system_prompt += "\n\n" + recommendations
 
-            # Add mesh awareness instructions
-            system_prompt += _MESH_AWARENESS_PROMPT
+            # Add mesh awareness instructions with dynamic region name mappings
+            region_name_instructions = ""
+            if self.config.mesh_intelligence and self.config.mesh_intelligence.regions:
+                # Build region name mappings for the prompt
+                mappings = []
+                for region in self.config.mesh_intelligence.regions:
+                    local = getattr(region, "local_name", "") or ""
+                    if local and local != region.name:
+                        mappings.append(f'say "{local}" not "{region.name}"')
+                if mappings:
+                    region_name_instructions = f"- ALWAYS use local region names: {', '.join(mappings)}. The code names mean nothing to users."
+
+            system_prompt += _MESH_AWARENESS_PROMPT.format(
+                region_name_instructions=region_name_instructions
+            )
 
             # Build region geography from config dynamically
             if self.config.mesh_intelligence and self.config.mesh_intelligence.regions:

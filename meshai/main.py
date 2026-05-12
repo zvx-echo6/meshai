@@ -330,6 +330,7 @@ class MeshAI:
                 subscription_manager=self.subscription_manager,
                 config=mi,
                 db_path="/data/mesh_history.db",
+                timezone=self.config.timezone,
             )
             logger.info(f"Alert engine initialized (critical: {mi.critical_nodes}, channel: {mi.alert_channel})")
 
@@ -574,7 +575,7 @@ class MeshAI:
         from datetime import datetime
         from zoneinfo import ZoneInfo
 
-        tz = ZoneInfo("America/Boise")
+        tz = ZoneInfo(self.config.timezone)
         now = datetime.now(tz)
         current_hhmm = now.strftime("%H%M")
         current_day = now.strftime("%a").lower()
