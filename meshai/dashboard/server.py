@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .ws import DashboardBroadcaster, router as ws_router
@@ -61,10 +62,31 @@ def create_app() -> FastAPI:
     # WebSocket router (no prefix, path is /ws/live)
     app.include_router(ws_router)
 
-    # Static files - mount LAST so /api routes take priority
+    # Static files setup for SPA
     static_dir = Path(__file__).parent / "static"
+    index_html = static_dir / "index.html"
+
     if static_dir.exists():
-        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+        # Mount /assets for JS, CSS, images
+        assets_dir = static_dir / "assets"
+        if assets_dir.exists():
+            app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+        # SPA catch-all: serve index.html for any non-API, non-static path
+        # This enables React Router client-side routing
+        @app.get("/{path:path}")
+        async def spa_catch_all(request: Request, path: str):
+            # Let static files be served directly if they exist
+            file_path = static_dir / path
+            if file_path.is_file():
+                return FileResponse(file_path)
+            # Otherwise serve index.html for client-side routing
+            return FileResponse(index_html)
+
+        # Explicit root route
+        @app.get("/")
+        async def root():
+            return FileResponse(index_html)
 
     return app
 
