@@ -186,6 +186,9 @@ interface EnvironmentalConfig {
   ducting: { enabled: boolean; tick_seconds: number; latitude: number; longitude: number }
   fires: { enabled: boolean; tick_seconds: number; state: string }
   avalanche: { enabled: boolean; tick_seconds: number; center_ids: string[]; season_months: number[] }
+  usgs: { enabled: boolean; tick_seconds: number; sites: string[] }
+  traffic: { enabled: boolean; tick_seconds: number; api_key: string; corridors: { name: string; lat: number; lon: number }[] }
+  roads511: { enabled: boolean; tick_seconds: number; api_key: string; base_url: string; endpoints: string[]; bbox: number[] }
 }
 
 interface DashboardConfig {
@@ -972,6 +975,98 @@ function EnvironmentalSection({ data, onChange }: { data: EnvironmentalConfig; o
                 <NumberInput label="Tick Seconds" value={data.avalanche.tick_seconds} onChange={(v) => onChange({ ...data, avalanche: { ...data.avalanche, tick_seconds: v } })} min={60} />
                 <ListInput label="Center IDs" value={data.avalanche.center_ids} onChange={(v) => onChange({ ...data, avalanche: { ...data.avalanche, center_ids: v } })} />
                 <NumberListInput label="Season Months" value={data.avalanche.season_months} onChange={(v) => onChange({ ...data, avalanche: { ...data.avalanche, season_months: v } })} helper="e.g., 12, 1, 2, 3, 4" />
+              </>
+            )}
+          </div>
+
+          <div className="border border-[#1e2a3a] rounded-lg p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-slate-300">USGS Stream Gauges</span>
+              <Toggle label="" checked={data.usgs?.enabled || false} onChange={(v) => onChange({ ...data, usgs: { ...data.usgs, enabled: v, tick_seconds: data.usgs?.tick_seconds || 900, sites: data.usgs?.sites || [] } })} />
+            </div>
+            {data.usgs?.enabled && (
+              <>
+                <NumberInput label="Tick Seconds" value={data.usgs.tick_seconds} onChange={(v) => onChange({ ...data, usgs: { ...data.usgs, tick_seconds: v } })} min={900} />
+                <ListInput label="Site IDs" value={data.usgs.sites} onChange={(v) => onChange({ ...data, usgs: { ...data.usgs, sites: v } })} helper="Find IDs at waterdata.usgs.gov/nwis" />
+              </>
+            )}
+          </div>
+
+          <div className="border border-[#1e2a3a] rounded-lg p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-slate-300">TomTom Traffic</span>
+              <Toggle label="" checked={data.traffic?.enabled || false} onChange={(v) => onChange({ ...data, traffic: { ...data.traffic, enabled: v, tick_seconds: data.traffic?.tick_seconds || 300, api_key: data.traffic?.api_key || '', corridors: data.traffic?.corridors || [] } })} />
+            </div>
+            {data.traffic?.enabled && (
+              <>
+                <TextInput label="API Key" value={data.traffic.api_key} onChange={(v) => onChange({ ...data, traffic: { ...data.traffic, api_key: v } })} type="password" helper="Get key at developer.tomtom.com" />
+                <NumberInput label="Tick Seconds" value={data.traffic.tick_seconds} onChange={(v) => onChange({ ...data, traffic: { ...data.traffic, tick_seconds: v } })} min={60} />
+                <div className="text-xs text-slate-500 mt-2">Corridors (each with name, lat, lon):</div>
+                {(data.traffic.corridors || []).map((c, i) => (
+                  <div key={i} className="grid grid-cols-4 gap-2 items-end">
+                    <TextInput label="Name" value={c.name} onChange={(v) => {
+                      const newCorridors = [...data.traffic.corridors]
+                      newCorridors[i] = { ...c, name: v }
+                      onChange({ ...data, traffic: { ...data.traffic, corridors: newCorridors } })
+                    }} />
+                    <NumberInput label="Lat" value={c.lat} onChange={(v) => {
+                      const newCorridors = [...data.traffic.corridors]
+                      newCorridors[i] = { ...c, lat: v }
+                      onChange({ ...data, traffic: { ...data.traffic, corridors: newCorridors } })
+                    }} step={0.01} />
+                    <NumberInput label="Lon" value={c.lon} onChange={(v) => {
+                      const newCorridors = [...data.traffic.corridors]
+                      newCorridors[i] = { ...c, lon: v }
+                      onChange({ ...data, traffic: { ...data.traffic, corridors: newCorridors } })
+                    }} step={0.01} />
+                    <button
+                      onClick={() => onChange({ ...data, traffic: { ...data.traffic, corridors: data.traffic.corridors.filter((_, j) => j !== i) } })}
+                      className="px-2 py-1 text-xs text-red-400 hover:text-red-300"
+                    >Remove</button>
+                  </div>
+                ))}
+                <button
+                  onClick={() => onChange({ ...data, traffic: { ...data.traffic, corridors: [...(data.traffic.corridors || []), { name: '', lat: 0, lon: 0 }] } })}
+                  className="text-xs text-accent hover:underline"
+                >+ Add Corridor</button>
+              </>
+            )}
+          </div>
+
+          <div className="border border-[#1e2a3a] rounded-lg p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-slate-300">511 Road Conditions</span>
+              <Toggle label="" checked={data.roads511?.enabled || false} onChange={(v) => onChange({ ...data, roads511: { ...data.roads511, enabled: v, tick_seconds: data.roads511?.tick_seconds || 300, api_key: data.roads511?.api_key || '', base_url: data.roads511?.base_url || '', endpoints: data.roads511?.endpoints || ['/get/event'], bbox: data.roads511?.bbox || [] } })} />
+            </div>
+            {data.roads511?.enabled && (
+              <>
+                <TextInput label="Base URL" value={data.roads511.base_url} onChange={(v) => onChange({ ...data, roads511: { ...data.roads511, base_url: v } })} placeholder="https://511.yourstate.gov/api/v2" />
+                <TextInput label="API Key" value={data.roads511.api_key} onChange={(v) => onChange({ ...data, roads511: { ...data.roads511, api_key: v } })} type="password" helper="Leave empty if not required" />
+                <NumberInput label="Tick Seconds" value={data.roads511.tick_seconds} onChange={(v) => onChange({ ...data, roads511: { ...data.roads511, tick_seconds: v } })} min={60} />
+                <ListInput label="Endpoints" value={data.roads511.endpoints} onChange={(v) => onChange({ ...data, roads511: { ...data.roads511, endpoints: v } })} helper="e.g., /get/event, /get/mountainpasses" />
+                <div className="grid grid-cols-4 gap-2">
+                  <NumberInput label="West" value={data.roads511.bbox?.[0] || 0} onChange={(v) => {
+                    const bbox = [...(data.roads511.bbox || [0, 0, 0, 0])]
+                    bbox[0] = v
+                    onChange({ ...data, roads511: { ...data.roads511, bbox } })
+                  }} step={0.01} />
+                  <NumberInput label="South" value={data.roads511.bbox?.[1] || 0} onChange={(v) => {
+                    const bbox = [...(data.roads511.bbox || [0, 0, 0, 0])]
+                    bbox[1] = v
+                    onChange({ ...data, roads511: { ...data.roads511, bbox } })
+                  }} step={0.01} />
+                  <NumberInput label="East" value={data.roads511.bbox?.[2] || 0} onChange={(v) => {
+                    const bbox = [...(data.roads511.bbox || [0, 0, 0, 0])]
+                    bbox[2] = v
+                    onChange({ ...data, roads511: { ...data.roads511, bbox } })
+                  }} step={0.01} />
+                  <NumberInput label="North" value={data.roads511.bbox?.[3] || 0} onChange={(v) => {
+                    const bbox = [...(data.roads511.bbox || [0, 0, 0, 0])]
+                    bbox[3] = v
+                    onChange({ ...data, roads511: { ...data.roads511, bbox } })
+                  }} step={0.01} />
+                </div>
+                <div className="text-xs text-slate-500">Bounding box filter (leave all 0 to disable)</div>
               </>
             )}
           </div>
