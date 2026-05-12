@@ -187,11 +187,21 @@ export default function TopologyGraph({
           edgeLength: [80, 120],
           gravity: 0.1,
         },
+        // Only nodes trigger hover/click - edges are not interactive
         emphasis: {
           focus: 'adjacency',
           blurScope: 'coordinateSystem',
+          scale: 1.1,
           lineStyle: {
-            width: 3,
+            width: 2,
+          },
+        },
+        blur: {
+          itemStyle: {
+            opacity: 0.15,
+          },
+          lineStyle: {
+            opacity: 0.04,
           },
         },
         label: {
@@ -204,6 +214,8 @@ export default function TopologyGraph({
         edgeLabel: {
           show: false,
         },
+        // Edges not interactive - no hover, no tooltip, no click
+        edgeSymbol: ['none', 'none'],
         // Selection styling handled via data opacity
       },
     ],
