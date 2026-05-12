@@ -64,9 +64,9 @@ export default function Layout({ children }: LayoutProps) {
   })
 
   return (
-    <div className="flex min-h-screen bg-bg text-slate-200">
+    <div className="flex h-screen overflow-hidden bg-bg text-slate-200">
       {/* Sidebar */}
-      <aside className="fixed left-0 top-0 h-screen w-[220px] bg-bg-card border-r border-border flex flex-col">
+      <aside className="w-[220px] flex-shrink-0 bg-bg-card border-r border-border flex flex-col overflow-y-auto">
         {/* Logo */}
         <div className="p-5 border-b border-border">
           <div className="flex items-center gap-3">
@@ -129,9 +129,9 @@ export default function Layout({ children }: LayoutProps) {
       </aside>
 
       {/* Main content */}
-      <div className="ml-[220px] flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <header className="h-14 border-b border-border bg-bg-card flex items-center justify-between px-6">
+        <header className="h-14 flex-shrink-0 border-b border-border bg-bg-card flex items-center justify-between px-6">
           <h1 className="text-lg font-semibold">
             {getPageTitle(location.pathname)}
           </h1>
@@ -155,7 +155,7 @@ export default function Layout({ children }: LayoutProps) {
         </header>
 
         {/* Page content */}
-        <main className="flex-1 p-6 overflow-auto">{children}</main>
+        <main className="flex-1 overflow-y-auto p-6">{children}</main>
       </div>
     </div>
   )
