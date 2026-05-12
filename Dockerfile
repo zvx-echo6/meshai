@@ -78,7 +78,7 @@ USER meshai
 VOLUME ["/data"]
 
 # Expose ttyd web config port
-EXPOSE 7682
+EXPOSE 7682 8080
 
 # Health check - verify bot process is alive via PID file
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \

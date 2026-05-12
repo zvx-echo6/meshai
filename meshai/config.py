@@ -257,6 +257,16 @@ class MeshIntelligenceConfig:
     alert_rules: AlertRulesConfig = field(default_factory=AlertRulesConfig)
 
 
+
+
+@dataclass
+class DashboardConfig:
+    """Web dashboard settings."""
+
+    enabled: bool = True
+    port: int = 8080
+    host: str = "0.0.0.0"
+
 @dataclass
 class Config:
     """Main configuration container."""
@@ -274,6 +284,7 @@ class Config:
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
     mesh_sources: list[MeshSourceConfig] = field(default_factory=list)
     mesh_intelligence: MeshIntelligenceConfig = field(default_factory=MeshIntelligenceConfig)
+    dashboard: DashboardConfig = field(default_factory=DashboardConfig)
 
     _config_path: Optional[Path] = field(default=None, repr=False)
 

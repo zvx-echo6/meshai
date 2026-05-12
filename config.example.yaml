@@ -123,3 +123,9 @@ mesh_intelligence:
   battery_warning_percent: 20
   infra_overrides: []
   region_labels: {}
+
+# === WEB DASHBOARD ===
+dashboard:
+  enabled: true
+  port: 8080
+  host: "0.0.0.0"

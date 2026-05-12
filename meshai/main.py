@@ -51,6 +51,7 @@ class MeshAI:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._last_cleanup: float = 0.0
         self._last_health_compute: float = 0.0
+        self.broadcaster = None  # Dashboard WebSocket broadcaster
 
     async def start(self) -> None:
         """Start the bot."""
@@ -94,11 +95,36 @@ class MeshAI:
                     self.health_engine.compute(self.data_store)
                     self._last_health_compute = time.time()
 
+                    # Broadcast health update to dashboard
+                    if self.broadcaster and self.health_engine.mesh_health:
+                        try:
+                            mh = self.health_engine.mesh_health
+                            health_dict = {
+                                "score": round(mh.score.composite, 1),
+                                "tier": mh.score.tier,
+                                "total_nodes": mh.total_nodes,
+                                "total_regions": mh.total_regions,
+                                "infra_online": mh.score.infra_online,
+                                "infra_total": mh.score.infra_total,
+                                "last_computed": mh.last_computed,
+                            }
+                            await self.broadcaster.broadcast("health_update", health_dict)
+                        except Exception as e:
+                            logger.debug("Dashboard broadcast error: %s", e)
+
                     # Check for alertable conditions
                     if self.alert_engine:
                         alerts = self.alert_engine.check()
                         if alerts:
                             await self._dispatch_alerts(alerts)
+
+                        # Broadcast alerts to dashboard
+                        if self.broadcaster:
+                            for alert in alerts:
+                                try:
+                                    await self.broadcaster.broadcast("alert_fired", alert)
+                                except Exception:
+                                    pass
 
             # Check scheduled subscriptions (every 60 seconds)
             if self.subscription_manager and self.mesh_reporter:
@@ -344,6 +370,18 @@ class MeshAI:
 
         # Responder
         self.responder = Responder(self.config.response, self.connector)
+
+        # Dashboard
+        if hasattr(self.config, 'dashboard') and self.config.dashboard.enabled:
+            try:
+                from .dashboard.server import start_dashboard
+                self.broadcaster = await start_dashboard(self)
+                logger.info("Dashboard started on port %d", self.config.dashboard.port)
+            except Exception as e:
+                logger.warning("Dashboard failed to start: %s", e)
+                self.broadcaster = None
+        else:
+            self.broadcaster = None
 
     async def _on_message(self, message: MeshMessage) -> None:
         """Handle incoming message."""

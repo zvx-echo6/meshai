@@ -35,6 +35,8 @@ services:
     ports:
       # Web-based config interface (ttyd)
       - "7682:7682"
+      # Dashboard API
+      - "8080:8080"
 
     volumes:
       # Persistent data (database, config)
