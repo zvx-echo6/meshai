@@ -1,0 +1,157 @@
+// API types matching actual backend responses
+
+export interface SystemStatus {
+  version: string
+  uptime_seconds: number
+  bot_name: string
+  connection_type: string
+  connection_target: string
+  connected: boolean
+  node_count: number
+  source_count: number
+  env_feeds_enabled: boolean
+  dashboard_port: number
+}
+
+export interface MeshHealth {
+  score: number
+  tier: string
+  pillars: {
+    infrastructure: number
+    utilization: number
+    behavior: number
+    power: number
+  }
+  infra_online: number
+  infra_total: number
+  util_percent: number
+  flagged_nodes: number
+  battery_warnings: number
+  total_nodes: number
+  total_regions: number
+  unlocated_count: number
+  last_computed: string
+  recommendations: string[]
+}
+
+export interface NodeInfo {
+  node_num: number
+  node_id_hex: string
+  short_name: string
+  long_name: string
+  role: string
+  latitude: number | null
+  longitude: number | null
+  last_heard: string | null
+  battery_level: number | null
+  voltage: number | null
+  snr: number | null
+  firmware: string
+  hardware: string
+  uptime: number | null
+  sources: string[]
+}
+
+export interface EdgeInfo {
+  from_node: number
+  to_node: number
+  snr: number
+  quality: string
+}
+
+export interface SourceHealth {
+  name: string
+  type: string
+  url: string
+  is_loaded: boolean
+  last_error: string | null
+  consecutive_errors: number
+  response_time_ms: number | null
+  tick_count: number
+  node_count: number
+}
+
+export interface Alert {
+  type: string
+  severity: string
+  message: string
+  timestamp: string
+  scope_type?: string
+  scope_value?: string
+}
+
+export interface EnvStatus {
+  enabled: boolean
+  feeds: unknown[]
+}
+
+export interface EnvEvent {
+  type: string
+  [key: string]: unknown
+}
+
+// API fetch helpers
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status} ${response.statusText}`)
+  }
+  return response.json()
+}
+
+export async function fetchStatus(): Promise<SystemStatus> {
+  return fetchJson<SystemStatus>('/api/status')
+}
+
+export async function fetchHealth(): Promise<MeshHealth> {
+  return fetchJson<MeshHealth>('/api/health')
+}
+
+export async function fetchNodes(): Promise<NodeInfo[]> {
+  return fetchJson<NodeInfo[]>('/api/nodes')
+}
+
+export async function fetchEdges(): Promise<EdgeInfo[]> {
+  return fetchJson<EdgeInfo[]>('/api/edges')
+}
+
+export async function fetchSources(): Promise<SourceHealth[]> {
+  return fetchJson<SourceHealth[]>('/api/sources')
+}
+
+export async function fetchConfig(section?: string): Promise<unknown> {
+  const url = section ? `/api/config/${section}` : '/api/config'
+  return fetchJson(url)
+}
+
+export async function updateConfig(
+  section: string,
+  data: unknown
+): Promise<{ saved: boolean; restart_required: boolean }> {
+  const response = await fetch(`/api/config/${section}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status} ${response.statusText}`)
+  }
+  return response.json()
+}
+
+export async function fetchAlerts(): Promise<Alert[]> {
+  return fetchJson<Alert[]>('/api/alerts/active')
+}
+
+export async function fetchEnvStatus(): Promise<EnvStatus> {
+  return fetchJson<EnvStatus>('/api/env/status')
+}
+
+export async function fetchEnvActive(): Promise<EnvEvent[]> {
+  return fetchJson<EnvEvent[]>('/api/env/active')
+}
+
+export async function fetchRegions(): Promise<unknown[]> {
+  return fetchJson<unknown[]>('/api/regions')
+}
