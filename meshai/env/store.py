@@ -54,6 +54,13 @@ class EnvironmentalStore:
             from .roads511 import Roads511Adapter
             self._adapters["roads511"] = Roads511Adapter(config.roads511)
 
+        # FIRMS needs reference to NIFC adapter for cross-referencing
+        if config.firms.enabled:
+            from .firms import FIRMSAdapter
+            fires_adapter = self._adapters.get("nifc")
+            self._firms = FIRMSAdapter(config.firms, self._region_anchors, fires_adapter)
+            self._adapters["firms"] = self._firms
+
         logger.info(f"EnvironmentalStore initialized with {len(self._adapters)} adapters")
 
     def refresh(self) -> bool:
@@ -223,6 +230,16 @@ class EnvironmentalStore:
             lines.append(f"Road Events: {len(roads)} active")
             for r in roads[:2]:
                 lines.append(f"  - {r['headline'][:60]}")
+
+        # Satellite hotspots
+        hotspots = self.get_active(source="firms")
+        if hotspots:
+            new_ignitions = [h for h in hotspots if h.get("properties", {}).get("new_ignition")]
+            lines.append(f"Satellite Hotspots: {len(hotspots)} detected")
+            if new_ignitions:
+                lines.append(f"  *** {len(new_ignitions)} POTENTIAL NEW IGNITION(S) ***")
+            for h in hotspots[:2]:
+                lines.append(f"  - {h['headline']}")
 
         return "\n".join(lines)
 

@@ -299,6 +299,15 @@ def create_dispatcher(
             alias_handler.name = alias
             dispatcher.register(alias_handler)
 
+        # Register hotspots command (NASA FIRMS satellite fire detection)
+        from .hotspots_cmd import HotspotsCommand
+        hotspots_cmd = HotspotsCommand(env_store)
+        dispatcher.register(hotspots_cmd)
+        for alias in getattr(hotspots_cmd, 'aliases', []):
+            alias_handler = HotspotsCommand(env_store)
+            alias_handler.name = alias
+            dispatcher.register(alias_handler)
+
     # Register custom commands
     if custom_commands:
         for name, response in custom_commands.items():

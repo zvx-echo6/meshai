@@ -138,3 +138,26 @@ async def get_roads_data(request: Request):
         return []
 
     return env_store.get_active(source="511")
+
+
+@router.get("/env/hotspots")
+async def get_hotspots_data(request: Request):
+    """Get NASA FIRMS satellite fire hotspots."""
+    env_store = getattr(request.app.state, "env_store", None)
+
+    if not env_store:
+        return {"hotspots": [], "new_ignitions": 0}
+
+    firms_adapter = getattr(env_store, "_firms", None)
+
+    if not firms_adapter:
+        return {"hotspots": [], "new_ignitions": 0, "enabled": False}
+
+    hotspots = env_store.get_active(source="firms")
+    new_ignitions = [h for h in hotspots if h.get("properties", {}).get("new_ignition")]
+
+    return {
+        "enabled": True,
+        "hotspots": hotspots,
+        "new_ignitions": len(new_ignitions),
+    }

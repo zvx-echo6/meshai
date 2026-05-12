@@ -189,6 +189,7 @@ interface EnvironmentalConfig {
   usgs: { enabled: boolean; tick_seconds: number; sites: string[] }
   traffic: { enabled: boolean; tick_seconds: number; api_key: string; corridors: { name: string; lat: number; lon: number }[] }
   roads511: { enabled: boolean; tick_seconds: number; api_key: string; base_url: string; endpoints: string[]; bbox: number[] }
+  firms: { enabled: boolean; tick_seconds: number; map_key: string; source: string; bbox: number[]; day_range: number; confidence_min: string; proximity_km: number }
 }
 
 interface DashboardConfig {
@@ -1067,6 +1068,64 @@ function EnvironmentalSection({ data, onChange }: { data: EnvironmentalConfig; o
                   }} step={0.01} />
                 </div>
                 <div className="text-xs text-slate-500">Bounding box filter (leave all 0 to disable)</div>
+              </>
+            )}
+          </div>
+
+          <div className="border border-[#1e2a3a] rounded-lg p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-slate-300">NASA FIRMS Satellite Fire Detection</span>
+              <Toggle label="" checked={data.firms?.enabled || false} onChange={(v) => onChange({ ...data, firms: { ...data.firms, enabled: v, tick_seconds: data.firms?.tick_seconds || 1800, map_key: data.firms?.map_key || '', source: data.firms?.source || 'VIIRS_SNPP_NRT', bbox: data.firms?.bbox || [], day_range: data.firms?.day_range || 1, confidence_min: data.firms?.confidence_min || 'nominal', proximity_km: data.firms?.proximity_km || 10 } })} />
+            </div>
+            {data.firms?.enabled && (
+              <>
+                <TextInput label="MAP Key" value={data.firms.map_key} onChange={(v) => onChange({ ...data, firms: { ...data.firms, map_key: v } })} type="password" helper="Get key at firms.modaps.eosdis.nasa.gov/api/area/" />
+                <NumberInput label="Tick Seconds" value={data.firms.tick_seconds} onChange={(v) => onChange({ ...data, firms: { ...data.firms, tick_seconds: v } })} min={300} />
+                <SelectInput
+                  label="Satellite Source"
+                  value={data.firms.source}
+                  onChange={(v) => onChange({ ...data, firms: { ...data.firms, source: v } })}
+                  options={[
+                    { value: 'VIIRS_SNPP_NRT', label: 'VIIRS SNPP (Near Real-Time)' },
+                    { value: 'VIIRS_NOAA20_NRT', label: 'VIIRS NOAA-20 (Near Real-Time)' },
+                    { value: 'MODIS_NRT', label: 'MODIS (Near Real-Time)' },
+                  ]}
+                />
+                <NumberInput label="Day Range" value={data.firms.day_range} onChange={(v) => onChange({ ...data, firms: { ...data.firms, day_range: v } })} min={1} max={10} helper="1-10 days of data" />
+                <SelectInput
+                  label="Minimum Confidence"
+                  value={data.firms.confidence_min}
+                  onChange={(v) => onChange({ ...data, firms: { ...data.firms, confidence_min: v } })}
+                  options={[
+                    { value: 'low', label: 'Low' },
+                    { value: 'nominal', label: 'Nominal' },
+                    { value: 'high', label: 'High' },
+                  ]}
+                />
+                <NumberInput label="Proximity (km)" value={data.firms.proximity_km} onChange={(v) => onChange({ ...data, firms: { ...data.firms, proximity_km: v } })} step={0.5} helper="Distance to match known fires" />
+                <div className="grid grid-cols-4 gap-2">
+                  <NumberInput label="West" value={data.firms.bbox?.[0] || 0} onChange={(v) => {
+                    const bbox = [...(data.firms.bbox || [0, 0, 0, 0])]
+                    bbox[0] = v
+                    onChange({ ...data, firms: { ...data.firms, bbox } })
+                  }} step={0.01} />
+                  <NumberInput label="South" value={data.firms.bbox?.[1] || 0} onChange={(v) => {
+                    const bbox = [...(data.firms.bbox || [0, 0, 0, 0])]
+                    bbox[1] = v
+                    onChange({ ...data, firms: { ...data.firms, bbox } })
+                  }} step={0.01} />
+                  <NumberInput label="East" value={data.firms.bbox?.[2] || 0} onChange={(v) => {
+                    const bbox = [...(data.firms.bbox || [0, 0, 0, 0])]
+                    bbox[2] = v
+                    onChange({ ...data, firms: { ...data.firms, bbox } })
+                  }} step={0.01} />
+                  <NumberInput label="North" value={data.firms.bbox?.[3] || 0} onChange={(v) => {
+                    const bbox = [...(data.firms.bbox || [0, 0, 0, 0])]
+                    bbox[3] = v
+                    onChange({ ...data, firms: { ...data.firms, bbox } })
+                  }} step={0.01} />
+                </div>
+                <div className="text-xs text-slate-500">Bounding box for monitoring area (required)</div>
               </>
             )}
           </div>

@@ -12,6 +12,7 @@ import {
   Mountain,
   Droplets,
   Car,
+  Satellite,
 } from 'lucide-react'
 import {
   fetchEnvStatus,
@@ -23,6 +24,7 @@ import {
   fetchStreams,
   fetchTraffic,
   fetchRoads,
+  fetchHotspots,
   type EnvStatus,
   type EnvEvent,
   type SWPCStatus,
@@ -32,6 +34,8 @@ import {
   type StreamGaugeEvent,
   type TrafficEvent,
   type RoadEvent,
+  type HotspotEvent,
+
 } from '@/lib/api'
 
 function FeedStatusCard({ feed }: { feed: { source: string; is_loaded: boolean; last_error: string | null; consecutive_errors: number; event_count: number; last_fetch: number } }) {
@@ -359,6 +363,8 @@ export default function Environment() {
   const [streams, setStreams] = useState<StreamGaugeEvent[]>([])
   const [traffic, setTraffic] = useState<TrafficEvent[]>([])
   const [roads, setRoads] = useState<RoadEvent[]>([])
+  const [hotspots, setHotspots] = useState<HotspotEvent[]>([])
+  const [newIgnitions, setNewIgnitions] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -373,8 +379,9 @@ export default function Environment() {
       fetchStreams().catch(() => []),
       fetchTraffic().catch(() => []),
       fetchRoads().catch(() => []),
+      fetchHotspots().catch(() => ({ hotspots: [], new_ignitions: 0 })),
     ])
-      .then(([status, active, swpcData, ductingData, firesData, avyData, streamsData, trafficData, roadsData]) => {
+      .then(([status, active, swpcData, ductingData, firesData, avyData, streamsData, trafficData, roadsData, hotspotsData]) => {
         setEnvStatus(status)
         setEvents(active)
         setSWPC(swpcData)
@@ -384,6 +391,8 @@ export default function Environment() {
         setStreams(streamsData || [])
         setTraffic(trafficData || [])
         setRoads(roadsData || [])
+        setHotspots(hotspotsData?.hotspots || [])
+        setNewIgnitions(hotspotsData?.new_ignitions || 0)
         setLoading(false)
       })
       .catch((err) => {
@@ -687,6 +696,60 @@ export default function Environment() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Satellite Hotspots */}
+      {hotspots.length > 0 && (
+        <div className="bg-bg-card border border-border rounded-lg p-6">
+          <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
+            <Satellite size={14} />
+            Satellite Hotspots ({hotspots.length})
+            {newIgnitions > 0 && (
+              <span className="ml-2 px-2 py-0.5 text-xs rounded-full bg-red-500/20 text-red-400 animate-pulse">
+                {newIgnitions} NEW
+              </span>
+            )}
+          </h2>
+          <div className="space-y-2">
+            {hotspots.map((h) => (
+              <div
+                key={h.event_id}
+                className={`p-3 rounded-lg ${
+                  h.properties?.new_ignition
+                    ? 'bg-red-500/10 border-l-2 border-red-500'
+                    : h.severity === 'watch'
+                    ? 'bg-amber-500/10 border-l-2 border-amber-500'
+                    : 'bg-orange-500/10 border-l-2 border-orange-500'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {h.properties?.new_ignition && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-400">
+                        NEW
+                      </span>
+                    )}
+                    <span className="text-sm text-slate-200">
+                      {h.headline}
+                    </span>
+                  </div>
+                  {h.properties?.frp && (
+                    <span className="text-sm font-mono text-orange-400">
+                      {Math.round(h.properties.frp)} MW
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-slate-500 mt-1 flex items-center gap-3">
+                  <span>Conf: {h.properties?.confidence || 'N/A'}</span>
+                  {h.properties?.acq_time && <span>@{h.properties.acq_time}Z</span>}
+                  {h.properties?.near_fire && (
+                    <span>Near: {h.properties.near_fire}</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

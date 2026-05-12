@@ -330,6 +330,36 @@ export interface RoadEvent {
   }
 }
 
+export interface HotspotEvent {
+  source: string
+  event_id: string
+  event_type: string
+  headline: string
+  severity: string
+  lat?: number
+  lon?: number
+  expires: number
+  fetched_at: number
+  properties: {
+    new_ignition: boolean
+    confidence: string
+    frp?: number
+    brightness?: number
+    acq_date: string
+    acq_time: string
+    near_fire?: string
+    distance_to_fire_km?: number
+    distance_km?: number
+    nearest_anchor?: string
+  }
+}
+
+export interface HotspotsResponse {
+  enabled: boolean
+  hotspots: HotspotEvent[]
+  new_ignitions: number
+}
+
 export interface AvalancheResponse {
   off_season: boolean
   advisories: AvalancheEvent[]
@@ -353,6 +383,10 @@ export async function fetchTraffic(): Promise<TrafficEvent[]> {
 
 export async function fetchRoads(): Promise<RoadEvent[]> {
   return fetchJson<RoadEvent[]>('/api/env/roads')
+}
+
+export async function fetchHotspots(): Promise<HotspotsResponse> {
+  return fetchJson<HotspotsResponse>('/api/env/hotspots')
 }
 
 export async function fetchRegions(): Promise<RegionInfo[]> {

@@ -203,6 +203,19 @@ environmental:
     endpoints: ["/get/event"]
     bbox: []            # [west, south, east, north]
 
+  # NASA FIRMS Satellite Fire Detection
+  # Early warning via satellite hotspots, hours before official perimeters
+  # Get MAP_KEY at: https://firms.modaps.eosdis.nasa.gov/api/area/
+  firms:
+    enabled: false
+    tick_seconds: 1800  # 30 min default
+    map_key: ""         # Required - NASA FIRMS MAP_KEY
+    source: "VIIRS_SNPP_NRT"  # VIIRS_SNPP_NRT, VIIRS_NOAA20_NRT, MODIS_NRT
+    bbox: []            # [west, south, east, north] - Required
+    day_range: 1        # 1-10 days of data
+    confidence_min: "nominal"  # low, nominal, high
+    proximity_km: 10.0  # km to match known fire perimeters
+
 # === WEB DASHBOARD ===
 dashboard:
   enabled: true

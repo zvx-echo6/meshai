@@ -394,6 +394,20 @@ class Roads511Config:
 
 
 @dataclass
+class FIRMSConfig:
+    """NASA FIRMS satellite fire hotspot settings."""
+
+    enabled: bool = False
+    tick_seconds: int = 1800  # 30 min default
+    map_key: str = ""  # NASA FIRMS MAP_KEY, get at https://firms.modaps.eosdis.nasa.gov/api/area/
+    source: str = "VIIRS_SNPP_NRT"  # VIIRS_SNPP_NRT, VIIRS_NOAA20_NRT, MODIS_NRT
+    bbox: list = field(default_factory=list)  # [west, south, east, north]
+    day_range: int = 1  # 1-10 days of data
+    confidence_min: str = "nominal"  # low, nominal, high
+    proximity_km: float = 10.0  # km to match known fire
+
+
+@dataclass
 class EnvironmentalConfig:
     """Environmental feeds settings."""
 
@@ -407,6 +421,7 @@ class EnvironmentalConfig:
     usgs: USGSConfig = field(default_factory=USGSConfig)
     traffic: TomTomConfig = field(default_factory=TomTomConfig)
     roads511: Roads511Config = field(default_factory=Roads511Config)
+    firms: FIRMSConfig = field(default_factory=FIRMSConfig)
 
 
 @dataclass
@@ -518,6 +533,8 @@ def _dict_to_dataclass(cls, data: dict):
             kwargs[key] = _dict_to_dataclass(TomTomConfig, value)
         elif key == "roads511" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(Roads511Config, value)
+        elif key == "firms" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(FIRMSConfig, value)
         else:
             kwargs[key] = value
 
