@@ -383,10 +383,10 @@ export default function Dashboard() {
           <>
             <HealthGauge health={health} />
             <div className="mt-6 space-y-3">
-              <PillarBar label="Infrastructure" value={health.pillars.infrastructure} />
-              <PillarBar label="Utilization" value={health.pillars.utilization} />
-              <PillarBar label="Behavior" value={health.pillars.behavior} />
-              <PillarBar label="Power" value={health.pillars.power} />
+              <PillarBar label="Infrastructure" value={health.pillars?.infrastructure ?? 0} />
+              <PillarBar label="Utilization" value={health.pillars?.utilization ?? 0} />
+              <PillarBar label="Behavior" value={health.pillars?.behavior ?? 0} />
+              <PillarBar label="Power" value={health.pillars?.power ?? 0} />
             </div>
           </>
         )}
