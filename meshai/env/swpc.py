@@ -139,31 +139,30 @@ class SWPCAdapter:
     def _parse_kp(self, data):
         """Parse noaa-planetary-k-index.json.
 
-        Data format: array of arrays
-        First row is header: ["time_tag", "Kp", "a_running", "station_count"]
-        Last row is most recent.
+        Data format: array of objects with time_tag, Kp, a_running, station_count
+        Last entry is most recent.
         """
-        if not data or len(data) < 2:
+        if not data:
             return
 
-        # Find Kp column index from header
-        header = data[0]
-        try:
-            kp_idx = header.index("Kp")
-        except ValueError:
-            kp_idx = 1
+        # Get last entry (most recent)
+        last_entry = data[-1]
 
-        # Get last row
-        last_row = data[-1]
-        if len(last_row) > kp_idx:
+        # Handle both dict format (new API) and list format (legacy)
+        if isinstance(last_entry, dict):
             try:
-                self._status["kp_current"] = float(last_row[kp_idx])
+                self._status["kp_current"] = float(last_entry.get("Kp", 0))
             except (ValueError, TypeError):
                 pass
-
-        # Get timestamp
-        if len(last_row) > 0:
-            self._status["kp_timestamp"] = last_row[0]
+            self._status["kp_timestamp"] = last_entry.get("time_tag", "")
+        elif isinstance(last_entry, list) and len(last_entry) > 1:
+            # Legacy array format fallback
+            try:
+                self._status["kp_current"] = float(last_entry[1])
+            except (ValueError, TypeError):
+                pass
+            if len(last_entry) > 0:
+                self._status["kp_timestamp"] = last_entry[0]
 
     def _parse_alerts(self, data):
         """Parse alerts.json.
