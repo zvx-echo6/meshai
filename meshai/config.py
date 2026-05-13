@@ -448,7 +448,7 @@ class NotificationRuleConfig:
     custom_message: str = ""
 
     # Delivery type
-    delivery_type: str = "mesh_broadcast"  # mesh_broadcast, mesh_dm, email, webhook
+    delivery_type: str = ""  # mesh_broadcast, mesh_dm, email, webhook
 
     # Mesh broadcast fields
     broadcast_channel: int = 0
@@ -482,6 +482,7 @@ class NotificationsConfig:
     """Notification system settings."""
 
     enabled: bool = False
+    quiet_hours_enabled: bool = True  # Master toggle for quiet hours
     quiet_hours_start: str = "22:00"
     quiet_hours_end: str = "06:00"
     rules: list = field(default_factory=list)  # List of NotificationRuleConfig

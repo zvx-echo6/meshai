@@ -224,12 +224,14 @@ environmental:
 #
 notifications:
   enabled: false
+  quiet_hours_enabled: true    # Master toggle for quiet hours feature
   quiet_hours_start: "22:00"   # Suppress non-emergency alerts during quiet hours
   quiet_hours_end: "06:00"
 
   # Notification rules - each rule is self-contained with its own delivery config
+  # Default baseline rules are created on fresh install
   rules:
-    # All emergencies -> mesh broadcast
+    # Emergency Broadcast - all emergencies go out immediately
     - name: "Emergency Broadcast"
       enabled: true
       trigger_type: condition
@@ -239,6 +241,39 @@ notifications:
       broadcast_channel: 0
       cooldown_minutes: 5
       override_quiet: true     # Send even during quiet hours
+
+    # Infrastructure Down - critical node and infrastructure offline alerts
+    - name: "Infrastructure Down"
+      enabled: true
+      trigger_type: condition
+      categories: ["infra_offline", "critical_node_down"]
+      min_severity: "warning"
+      delivery_type: mesh_broadcast
+      broadcast_channel: 0
+      cooldown_minutes: 30
+      override_quiet: false
+
+    # Fire Alert - wildfire proximity and new ignition
+    - name: "Fire Alert"
+      enabled: true
+      trigger_type: condition
+      categories: ["wildfire_proximity", "new_ignition"]
+      min_severity: "advisory"
+      delivery_type: mesh_broadcast
+      broadcast_channel: 0
+      cooldown_minutes: 60
+      override_quiet: false
+
+    # Severe Weather - weather warnings
+    - name: "Severe Weather"
+      enabled: true
+      trigger_type: condition
+      categories: ["weather_warning"]
+      min_severity: "warning"
+      delivery_type: mesh_broadcast
+      broadcast_channel: 0
+      cooldown_minutes: 30
+      override_quiet: false
 
     # Example: Fire alerts -> email
     # - name: "Fire Alerts Email"
@@ -276,17 +311,13 @@ notifications:
     #   delivery_type: mesh_broadcast
     #   broadcast_channel: 0
 
-    # Example: Weekly digest -> email
-    # - name: "Weekly Digest"
+    # Example: Rule with no delivery (matches and logs, but doesn't send)
+    # - name: "Monitor Only"
     #   enabled: true
-    #   trigger_type: schedule
-    #   schedule_frequency: weekly
-    #   schedule_days: ["monday"]
-    #   schedule_time: "08:00"
-    #   message_type: alerts_digest
-    #   delivery_type: email
-    #   smtp_host: "smtp.gmail.com"
-    #   recipients: ["admin@example.com"]
+    #   trigger_type: condition
+    #   categories: ["battery_warning"]
+    #   min_severity: "warning"
+    #   delivery_type: ""        # Empty = no delivery, just tracks matches
 
 # === WEB DASHBOARD ===
 dashboard:

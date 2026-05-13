@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Save, RotateCcw, RefreshCw, Plus, Trash2, ChevronDown, ChevronRight,
   Check, X, Eye as EyeIcon, EyeOff, Send, Clock, Zap,
-  Calendar, AlertTriangle, Copy
+  Calendar, AlertTriangle, Copy, Moon, AlertCircle
 } from 'lucide-react'
 import ChannelPicker from '@/components/ChannelPicker'
 import NodePicker from '@/components/NodePicker'
@@ -11,20 +11,15 @@ import NodePicker from '@/components/NodePicker'
 interface NotificationRuleConfig {
   name: string
   enabled: boolean
-  // Trigger
   trigger_type: 'condition' | 'schedule'
-  // Condition trigger
   categories: string[]
   min_severity: string
-  // Schedule trigger
-  schedule_frequency: 'daily' | 'twice_daily' | 'weekly' | 'custom'
+  schedule_frequency: 'daily' | 'twice_daily' | 'weekly'
   schedule_time: string
-  schedule_time_2: string  // For twice_daily
-  schedule_days: string[]  // For weekly
-  schedule_cron: string    // For custom
+  schedule_time_2: string
+  schedule_days: string[]
   message_type: string
   custom_message: string
-  // Delivery
   delivery_type: string
   broadcast_channel: number
   node_ids: string[]
@@ -37,13 +32,13 @@ interface NotificationRuleConfig {
   recipients: string[]
   webhook_url: string
   webhook_headers: Record<string, string>
-  // Behavior
   cooldown_minutes: number
   override_quiet: boolean
 }
 
 interface NotificationsConfig {
   enabled: boolean
+  quiet_hours_enabled: boolean
   quiet_hours_start: string
   quiet_hours_end: string
   rules: NotificationRuleConfig[]
@@ -54,7 +49,42 @@ interface AlertCategory {
   name: string
   description: string
   default_severity: string
+  example_message: string
 }
+
+// Severity levels with descriptions
+const SEVERITY_OPTIONS = [
+  {
+    value: 'info',
+    label: 'Info',
+    description: 'Routine updates (ducting detected, new router appeared)',
+  },
+  {
+    value: 'advisory',
+    label: 'Advisory',
+    description: 'Worth knowing (weather advisory, traffic slow, battery declining)',
+  },
+  {
+    value: 'watch',
+    label: 'Watch',
+    description: 'Pay attention (fire within 50km, weather watch, stream rising)',
+  },
+  {
+    value: 'warning',
+    label: 'Warning',
+    description: 'Act now (fire within 25km, severe weather, critical battery)',
+  },
+  {
+    value: 'critical',
+    label: 'Critical',
+    description: 'Serious issue (critical node down, battery emergency)',
+  },
+  {
+    value: 'emergency',
+    label: 'Emergency',
+    description: 'Life safety (extreme weather, fire at infrastructure, total blackout)',
+  },
+]
 
 // InfoButton component
 function InfoButton({ info }: { info: string }) {
@@ -187,34 +217,6 @@ function Toggle({ label, checked, onChange, helper = '', info = '' }: {
   )
 }
 
-function SelectInput({ label, value, onChange, options, helper = '', info = '' }: {
-  label: string
-  value: string
-  onChange: (v: string) => void
-  options: { value: string; label: string }[]
-  helper?: string
-  info?: string
-}) {
-  return (
-    <div className="space-y-1">
-      <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
-        {label}
-        {info && <InfoButton info={info} />}
-      </label>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 focus:outline-none focus:border-accent"
-      >
-        {options.map((opt) => (
-          <option key={opt.value} value={opt.value}>{opt.label}</option>
-        ))}
-      </select>
-      {helper && <p className="text-xs text-slate-600">{helper}</p>}
-    </div>
-  )
-}
-
 function TimeInput({ label, value, onChange, helper = '', info = '' }: {
   label: string
   value: string
@@ -307,10 +309,63 @@ function ListInput({ label, value, onChange, placeholder = 'Add item...', helper
   )
 }
 
+// Severity selector with descriptions
+function SeveritySelector({ value, onChange }: {
+  value: string
+  onChange: (v: string) => void
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+  const selected = SEVERITY_OPTIONS.find(s => s.value === value) || SEVERITY_OPTIONS[3]
+
+  return (
+    <div className="space-y-1">
+      <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+        Severity Threshold
+        <InfoButton info="Only alerts at or above this severity trigger this rule. Lower threshold = more notifications. 'Warning' is recommended for most rules." />
+      </label>
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setIsOpen(!isOpen)}
+          className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-left flex items-center justify-between hover:border-accent transition-colors"
+        >
+          <div>
+            <span className="text-slate-200">{selected.label}</span>
+            <span className="text-slate-500 ml-2">— {selected.description}</span>
+          </div>
+          <ChevronDown size={16} className={`text-slate-500 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        </button>
+        {isOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
+            <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-[#0a0e17] border border-[#1e2a3a] rounded-lg shadow-xl overflow-hidden">
+              {SEVERITY_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => { onChange(opt.value); setIsOpen(false) }}
+                  className={`w-full px-3 py-2.5 text-left text-sm hover:bg-[#1e2a3a] transition-colors ${
+                    value === opt.value ? 'bg-accent/10' : ''
+                  }`}
+                >
+                  <div className="font-medium text-slate-200">{opt.label}</div>
+                  <div className="text-xs text-slate-500">{opt.description}</div>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+      <p className="text-xs text-slate-600">Lower = more notifications. "Warning" recommended for most rules.</p>
+    </div>
+  )
+}
+
 // Notification Rule Card Component
 function NotificationRuleCard({
   rule,
   categories,
+  quietHoursEnabled,
   onChange,
   onDelete,
   onDuplicate,
@@ -318,6 +373,7 @@ function NotificationRuleCard({
 }: {
   rule: NotificationRuleConfig
   categories: AlertCategory[]
+  quietHoursEnabled: boolean
   onChange: (r: NotificationRuleConfig) => void
   onDelete: () => void
   onDuplicate: () => void
@@ -326,35 +382,26 @@ function NotificationRuleCard({
   const [expanded, setExpanded] = useState(!rule.name)
   const [testing, setTesting] = useState(false)
 
-  const severityOptions = [
-    { value: 'info', label: 'Info' },
-    { value: 'advisory', label: 'Advisory' },
-    { value: 'watch', label: 'Watch' },
-    { value: 'warning', label: 'Warning' },
-    { value: 'critical', label: 'Critical' },
-    { value: 'emergency', label: 'Emergency' },
-  ]
-
   const deliveryOptions = [
-    { value: 'mesh_broadcast', label: 'Mesh Broadcast' },
-    { value: 'mesh_dm', label: 'Mesh DM' },
-    { value: 'email', label: 'Email' },
-    { value: 'webhook', label: 'Webhook' },
+    { value: '', label: '(None)', description: 'Rule matches but does not deliver' },
+    { value: 'mesh_broadcast', label: 'Mesh Broadcast', description: 'Send to a mesh radio channel' },
+    { value: 'mesh_dm', label: 'Mesh DM', description: 'Direct message to specific nodes' },
+    { value: 'email', label: 'Email', description: 'Send via SMTP' },
+    { value: 'webhook', label: 'Webhook', description: 'POST to any URL' },
   ]
 
   const frequencyOptions = [
-    { value: 'daily', label: 'Once Daily' },
+    { value: 'daily', label: 'Daily' },
     { value: 'twice_daily', label: 'Twice Daily' },
     { value: 'weekly', label: 'Weekly' },
-    { value: 'custom', label: 'Custom Cron' },
   ]
 
   const messageTypeOptions = [
-    { value: 'mesh_health_summary', label: 'Mesh Health Summary' },
-    { value: 'rf_propagation_report', label: 'RF Propagation Report' },
-    { value: 'alerts_digest', label: 'Active Alerts Digest' },
-    { value: 'environmental_conditions', label: 'Environmental Conditions' },
-    { value: 'custom', label: 'Custom Message' },
+    { value: 'mesh_health_summary', label: 'Mesh Health Summary', description: 'Current health score, pillar breakdown, problem nodes' },
+    { value: 'rf_propagation_report', label: 'RF Propagation Report', description: 'Solar indices, Kp, ducting conditions' },
+    { value: 'alerts_digest', label: 'Active Alerts Digest', description: 'Summary of all active environmental alerts' },
+    { value: 'environmental_conditions', label: 'Environmental Conditions', description: 'Full conditions: weather, fire, streams, roads' },
+    { value: 'custom', label: 'Custom Message', description: 'Write your own with template tokens' },
   ]
 
   const dayOptions = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
@@ -383,42 +430,57 @@ function NotificationRuleCard({
     setTesting(false)
   }
 
+  // Get example message for display
+  const getExampleMessage = (): string => {
+    if (rule.trigger_type === 'schedule') {
+      return '[Scheduled report preview would appear here]'
+    }
+    const ruleCats = rule.categories || []
+    if (ruleCats.length === 0 && categories.length > 0) {
+      return categories[0].example_message || 'Alert notification'
+    }
+    const firstCat = categories.find(c => ruleCats.includes(c.id))
+    return firstCat?.example_message || 'Alert notification'
+  }
+
   // Generate summary for collapsed view
   const getSummary = () => {
     const parts: string[] = []
 
     if (rule.trigger_type === 'schedule') {
-      // Schedule summary
       const freq = frequencyOptions.find(f => f.value === rule.schedule_frequency)?.label || rule.schedule_frequency
       const msgType = messageTypeOptions.find(m => m.value === rule.message_type)?.label || rule.message_type
       parts.push(`${freq} at ${rule.schedule_time || '??:??'}`)
       parts.push(msgType)
     } else {
-      // Condition summary
       const catCount = rule.categories?.length || 0
-      const catText = catCount === 0 ? 'All categories' : `${catCount} categories`
-      const severity = severityOptions.find(s => s.value === rule.min_severity)?.label || rule.min_severity
+      const catText = catCount === 0 ? 'All' : categories.filter(c => rule.categories?.includes(c.id)).map(c => c.name).slice(0, 2).join(', ') + (catCount > 2 ? ` +${catCount - 2}` : '')
+      const severity = SEVERITY_OPTIONS.find(s => s.value === rule.min_severity)?.label || rule.min_severity
       parts.push(`${catText} at ${severity}+`)
     }
 
     // Delivery summary
-    const delivery = deliveryOptions.find(d => d.value === rule.delivery_type)?.label || rule.delivery_type
-    let target = ''
-    if (rule.delivery_type === 'mesh_broadcast') {
-      target = `Ch ${rule.broadcast_channel}`
-    } else if (rule.delivery_type === 'mesh_dm') {
-      target = `${rule.node_ids?.length || 0} nodes`
-    } else if (rule.delivery_type === 'email') {
-      target = rule.recipients?.length ? rule.recipients[0] + (rule.recipients.length > 1 ? ` +${rule.recipients.length - 1}` : '') : 'no recipients'
-    } else if (rule.delivery_type === 'webhook') {
-      try {
-        const url = new URL(rule.webhook_url)
-        target = url.hostname
-      } catch {
-        target = rule.webhook_url?.slice(0, 30) || 'no URL'
+    if (!rule.delivery_type) {
+      parts.push('⚠️ No delivery')
+    } else {
+      const delivery = deliveryOptions.find(d => d.value === rule.delivery_type)?.label || rule.delivery_type
+      let target = ''
+      if (rule.delivery_type === 'mesh_broadcast') {
+        target = `Ch ${rule.broadcast_channel}`
+      } else if (rule.delivery_type === 'mesh_dm') {
+        target = `${rule.node_ids?.length || 0} nodes`
+      } else if (rule.delivery_type === 'email') {
+        target = rule.recipients?.length ? rule.recipients[0] + (rule.recipients.length > 1 ? ` +${rule.recipients.length - 1}` : '') : 'no recipients'
+      } else if (rule.delivery_type === 'webhook') {
+        try {
+          const url = new URL(rule.webhook_url)
+          target = url.hostname
+        } catch {
+          target = rule.webhook_url?.slice(0, 20) || 'no URL'
+        }
       }
+      parts.push(`${delivery}${target ? ` (${target})` : ''}`)
     }
-    parts.push(`${delivery}${target ? ` (${target})` : ''}`)
 
     return parts.join(' → ')
   }
@@ -435,7 +497,7 @@ function NotificationRuleCard({
           <button
             onClick={(e) => { e.stopPropagation(); onChange({ ...rule, enabled: !rule.enabled }) }}
             className={`w-2 h-2 rounded-full flex-shrink-0 ${rule.enabled ? 'bg-green-500' : 'bg-slate-500'}`}
-            title={rule.enabled ? 'Enabled - click to disable' : 'Disabled - click to enable'}
+            title={rule.enabled ? 'Enabled' : 'Disabled'}
           />
           {rule.trigger_type === 'schedule' ? (
             <Clock size={14} className="text-blue-400 flex-shrink-0" />
@@ -444,7 +506,7 @@ function NotificationRuleCard({
           )}
           <span className="font-medium text-slate-200 truncate">{rule.name || 'New Rule'}</span>
           {!expanded && (
-            <span className="text-xs text-slate-500 truncate hidden sm:block">
+            <span className={`text-xs truncate hidden sm:block ${!rule.delivery_type ? 'text-amber-400' : 'text-slate-500'}`}>
               {getSummary()}
             </span>
           )}
@@ -454,21 +516,21 @@ function NotificationRuleCard({
             onClick={(e) => { e.stopPropagation(); handleTest() }}
             disabled={testing || !rule.name}
             className="p-1.5 text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 rounded disabled:opacity-50"
-            title="Send test"
+            title="Test rule"
           >
             <Send size={14} />
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); onDuplicate() }}
             className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-500/10 rounded"
-            title="Duplicate rule"
+            title="Duplicate"
           >
             <Copy size={14} />
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); onDelete() }}
             className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded"
-            title="Delete rule"
+            title="Delete"
           >
             <Trash2 size={14} />
           </button>
@@ -487,7 +549,7 @@ function NotificationRuleCard({
             helper="A descriptive name for this rule"
           />
 
-          {/* Trigger type selector */}
+          {/* Trigger type toggle */}
           <div className="space-y-2">
             <label className="text-xs text-slate-500 uppercase tracking-wide">Trigger Type</label>
             <div className="flex gap-2">
@@ -518,8 +580,8 @@ function NotificationRuleCard({
             </div>
             <p className="text-xs text-slate-600">
               {rule.trigger_type === 'schedule'
-                ? 'Send messages on a schedule (daily reports, weekly digests)'
-                : 'React to alert conditions (fires, outages, warnings)'}
+                ? 'Send reports on a schedule (daily briefings, weekly digests)'
+                : 'React to alert conditions (fires, outages, weather warnings)'}
             </p>
           </div>
 
@@ -531,12 +593,9 @@ function NotificationRuleCard({
                 WHEN (Condition)
               </div>
 
-              <SelectInput
-                label="Minimum Severity"
+              <SeveritySelector
                 value={rule.min_severity}
                 onChange={(v) => onChange({ ...rule, min_severity: v })}
-                options={severityOptions}
-                helper="Only alerts at or above this level"
               />
 
               <div className="space-y-2">
@@ -578,19 +637,24 @@ function NotificationRuleCard({
                 WHEN (Schedule)
               </div>
 
-              <SelectInput
-                label="Frequency"
-                value={rule.schedule_frequency || 'daily'}
-                onChange={(v) => onChange({ ...rule, schedule_frequency: v as any })}
-                options={frequencyOptions}
-              />
+              <div className="space-y-1">
+                <label className="text-xs text-slate-500 uppercase tracking-wide">Frequency</label>
+                <select
+                  value={rule.schedule_frequency || 'daily'}
+                  onChange={(e) => onChange({ ...rule, schedule_frequency: e.target.value as any })}
+                  className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 focus:outline-none focus:border-accent"
+                >
+                  {frequencyOptions.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <TimeInput
                   label="Time"
                   value={rule.schedule_time || '07:00'}
                   onChange={(v) => onChange({ ...rule, schedule_time: v })}
-                  helper="24-hour format"
                 />
                 {rule.schedule_frequency === 'twice_daily' && (
                   <TimeInput
@@ -623,30 +687,27 @@ function NotificationRuleCard({
                 </div>
               )}
 
-              {rule.schedule_frequency === 'custom' && (
-                <TextInput
-                  label="Cron Expression"
-                  value={rule.schedule_cron || ''}
-                  onChange={(v) => onChange({ ...rule, schedule_cron: v })}
-                  placeholder="0 7 * * *"
-                  helper="Standard cron format"
-                  info="Five-field cron: minute hour day-of-month month day-of-week. Example: '0 7 * * 1' = 7:00 AM every Monday."
-                />
-              )}
-
-              <SelectInput
-                label="Message Type"
-                value={rule.message_type || 'mesh_health_summary'}
-                onChange={(v) => onChange({ ...rule, message_type: v })}
-                options={messageTypeOptions}
-                info="The type of report or message to send."
-              />
+              <div className="space-y-1">
+                <label className="text-xs text-slate-500 uppercase tracking-wide">Report Type</label>
+                <select
+                  value={rule.message_type || 'mesh_health_summary'}
+                  onChange={(e) => onChange({ ...rule, message_type: e.target.value })}
+                  className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 focus:outline-none focus:border-accent"
+                >
+                  {messageTypeOptions.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-slate-600">
+                  {messageTypeOptions.find(m => m.value === rule.message_type)?.description}
+                </p>
+              </div>
 
               {rule.message_type === 'custom' && (
                 <div className="space-y-1">
                   <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
                     Custom Message
-                    <InfoButton info="Use template tokens: {MESH_SCORE}, {NODE_COUNT}, {ACTIVE_ALERTS}, {KP}, {SFI}, {DATE}, {TIME}" />
+                    <InfoButton info="Available tokens: {MESH_SCORE}, {NODE_COUNT}, {NODES_ONLINE}, {ACTIVE_ALERTS}, {KP}, {SFI}, {DATE}, {TIME}" />
                   </label>
                   <textarea
                     value={rule.custom_message || ''}
@@ -667,12 +728,34 @@ function NotificationRuleCard({
               SEND VIA
             </div>
 
-            <SelectInput
-              label="Delivery Method"
-              value={rule.delivery_type || 'mesh_broadcast'}
-              onChange={(v) => onChange({ ...rule, delivery_type: v })}
-              options={deliveryOptions}
-            />
+            <div className="space-y-1">
+              <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+                Delivery Method
+                <InfoButton info="Where this notification gets delivered. Select (None) to save the rule without delivery — it will match conditions but won't send until you configure a delivery method." />
+              </label>
+              <select
+                value={rule.delivery_type || ''}
+                onChange={(e) => onChange({ ...rule, delivery_type: e.target.value })}
+                className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 focus:outline-none focus:border-accent"
+              >
+                {deliveryOptions.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              <p className="text-xs text-slate-600">
+                {deliveryOptions.find(d => d.value === (rule.delivery_type || ''))?.description}
+              </p>
+            </div>
+
+            {/* No delivery warning */}
+            {!rule.delivery_type && (
+              <div className="flex items-start gap-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                <AlertCircle size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                <div className="text-sm text-amber-300">
+                  Rule will log matches but not deliver until a delivery method is configured.
+                </div>
+              </div>
+            )}
 
             {/* Mesh Broadcast fields */}
             {rule.delivery_type === 'mesh_broadcast' && (
@@ -739,7 +822,7 @@ function NotificationRuleCard({
                         value={rule.smtp_password || ''}
                         onChange={(v) => onChange({ ...rule, smtp_password: v })}
                         type="password"
-                        info="For Gmail, use an App Password from myaccount.google.com/apppasswords"
+                        info="Gmail users: use an App Password from myaccount.google.com/apppasswords"
                       />
                     </div>
                     <Toggle
@@ -760,28 +843,14 @@ function NotificationRuleCard({
 
             {/* Webhook fields */}
             {rule.delivery_type === 'webhook' && (
-              <div className="space-y-4">
-                <TextInput
-                  label="Webhook URL"
-                  value={rule.webhook_url || ''}
-                  onChange={(v) => onChange({ ...rule, webhook_url: v })}
-                  placeholder="https://discord.com/api/webhooks/..."
-                  helper="POST endpoint for alerts"
-                  info="Works with Discord, Slack, ntfy.sh, Home Assistant, Pushover, or any HTTP POST endpoint."
-                />
-
-                <details className="group">
-                  <summary className="flex items-center gap-2 cursor-pointer text-sm text-slate-400 hover:text-slate-200">
-                    <ChevronRight size={14} className="group-open:rotate-90 transition-transform" />
-                    Custom Headers (optional)
-                  </summary>
-                  <div className="mt-4 pl-6 border-l border-[#1e2a3a]">
-                    <p className="text-xs text-slate-500 mb-2">
-                      Headers are configured in config.yaml for security.
-                    </p>
-                  </div>
-                </details>
-              </div>
+              <TextInput
+                label="Webhook URL"
+                value={rule.webhook_url || ''}
+                onChange={(v) => onChange({ ...rule, webhook_url: v })}
+                placeholder="https://discord.com/api/webhooks/..."
+                helper="POST alert as JSON"
+                info="Works with Discord webhooks, ntfy.sh, Slack, Home Assistant, Pushover, or any HTTP POST endpoint."
+              />
             )}
           </div>
 
@@ -795,15 +864,28 @@ function NotificationRuleCard({
               helper="Min time between repeat sends"
               info="Prevents alert spam. Same condition won't re-trigger this rule within this window."
             />
-            <div className="flex items-end pb-1">
-              <Toggle
-                label="Override Quiet Hours"
-                checked={rule.override_quiet ?? false}
-                onChange={(v) => onChange({ ...rule, override_quiet: v })}
-                helper="Send during quiet hours"
-              />
-            </div>
+            {quietHoursEnabled && (
+              <div className="flex items-end pb-1">
+                <Toggle
+                  label="Override Quiet Hours"
+                  checked={rule.override_quiet ?? false}
+                  onChange={(v) => onChange({ ...rule, override_quiet: v })}
+                  helper="Deliver during quiet hours"
+                />
+              </div>
+            )}
           </div>
+
+          {/* Example message */}
+          {rule.trigger_type !== 'schedule' && (
+            <div className="space-y-2">
+              <label className="text-xs text-slate-500 uppercase tracking-wide">Example Message</label>
+              <div className="p-3 bg-[#1e2a3a]/50 rounded-lg border border-[#1e2a3a]">
+                <p className="text-sm text-slate-300 font-mono">{getExampleMessage()}</p>
+              </div>
+              <p className="text-xs text-slate-600">This is an example of what this rule would send.</p>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -902,10 +984,9 @@ export default function Notifications() {
     schedule_time: '07:00',
     schedule_time_2: '19:00',
     schedule_days: ['monday'],
-    schedule_cron: '',
     message_type: 'mesh_health_summary',
     custom_message: '',
-    delivery_type: 'mesh_broadcast',
+    delivery_type: '',  // Start with no delivery
     broadcast_channel: 0,
     node_ids: [],
     smtp_host: '',
@@ -965,11 +1046,11 @@ export default function Notifications() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      {/* Header with actions */}
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-slate-500">
-            Configure notification rules for alerts and scheduled reports.
+            Alert delivery and scheduled reports. Rules define what triggers a notification and where it gets sent.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -1025,31 +1106,47 @@ export default function Notifications() {
           checked={config.enabled}
           onChange={(v) => setConfig({ ...config, enabled: v })}
           helper="Master switch for all notification delivery"
-          info="When disabled, no alerts or scheduled messages will be delivered. The alert engine still runs and records alerts to history."
+          info="When disabled, no alerts or scheduled messages will be delivered. Alerts still get recorded to history."
         />
 
         {config.enabled && (
           <>
-            {/* Quiet Hours Section - at top */}
+            {/* Quiet Hours Section */}
             <div className="space-y-3 p-4 bg-[#0a0e17] rounded-lg border border-[#1e2a3a]">
-              <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
-                Quiet Hours
-                <InfoButton info="Non-emergency alerts are held during these hours. Rules with 'Override Quiet Hours' enabled still deliver. Emergency and critical alerts always get through." />
-              </label>
-              <div className="grid grid-cols-2 gap-4">
-                <TimeInput
-                  label="Start Time"
-                  value={config.quiet_hours_start || '22:00'}
-                  onChange={(v) => setConfig({ ...config, quiet_hours_start: v })}
-                  helper="When quiet hours begin"
-                />
-                <TimeInput
-                  label="End Time"
-                  value={config.quiet_hours_end || '06:00'}
-                  onChange={(v) => setConfig({ ...config, quiet_hours_end: v })}
-                  helper="When quiet hours end"
-                />
+              <div className="flex items-center gap-2">
+                <Moon size={14} className="text-slate-400" />
+                <label className="text-xs text-slate-500 uppercase tracking-wide">Quiet Hours</label>
               </div>
+
+              <Toggle
+                label="Enable Quiet Hours"
+                checked={config.quiet_hours_enabled ?? true}
+                onChange={(v) => setConfig({ ...config, quiet_hours_enabled: v })}
+                helper="Suppress non-emergency alerts during sleeping hours"
+                info="When enabled, alerts below emergency severity are held during quiet hours. When disabled, all alerts deliver anytime."
+              />
+
+              {config.quiet_hours_enabled && (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <TimeInput
+                      label="Start Time"
+                      value={config.quiet_hours_start || '22:00'}
+                      onChange={(v) => setConfig({ ...config, quiet_hours_start: v })}
+                      helper="When quiet hours begin"
+                    />
+                    <TimeInput
+                      label="End Time"
+                      value={config.quiet_hours_end || '06:00'}
+                      onChange={(v) => setConfig({ ...config, quiet_hours_end: v })}
+                      helper="When quiet hours end"
+                    />
+                  </div>
+                  <p className="text-xs text-slate-600">
+                    Emergency alerts and rules with "Override Quiet Hours" enabled always deliver.
+                  </p>
+                </>
+              )}
             </div>
 
             {/* Rules Section */}
@@ -1069,6 +1166,7 @@ export default function Notifications() {
                   key={i}
                   rule={rule}
                   categories={categories}
+                  quietHoursEnabled={config.quiet_hours_enabled ?? true}
                   onChange={(r) => {
                     const newRules = [...(config.rules || [])]
                     newRules[i] = r
