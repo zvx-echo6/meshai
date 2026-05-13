@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from ..mesh_data_store import MeshDataStore
     from ..mesh_reporter import MeshReporter
     from ..subscriptions import SubscriptionManager
+    from ..notifications.router import NotificationRouter
 
 
 class SubCommand(CommandHandler):
@@ -15,7 +16,7 @@ class SubCommand(CommandHandler):
 
     name = "sub"
     description = "Subscribe to reports or alerts"
-    usage = "!sub daily|weekly|alerts [time] [day] [scope]"
+    usage = "!sub daily|weekly|alerts|<category> [time] [day] [scope]"
     aliases = ["subscribe"]
 
     def __init__(
@@ -23,23 +24,35 @@ class SubCommand(CommandHandler):
         subscription_manager: "SubscriptionManager" = None,
         mesh_reporter: "MeshReporter" = None,
         data_store: "MeshDataStore" = None,
+        notification_router: "NotificationRouter" = None,
     ):
         self._sub_manager = subscription_manager
         self._reporter = mesh_reporter
         self._data_store = data_store
+        self._notification_router = notification_router
 
     async def execute(self, args: str, context: CommandContext) -> str:
         """Handle subscription command."""
-        if not self._sub_manager:
-            return "Subscriptions not available."
-
         parts = args.strip().split()
+
+        # No args - show available alert categories
         if not parts:
-            return self._usage_help()
+            return self._show_categories()
 
         sub_type = parts[0].lower()
+
+        # Check if it's a category subscription
+        if self._notification_router:
+            from ..notifications.categories import ALERT_CATEGORIES
+            if sub_type in ALERT_CATEGORIES or sub_type == "all":
+                return self._handle_category_subscription(sub_type, context)
+
+        # Legacy subscription types
         if sub_type not in ("daily", "weekly", "alerts"):
-            return f"Invalid type '{sub_type}'. Use: daily, weekly, or alerts"
+            return self._show_categories()
+
+        if not self._sub_manager:
+            return "Subscriptions not available."
 
         try:
             if sub_type == "daily":
@@ -51,15 +64,55 @@ class SubCommand(CommandHandler):
         except ValueError as e:
             return f"Error: {e}"
 
+    def _show_categories(self) -> str:
+        """Show available alert categories."""
+        try:
+            from ..notifications.categories import ALERT_CATEGORIES
+        except ImportError:
+            return self._usage_help()
+
+        lines = ["Available alert categories:"]
+        for cat_id, cat_info in ALERT_CATEGORIES.items():
+            lines.append(f"  {cat_id} - {cat_info['description']}")
+        lines.append("")
+        lines.append("Usage:")
+        lines.append("  !sub <category>  - subscribe to a category")
+        lines.append("  !sub all         - subscribe to all alerts")
+        lines.append("  !sub alerts      - legacy mesh-wide alerts")
+
+        return "\n".join(lines)
+
+    def _handle_category_subscription(self, category: str, context: CommandContext) -> str:
+        """Handle category-based alert subscription."""
+        node_id = self._get_user_id(context)
+
+        if category == "all":
+            categories = []  # Empty = all categories
+        else:
+            categories = [category]
+
+        # Add subscription via notification router
+        rule_name = self._notification_router.add_mesh_subscription(
+            node_id=node_id,
+            categories=categories,
+        )
+
+        if category == "all":
+            return "Subscribed to all alert categories. Use !unsub to remove."
+        else:
+            from ..notifications.categories import get_category
+            cat_info = get_category(category)
+            return f"Subscribed to {cat_info['name']} alerts. Use !unsub {category} to remove."
+
     def _usage_help(self) -> str:
         """Return usage help."""
         return """Usage:
 !sub daily 1830              - daily mesh report at 6:30 PM
 !sub daily 1830 region SCID  - daily region report
-!sub daily 1830 node MHR     - daily node report
 !sub weekly 0800 sun         - weekly digest Sunday 8 AM
-!sub alerts                  - mesh-wide alerts
-!sub alerts region SCID      - alerts for a region"""
+!sub alerts                  - mesh-wide alerts (legacy)
+!sub <category>              - subscribe to alert category
+!sub all                     - subscribe to all alerts"""
 
     def _handle_daily(self, args: list, context: CommandContext) -> str:
         """Handle daily subscription."""
@@ -68,11 +121,9 @@ class SubCommand(CommandHandler):
 
         schedule_time = args[0]
         scope_type, scope_value = self._parse_scope(args[1:])
-
-        # Validate scope
         scope_value = self._validate_scope(scope_type, scope_value)
 
-        result = self._sub_manager.add(
+        self._sub_manager.add(
             user_id=self._get_user_id(context),
             sub_type="daily",
             schedule_time=schedule_time,
@@ -92,11 +143,9 @@ class SubCommand(CommandHandler):
         schedule_time = args[0]
         schedule_day = args[1].lower()
         scope_type, scope_value = self._parse_scope(args[2:])
-
-        # Validate scope
         scope_value = self._validate_scope(scope_type, scope_value)
 
-        result = self._sub_manager.add(
+        self._sub_manager.add(
             user_id=self._get_user_id(context),
             sub_type="weekly",
             schedule_time=schedule_time,
@@ -111,13 +160,11 @@ class SubCommand(CommandHandler):
         return f"Subscribed: weekly {scope_desc}report at {time_fmt} {day_fmt}"
 
     def _handle_alerts(self, args: list, context: CommandContext) -> str:
-        """Handle alerts subscription."""
+        """Handle alerts subscription (legacy)."""
         scope_type, scope_value = self._parse_scope(args)
-
-        # Validate scope
         scope_value = self._validate_scope(scope_type, scope_value)
 
-        result = self._sub_manager.add(
+        self._sub_manager.add(
             user_id=self._get_user_id(context),
             sub_type="alerts",
             scope_type=scope_type,
@@ -128,15 +175,10 @@ class SubCommand(CommandHandler):
         return f"Subscribed: alerts for {scope_desc.strip() or 'mesh'}"
 
     def _parse_scope(self, args: list) -> tuple[str, str]:
-        """Parse scope from remaining args.
-
-        Returns:
-            (scope_type, scope_value) tuple
-        """
+        """Parse scope from remaining args."""
         if not args:
             return "mesh", None
 
-        # Look for 'region' or 'node' keyword
         scope_type = "mesh"
         scope_value = None
 
@@ -144,26 +186,17 @@ class SubCommand(CommandHandler):
             arg_lower = arg.lower()
             if arg_lower == "region":
                 scope_type = "region"
-                # Everything after 'region' is the region name
                 scope_value = " ".join(args[i + 1:]) if i + 1 < len(args) else None
                 break
             elif arg_lower == "node":
                 scope_type = "node"
-                # Next arg is the node identifier
                 scope_value = args[i + 1] if i + 1 < len(args) else None
                 break
 
         return scope_type, scope_value
 
     def _validate_scope(self, scope_type: str, scope_value: str) -> str:
-        """Validate and resolve scope value.
-
-        Returns:
-            Resolved scope_value (e.g., full region name)
-
-        Raises:
-            ValueError: If scope not found
-        """
+        """Validate and resolve scope value."""
         if scope_type == "mesh":
             return None
 
@@ -172,14 +205,9 @@ class SubCommand(CommandHandler):
 
         if scope_type == "region" and self._reporter:
             region = self._reporter._find_region(scope_value)
-            if not region:
-                # List available regions
-                health = self._reporter.health_engine.mesh_health
-                if health:
-                    available = [r.name for r in health.regions if r.node_ids]
-                    return scope_value  # Use as-is, will fail at delivery if invalid
-                raise ValueError(f"Region '{scope_value}' not found")
-            return region.name  # Return canonical name
+            if region:
+                return region.name
+            return scope_value
 
         if scope_type == "node" and self._reporter:
             node = self._reporter._find_node(scope_value)
@@ -191,7 +219,6 @@ class SubCommand(CommandHandler):
 
     def _get_user_id(self, context: CommandContext) -> str:
         """Extract user ID from context."""
-        # sender_id is like "!abcd1234" - convert to node_num
         sender_id = context.sender_id
         if sender_id.startswith("!"):
             return str(int(sender_id[1:], 16))
@@ -217,26 +244,40 @@ class UnsubCommand(CommandHandler):
 
     name = "unsub"
     description = "Remove subscription(s)"
-    usage = "!unsub daily|weekly|alerts|all"
+    usage = "!unsub daily|weekly|alerts|<category>|all"
     aliases = ["unsubscribe"]
 
-    def __init__(self, subscription_manager: "SubscriptionManager" = None):
+    def __init__(
+        self,
+        subscription_manager: "SubscriptionManager" = None,
+        notification_router: "NotificationRouter" = None,
+    ):
         self._sub_manager = subscription_manager
+        self._notification_router = notification_router
 
     async def execute(self, args: str, context: CommandContext) -> str:
         """Handle unsubscribe command."""
-        if not self._sub_manager:
-            return "Subscriptions not available."
-
         sub_type = args.strip().lower() if args else None
 
         if not sub_type:
-            return "Usage: !unsub daily|weekly|alerts|all"
-
-        if sub_type not in ("daily", "weekly", "alerts", "all"):
-            return f"Invalid type '{sub_type}'. Use: daily, weekly, alerts, or all"
+            return "Usage: !unsub daily|weekly|alerts|<category>|all"
 
         user_id = self._get_user_id(context)
+
+        # Check if it's a category unsubscription
+        if self._notification_router:
+            from ..notifications.categories import ALERT_CATEGORIES
+            if sub_type in ALERT_CATEGORIES or sub_type == "all":
+                self._notification_router.remove_mesh_subscription(user_id)
+                return "Removed alert subscriptions"
+
+        # Legacy subscription types
+        if not self._sub_manager:
+            return "Subscriptions not available."
+
+        if sub_type not in ("daily", "weekly", "alerts", "all"):
+            return f"Invalid type '{sub_type}'. Use: daily, weekly, alerts, <category>, or all"
+
         removed = self._sub_manager.remove(user_id, sub_type if sub_type != "all" else None)
 
         if removed == 0:
@@ -260,25 +301,43 @@ class MySubsCommand(CommandHandler):
     name = "mysubs"
     description = "List your subscriptions"
     usage = "!mysubs"
-    aliases = ["subs"]
+    aliases = ["subs", "subscriptions"]
 
-    def __init__(self, subscription_manager: "SubscriptionManager" = None):
+    def __init__(
+        self,
+        subscription_manager: "SubscriptionManager" = None,
+        notification_router: "NotificationRouter" = None,
+    ):
         self._sub_manager = subscription_manager
+        self._notification_router = notification_router
 
     async def execute(self, args: str, context: CommandContext) -> str:
         """List user's subscriptions."""
-        if not self._sub_manager:
-            return "Subscriptions not available."
-
         user_id = self._get_user_id(context)
-        subs = self._sub_manager.get_user_subs(user_id)
+        lines = []
 
-        if not subs:
+        # Check notification router subscriptions
+        if self._notification_router:
+            categories = self._notification_router.get_node_subscriptions(user_id)
+            if categories:
+                if categories == ["all"]:
+                    lines.append("Alert subscriptions: all categories")
+                else:
+                    lines.append(f"Alert subscriptions: {', '.join(categories)}")
+
+        # Check legacy subscriptions
+        if self._sub_manager:
+            subs = self._sub_manager.get_user_subs(user_id)
+            if subs:
+                if not lines:
+                    lines.append("Your subscriptions:")
+                else:
+                    lines.append("\nScheduled reports:")
+                for i, sub in enumerate(subs, 1):
+                    lines.append(f"  {i}. {self._format_sub(sub)}")
+
+        if not lines:
             return "No active subscriptions. Use !sub to subscribe."
-
-        lines = ["Your subscriptions:"]
-        for i, sub in enumerate(subs, 1):
-            lines.append(f"  {i}. {self._format_sub(sub)}")
 
         return "\n".join(lines)
 
@@ -301,7 +360,7 @@ class MySubsCommand(CommandHandler):
             time_str = self._format_time(sub.get("schedule_time", "0000"))
             day_str = (sub.get("schedule_day") or "").capitalize()
             return f"Weekly {scope_desc}report at {time_str} {day_str}"
-        else:  # alerts
+        else:
             return f"Alerts for {scope_desc.strip() or 'mesh'}"
 
     def _format_time(self, hhmm: str) -> str:

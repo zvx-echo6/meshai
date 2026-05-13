@@ -216,6 +216,67 @@ environmental:
     confidence_min: "nominal"  # low, nominal, high
     proximity_km: 10.0  # km to match known fire perimeters
 
+
+# === NOTIFICATION DELIVERY ===
+# Route alerts to channels (mesh, email, webhook) based on rules.
+# Categories match alert types from alert_engine.py.
+# Severity levels: info, advisory, watch, warning, critical, emergency
+#
+notifications:
+  enabled: false
+  quiet_hours_start: "22:00"   # Suppress non-emergency alerts during quiet hours
+  quiet_hours_end: "06:00"
+  dedup_seconds: 600           # Don't resend same alert within this window
+
+  # Notification channels
+  channels:
+    # Mesh broadcast - posts to mesh channel
+    - id: "mesh-channel"
+      type: mesh_broadcast
+      enabled: true
+      channel_index: 0         # Mesh channel to broadcast on
+
+    # Example: Email channel (uncomment to enable)
+    # - id: "email-admin"
+    #   type: email
+    #   smtp_host: "smtp.gmail.com"
+    #   smtp_port: 587
+    #   smtp_user: "you@gmail.com"
+    #   smtp_password: "${SMTP_PASSWORD}"  # Use env var
+    #   smtp_tls: true
+    #   from_address: "meshai@yourdomain.com"
+    #   recipients: ["admin@yourdomain.com"]
+
+    # Example: Webhook (Discord, Slack, ntfy, Home Assistant)
+    # - id: "discord-alerts"
+    #   type: webhook
+    #   url: "https://discord.com/api/webhooks/..."
+
+    # - id: "ntfy-alerts"
+    #   type: webhook
+    #   url: "https://ntfy.sh/your-topic"
+
+  # Notification rules - match alerts to channels
+  rules:
+    # All emergencies -> mesh broadcast
+    - name: "emergencies"
+      categories: []           # Empty = all categories
+      min_severity: "emergency"
+      channel_ids: ["mesh-channel"]
+      override_quiet: true     # Send even during quiet hours
+
+    # Example: Fire alerts at any severity
+    # - name: "fire-alerts"
+    #   categories: ["wildfire_proximity", "new_ignition"]
+    #   min_severity: "advisory"
+    #   channel_ids: ["mesh-channel", "email-admin"]
+
+    # Example: Infrastructure alerts
+    # - name: "infra-alerts"
+    #   categories: ["infra_offline", "critical_node_down", "battery_emergency"]
+    #   min_severity: "warning"
+    #   channel_ids: ["mesh-channel"]
+
 # === WEB DASHBOARD ===
 dashboard:
   enabled: true

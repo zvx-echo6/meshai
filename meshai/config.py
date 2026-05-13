@@ -425,6 +425,47 @@ class EnvironmentalConfig:
 
 
 @dataclass
+class NotificationChannelConfig:
+    """Configuration for a notification channel."""
+
+    id: str = ""
+    type: str = ""
+    enabled: bool = True
+    channel_index: int = 0
+    node_ids: list = field(default_factory=list)
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_tls: bool = True
+    from_address: str = ""
+    recipients: list = field(default_factory=list)
+    url: str = ""
+    headers: dict = field(default_factory=dict)
+
+
+@dataclass
+class NotificationRuleConfig:
+    """Configuration for a notification rule."""
+
+    name: str = ""
+    categories: list = field(default_factory=list)
+    min_severity: str = "warning"
+    channel_ids: list = field(default_factory=list)
+    override_quiet: bool = False
+
+
+@dataclass
+class NotificationsConfig:
+    """Notification system settings."""
+
+    enabled: bool = False
+    quiet_hours_start: str = "22:00"
+    quiet_hours_end: str = "06:00"
+    dedup_seconds: int = 600
+    channels: list = field(default_factory=list)
+    rules: list = field(default_factory=list)
+
 class DashboardConfig:
     """Web dashboard settings."""
 
@@ -462,6 +503,7 @@ class Config:
     mesh_intelligence: MeshIntelligenceConfig = field(default_factory=MeshIntelligenceConfig)
     environmental: EnvironmentalConfig = field(default_factory=EnvironmentalConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
+    notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
 
     _config_path: Optional[Path] = field(default=None, repr=False)
 
@@ -535,6 +577,13 @@ def _dict_to_dataclass(cls, data: dict):
             kwargs[key] = _dict_to_dataclass(Roads511Config, value)
         elif key == "firms" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(FIRMSConfig, value)
+        elif key == "notifications" and isinstance(value, dict):
+            notifications = _dict_to_dataclass(NotificationsConfig, value)
+            if "channels" in value and isinstance(value["channels"], list):
+                notifications.channels = [_dict_to_dataclass(NotificationChannelConfig, c) if isinstance(c, dict) else c for c in value["channels"]]
+            if "rules" in value and isinstance(value["rules"], list):
+                notifications.rules = [_dict_to_dataclass(NotificationRuleConfig, r) if isinstance(r, dict) else r for r in value["rules"]]
+            kwargs[key] = notifications
         else:
             kwargs[key] = value
 

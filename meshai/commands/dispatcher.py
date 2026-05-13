@@ -162,6 +162,7 @@ def create_dispatcher(
     health_engine=None,
     subscription_manager=None,
     env_store=None,
+    notification_router=None,
 ) -> CommandDispatcher:
     """Create and populate command dispatcher with default commands.
 
@@ -224,24 +225,24 @@ def create_dispatcher(
         dispatcher.register(alias_handler)
 
     # Register subscription commands
-    sub_cmd = SubCommand(subscription_manager, mesh_reporter, data_store)
+    sub_cmd = SubCommand(subscription_manager, mesh_reporter, data_store, notification_router)
     dispatcher.register(sub_cmd)
     for alias in getattr(sub_cmd, 'aliases', []):
-        alias_handler = SubCommand(subscription_manager, mesh_reporter, data_store)
+        alias_handler = SubCommand(subscription_manager, mesh_reporter, data_store, notification_router)
         alias_handler.name = alias
         dispatcher.register(alias_handler)
 
-    unsub_cmd = UnsubCommand(subscription_manager)
+    unsub_cmd = UnsubCommand(subscription_manager, notification_router)
     dispatcher.register(unsub_cmd)
     for alias in getattr(unsub_cmd, 'aliases', []):
-        alias_handler = UnsubCommand(subscription_manager)
+        alias_handler = UnsubCommand(subscription_manager, notification_router)
         alias_handler.name = alias
         dispatcher.register(alias_handler)
 
-    mysubs_cmd = MySubsCommand(subscription_manager)
+    mysubs_cmd = MySubsCommand(subscription_manager, notification_router)
     dispatcher.register(mysubs_cmd)
     for alias in getattr(mysubs_cmd, 'aliases', []):
-        alias_handler = MySubsCommand(subscription_manager)
+        alias_handler = MySubsCommand(subscription_manager, notification_router)
         alias_handler.name = alias
         dispatcher.register(alias_handler)
 

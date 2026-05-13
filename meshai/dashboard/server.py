@@ -52,6 +52,7 @@ def create_app() -> FastAPI:
     from .api.mesh_routes import router as mesh_router
     from .api.env_routes import router as env_router
     from .api.alert_routes import router as alert_router
+    from .api.notification_routes import router as notification_router
 
     app.include_router(system_router, prefix="/api")
     app.include_router(config_router, prefix="/api")
@@ -59,6 +60,7 @@ def create_app() -> FastAPI:
     app.include_router(env_router, prefix="/api")
     app.include_router(alert_router, prefix="/api")
 
+    app.include_router(notification_router, prefix="/api")
     # WebSocket router (no prefix, path is /ws/live)
     app.include_router(ws_router)
 
@@ -110,6 +112,7 @@ async def start_dashboard(meshai_instance: "MeshAI") -> DashboardBroadcaster:
     app.state.alert_engine = getattr(meshai_instance, "alert_engine", None)
     app.state.env_store = getattr(meshai_instance, "env_store", None)
     app.state.subscription_manager = meshai_instance.subscription_manager
+    app.state.notification_router = getattr(meshai_instance, "notification_router", None)
 
     # Create broadcaster and attach to app state
     broadcaster = DashboardBroadcaster()
