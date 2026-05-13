@@ -420,7 +420,7 @@ class MeshAI:
             health_engine=self.health_engine,
             mesh_reporter=self.mesh_reporter,
             env_store=self.env_store,
-            notification_router=self.notification_router,
+            # notification_router not used by MessageRouter
         )
 
         # Responder

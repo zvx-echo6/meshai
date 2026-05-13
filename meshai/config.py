@@ -466,18 +466,11 @@ class NotificationsConfig:
     channels: list = field(default_factory=list)
     rules: list = field(default_factory=list)
 
+@dataclass
 class DashboardConfig:
     """Web dashboard settings."""
 
     enabled: bool = True
-
-    # MQTT-specific fields (type=mqtt only)
-    host: str = ""              # MQTT broker hostname
-    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
-    username: str = ""         # MQTT username (optional)
-    password: str = ""         # MQTT password (optional, supports )
-    topic_root: str = "msh/US"  # Topic root to subscribe to
-    use_tls: bool = False       # Enable TLS for MQTT connection
     port: int = 8080
     host: str = "0.0.0.0"
 
@@ -577,6 +570,8 @@ def _dict_to_dataclass(cls, data: dict):
             kwargs[key] = _dict_to_dataclass(Roads511Config, value)
         elif key == "firms" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(FIRMSConfig, value)
+        elif key == "dashboard" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(DashboardConfig, value)
         elif key == "notifications" and isinstance(value, dict):
             notifications = _dict_to_dataclass(NotificationsConfig, value)
             if "channels" in value and isinstance(value["channels"], list):
