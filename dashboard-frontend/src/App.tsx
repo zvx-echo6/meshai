@@ -5,6 +5,7 @@ import Mesh from './pages/Mesh'
 import Environment from './pages/Environment'
 import Config from './pages/Config'
 import Alerts from './pages/Alerts'
+import Notifications from './pages/Notifications'
 import { ToastProvider } from './components/ToastProvider'
 
 function App() {
@@ -17,6 +18,7 @@ function App() {
           <Route path="/environment" element={<Environment />} />
           <Route path="/config" element={<Config />} />
           <Route path="/alerts" element={<Alerts />} />
+          <Route path="/notifications" element={<Notifications />} />
         </Routes>
       </Layout>
     </ToastProvider>

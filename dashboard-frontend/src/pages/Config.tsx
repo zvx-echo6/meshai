@@ -4,7 +4,7 @@ import {
   Terminal, Cpu, Cloud, Radio, BookOpen, Layers, Activity,
   Thermometer, LayoutDashboard, Save, RotateCcw, RefreshCw,
   Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle,
-  Check, X, Eye as EyeIcon, EyeOff, ExternalLink, Bell, Send
+  Check, X, Eye as EyeIcon, EyeOff, ExternalLink
 } from 'lucide-react'
 
 // Types for config sections
@@ -197,47 +197,6 @@ interface DashboardConfig {
   host: string
 }
 
-interface NotificationChannelConfig {
-  id: string
-  type: string
-  enabled: boolean
-  channel_index: number
-  node_ids: string[]
-  smtp_host: string
-  smtp_port: number
-  smtp_user: string
-  smtp_password: string
-  smtp_tls: boolean
-  from_address: string
-  recipients: string[]
-  url: string
-  headers: Record<string, string>
-}
-
-interface NotificationRuleConfig {
-  name: string
-  categories: string[]
-  min_severity: string
-  channel_ids: string[]
-  override_quiet: boolean
-}
-
-interface NotificationsConfig {
-  enabled: boolean
-  quiet_hours_start: string
-  quiet_hours_end: string
-  dedup_seconds: number
-  channels: NotificationChannelConfig[]
-  rules: NotificationRuleConfig[]
-}
-
-interface AlertCategory {
-  id: string
-  name: string
-  description: string
-  default_severity: string
-}
-
 interface FullConfig {
   bot: BotConfig
   connection: ConnectionConfig
@@ -254,7 +213,6 @@ interface FullConfig {
   mesh_intelligence: MeshIntelligenceConfig
   environmental: EnvironmentalConfig
   dashboard: DashboardConfig
-  notifications: NotificationsConfig
 }
 
 type SectionKey = keyof FullConfig
@@ -274,7 +232,6 @@ const SECTIONS: { key: SectionKey; label: string; icon: typeof Settings }[] = [
   { key: 'mesh_sources', label: 'Mesh Sources', icon: Layers },
   { key: 'mesh_intelligence', label: 'Intelligence', icon: Activity },
   { key: 'environmental', label: 'Environmental', icon: Thermometer },
-  { key: 'notifications', label: 'Notifications', icon: Bell },
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
 ]
 
@@ -294,7 +251,6 @@ const SECTION_DESCRIPTIONS: Record<SectionKey, string> = {
   mesh_sources: 'Data sources for mesh network information. MeshAI can pull data from multiple sources simultaneously and merge them into a unified view.',
   mesh_intelligence: 'Advanced mesh analysis: health scoring, region management, and automated alerting. The intelligence engine monitors your mesh and detects problems automatically.',
   environmental: 'Live environmental data feeds for situational awareness. Each feed polls a public or authenticated API for real-time conditions affecting your area.',
-  notifications: 'Alert delivery system. Configure where alerts get sent (mesh, email, webhooks) and which conditions trigger them.',
   dashboard: "Web dashboard settings. You're looking at it right now.",
 }
 
@@ -1106,7 +1062,7 @@ function LLMSection({ data, onChange }: { data: LLMConfig; onChange: (d: LLMConf
           onChange={(v) => onChange({ ...data, system_prompt: v })}
           rows={6}
           helper="Instructions that shape the bot's personality"
-          info="Instructions that shape the bot's personality and behavior. The bot always follows these instructions. MeshAI adds mesh health data and environmental context automatically — you don't need to include those here."
+          info="Instructions that shape the bot's personality and behavior. The bot always follows these instructions. MeshAI adds mesh health data and environmental context automatically â€” you don't need to include those here."
         />
       )}
       <Toggle
@@ -2178,570 +2134,7 @@ function EnvironmentalSection({ data, onChange }: { data: EnvironmentalConfig; o
     </div>
   )
 }
-
-// Notification Channel Card Component
-function NotificationChannelCard({
-  channel,
-  onChange,
-  onDelete,
-  onTest,
-}: {
-  channel: NotificationChannelConfig
-  onChange: (c: NotificationChannelConfig) => void
-  onDelete: () => void
-  onTest: () => void
-}) {
-  const [expanded, setExpanded] = useState(false)
-  const [testing, setTesting] = useState(false)
-
-  const typeOptions = [
-    { value: 'mesh_broadcast', label: 'Mesh Broadcast' },
-    { value: 'mesh_dm', label: 'Mesh DM' },
-    { value: 'email', label: 'Email' },
-    { value: 'webhook', label: 'Webhook' },
-  ]
-
-  const typeDescriptions: Record<string, string> = {
-    mesh_broadcast: 'Broadcast alerts to a mesh channel. All nodes on that channel receive the alert.',
-    mesh_dm: 'Send alerts as direct messages to specific nodes.',
-    email: 'Send alert emails via SMTP. Works with Gmail, Outlook, and any SMTP server.',
-    webhook: 'POST alert JSON to any URL. Works with Discord webhooks, ntfy.sh, Pushover, Slack, Home Assistant, or any service that accepts HTTP POST.',
-  }
-
-  const handleTest = async () => {
-    setTesting(true)
-    await onTest()
-    setTesting(false)
-  }
-
-  return (
-    <div className="border border-[#1e2a3a] rounded-lg overflow-hidden">
-      <div
-        className="flex items-center justify-between p-3 bg-[#0a0e17] cursor-pointer"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <div className="flex items-center gap-3">
-          {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-          <div className={`w-2 h-2 rounded-full ${channel.enabled ? 'bg-green-500' : 'bg-slate-500'}`} />
-          <span className="font-medium text-slate-200">{channel.id || 'New Channel'}</span>
-          <span className="text-xs text-slate-500 bg-[#1e2a3a] px-2 py-0.5 rounded">
-            {typeOptions.find(t => t.value === channel.type)?.label || channel.type}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={(e) => { e.stopPropagation(); handleTest() }}
-            disabled={testing}
-            className="p-1.5 text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 rounded disabled:opacity-50"
-            title="Send test alert"
-          >
-            <Send size={14} />
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); onDelete() }}
-            className="p-1 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded"
-          >
-            <Trash2 size={14} />
-          </button>
-        </div>
-      </div>
-      {expanded && (
-        <div className="p-4 space-y-4 border-t border-[#1e2a3a]">
-          <div className="grid grid-cols-2 gap-4">
-            <TextInput
-              label="Channel ID"
-              value={channel.id}
-              onChange={(v) => onChange({ ...channel, id: v })}
-              helper="Unique identifier for this channel"
-              info="Used to reference this channel in notification rules. Use lowercase with hyphens (e.g., 'mesh-main', 'email-admin')."
-            />
-            <SelectInput
-              label="Type"
-              value={channel.type}
-              onChange={(v) => onChange({ ...channel, type: v })}
-              options={typeOptions}
-              info={typeDescriptions[channel.type] || 'Select a channel type'}
-            />
-          </div>
-          <Toggle
-            label="Enabled"
-            checked={channel.enabled}
-            onChange={(v) => onChange({ ...channel, enabled: v })}
-            helper="Disable to temporarily stop alerts on this channel"
-          />
-
-          {/* Mesh Broadcast fields */}
-          {channel.type === 'mesh_broadcast' && (
-            <NumberInput
-              label="Channel Index"
-              value={channel.channel_index}
-              onChange={(v) => onChange({ ...channel, channel_index: v })}
-              min={0}
-              max={7}
-              helper="Mesh channel number (0-7)"
-              info="The mesh channel to broadcast alerts on. Channel 0 is typically the default channel."
-            />
-          )}
-
-          {/* Mesh DM fields */}
-          {channel.type === 'mesh_dm' && (
-            <ListInput
-              label="Node IDs"
-              value={channel.node_ids}
-              onChange={(v) => onChange({ ...channel, node_ids: v })}
-              helper="Node IDs to receive DM alerts"
-              info="Node IDs that receive direct message alerts. Enter the full node ID (e.g., '!a1b2c3d4') for each recipient."
-            />
-          )}
-
-          {/* Email fields */}
-          {channel.type === 'email' && (
-            <>
-              <div className="grid grid-cols-2 gap-4">
-                <TextInput
-                  label="SMTP Host"
-                  value={channel.smtp_host}
-                  onChange={(v) => onChange({ ...channel, smtp_host: v })}
-                  placeholder="smtp.gmail.com"
-                  helper="SMTP server hostname"
-                  info="The SMTP server for sending emails. Gmail: smtp.gmail.com, Outlook: smtp.office365.com"
-                />
-                <NumberInput
-                  label="SMTP Port"
-                  value={channel.smtp_port}
-                  onChange={(v) => onChange({ ...channel, smtp_port: v })}
-                  min={1}
-                  max={65535}
-                  helper="587 (TLS) or 465 (SSL)"
-                  info="SMTP port. Use 587 for TLS (recommended) or 465 for SSL."
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <TextInput
-                  label="SMTP User"
-                  value={channel.smtp_user}
-                  onChange={(v) => onChange({ ...channel, smtp_user: v })}
-                  placeholder="you@gmail.com"
-                  helper="Login username"
-                />
-                <TextInput
-                  label="SMTP Password"
-                  value={channel.smtp_password}
-                  onChange={(v) => onChange({ ...channel, smtp_password: v })}
-                  type="password"
-                  helper="App password recommended"
-                  info="SMTP server for sending alert emails. Gmail users: use an App Password, not your regular password. Generate one at myaccount.google.com/apppasswords"
-                />
-              </div>
-              <Toggle
-                label="Use TLS"
-                checked={channel.smtp_tls}
-                onChange={(v) => onChange({ ...channel, smtp_tls: v })}
-                helper="Encrypt SMTP connection"
-                info="Enable TLS encryption for the SMTP connection. Required for most modern email servers."
-              />
-              <TextInput
-                label="From Address"
-                value={channel.from_address}
-                onChange={(v) => onChange({ ...channel, from_address: v })}
-                placeholder="alerts@yourdomain.com"
-                helper="Sender email address"
-                info="The email address that appears as the sender. Some servers require this to match your login."
-              />
-              <ListInput
-                label="Recipients"
-                value={channel.recipients}
-                onChange={(v) => onChange({ ...channel, recipients: v })}
-                helper="Email addresses to receive alerts"
-                info="List of email addresses that will receive alerts from this channel."
-              />
-            </>
-          )}
-
-          {/* Webhook fields */}
-          {channel.type === 'webhook' && (
-            <>
-              <TextInput
-                label="Webhook URL"
-                value={channel.url}
-                onChange={(v) => onChange({ ...channel, url: v })}
-                placeholder="https://discord.com/api/webhooks/..."
-                helper="POST endpoint for alerts"
-                info="POST alert JSON to any URL. Works with Discord webhooks, ntfy.sh, Pushover, Slack, Home Assistant, or any service that accepts HTTP POST."
-              />
-              <div className="space-y-1">
-                <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
-                  Headers (optional)
-                  <InfoButton info="Additional HTTP headers to send with the webhook request. Useful for authentication tokens or custom headers required by the receiving service." />
-                </label>
-                <div className="text-xs text-slate-600">
-                  Custom headers can be configured in the YAML config file
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// Notification Rule Card Component
-function NotificationRuleCard({
-  rule,
-  categories,
-  channels,
-  onChange,
-  onDelete,
-}: {
-  rule: NotificationRuleConfig
-  categories: AlertCategory[]
-  channels: NotificationChannelConfig[]
-  onChange: (r: NotificationRuleConfig) => void
-  onDelete: () => void
-}) {
-  const [expanded, setExpanded] = useState(false)
-
-  const severityOptions = [
-    { value: 'info', label: 'Info' },
-    { value: 'advisory', label: 'Advisory' },
-    { value: 'watch', label: 'Watch' },
-    { value: 'warning', label: 'Warning' },
-    { value: 'critical', label: 'Critical' },
-    { value: 'emergency', label: 'Emergency' },
-  ]
-
-  const toggleCategory = (catId: string) => {
-    const current = rule.categories || []
-    if (current.includes(catId)) {
-      onChange({ ...rule, categories: current.filter(c => c !== catId) })
-    } else {
-      onChange({ ...rule, categories: [...current, catId] })
-    }
-  }
-
-  const toggleChannel = (channelId: string) => {
-    const current = rule.channel_ids || []
-    if (current.includes(channelId)) {
-      onChange({ ...rule, channel_ids: current.filter(c => c !== channelId) })
-    } else {
-      onChange({ ...rule, channel_ids: [...current, channelId] })
-    }
-  }
-
-  return (
-    <div className="border border-[#1e2a3a] rounded-lg overflow-hidden">
-      <div
-        className="flex items-center justify-between p-3 bg-[#0a0e17] cursor-pointer"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <div className="flex items-center gap-3">
-          {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-          <span className="font-medium text-slate-200">{rule.name || 'New Rule'}</span>
-          <span className="text-xs text-slate-500">
-            {rule.categories?.length || 0} categories → {rule.channel_ids?.length || 0} channels
-          </span>
-        </div>
-        <button
-          onClick={(e) => { e.stopPropagation(); onDelete() }}
-          className="p-1 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded"
-        >
-          <Trash2 size={14} />
-        </button>
-      </div>
-      {expanded && (
-        <div className="p-4 space-y-4 border-t border-[#1e2a3a]">
-          <TextInput
-            label="Rule Name"
-            value={rule.name}
-            onChange={(v) => onChange({ ...rule, name: v })}
-            helper="Human-readable name for this rule"
-            info="A descriptive name to identify this rule. Example: 'Emergency Alerts', 'Fire Notifications', 'Infrastructure Warnings'"
-          />
-
-          <SelectInput
-            label="Minimum Severity"
-            value={rule.min_severity}
-            onChange={(v) => onChange({ ...rule, min_severity: v })}
-            options={severityOptions}
-            helper="Only alerts at or above this severity"
-            info="Only alerts at this severity or above will trigger this rule. 'warning' is recommended for most channels. Use 'info' to receive all alerts."
-          />
-
-          <div className="space-y-2">
-            <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
-              Alert Categories
-              <InfoButton info="Which alert types this rule applies to. Select none to match all categories. Alerts matching any selected category (AND meeting severity threshold) will trigger this rule." />
-            </label>
-            <div className="text-xs text-slate-500 mb-2">
-              {rule.categories?.length === 0 ? 'All categories (none selected)' : `${rule.categories?.length} selected`}
-            </div>
-            <div className="max-h-48 overflow-y-auto border border-[#1e2a3a] rounded-lg p-2 space-y-1">
-              {categories.map((cat) => (
-                <label
-                  key={cat.id}
-                  className="flex items-start gap-2 p-2 rounded hover:bg-[#0a0e17] cursor-pointer"
-                >
-                  <input
-                    type="checkbox"
-                    checked={rule.categories?.includes(cat.id) || false}
-                    onChange={() => toggleCategory(cat.id)}
-                    className="mt-0.5 rounded border-slate-600 bg-[#0a0e17] text-accent focus:ring-accent"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm text-slate-200">{cat.name}</div>
-                    <div className="text-xs text-slate-500">{cat.description}</div>
-                  </div>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
-              Delivery Channels
-              <InfoButton info="Which channels receive alerts matching this rule. Select at least one channel." />
-            </label>
-            {channels.length === 0 ? (
-              <div className="text-xs text-slate-500 p-2 border border-[#1e2a3a] rounded-lg">
-                No channels configured. Add channels above first.
-              </div>
-            ) : (
-              <div className="border border-[#1e2a3a] rounded-lg p-2 space-y-1">
-                {channels.map((ch) => (
-                  <label
-                    key={ch.id}
-                    className="flex items-center gap-2 p-2 rounded hover:bg-[#0a0e17] cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={rule.channel_ids?.includes(ch.id) || false}
-                      onChange={() => toggleChannel(ch.id)}
-                      className="rounded border-slate-600 bg-[#0a0e17] text-accent focus:ring-accent"
-                    />
-                    <span className="text-sm text-slate-200">{ch.id}</span>
-                    <span className="text-xs text-slate-500">({ch.type})</span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <Toggle
-            label="Override Quiet Hours"
-            checked={rule.override_quiet}
-            onChange={(v) => onChange({ ...rule, override_quiet: v })}
-            helper="Send alerts even during quiet hours"
-            info="When enabled, this rule sends alerts even during quiet hours. Use for critical conditions like fires or infrastructure failures."
-          />
-        </div>
-      )}
-    </div>
-  )
-}
-
-// Main Notifications Section Component
-function NotificationsSection({ data, onChange }: { data: NotificationsConfig; onChange: (d: NotificationsConfig) => void }) {
-  const [categories, setCategories] = useState<AlertCategory[]>([])
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
-
-  // Fetch categories on mount
-  useEffect(() => {
-    fetch('/api/notifications/categories')
-      .then(res => res.json())
-      .then(setCategories)
-      .catch(() => setCategories([]))
-  }, [])
-
-  const addChannel = () => {
-    const newChannel: NotificationChannelConfig = {
-      id: '',
-      type: 'mesh_broadcast',
-      enabled: true,
-      channel_index: 0,
-      node_ids: [],
-      smtp_host: '',
-      smtp_port: 587,
-      smtp_user: '',
-      smtp_password: '',
-      smtp_tls: true,
-      from_address: '',
-      recipients: [],
-      url: '',
-      headers: {},
-    }
-    onChange({ ...data, channels: [...(data.channels || []), newChannel] })
-  }
-
-  const addRule = () => {
-    const newRule: NotificationRuleConfig = {
-      name: '',
-      categories: [],
-      min_severity: 'warning',
-      channel_ids: [],
-      override_quiet: false,
-    }
-    onChange({ ...data, rules: [...(data.rules || []), newRule] })
-  }
-
-  const testChannel = async (channelId: string) => {
-    try {
-      const res = await fetch(`/api/notifications/channels/${channelId}/test`, { method: 'POST' })
-      const result = await res.json()
-      setTestResult(result)
-      setTimeout(() => setTestResult(null), 5000)
-    } catch {
-      setTestResult({ success: false, message: 'Test failed' })
-      setTimeout(() => setTestResult(null), 5000)
-    }
-  }
-
-  return (
-    <div className="space-y-6">
-      <SectionDescription text={SECTION_DESCRIPTIONS.notifications} />
-
-      <Toggle
-        label="Enable Notifications"
-        checked={data.enabled}
-        onChange={(v) => onChange({ ...data, enabled: v })}
-        helper="Master switch for all notification delivery"
-        info="When disabled, no alerts will be delivered through any channel. The alert engine still runs and records alerts to history."
-      />
-
-      {testResult && (
-        <div className={`p-3 rounded-lg text-sm ${testResult.success ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-          {testResult.success ? <Check size={14} className="inline mr-2" /> : <X size={14} className="inline mr-2" />}
-          {testResult.message}
-        </div>
-      )}
-
-      {data.enabled && (
-        <>
-          {/* Channels Section */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
-                Channels
-                <InfoButton info="Where alerts get delivered. Add channels for each destination you want to receive alerts." />
-              </label>
-            </div>
-            <p className="text-sm text-slate-500 -mt-1">
-              Where alerts get delivered. Add channels for each destination you want to receive alerts.
-            </p>
-            {(data.channels || []).map((channel, i) => (
-              <NotificationChannelCard
-                key={i}
-                channel={channel}
-                onChange={(c) => {
-                  const newChannels = [...(data.channels || [])]
-                  newChannels[i] = c
-                  onChange({ ...data, channels: newChannels })
-                }}
-                onDelete={() => {
-                  if (confirm(`Delete channel "${channel.id || 'New Channel'}"?`)) {
-                    onChange({ ...data, channels: (data.channels || []).filter((_, j) => j !== i) })
-                  }
-                }}
-                onTest={() => testChannel(channel.id)}
-              />
-            ))}
-            <button
-              onClick={addChannel}
-              className="w-full py-2 border border-dashed border-[#1e2a3a] rounded-lg text-slate-500 hover:text-slate-300 hover:border-accent flex items-center justify-center gap-2 transition-colors"
-            >
-              <Plus size={16} /> Add Channel
-            </button>
-          </div>
-
-          {/* Rules Section */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
-                Rules
-                <InfoButton info="Rules connect alert categories to delivery channels. When a condition matches a rule, the alert is sent to all channels in that rule." />
-              </label>
-            </div>
-            <p className="text-sm text-slate-500 -mt-1">
-              Rules connect alert categories to delivery channels. When a condition matches a rule, the alert is sent to all channels in that rule.
-            </p>
-            {(data.rules || []).map((rule, i) => (
-              <NotificationRuleCard
-                key={i}
-                rule={rule}
-                categories={categories}
-                channels={data.channels || []}
-                onChange={(r) => {
-                  const newRules = [...(data.rules || [])]
-                  newRules[i] = r
-                  onChange({ ...data, rules: newRules })
-                }}
-                onDelete={() => {
-                  if (confirm(`Delete rule "${rule.name || 'New Rule'}"?`)) {
-                    onChange({ ...data, rules: (data.rules || []).filter((_, j) => j !== i) })
-                  }
-                }}
-              />
-            ))}
-            <button
-              onClick={addRule}
-              className="w-full py-2 border border-dashed border-[#1e2a3a] rounded-lg text-slate-500 hover:text-slate-300 hover:border-accent flex items-center justify-center gap-2 transition-colors"
-            >
-              <Plus size={16} /> Add Rule
-            </button>
-          </div>
-
-          {/* Quiet Hours Section */}
-          <div className="space-y-3">
-            <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
-              Quiet Hours
-              <InfoButton info="Suppress non-emergency alerts during sleeping hours. Emergency and critical alerts always get through. Rules with 'Override Quiet Hours' enabled will also deliver during this time." />
-            </label>
-            <p className="text-sm text-slate-500 -mt-1">
-              Suppress non-emergency alerts during sleeping hours. Emergency and critical alerts always get through.
-            </p>
-            <div className="grid grid-cols-2 gap-4">
-              <TextInput
-                label="Start Time"
-                value={data.quiet_hours_start || '22:00'}
-                onChange={(v) => onChange({ ...data, quiet_hours_start: v })}
-                placeholder="22:00"
-                helper="When quiet hours begin"
-                info="Time in 24-hour format (HH:MM) when quiet hours start. Alerts below emergency severity will be held until quiet hours end."
-              />
-              <TextInput
-                label="End Time"
-                value={data.quiet_hours_end || '06:00'}
-                onChange={(v) => onChange({ ...data, quiet_hours_end: v })}
-                placeholder="06:00"
-                helper="When quiet hours end"
-                info="Time in 24-hour format (HH:MM) when quiet hours end. Held alerts will be delivered at this time."
-              />
-            </div>
-          </div>
-
-          {/* Dedup Section */}
-          <div className="space-y-3">
-            <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
-              Deduplication
-              <InfoButton info="Prevents alert spam. If the same condition fires multiple times within this window, only the first one is delivered." />
-            </label>
-            <NumberInput
-              label="Dedup Window (seconds)"
-              value={data.dedup_seconds || 600}
-              onChange={(v) => onChange({ ...data, dedup_seconds: v })}
-              min={0}
-              max={86400}
-              helper="Don't re-send the same alert within this window"
-              info="Prevents alert spam. If the same condition fires multiple times within this window, only the first one is delivered. Default is 600 seconds (10 minutes)."
-            />
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
-function DashboardSection({ data, onChange }: { data: DashboardConfig; onChange: (d: DashboardConfig) => void }) {
+function DashboardSection({ data, onChange }: { data: DashboardConfig; onChange: (d: DashboardConfig) => void }) {
   return (
     <div className="space-y-4">
       <SectionDescription text={SECTION_DESCRIPTIONS.dashboard} />
@@ -2804,7 +2197,7 @@ export default function Config() {
   }, [])
 
   useEffect(() => {
-    document.title = 'Config — MeshAI'
+    document.title = 'Config â€” MeshAI'
     fetchConfig()
   }, [fetchConfig])
 
@@ -2905,7 +2298,6 @@ export default function Config() {
       case 'mesh_sources': return <MeshSourcesSection data={config.mesh_sources} onChange={(d) => updateSection('mesh_sources', d)} />
       case 'mesh_intelligence': return <MeshIntelligenceSection data={config.mesh_intelligence} onChange={(d) => updateSection('mesh_intelligence', d)} />
       case 'environmental': return <EnvironmentalSection data={config.environmental} onChange={(d) => updateSection('environmental', d)} />
-      case 'notifications': return <NotificationsSection data={config.notifications} onChange={(d) => updateSection('notifications', d)} />
       case 'dashboard': return <DashboardSection data={config.dashboard} onChange={(d) => updateSection('dashboard', d)} />
       default: return null
     }
