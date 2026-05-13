@@ -26,9 +26,12 @@ INFRASTRUCTURE_ROLES = {"ROUTER", "ROUTER_LATE", "ROUTER_CLIENT"}
 
 # Default thresholds
 DEFAULT_LOCALITY_RADIUS_MILES = 8.0
-DEFAULT_OFFLINE_THRESHOLD_HOURS = 24
-DEFAULT_PACKET_THRESHOLD = 500  # Non-text packets per 24h
-DEFAULT_BATTERY_WARNING_PERCENT = 20
+DEFAULT_OFFLINE_THRESHOLD_HOURS = 2  # Hours before node considered offline
+DEFAULT_PACKET_THRESHOLD = 7200  # Non-text packets per 24h (5/min avg)
+# NOTE: This is aligned with notification config's packet_flood threshold.
+# 5 packets/min avg × 60 min × 24 hr = 7,200 packets/day.
+# A node averaging 5+ non-text packets/min is misbehaving.
+DEFAULT_BATTERY_WARNING_PERCENT = 30  # Battery level to warn (30% gives time to respond)
 
 # Utilization thresholds (percentage) - based on real Meshtastic behavior
 # Firmware starts throttling GPS at 25%, severe degradation above 35%

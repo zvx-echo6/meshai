@@ -745,9 +745,11 @@ class MeshDataStore:
 
         node.last_heard = ts or 0.0
 
-        # Is online (computed from last_heard)
-        now = time.time()
-        node.is_online = (now - node.last_heard) < 86400 if node.last_heard else False
+        # NOTE: is_online is set by MeshHealthEngine.compute() using the
+        # configured offline_threshold_hours. Don't set it here with a
+        # hardcoded value - let the health engine determine online status.
+        # The health engine runs on every refresh cycle and will set is_online
+        # based on: (now - last_heard) < (offline_threshold_hours * 3600)
 
         # Hops, SNR, RSSI (MM)
         node.hops_away = raw.get("hopsAway")

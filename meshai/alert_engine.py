@@ -265,6 +265,10 @@ class AlertEngine:
                         ))
                         state.fire(now)
 
+            # NOTE: has_solar is never populated in current version.
+            # Solar Quality Engine (v0.3) will replace this with real solar
+            # monitoring based on location, weather, and inversion data.
+            # For now this check effectively never fires.
             if self._rules.solar_not_charging and getattr(node, "has_solar", False) and 0 < bat <= 100:
                 try:
                     from zoneinfo import ZoneInfo

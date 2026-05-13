@@ -282,9 +282,9 @@ class MeshIntelligenceConfig:
     enabled: bool = False
     regions: list[RegionAnchor] = field(default_factory=list)  # Fixed region anchors
     locality_radius_miles: float = 8.0  # Radius for locality clustering within regions
-    offline_threshold_hours: int = 24  # Hours before node considered offline
+    offline_threshold_hours: int = 2  # Hours before node considered offline
     packet_threshold: int = 500  # Non-text packets per 24h to flag
-    battery_warning_percent: int = 20  # Battery level for warnings
+    battery_warning_percent: int = 30  # Battery level for warnings
 
     # Alert settings
     critical_nodes: list[str] = field(default_factory=list)  # Short names of critical nodes (e.g., ["MHR", "HPR"])
