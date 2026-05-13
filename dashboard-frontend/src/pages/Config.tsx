@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import NodePicker from '@/components/NodePicker'
 import ChannelPicker from '@/components/ChannelPicker'
 import {
@@ -309,12 +309,28 @@ const US_STATES = [
   { value: 'US-WI', label: 'Wisconsin' }, { value: 'US-WY', label: 'Wyoming' },
 ]
 
-// InfoButton component
+// InfoButton component with click-outside dismiss and X close button
 function InfoButton({ info, link, linkText = 'Learn more' }: { info: string; link?: string; linkText?: string }) {
   const [open, setOpen] = useState(false)
+  const popoverRef = useRef<HTMLDivElement>(null)
+
+  // Close on click outside
+  useEffect(() => {
+    if (!open) return
+    function handleClickOutside(e: MouseEvent) {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    const timer = setTimeout(() => document.addEventListener('mousedown', handleClickOutside), 0)
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [open])
 
   return (
-    <div className="relative inline-block">
+    <div className="relative inline-block" ref={popoverRef}>
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); setOpen(!open) }}
@@ -324,23 +340,28 @@ function InfoButton({ info, link, linkText = 'Learn more' }: { info: string; lin
         ?
       </button>
       {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-6 z-50 w-72 p-3 bg-[#1a2332] border border-[#2a3a4a] rounded-lg shadow-xl text-xs text-slate-300 leading-relaxed">
-            {info}
-            {link && (
-              <a
-                href={link}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-2 flex items-center gap-1 text-accent hover:underline"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {linkText} <ExternalLink size={10} />
-              </a>
-            )}
-          </div>
-        </>
+        <div className="absolute left-0 top-6 z-50 w-72 p-3 bg-[#1a2332] border border-[#2a3a4a] rounded-lg shadow-xl text-xs text-slate-300 leading-relaxed">
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            className="absolute top-1 right-1 w-5 h-5 rounded hover:bg-slate-700 text-slate-500 hover:text-slate-300 inline-flex items-center justify-center transition-colors"
+            aria-label="Close"
+          >
+            <X size={12} />
+          </button>
+          <div className="pr-4">{info}</div>
+          {link && (
+            <a
+              href={link}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-2 flex items-center gap-1 text-accent hover:underline"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {linkText} <ExternalLink size={10} />
+            </a>
+          )}
+        </div>
       )}
     </div>
   )
@@ -2139,7 +2160,8 @@ function EnvironmentalSection({ data, onChange }: { data: EnvironmentalConfig; o
     </div>
   )
 }
-function DashboardSection({ data, onChange }: { data: DashboardConfig; onChange: (d: DashboardConfig) => void }) {
+
+function DashboardSection({ data, onChange }: { data: DashboardConfig; onChange: (d: DashboardConfig) => void }) {
   return (
     <div className="space-y-4">
       <SectionDescription text={SECTION_DESCRIPTIONS.dashboard} />
