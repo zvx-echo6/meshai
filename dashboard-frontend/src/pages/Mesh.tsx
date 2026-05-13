@@ -26,6 +26,7 @@ export default function Mesh() {
 
   // Fetch data on mount
   useEffect(() => {
+    document.title = 'Mesh — MeshAI'
     Promise.all([fetchNodes(), fetchEdges(), fetchRegions()])
       .then(([n, e, r]) => {
         setNodes(n)

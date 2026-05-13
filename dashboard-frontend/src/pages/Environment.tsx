@@ -369,6 +369,7 @@ export default function Environment() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    document.title = 'Environment — MeshAI'
     Promise.all([
       fetchEnvStatus().catch(() => null),
       fetchEnvActive().catch(() => []),

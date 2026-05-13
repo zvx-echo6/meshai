@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { fetchStatus, type SystemStatus } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
+import { useToast } from './ToastProvider'
 
 interface LayoutProps {
   children: ReactNode
@@ -39,8 +40,21 @@ function getPageTitle(pathname: string): string {
 
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation()
-  const { connected } = useWebSocket()
+  const { connected, lastAlert } = useWebSocket()
+  const { addToast } = useToast()
   const [status, setStatus] = useState<SystemStatus | null>(null)
+  const [lastAlertId, setLastAlertId] = useState<string | null>(null)
+
+  // Trigger toast on new alerts
+  useEffect(() => {
+    if (lastAlert) {
+      const alertId = `${lastAlert.type}-${lastAlert.message}-${lastAlert.timestamp}`
+      if (alertId !== lastAlertId) {
+        setLastAlertId(alertId)
+        addToast(lastAlert)
+      }
+    }
+  }, [lastAlert, lastAlertId, addToast])
   const [currentTime, setCurrentTime] = useState(new Date())
 
   useEffect(() => {

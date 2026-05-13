@@ -93,6 +93,34 @@ export interface Alert {
   scope_value?: string
 }
 
+export interface AlertHistoryItem {
+  id?: number
+  type: string
+  severity: string
+  message: string
+  timestamp: string
+  duration?: number
+  scope_type?: string
+  scope_value?: string
+  resolved_at?: string
+}
+
+export interface AlertHistoryResponse {
+  items: AlertHistoryItem[]
+  total: number
+}
+
+export interface Subscription {
+  id: number
+  user_id: string
+  sub_type: string
+  schedule_time?: string
+  schedule_day?: string
+  scope_type: string
+  scope_value?: string
+  enabled: boolean
+}
+
 export interface EnvStatus {
   enabled: boolean
   feeds: EnvFeedHealth[]
@@ -207,6 +235,24 @@ export async function updateConfig(
 
 export async function fetchAlerts(): Promise<Alert[]> {
   return fetchJson<Alert[]>('/api/alerts/active')
+}
+
+export async function fetchAlertHistory(
+  limit: number = 50,
+  offset: number = 0,
+  type?: string,
+  severity?: string
+): Promise<AlertHistoryResponse | AlertHistoryItem[]> {
+  const params = new URLSearchParams()
+  params.set('limit', limit.toString())
+  params.set('offset', offset.toString())
+  if (type && type !== 'all') params.set('type', type)
+  if (severity && severity !== 'all') params.set('severity', severity)
+  return fetchJson<AlertHistoryResponse | AlertHistoryItem[]>(`/api/alerts/history?${params.toString()}`)
+}
+
+export async function fetchSubscriptions(): Promise<Subscription[]> {
+  return fetchJson<Subscription[]>('/api/subscriptions')
 }
 
 export async function fetchEnvStatus(): Promise<EnvStatus> {

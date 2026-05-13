@@ -326,10 +326,12 @@ export default function Dashboard() {
         setEnvStatus(e)
         setRFProp(rf)
         setLoading(false)
+      document.title = 'Dashboard — MeshAI'
       })
       .catch((err) => {
         setError(err.message)
         setLoading(false)
+      document.title = 'Dashboard — MeshAI'
       })
   }, [])
 

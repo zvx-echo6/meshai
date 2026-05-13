@@ -383,6 +383,7 @@ function ListInput({ label, value, onChange, helper = '' }: {
   const [text, setText] = useState(value.join(', '))
 
   useEffect(() => {
+    document.title = 'Config — MeshAI'
     setText(value.join(', '))
   }, [value])
 
