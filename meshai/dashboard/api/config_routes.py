@@ -27,6 +27,8 @@ RESTART_REQUIRED_SECTIONS = {
 
 # Valid config section names
 VALID_SECTIONS = {
+    "notifications",
+    "environmental",
     "bot",
     "connection",
     "response",
