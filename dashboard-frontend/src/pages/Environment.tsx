@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import {
   Cloud,
   Sun,
@@ -10,7 +10,42 @@ import {
   Wind,
   Flame,
   Mountain,
+  HelpCircle,
 } from 'lucide-react'
+
+// Info button component with popover
+function InfoButton({ info }: { info: string }) {
+  const [show, setShow] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setShow(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  return (
+    <div className="relative inline-block" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setShow(!show)}
+        className="ml-1 text-slate-500 hover:text-slate-300 transition-colors"
+        aria-label="More information"
+      >
+        <HelpCircle size={14} />
+      </button>
+      {show && (
+        <div className="absolute z-50 left-0 mt-1 w-64 p-3 bg-[#1a1f2e] border border-[#2a3548] rounded-lg shadow-xl text-xs text-slate-300 leading-relaxed">
+          {info}
+        </div>
+      )}
+    </div>
+  )
+}
 import {
   fetchEnvStatus,
   fetchEnvActive,
@@ -150,6 +185,7 @@ function SolarIndicesPanel({ swpc }: { swpc: SWPCStatus | null }) {
         <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
           <Sun size={14} />
           Solar/Geomagnetic Indices
+          <InfoButton info="Space weather data from NOAA SWPC. Solar Flux Index (SFI) indicates HF propagation quality. Kp index measures geomagnetic disturbance. Higher values can degrade or enhance radio propagation." />
         </h2>
         <div className="text-slate-500">Data not available</div>
       </div>
@@ -176,12 +212,16 @@ function SolarIndicesPanel({ swpc }: { swpc: SWPCStatus | null }) {
       <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
         <Sun size={14} />
         Solar/Geomagnetic Indices
+        <InfoButton info="Space weather data from NOAA SWPC. Solar Flux Index (SFI) indicates HF propagation quality (higher=better). Kp index measures geomagnetic disturbance (lower=better). R/S/G scales: R=Radio Blackout, S=Solar Radiation, G=Geomagnetic Storm." />
       </h2>
 
       <div className="grid grid-cols-2 gap-4 mb-4">
         {/* SFI */}
         <div className="bg-bg-hover rounded-lg p-3">
-          <div className="text-xs text-slate-500 mb-1">Solar Flux Index</div>
+          <div className="text-xs text-slate-500 mb-1 flex items-center">
+            Solar Flux Index
+            <InfoButton info="10.7cm solar radio flux. <70=poor HF, 70-90=fair, 90-120=good, 120-150=very good, >150=excellent. Measured daily at noon UTC." />
+          </div>
           <div className="text-2xl font-mono text-slate-100">
             {swpc.sfi?.toFixed(0) ?? '—'}
           </div>
@@ -190,7 +230,10 @@ function SolarIndicesPanel({ swpc }: { swpc: SWPCStatus | null }) {
 
         {/* Kp */}
         <div className="bg-bg-hover rounded-lg p-3">
-          <div className="text-xs text-slate-500 mb-1">Planetary K-Index</div>
+          <div className="text-xs text-slate-500 mb-1 flex items-center">
+            Planetary K-Index
+            <InfoButton info="Geomagnetic disturbance scale 0-9. Kp 0-2=quiet, 3-4=unsettled, 5=minor storm (G1), 6=moderate (G2), 7=strong (G3), 8=severe (G4), 9=extreme (G5). Higher Kp degrades HF at high latitudes." />
+          </div>
           <div className={`text-2xl font-mono ${getKpColor(swpc.kp_current)}`}>
             {swpc.kp_current?.toFixed(1) ?? '—'}
           </div>
@@ -251,6 +294,7 @@ function DuctingPanel({ ducting }: { ducting: DuctingStatus | null }) {
         <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
           <Wind size={14} />
           Tropospheric Ducting
+          <InfoButton info="Atmospheric conditions that trap VHF/UHF signals, allowing propagation far beyond normal line-of-sight. Measured as refractivity gradient (dM/dz) in M-units/km. Negative values indicate ducting." />
         </h2>
         <div className="text-slate-500">Data not available</div>
       </div>
@@ -281,11 +325,15 @@ function DuctingPanel({ ducting }: { ducting: DuctingStatus | null }) {
       <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
         <Wind size={14} />
         Tropospheric Ducting
+        <InfoButton info="Atmospheric conditions that trap VHF/UHF signals, allowing propagation far beyond normal line-of-sight. Ducting can extend 900 MHz Meshtastic range significantly. Surface ducts form near the ground; elevated ducts form aloft." />
       </h2>
 
       {/* Condition */}
       <div className="bg-bg-hover rounded-lg p-4 mb-4">
-        <div className="text-xs text-slate-500 mb-1">Condition</div>
+        <div className="text-xs text-slate-500 mb-1 flex items-center">
+          Condition
+          <InfoButton info="Normal: Standard refraction. Super-refraction: Signals bend more than normal, slightly extended range. Ducting: Signals trapped in atmospheric layer, significantly extended range possible." />
+        </div>
         <div className={`text-xl font-medium ${getConditionColor(ducting.condition)}`}>
           {formatCondition(ducting.condition)}
         </div>
