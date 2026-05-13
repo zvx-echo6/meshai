@@ -147,6 +147,37 @@ export interface EnvEvent {
   [key: string]: unknown
 }
 
+// Kp history entry for charting
+export interface KpHistoryEntry {
+  time: string
+  value: number
+}
+
+// SFI history entry for charting
+export interface SfiHistoryEntry {
+  time: string
+  value: number
+}
+
+// Refractivity profile entry
+export interface ProfileEntry {
+  level_hPa: number
+  height_m: number
+  N: number
+  M: number
+  T_C: number
+  RH: number
+}
+
+// Gradient entry
+export interface GradientEntry {
+  from_level: number
+  to_level: number
+  from_height_m: number
+  to_height_m: number
+  gradient: number
+}
+
 export interface SWPCStatus {
   enabled: boolean
   kp_current?: number
@@ -156,6 +187,8 @@ export interface SWPCStatus {
   s_scale?: number
   g_scale?: number
   active_warnings?: string[]
+  kp_history?: KpHistoryEntry[]
+  sfi_history?: SfiHistoryEntry[]
 }
 
 export interface DuctingStatus {
@@ -165,6 +198,10 @@ export interface DuctingStatus {
   duct_thickness_m?: number | null
   duct_base_m?: number | null
   last_update?: string
+  profile?: ProfileEntry[]
+  gradients?: GradientEntry[]
+  assessment?: string
+  location?: { lat: number; lon: number }
 }
 
 export interface RFPropagation {
@@ -175,11 +212,13 @@ export interface RFPropagation {
     s_scale?: number
     g_scale?: number
     active_warnings?: string[]
+    kp_history?: KpHistoryEntry[]
   }
   uhf_ducting: {
     condition?: string
     min_gradient?: number
     duct_thickness_m?: number | null
+    profile?: ProfileEntry[]
   }
 }
 

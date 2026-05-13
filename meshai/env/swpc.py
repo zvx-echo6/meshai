@@ -140,15 +140,36 @@ class SWPCAdapter:
         """Parse noaa-planetary-k-index.json.
 
         Data format: array of objects with time_tag, Kp, a_running, station_count
-        Last entry is most recent.
+        Last entry is most recent. Store full history for charting.
         """
         if not data:
             return
 
-        # Get last entry (most recent)
-        last_entry = data[-1]
+        # Store full history (last 24-48 hours of readings)
+        kp_history = []
+        for entry in data:
+            if isinstance(entry, dict):
+                try:
+                    kp_history.append({
+                        "time": entry.get("time_tag", ""),
+                        "value": float(entry.get("Kp", 0)),
+                    })
+                except (ValueError, TypeError):
+                    continue
+            elif isinstance(entry, list) and len(entry) > 1:
+                # Legacy array format fallback
+                try:
+                    kp_history.append({
+                        "time": entry[0] if len(entry) > 0 else "",
+                        "value": float(entry[1]),
+                    })
+                except (ValueError, TypeError):
+                    continue
 
-        # Handle both dict format (new API) and list format (legacy)
+        self._status["kp_history"] = kp_history
+
+        # Get last entry (most recent) for current value
+        last_entry = data[-1]
         if isinstance(last_entry, dict):
             try:
                 self._status["kp_current"] = float(last_entry.get("Kp", 0))
@@ -184,9 +205,25 @@ class SWPCAdapter:
         """Parse f107_cm_flux.json.
 
         Data format: array of objects with time_tag, flux
+        Store history for potential charting.
         """
         if not data:
             return
+
+        # Store SFI history (last 30 days of readings)
+        sfi_history = []
+        if isinstance(data, list):
+            for entry in data[-30:]:  # Last 30 entries
+                if isinstance(entry, dict):
+                    try:
+                        sfi_history.append({
+                            "time": entry.get("time_tag", ""),
+                            "value": float(entry.get("flux", 0)),
+                        })
+                    except (ValueError, TypeError):
+                        continue
+
+        self._status["sfi_history"] = sfi_history
 
         # Get most recent entry (last in list)
         if isinstance(data, list) and data:
