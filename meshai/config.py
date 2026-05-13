@@ -246,18 +246,22 @@ class AlertRulesConfig:
     battery_warning: bool = True
     battery_critical: bool = True
     battery_emergency: bool = True
-    battery_warning_threshold: int = 50
-    battery_critical_threshold: int = 25
-    battery_emergency_threshold: int = 10
+    battery_warning_threshold: int = 30
+    battery_critical_threshold: int = 15
+    battery_emergency_threshold: int = 5
+    # Voltage-based thresholds (more accurate than percentage)
+    battery_warning_voltage: float = 3.60
+    battery_critical_voltage: float = 3.50
+    battery_emergency_voltage: float = 3.40
     power_source_change: bool = True
     solar_not_charging: bool = True
 
     # Utilization
     sustained_high_util: bool = True
-    high_util_threshold: float = 20.0
+    high_util_threshold: float = 40.0
     high_util_hours: int = 6
     packet_flood: bool = True
-    packet_flood_threshold: int = 500
+    packet_flood_threshold: int = 10
 
     # Coverage
     infra_single_gateway: bool = True
@@ -266,7 +270,7 @@ class AlertRulesConfig:
 
     # Health Scores
     mesh_score_alert: bool = True
-    mesh_score_threshold: int = 70
+    mesh_score_threshold: int = 65
     region_score_alert: bool = True
     region_score_threshold: int = 60
 

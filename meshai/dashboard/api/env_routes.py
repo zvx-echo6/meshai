@@ -107,6 +107,7 @@ async def get_avalanche_data(request: Request):
         "advisories": env_store.get_active(source="avalanche"),
     }
 
+
 @router.get("/env/streams")
 async def get_streams_data(request: Request):
     """Get USGS stream gauge readings."""
@@ -116,6 +117,34 @@ async def get_streams_data(request: Request):
         return []
 
     return env_store.get_active(source="usgs")
+
+
+@router.get("/env/usgs/lookup/{site_id}")
+async def lookup_usgs_site(request: Request, site_id: str):
+    """Lookup USGS site metadata and NWS flood stages.
+
+    Returns site name, location, and flood stage thresholds from NWS NWPS.
+    Used by the config UI to auto-populate fields when adding a new gauge.
+    """
+    env_store = getattr(request.app.state, "env_store", None)
+
+    if not env_store:
+        return {"error": "Environmental feeds not enabled"}
+
+    adapters = getattr(env_store, "_adapters", {})
+    usgs_adapter = adapters.get("usgs")
+
+    if not usgs_adapter:
+        # Create a temporary adapter for lookup
+        from meshai.env.usgs import USGSStreamsAdapter
+        from meshai.config import USGSConfig
+        usgs_adapter = USGSStreamsAdapter(USGSConfig())
+
+    try:
+        result = usgs_adapter.lookup_site(site_id)
+        return result
+    except Exception as e:
+        return {"error": str(e), "site_id": site_id}
 
 
 @router.get("/env/traffic")
