@@ -758,11 +758,11 @@ export default function Reference() {
             <RefTable
               headers={['Estimated Airtime', 'Score', 'What It Means']}
               rows={[
-                ['Under 15%', '100', 'Channel is clear — this is the goal'],
-                ['15-20%', '75-100', 'Getting busy, but fine'],
-                ['20-25%', '50-75', 'Congested — firmware starts throttling GPS'],
-                ['25-35%', '25-50', 'Seriously congested — collisions happening'],
-                ['Over 35%', '0-25', 'Channel is overwhelmed'],
+                ['Under 20%', '100', 'Channel is clear — this is the goal'],
+                ['20-25%', '75-100', 'Slight degradation, occasional collisions'],
+                ['25-35%', '50-75', 'Severe degradation — firmware throttling active'],
+                ['35-45%', '25-50', 'Mesh struggling badly — reliability dropping'],
+                ['Over 45%', '0-25', 'Mesh is effectively dead'],
               ]}
             />
             <p>
