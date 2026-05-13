@@ -219,10 +219,47 @@ class NotificationRouter:
         return self._rules
 
     async def test_rule(self, rule_index: int) -> tuple[bool, str]:
-        """Send a test alert through a specific rule."""
+        """Send a test alert through a specific rule (legacy method)."""
+        result = await self.test_rule_with_conditions(rule_index, send=True)
+        return result.get("delivered", False), result.get("delivery_result", "Unknown")
+
+    async def test_rule_with_conditions(
+        self,
+        rule_index: int,
+        alert_engine=None,
+        env_store=None,
+        send: bool = False,
+    ) -> dict:
+        """Test a rule against current conditions.
+
+        Args:
+            rule_index: Index of the rule to test
+            alert_engine: AlertEngine instance for pending alerts
+            env_store: EnvStore instance for environmental events
+            send: Whether to actually deliver (True) or just preview (False)
+
+        Returns:
+            {
+                "conditions_matched": int,
+                "preview_messages": list[str],
+                "is_example": bool,
+                "delivered": bool,
+                "delivery_method": str,
+                "delivery_result": str,
+            }
+        """
+        from .categories import get_category
+
         rules_config = getattr(self._config, "rules", [])
         if rule_index < 0 or rule_index >= len(rules_config):
-            return False, "Rule index out of range"
+            return {
+                "conditions_matched": 0,
+                "preview_messages": [],
+                "is_example": False,
+                "delivered": False,
+                "delivery_method": "",
+                "delivery_result": "Rule index out of range",
+            }
 
         rule = rules_config[rule_index]
         if hasattr(rule, "__dict__"):
@@ -230,15 +267,184 @@ class NotificationRouter:
         else:
             rule_dict = dict(rule)
 
-        # Check if delivery is configured
-        if not rule_dict.get("delivery_type"):
-            return False, "No delivery method configured for this rule"
+        rule_categories = rule_dict.get("categories", [])
+        min_severity = rule_dict.get("min_severity", "info")
+        delivery_type = rule_dict.get("delivery_type", "")
 
+        # Collect matching alerts from alert_engine
+        matching_alerts = []
+
+        if alert_engine and hasattr(alert_engine, "get_pending_alerts"):
+            try:
+                for alert in alert_engine.get_pending_alerts():
+                    category = alert.get("type", "")
+                    severity = alert.get("severity", "info")
+
+                    # Check category match
+                    if rule_categories and category not in rule_categories:
+                        continue
+
+                    # Check severity threshold
+                    if not self._severity_meets(severity, min_severity):
+                        continue
+
+                    matching_alerts.append(alert)
+            except Exception as e:
+                logger.warning("Error getting pending alerts: %s", e)
+
+        # Collect matching env events
+        if env_store and hasattr(env_store, "get_active"):
+            try:
+                # Map category prefixes to env sources
+                source_map = {
+                    "weather_": "nws",
+                    "fire_": "nifc",
+                    "wildfire_": "nifc",
+                    "new_ignition": "firms",
+                    "stream_": "usgs",
+                    "road_": "here",
+                    "traffic_": "here",
+                    "avalanche_": "avy",
+                    "hf_blackout": "swpc",
+                    "geomagnetic_": "swpc",
+                    "tropospheric_": "ducting",
+                }
+
+                # Get all active events
+                all_events = env_store.get_active()
+
+                for event in all_events:
+                    event_type = event.get("type", "")
+                    severity = event.get("severity", "info")
+
+                    # Try to match to a category
+                    matched_category = None
+                    for cat in rule_categories if rule_categories else list(source_map.keys()):
+                        if event_type.startswith(cat.rstrip("_")) or cat in event_type:
+                            matched_category = cat
+                            break
+
+                    if rule_categories and not matched_category:
+                        continue
+
+                    # Check severity
+                    if not self._severity_meets(severity, min_severity):
+                        continue
+
+                    # Convert to alert format
+                    matching_alerts.append({
+                        "type": event_type,
+                        "severity": severity,
+                        "message": event.get("message", event.get("summary", str(event))),
+                    })
+            except Exception as e:
+                logger.warning("Error getting env events: %s", e)
+
+        # Build preview messages
+        preview_messages = []
+        is_example = False
+
+        if matching_alerts:
+            # Use real alerts
+            for alert in matching_alerts[:5]:  # Limit to 5
+                msg = alert.get("message", "")
+                if len(msg) > 200 and delivery_type in ("mesh_broadcast", "mesh_dm"):
+                    # Truncate for mesh delivery preview
+                    msg = msg[:195] + "..."
+                preview_messages.append(msg)
+        else:
+            # No matches - use example messages
+            is_example = True
+            if rule_categories:
+                for cat_id in rule_categories[:3]:
+                    cat_info = get_category(cat_id)
+                    example = cat_info.get("example_message", f"Alert: {cat_id}")
+                    preview_messages.append(f"[EXAMPLE] {example}")
+            else:
+                # Rule matches all categories - show generic example
+                cat_info = get_category("infra_offline")
+                preview_messages.append(f"[EXAMPLE] {cat_info.get('example_message', 'Alert notification')}")
+
+        # Check if delivery is configured
+        if not delivery_type:
+            return {
+                "conditions_matched": len(matching_alerts),
+                "preview_messages": preview_messages,
+                "is_example": is_example,
+                "delivered": False,
+                "delivery_method": "",
+                "delivery_result": "No delivery method configured for this rule",
+            }
+
+        # Create channel
         channel = self._create_channel_for_rule(rule_dict)
         if not channel:
-            return False, "Failed to create delivery channel"
+            return {
+                "conditions_matched": len(matching_alerts),
+                "preview_messages": preview_messages,
+                "is_example": is_example,
+                "delivered": False,
+                "delivery_method": delivery_type,
+                "delivery_result": "Failed to create delivery channel",
+            }
 
-        return await channel.test()
+        # If not sending, just return preview
+        if not send:
+            return {
+                "conditions_matched": len(matching_alerts),
+                "preview_messages": preview_messages,
+                "is_example": is_example,
+                "delivered": False,
+                "delivery_method": delivery_type,
+                "delivery_result": "Preview only - use send=true to deliver",
+            }
+
+        # Actually send the test message
+        try:
+            # Pick the first message to send
+            if preview_messages:
+                test_message = preview_messages[0]
+                if not test_message.startswith("["):
+                    test_message = f"[TEST] {test_message}"
+                elif test_message.startswith("[EXAMPLE]"):
+                    test_message = test_message.replace("[EXAMPLE]", "[TEST]")
+            else:
+                test_message = "[TEST] MeshAI notification test"
+
+            # Send through channel with the real message
+            success = await channel.deliver_test(test_message)
+
+            if success:
+                delivery_result = f"Sent to {delivery_type}"
+                if delivery_type == "mesh_broadcast":
+                    delivery_result = f"Sent to channel {rule_dict.get('broadcast_channel', 0)}"
+                elif delivery_type == "mesh_dm":
+                    node_count = len(rule_dict.get("node_ids", []))
+                    delivery_result = f"Sent DM to {node_count} node(s)"
+                elif delivery_type == "email":
+                    recipient_count = len(rule_dict.get("recipients", []))
+                    delivery_result = f"Sent to {recipient_count} recipient(s)"
+            else:
+                delivery_result = "Delivery failed"
+
+            return {
+                "conditions_matched": len(matching_alerts),
+                "preview_messages": preview_messages,
+                "is_example": is_example,
+                "delivered": success,
+                "delivery_method": delivery_type,
+                "delivery_result": delivery_result,
+            }
+        except Exception as e:
+            logger.warning("Test delivery failed: %s", e)
+            return {
+                "conditions_matched": len(matching_alerts),
+                "preview_messages": preview_messages,
+                "is_example": is_example,
+                "delivered": False,
+                "delivery_method": delivery_type,
+                "delivery_result": f"Delivery error: {e}",
+            }
 
     async def preview_rule(self, rule_index: int) -> dict:
         """Preview what a rule would match right now.

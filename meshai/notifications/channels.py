@@ -272,6 +272,15 @@ class WebhookChannel(NotificationChannel):
         success = await self.deliver(test_alert, {})
         if success:
             return True, "Test sent to %s" % self._url
+
+    async def deliver_test(self, message: str) -> bool:
+        """Deliver a specific test message via webhook."""
+        try:
+            test_alert = {"type": "test", "severity": "info", "message": message}
+            return await self.deliver(test_alert, {})
+        except Exception as e:
+            logger.warning("Webhook test failed: %s", e)
+            return False
         return False, "Webhook failed"
 
 

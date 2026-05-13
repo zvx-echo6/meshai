@@ -1098,7 +1098,17 @@ export default function Notifications() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [testResult, setTestResult] = useState<{
+    success?: boolean;
+    message?: string;
+    conditions_matched?: number;
+    preview_messages?: string[];
+    is_example?: boolean;
+    delivered?: boolean;
+    delivery_method?: string;
+    delivery_result?: string;
+  } | null>(null)
+  const [testDialog, setTestDialog] = useState<{ open: boolean; ruleIndex: number; loading: boolean }>({ open: false, ruleIndex: -1, loading: false })
   const [showTemplates, setShowTemplates] = useState(false)
   const [hasChanges, setHasChanges] = useState(false)
 
@@ -1223,15 +1233,44 @@ export default function Notifications() {
   }
 
   const testRule = async (index: number) => {
+    // Open dialog and show preview first
+    setTestDialog({ open: true, ruleIndex: index, loading: true })
     try {
-      const res = await fetch(`/api/notifications/rules/${index}/test`, { method: 'POST' })
+      const res = await fetch(`/api/notifications/rules/${index}/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ send: false })  // Preview only
+      })
       const result = await res.json()
       setTestResult(result)
-      setTimeout(() => setTestResult(null), 5000)
+      setTestDialog(d => ({ ...d, loading: false }))
     } catch {
-      setTestResult({ success: false, message: 'Test failed' })
-      setTimeout(() => setTestResult(null), 5000)
+      setTestResult({ success: false, message: 'Failed to get preview' })
+      setTestDialog(d => ({ ...d, loading: false }))
     }
+  }
+
+  const sendTest = async () => {
+    const index = testDialog.ruleIndex
+    setTestDialog(d => ({ ...d, loading: true }))
+    try {
+      const res = await fetch(`/api/notifications/rules/${index}/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ send: true })  // Actually send
+      })
+      const result = await res.json()
+      setTestResult(result)
+      setTestDialog(d => ({ ...d, loading: false }))
+    } catch {
+      setTestResult({ success: false, message: 'Failed to send test' })
+      setTestDialog(d => ({ ...d, loading: false }))
+    }
+  }
+
+  const closeTestDialog = () => {
+    setTestDialog({ open: false, ruleIndex: -1, loading: false })
+    setTestResult(null)
   }
 
   if (loading) {
@@ -1252,6 +1291,85 @@ export default function Notifications() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
+      {/* Test Dialog */}
+      {testDialog.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-[#1a2332] border border-[#2a3a4a] rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-[80vh] overflow-auto">
+            <div className="p-4 border-b border-[#2a3a4a] flex items-center justify-between">
+              <h3 className="text-lg font-semibold">Test Notification Rule</h3>
+              <button onClick={closeTestDialog} className="text-slate-500 hover:text-slate-300">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              {testDialog.loading ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="text-slate-400">Checking conditions...</div>
+                </div>
+              ) : testResult ? (
+                <>
+                  {/* Conditions summary */}
+                  <div className="flex items-center gap-2">
+                    {testResult.conditions_matched && testResult.conditions_matched > 0 ? (
+                      <span className="px-2 py-1 bg-green-500/20 text-green-400 rounded text-sm">
+                        {testResult.conditions_matched} condition{testResult.conditions_matched !== 1 ? 's' : ''} match
+                      </span>
+                    ) : (
+                      <span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded text-sm">
+                        No current matches — showing examples
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Preview messages */}
+                  <div className="space-y-2">
+                    <div className="text-sm text-slate-500">
+                      {testResult.is_example ? 'Example messages:' : 'Current alerts that would fire:'}
+                    </div>
+                    {testResult.preview_messages?.map((msg, i) => (
+                      <div key={i} className="p-3 bg-slate-800 rounded text-sm font-mono break-words">
+                        {msg}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Delivery result */}
+                  {testResult.delivered && (
+                    <div className="p-3 bg-green-500/10 border border-green-500/30 rounded text-green-400 text-sm">
+                      ✓ {testResult.delivery_result}
+                    </div>
+                  )}
+
+                  {/* Legacy format support */}
+                  {testResult.message && !testResult.preview_messages && (
+                    <div className={`p-3 rounded text-sm ${testResult.success ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                      {testResult.message}
+                    </div>
+                  )}
+                </>
+              ) : null}
+            </div>
+            <div className="p-4 border-t border-[#2a3a4a] flex justify-end gap-2">
+              <button
+                onClick={closeTestDialog}
+                className="px-4 py-2 text-slate-400 hover:text-slate-200"
+              >
+                Close
+              </button>
+              {testResult && !testResult.delivered && testResult.delivery_method && (
+                <button
+                  onClick={sendTest}
+                  disabled={testDialog.loading}
+                  className="px-4 py-2 bg-accent hover:bg-accent/80 rounded disabled:opacity-50"
+                >
+                  {testDialog.loading ? 'Sending...' : 'Send Test'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
