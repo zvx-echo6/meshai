@@ -746,27 +746,32 @@ export default function Reference() {
 
             <SubHeader>Utilization (25%)</SubHeader>
             <p>
-              Estimates how much of the radio channel's airtime is being used. MeshAI can't measure airtime directly, so it estimates based on packet counts over the last 24 hours.
-            </p>
-            <p className="p-3 bg-slate-800 rounded font-mono text-sm">
-              packets_per_hour = non_text_packets ÷ 24<br/>
-              airtime_estimate = (packets_per_hour × 200ms) ÷ 3,600,000ms × 100%
+              MeshAI reads the channel utilization that each router reports in its telemetry — this is the firmware's own measurement of how busy the radio channel is. MeshAI uses the <strong>highest</strong> value from any infrastructure node because the busiest router is the bottleneck for the whole mesh.
             </p>
             <p>
-              The 200ms is an approximation for the MediumFast radio preset — each LoRa packet takes roughly 200ms of airtime. Text messages don't count toward utilization (chatting is the point of a mesh).
+              <strong>How it works:</strong>
+            </p>
+            <ol className="list-decimal list-inside space-y-1 ml-4">
+              <li>Collect <Mono>channel_utilization</Mono> from all infrastructure nodes that report it</li>
+              <li>If no infra nodes have telemetry, try all nodes</li>
+              <li>Use the <strong>maximum</strong> value for scoring (busiest node = bottleneck)</li>
+              <li>If no nodes report utilization (older firmware), fall back to packet count estimate</li>
+            </ol>
+            <p className="mt-4">
+              <strong>Fallback method</strong> (when telemetry unavailable): estimates from packet counts using 200ms/packet airtime. This is less accurate — it assumes MediumFast preset and sums packets across all nodes.
             </p>
             <RefTable
-              headers={['Estimated Airtime', 'Score', 'What It Means']}
+              headers={['Channel Utilization', 'Score', 'What It Means']}
               rows={[
                 ['Under 20%', '100', 'Channel is clear — this is the goal'],
                 ['20-25%', '75-100', 'Slight degradation, occasional collisions'],
                 ['25-35%', '50-75', 'Severe degradation — firmware throttling active'],
                 ['35-45%', '25-50', 'Mesh struggling badly — reliability dropping'],
-                ['Over 45%', '0-25', 'Mesh is effectively dead'],
+                ['Over 45%', '0-25', 'Mesh is effectively unusable'],
               ]}
             />
             <p>
-              <strong>Special case:</strong> If MeshAI doesn't have packet data (no sources reporting packet counts), this pillar scores 100. You're not penalized for missing data.
+              <strong>Special case:</strong> If no utilization data is available (no telemetry and no packet data), this pillar scores 100. You're not penalized for missing data.
             </p>
 
             <SubHeader>Coverage (20%)</SubHeader>
