@@ -226,56 +226,67 @@ notifications:
   enabled: false
   quiet_hours_start: "22:00"   # Suppress non-emergency alerts during quiet hours
   quiet_hours_end: "06:00"
-  dedup_seconds: 600           # Don't resend same alert within this window
 
-  # Notification channels
-  channels:
-    # Mesh broadcast - posts to mesh channel
-    - id: "mesh-channel"
-      type: mesh_broadcast
+  # Notification rules - each rule is self-contained with its own delivery config
+  rules:
+    # All emergencies -> mesh broadcast
+    - name: "Emergency Broadcast"
       enabled: true
-      channel_index: 0         # Mesh channel to broadcast on
+      trigger_type: condition
+      categories: []           # Empty = all categories
+      min_severity: "emergency"
+      delivery_type: mesh_broadcast
+      broadcast_channel: 0
+      cooldown_minutes: 5
+      override_quiet: true     # Send even during quiet hours
 
-    # Example: Email channel (uncomment to enable)
-    # - id: "email-admin"
-    #   type: email
+    # Example: Fire alerts -> email
+    # - name: "Fire Alerts Email"
+    #   enabled: true
+    #   trigger_type: condition
+    #   categories: ["wildfire_proximity", "new_ignition"]
+    #   min_severity: "advisory"
+    #   delivery_type: email
     #   smtp_host: "smtp.gmail.com"
     #   smtp_port: 587
     #   smtp_user: "you@gmail.com"
-    #   smtp_password: "${SMTP_PASSWORD}"  # Use env var
+    #   smtp_password: "${SMTP_PASSWORD}"
     #   smtp_tls: true
     #   from_address: "meshai@yourdomain.com"
     #   recipients: ["admin@yourdomain.com"]
+    #   cooldown_minutes: 30
 
-    # Example: Webhook (Discord, Slack, ntfy, Home Assistant)
-    # - id: "discord-alerts"
-    #   type: webhook
-    #   url: "https://discord.com/api/webhooks/..."
-
-    # - id: "ntfy-alerts"
-    #   type: webhook
-    #   url: "https://ntfy.sh/your-topic"
-
-  # Notification rules - match alerts to channels
-  rules:
-    # All emergencies -> mesh broadcast
-    - name: "emergencies"
-      categories: []           # Empty = all categories
-      min_severity: "emergency"
-      channel_ids: ["mesh-channel"]
-      override_quiet: true     # Send even during quiet hours
-
-    # Example: Fire alerts at any severity
-    # - name: "fire-alerts"
-    #   categories: ["wildfire_proximity", "new_ignition"]
-    #   min_severity: "advisory"
-    #   channel_ids: ["mesh-channel", "email-admin"]
-
-    # Example: Infrastructure alerts
-    # - name: "infra-alerts"
-    #   categories: ["infra_offline", "critical_node_down", "battery_emergency"]
+    # Example: All warnings -> Discord webhook
+    # - name: "Discord Alerts"
+    #   enabled: true
+    #   trigger_type: condition
+    #   categories: []
     #   min_severity: "warning"
-    #   channel_ids: ["mesh-channel"]
+    #   delivery_type: webhook
+    #   webhook_url: "https://discord.com/api/webhooks/..."
+    #   cooldown_minutes: 10
+
+    # Example: Daily health report -> mesh broadcast
+    # - name: "Morning Briefing"
+    #   enabled: true
+    #   trigger_type: schedule
+    #   schedule_frequency: daily
+    #   schedule_time: "07:00"
+    #   message_type: mesh_health_summary
+    #   delivery_type: mesh_broadcast
+    #   broadcast_channel: 0
+
+    # Example: Weekly digest -> email
+    # - name: "Weekly Digest"
+    #   enabled: true
+    #   trigger_type: schedule
+    #   schedule_frequency: weekly
+    #   schedule_days: ["monday"]
+    #   schedule_time: "08:00"
+    #   message_type: alerts_digest
+    #   delivery_type: email
+    #   smtp_host: "smtp.gmail.com"
+    #   recipients: ["admin@example.com"]
 
 # === WEB DASHBOARD ===
 dashboard:

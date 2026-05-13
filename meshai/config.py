@@ -425,14 +425,38 @@ class EnvironmentalConfig:
 
 
 @dataclass
-class NotificationChannelConfig:
-    """Configuration for a notification channel."""
+class NotificationRuleConfig:
+    """Self-contained notification rule with inline delivery config."""
 
-    id: str = ""
-    type: str = ""
+    name: str = ""
     enabled: bool = True
-    channel_index: int = 0
+
+    # Trigger type
+    trigger_type: str = "condition"  # "condition" or "schedule"
+
+    # Condition trigger fields
+    categories: list = field(default_factory=list)  # Empty = all categories
+    min_severity: str = "warning"
+
+    # Schedule trigger fields
+    schedule_frequency: str = "daily"  # daily, twice_daily, weekly, custom
+    schedule_time: str = "07:00"
+    schedule_time_2: str = "19:00"  # For twice_daily
+    schedule_days: list = field(default_factory=list)  # For weekly
+    schedule_cron: str = ""  # For custom
+    message_type: str = "mesh_health_summary"
+    custom_message: str = ""
+
+    # Delivery type
+    delivery_type: str = "mesh_broadcast"  # mesh_broadcast, mesh_dm, email, webhook
+
+    # Mesh broadcast fields
+    broadcast_channel: int = 0
+
+    # Mesh DM fields
     node_ids: list = field(default_factory=list)
+
+    # Email fields
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
@@ -440,19 +464,17 @@ class NotificationChannelConfig:
     smtp_tls: bool = True
     from_address: str = ""
     recipients: list = field(default_factory=list)
-    url: str = ""
-    headers: dict = field(default_factory=dict)
 
+    # Webhook fields
+    webhook_url: str = ""
+    webhook_headers: dict = field(default_factory=dict)
 
-@dataclass
-class NotificationRuleConfig:
-    """Configuration for a notification rule."""
-
-    name: str = ""
-    categories: list = field(default_factory=list)
-    min_severity: str = "warning"
-    channel_ids: list = field(default_factory=list)
+    # Behavior
+    cooldown_minutes: int = 10
     override_quiet: bool = False
+
+    # Legacy field for migration (ignored in new format)
+    channel_ids: list = field(default_factory=list)
 
 
 @dataclass
@@ -462,9 +484,7 @@ class NotificationsConfig:
     enabled: bool = False
     quiet_hours_start: str = "22:00"
     quiet_hours_end: str = "06:00"
-    dedup_seconds: int = 600
-    channels: list = field(default_factory=list)
-    rules: list = field(default_factory=list)
+    rules: list = field(default_factory=list)  # List of NotificationRuleConfig
 
 @dataclass
 class DashboardConfig:
@@ -513,6 +533,69 @@ class Config:
             if value := os.environ.get(env_var):
                 return value
         return ""
+
+
+def _migrate_legacy_channels(notifications, data: dict):
+    """Migrate legacy channels+rules format to self-contained rules."""
+    old_channels = data.get("channels", [])
+    old_rules = data.get("rules", [])
+
+    if not old_channels:
+        return
+
+    _config_logger.info("Migrating %d legacy notification channels to inline rules", len(old_channels))
+
+    # Build channel lookup
+    channel_map = {}
+    for ch in old_channels:
+        if isinstance(ch, dict):
+            channel_map[ch.get("id", "")] = ch
+
+    # Convert each old rule + referenced channels to new format
+    migrated_rules = []
+    for old_rule in old_rules:
+        if not isinstance(old_rule, dict):
+            continue
+
+        channel_ids = old_rule.get("channel_ids", [])
+        if not channel_ids:
+            continue
+
+        for ch_id in channel_ids:
+            ch = channel_map.get(ch_id)
+            if not ch:
+                continue
+
+            # Create new rule with inline delivery config
+            new_rule = NotificationRuleConfig(
+                name=old_rule.get("name", "") or ch_id,
+                enabled=ch.get("enabled", True),
+                trigger_type="condition",
+                categories=old_rule.get("categories", []),
+                min_severity=old_rule.get("min_severity", "warning"),
+                delivery_type=ch.get("type", "mesh_broadcast"),
+                broadcast_channel=ch.get("channel_index", 0),
+                node_ids=ch.get("node_ids", []),
+                smtp_host=ch.get("smtp_host", ""),
+                smtp_port=ch.get("smtp_port", 587),
+                smtp_user=ch.get("smtp_user", ""),
+                smtp_password=ch.get("smtp_password", ""),
+                smtp_tls=ch.get("smtp_tls", True),
+                from_address=ch.get("from_address", ""),
+                recipients=ch.get("recipients", []),
+                webhook_url=ch.get("url", ""),
+                webhook_headers=ch.get("headers", {}),
+                cooldown_minutes=10,
+                override_quiet=old_rule.get("override_quiet", False),
+            )
+            migrated_rules.append(new_rule)
+
+    # Replace rules with migrated ones (migrated rules come first, then any new-format rules)
+    if migrated_rules:
+        # Keep only non-migrated rules (those without channel_ids)
+        existing_new_rules = [r for r in notifications.rules if not getattr(r, 'channel_ids', [])]
+        notifications.rules = migrated_rules + existing_new_rules
+        _config_logger.info("Migrated to %d self-contained rules", len(notifications.rules))
 
 
 def _dict_to_dataclass(cls, data: dict):
@@ -574,10 +657,11 @@ def _dict_to_dataclass(cls, data: dict):
             kwargs[key] = _dict_to_dataclass(DashboardConfig, value)
         elif key == "notifications" and isinstance(value, dict):
             notifications = _dict_to_dataclass(NotificationsConfig, value)
-            if "channels" in value and isinstance(value["channels"], list):
-                notifications.channels = [_dict_to_dataclass(NotificationChannelConfig, c) if isinstance(c, dict) else c for c in value["channels"]]
             if "rules" in value and isinstance(value["rules"], list):
                 notifications.rules = [_dict_to_dataclass(NotificationRuleConfig, r) if isinstance(r, dict) else r for r in value["rules"]]
+            # Migrate old channels+rules format if present
+            if "channels" in value and isinstance(value["channels"], list) and value["channels"]:
+                _migrate_legacy_channels(notifications, value)
             kwargs[key] = notifications
         else:
             kwargs[key] = value
