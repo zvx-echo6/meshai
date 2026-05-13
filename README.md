@@ -58,6 +58,14 @@ docker compose up -d
 | `!clear` | Clear conversation history |
 | `!help` | Show available commands |
 | `!help [cmd]` | Detailed help for a command |
+| `!quakes` | Recent earthquakes in monitored area |
+| `!fires` | Active wildfires from NIFC |
+| `!hotspots` | NASA FIRMS satellite fire detections |
+| `!hotspots --new` | Only hotspots not matching known fires |
+| `!traffic` | Traffic incidents from TomTom |
+| `!space` | Space weather conditions (solar/geomagnetic) |
+| `!water` | USGS stream gauge readings |
+| `!air` | Air quality index |
 
 Commands can be disabled in config if another service (like MeshMonitor) handles them.
 
@@ -121,6 +129,136 @@ mesh_intelligence:
       lon: -114.5
       radius_km: 80
 ```
+
+## Environmental Feeds
+
+MeshAI integrates real-time environmental data for situational awareness beyond mesh network health.
+
+### USGS Earthquake Monitoring
+
+```yaml
+env:
+  usgs:
+    enabled: true
+    min_magnitude: 2.5
+    radius_km: 500
+    center_lat: 43.6150
+    center_lon: -116.2023
+```
+
+No API key required. Data from [USGS Earthquake Hazards Program](https://earthquake.usgs.gov/fdsnws/event/1/).
+
+### NWS Weather Alerts
+
+```yaml
+env:
+  nws:
+    enabled: true
+    zone: IDZ025         # NWS zone ID
+    point: "43.6150,-116.2023"
+```
+
+No API key required. Find your zone at [NWS Zone Lookup](https://alerts.weather.gov/).
+
+### NOAA Space Weather
+
+```yaml
+env:
+  noaa_space:
+    enabled: true
+```
+
+No API key required. Data from [NOAA SWPC](https://services.swpc.noaa.gov/).
+
+### NIFC Wildfire Perimeters
+
+```yaml
+env:
+  nifc:
+    enabled: true
+    radius_km: 200
+    center_lat: 43.6150
+    center_lon: -116.2023
+```
+
+No API key required. Data from [NIFC Open Data](https://data-nifc.opendata.arcgis.com/).
+
+### NASA FIRMS Satellite Fire Detection
+
+```yaml
+env:
+  firms:
+    enabled: true
+    map_key: "your-map-key"    # Required
+    radius_km: 200
+    center_lat: 43.6150
+    center_lon: -116.2023
+    source: VIIRS_SNPP         # VIIRS_SNPP, VIIRS_NOAA20, MODIS_NRT
+    day_range: 1               # 1, 2, or 10 days
+```
+
+**API Key Required**: Register at [NASA FIRMS](https://firms.modaps.eosdis.nasa.gov/api/area/). Free MAP_KEY provides access to near real-time satellite fire detections. Hotspots are cross-referenced against NIFC perimeters to identify potential new ignitions.
+
+### TomTom Traffic
+
+```yaml
+env:
+  tomtom:
+    enabled: true
+    api_key: "your-api-key"    # Required
+    bbox: "-117.5,42.5,-115.0,44.5"  # lon1,lat1,lon2,lat2
+```
+
+**API Key Required**: Register at [TomTom Developer Portal](https://developer.tomtom.com/). Free tier includes 2,500 requests/day.
+
+### 511 Road Conditions
+
+```yaml
+env:
+  fiveonone:
+    enabled: true
+    state: ID                  # State code
+    api_key: "your-api-key"    # If required by state
+    bbox: [-117.5, 42.5, -115.0, 44.5]
+```
+
+API key requirements vary by state. Check your state's 511 developer portal.
+
+### USGS Water Services
+
+```yaml
+env:
+  usgs_water:
+    enabled: true
+    sites: ["13206000", "13202000"]  # USGS site numbers
+```
+
+No API key required. Find sites at [USGS Water Services](https://waterservices.usgs.gov/).
+
+### AirNow Air Quality
+
+```yaml
+env:
+  airnow:
+    enabled: true
+    api_key: "your-api-key"    # Required
+    zipcode: "83702"
+```
+
+**API Key Required**: Register at [AirNow API](https://docs.airnowapi.org/).
+
+### Dashboard Configuration
+
+```yaml
+dashboard:
+  enabled: true
+  host: 0.0.0.0
+  port: 8080
+```
+
+The web dashboard provides real-time visualization of mesh nodes, environmental conditions, and alerts with WebSocket push notifications.
+
+---
 
 ## Data Sources
 
@@ -266,6 +404,53 @@ Requires `sqlite-vec` and `fastembed` for the SQLite backend.
     │ bge-m3  │          │ hybrid  │
     │ cortex  │          │ cortex  │
     └─────────┘          └─────────┘
+```
+
+## Dashboard API Reference
+
+The dashboard exposes a REST API (default port 8080):
+
+### Core Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/health` | GET | System health check |
+| `/api/status` | GET | Full system status with health scores |
+| `/api/nodes` | GET | Connected mesh nodes |
+| `/api/messages` | GET | Recent mesh messages |
+
+### Environmental Data
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/env/earthquakes` | GET | Recent earthquakes |
+| `/api/env/weather` | GET | Weather conditions and alerts |
+| `/api/env/fires` | GET | Active wildfires from NIFC |
+| `/api/env/hotspots` | GET | NASA FIRMS satellite detections |
+| `/api/env/traffic` | GET | Traffic incidents |
+| `/api/env/water` | GET | Stream gauge readings |
+| `/api/env/space` | GET | Space weather data |
+| `/api/env/air` | GET | Air quality readings |
+
+### Alerts
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/alerts/active` | GET | Currently active alerts |
+| `/api/alerts/history` | GET | Historical alerts (`?severity=`, `?source=`, `?limit=`, `?offset=`) |
+| `/api/alerts/{id}/ack` | POST | Acknowledge an alert |
+| `/api/subscriptions` | GET | Alert subscriptions |
+
+### WebSocket
+
+Connect to `/ws` for real-time updates:
+
+```javascript
+const ws = new WebSocket('ws://localhost:8080/ws');
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  // data.type: 'message', 'alert', 'node_update', 'health_update'
+};
 ```
 
 ## Message Chunking
