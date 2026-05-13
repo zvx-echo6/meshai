@@ -113,6 +113,7 @@ async def start_dashboard(meshai_instance: "MeshAI") -> DashboardBroadcaster:
     app.state.env_store = getattr(meshai_instance, "env_store", None)
     app.state.subscription_manager = meshai_instance.subscription_manager
     app.state.notification_router = getattr(meshai_instance, "notification_router", None)
+    app.state.connector = meshai_instance.connector
 
     # Create broadcaster and attach to app state
     broadcaster = DashboardBroadcaster()

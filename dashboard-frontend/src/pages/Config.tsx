@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
+import NodePicker from '@/components/NodePicker'
+import ChannelPicker from '@/components/ChannelPicker'
 import {
   Settings, Bot, Wifi, MessageSquare, Database, Brain, Eye,
   Terminal, Cpu, Cloud, Radio, BookOpen, Layers, Activity,
@@ -882,18 +884,19 @@ function ContextSection({ data, onChange }: { data: ContextConfig; onChange: (d:
       />
       {data.enabled && (
         <>
-          <NumberListInput
+          <ChannelPicker
             label="Observe Channels"
             value={data.observe_channels}
             onChange={(v) => onChange({ ...data, observe_channels: v })}
-            helper="Channel indexes to monitor (empty = all)"
-            info="Meshtastic channel numbers to listen on. Channel 0 is the default primary channel. Leave empty to monitor all channels."
+            helper="Channels to monitor (empty = all)"
+            info="Meshtastic channels to listen on. Leave empty to monitor all channels."
+            mode="multi"
           />
-          <ListInput
+          <NodePicker
             label="Ignore Nodes"
             value={data.ignore_nodes}
             onChange={(v) => onChange({ ...data, ignore_nodes: v })}
-            helper="Node IDs to exclude from context"
+            helper="Nodes to exclude from context"
             info="Messages from these nodes won't be included in passive context. Useful for filtering out noisy automated nodes."
           />
           <div className="grid grid-cols-2 gap-4">
@@ -1439,22 +1442,24 @@ function MeshIntelligenceSection({ data, onChange }: { data: MeshIntelligenceCon
             />
           </div>
 
-          <ListInput
+          <NodePicker
             label="Critical Nodes"
             value={data.critical_nodes}
             onChange={(v) => onChange({ ...data, critical_nodes: v })}
-            helper="Short names of critical infrastructure"
-            info="Nodes that get priority alerting when they go offline. Use the node's short name (e.g., MHR, HPR)."
+            helper="Critical infrastructure nodes"
+            info="Nodes that get priority alerting when they go offline."
+            roleFilter="infrastructure"
           />
 
           <div className="grid grid-cols-2 gap-4">
-            <NumberInput
+            <ChannelPicker
               label="Alert Channel"
               value={data.alert_channel}
               onChange={(v) => onChange({ ...data, alert_channel: v })}
-              min={-1}
-              helper="-1 = disabled"
-              info="Meshtastic channel number for broadcast alerts. Set to -1 to disable channel broadcasting."
+              helper="Channel for broadcast alerts"
+              info="Meshtastic channel for broadcast alerts. Select Disabled to turn off channel broadcasting."
+              mode="single"
+              includeDisabled
             />
             <NumberInput
               label="Alert Cooldown (min)"

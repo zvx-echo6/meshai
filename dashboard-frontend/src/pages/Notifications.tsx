@@ -3,6 +3,8 @@ import {
   Save, RotateCcw, RefreshCw, Plus, Trash2, ChevronDown, ChevronRight,
   Check, X, Eye as EyeIcon, EyeOff, ExternalLink, Send
 } from 'lucide-react'
+import ChannelPicker from '@/components/ChannelPicker'
+import NodePicker from '@/components/NodePicker'
 
 // Types
 interface NotificationChannelConfig {
@@ -375,24 +377,24 @@ function NotificationChannelCard({
           />
 
           {channel.type === 'mesh_broadcast' && (
-            <NumberInput
-              label="Channel Index"
+            <ChannelPicker
+              label="Broadcast Channel"
               value={channel.channel_index}
               onChange={(v) => onChange({ ...channel, channel_index: v })}
-              min={0}
-              max={7}
-              helper="Mesh channel number (0-7)"
-              info="The mesh channel to broadcast alerts on. Channel 0 is typically the default channel."
+              helper="Channel for broadcast alerts"
+              info="The mesh channel to broadcast alerts on."
+              mode="single"
             />
           )}
 
           {channel.type === 'mesh_dm' && (
-            <ListInput
-              label="Node IDs"
+            <NodePicker
+              label="Recipient Nodes"
               value={channel.node_ids}
               onChange={(v) => onChange({ ...channel, node_ids: v })}
-              helper="Node IDs to receive DM alerts"
-              info="Node IDs that receive direct message alerts. Enter the full node ID (e.g., '!a1b2c3d4') for each recipient."
+              helper="Nodes to receive DM alerts"
+              info="Nodes that receive direct message alerts."
+              valueType="node_id_hex"
             />
           )}
 

@@ -26,6 +26,13 @@ import {
   type AlertHistoryItem,
   type Subscription,
 } from '@/lib/api'
+
+interface Node {
+  node_num: number
+  node_id_hex: string
+  short_name: string
+  long_name: string
+}
 import { useWebSocket } from '@/hooks/useWebSocket'
 
 // Alert type icons mapping
@@ -308,7 +315,20 @@ function AlertHistoryTable({
 }
 
 // Subscription Card Component
-function SubscriptionCard({ subscription }: { subscription: Subscription }) {
+function SubscriptionCard({ subscription, nodes }: { subscription: Subscription; nodes: Node[] }) {
+  const resolveNodeName = (userId: string): string => {
+    const node = nodes.find(n =>
+      n.node_id_hex === userId ||
+      String(n.node_num) === userId ||
+      n.short_name === userId
+    )
+    if (node) {
+      return node.long_name && node.long_name !== node.short_name
+        ? `${node.short_name} (${node.long_name})`
+        : node.short_name
+    }
+    return userId
+  }
   const formatSchedule = () => {
     if (subscription.sub_type === 'alerts') {
       return 'Real-time'
@@ -356,7 +376,7 @@ function SubscriptionCard({ subscription }: { subscription: Subscription }) {
             )}
           </div>
           <div className="text-xs text-slate-500 mt-0.5">
-            {formatSchedule()} • Node {subscription.user_id}
+            {formatSchedule()} • {resolveNodeName(subscription.user_id)}
           </div>
         </div>
         <div className={`w-2 h-2 rounded-full ${subscription.enabled ? 'bg-green-500' : 'bg-slate-500'}`} />
@@ -369,6 +389,7 @@ export default function Alerts() {
   const [activeAlerts, setActiveAlerts] = useState<Alert[]>([])
   const [history, setHistory] = useState<AlertHistoryItem[]>([])
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([])
+  const [nodes, setNodes] = useState<Node[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -395,8 +416,9 @@ export default function Alerts() {
       fetchAlerts().catch(() => []),
       fetchAlertHistory(pageSize, 0).catch(() => ({ items: [], total: 0 })),
       fetchSubscriptions().catch(() => []),
+      fetch('/api/nodes').then(r => r.json()).catch(() => []),
     ])
-      .then(([alerts, historyData, subs]) => {
+      .then(([alerts, historyData, subs, nodeData]) => {
         setActiveAlerts(alerts)
         if (Array.isArray(historyData)) {
           setHistory(historyData)
@@ -406,6 +428,7 @@ export default function Alerts() {
           setTotalPages(Math.ceil((historyData.total || 0) / pageSize))
         }
         setSubscriptions(subs)
+        setNodes(nodeData)
         setLoading(false)
       })
       .catch((err) => {
@@ -532,7 +555,7 @@ export default function Alerts() {
         {subscriptions.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {subscriptions.map((sub) => (
-              <SubscriptionCard key={sub.id} subscription={sub} />
+              <SubscriptionCard key={sub.id} subscription={sub} nodes={nodes} />
             ))}
           </div>
         ) : (
