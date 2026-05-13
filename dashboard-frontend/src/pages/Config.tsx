@@ -2224,7 +2224,7 @@ export default function Config() {
   }, [])
 
   useEffect(() => {
-    document.title = 'Config â€” MeshAI'
+    document.title = 'Config — MeshAI'
     fetchConfig()
   }, [fetchConfig])
 
