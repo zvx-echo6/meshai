@@ -7,6 +7,7 @@ import {
   Settings,
   Bell,
   BellRing,
+  BookOpen,
 } from 'lucide-react'
 import { fetchStatus, type SystemStatus } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
@@ -23,6 +24,7 @@ const navItems = [
   { path: '/config', label: 'Config', icon: Settings },
   { path: '/alerts', label: 'Alerts', icon: Bell },
   { path: '/notifications', label: 'Notifications', icon: BellRing },
+  { path: '/reference', label: 'Reference', icon: BookOpen },
 ]
 
 function formatUptime(seconds: number): string {

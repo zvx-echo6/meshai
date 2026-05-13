@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Save, RotateCcw, RefreshCw, Plus, Trash2, ChevronDown, ChevronRight,
   Check, X, Eye as EyeIcon, EyeOff, Send, Clock, Zap,
-  Calendar, AlertTriangle, Copy, Moon, AlertCircle
+  Calendar, AlertTriangle, Copy, Moon, AlertCircle, Layers
 } from 'lucide-react'
 import ChannelPicker from '@/components/ChannelPicker'
 import NodePicker from '@/components/NodePicker'
@@ -85,6 +85,203 @@ const SEVERITY_OPTIONS = [
     description: 'Life safety (extreme weather, fire at infrastructure, total blackout)',
   },
 ]
+
+// Notification rule templates
+const RULE_TEMPLATES = [
+  {
+    id: "mesh_health",
+    name: "Mesh Health Monitoring",
+    description: "Infrastructure problems - offline nodes, low battery, channel congestion",
+    rule: {
+      name: "Mesh Health Monitoring",
+      enabled: true,
+      trigger_type: "condition" as const,
+      categories: ["infra_offline", "critical_node_down", "infra_recovery", "battery_warning", "battery_critical", "battery_emergency", "high_utilization", "packet_flood", "mesh_score_low"],
+      min_severity: "advisory",
+      delivery_type: "mesh_broadcast",
+      broadcast_channel: 0,
+      cooldown_minutes: 30,
+      override_quiet: false,
+      schedule_frequency: "daily" as const,
+      schedule_time: "07:00",
+      schedule_time_2: "",
+      schedule_days: [] as string[],
+      message_type: "",
+      custom_message: "",
+      node_ids: [] as string[],
+      smtp_host: "",
+      smtp_port: 587,
+      smtp_user: "",
+      smtp_password: "",
+      smtp_tls: true,
+      from_address: "",
+      recipients: [] as string[],
+      webhook_url: "",
+      webhook_headers: {} as Record<string, string>,
+    }
+  },
+  {
+    id: "weather_fire",
+    name: "Weather & Fire Alerts",
+    description: "Environmental threats - severe weather, nearby wildfires, new ignitions, flooding",
+    rule: {
+      name: "Weather & Fire Alerts",
+      enabled: true,
+      trigger_type: "condition" as const,
+      categories: ["weather_warning", "fire_proximity", "new_ignition", "stream_flood_warning"],
+      min_severity: "warning",
+      delivery_type: "mesh_broadcast",
+      broadcast_channel: 0,
+      cooldown_minutes: 15,
+      override_quiet: false,
+      schedule_frequency: "daily" as const,
+      schedule_time: "07:00",
+      schedule_time_2: "",
+      schedule_days: [] as string[],
+      message_type: "",
+      custom_message: "",
+      node_ids: [] as string[],
+      smtp_host: "",
+      smtp_port: 587,
+      smtp_user: "",
+      smtp_password: "",
+      smtp_tls: true,
+      from_address: "",
+      recipients: [] as string[],
+      webhook_url: "",
+      webhook_headers: {} as Record<string, string>,
+    }
+  },
+  {
+    id: "rf_conditions",
+    name: "RF Conditions",
+    description: "Propagation changes - solar events, HF blackouts, tropospheric ducting",
+    rule: {
+      name: "RF Conditions",
+      enabled: true,
+      trigger_type: "condition" as const,
+      categories: ["hf_blackout", "tropospheric_ducting", "geomagnetic_storm"],
+      min_severity: "info",
+      delivery_type: "mesh_broadcast",
+      broadcast_channel: 0,
+      cooldown_minutes: 60,
+      override_quiet: false,
+      schedule_frequency: "daily" as const,
+      schedule_time: "07:00",
+      schedule_time_2: "",
+      schedule_days: [] as string[],
+      message_type: "",
+      custom_message: "",
+      node_ids: [] as string[],
+      smtp_host: "",
+      smtp_port: 587,
+      smtp_user: "",
+      smtp_password: "",
+      smtp_tls: true,
+      from_address: "",
+      recipients: [] as string[],
+      webhook_url: "",
+      webhook_headers: {} as Record<string, string>,
+    }
+  },
+  {
+    id: "road_traffic",
+    name: "Road & Traffic",
+    description: "Road closures and severe congestion",
+    rule: {
+      name: "Road & Traffic",
+      enabled: true,
+      trigger_type: "condition" as const,
+      categories: ["road_closure", "traffic_congestion"],
+      min_severity: "warning",
+      delivery_type: "mesh_broadcast",
+      broadcast_channel: 0,
+      cooldown_minutes: 30,
+      override_quiet: false,
+      schedule_frequency: "daily" as const,
+      schedule_time: "07:00",
+      schedule_time_2: "",
+      schedule_days: [] as string[],
+      message_type: "",
+      custom_message: "",
+      node_ids: [] as string[],
+      smtp_host: "",
+      smtp_port: 587,
+      smtp_user: "",
+      smtp_password: "",
+      smtp_tls: true,
+      from_address: "",
+      recipients: [] as string[],
+      webhook_url: "",
+      webhook_headers: {} as Record<string, string>,
+    }
+  },
+  {
+    id: "everything_critical",
+    name: "Everything Critical",
+    description: "All emergency-level events regardless of type",
+    rule: {
+      name: "Everything Critical",
+      enabled: true,
+      trigger_type: "condition" as const,
+      categories: [] as string[],
+      min_severity: "emergency",
+      delivery_type: "mesh_broadcast",
+      broadcast_channel: 0,
+      cooldown_minutes: 5,
+      override_quiet: true,
+      schedule_frequency: "daily" as const,
+      schedule_time: "07:00",
+      schedule_time_2: "",
+      schedule_days: [] as string[],
+      message_type: "",
+      custom_message: "",
+      node_ids: [] as string[],
+      smtp_host: "",
+      smtp_port: 587,
+      smtp_user: "",
+      smtp_password: "",
+      smtp_tls: true,
+      from_address: "",
+      recipients: [] as string[],
+      webhook_url: "",
+      webhook_headers: {} as Record<string, string>,
+    }
+  },
+  {
+    id: "morning_briefing",
+    name: "Morning Briefing",
+    description: "Daily health and conditions summary at 7am",
+    rule: {
+      name: "Morning Briefing",
+      enabled: true,
+      trigger_type: "schedule" as const,
+      categories: [] as string[],
+      min_severity: "info",
+      schedule_frequency: "daily" as const,
+      schedule_time: "07:00",
+      schedule_time_2: "",
+      schedule_days: [] as string[],
+      message_type: "mesh_health_summary",
+      custom_message: "",
+      delivery_type: "mesh_broadcast",
+      broadcast_channel: 0,
+      cooldown_minutes: 0,
+      override_quiet: false,
+      node_ids: [] as string[],
+      smtp_host: "",
+      smtp_port: 587,
+      smtp_user: "",
+      smtp_password: "",
+      smtp_tls: true,
+      from_address: "",
+      recipients: [] as string[],
+      webhook_url: "",
+      webhook_headers: {} as Record<string, string>,
+    }
+  },
+]
+
 
 // InfoButton component
 function InfoButton({ info }: { info: string }) {
@@ -902,6 +1099,7 @@ export default function Notifications() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [showTemplates, setShowTemplates] = useState(false)
   const [hasChanges, setHasChanges] = useState(false)
 
   const fetchConfig = useCallback(async () => {
@@ -1005,6 +1203,14 @@ export default function Notifications() {
   const addRule = () => {
     if (!config) return
     setConfig({ ...config, rules: [...(config.rules || []), createDefaultRule()] })
+  }
+
+  const addFromTemplate = (templateId: string) => {
+    if (!config) return
+    const template = RULE_TEMPLATES.find(t => t.id === templateId)
+    if (!template) return
+    setConfig({ ...config, rules: [...(config.rules || []), { ...template.rule }] })
+    setShowTemplates(false)
   }
 
   const duplicateRule = (index: number) => {
@@ -1182,12 +1388,40 @@ export default function Notifications() {
                 />
               ))}
 
-              <button
-                onClick={addRule}
-                className="w-full py-3 border border-dashed border-[#1e2a3a] rounded-lg text-slate-500 hover:text-slate-300 hover:border-accent flex items-center justify-center gap-2 transition-colors"
-              >
-                <Plus size={16} /> Add Rule
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={addRule}
+                  className="flex-1 py-3 border border-dashed border-[#1e2a3a] rounded-lg text-slate-500 hover:text-slate-300 hover:border-accent flex items-center justify-center gap-2 transition-colors"
+                >
+                  <Plus size={16} /> Add Rule
+                </button>
+                <div className="relative">
+                  <button
+                    onClick={() => setShowTemplates(!showTemplates)}
+                    className="py-3 px-4 border border-dashed border-[#1e2a3a] rounded-lg text-slate-500 hover:text-slate-300 hover:border-accent flex items-center gap-2 transition-colors"
+                  >
+                    <Layers size={16} /> Add from Template
+                  </button>
+                  {showTemplates && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setShowTemplates(false)} />
+                      <div className="absolute right-0 top-full mt-2 z-50 w-80 bg-[#1a2332] border border-[#2a3a4a] rounded-lg shadow-xl overflow-hidden">
+                        <div className="p-2 border-b border-[#2a3a4a] text-xs text-slate-500 uppercase">Rule Templates</div>
+                        {RULE_TEMPLATES.map((t) => (
+                          <button
+                            key={t.id}
+                            onClick={() => addFromTemplate(t.id)}
+                            className="w-full p-3 text-left hover:bg-[#2a3a4a] transition-colors"
+                          >
+                            <div className="font-medium text-slate-200">{t.name}</div>
+                            <div className="text-xs text-slate-500 mt-0.5">{t.description}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
           </>
         )}
