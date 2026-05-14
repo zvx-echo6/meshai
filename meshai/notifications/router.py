@@ -789,34 +789,52 @@ class NotificationRouter:
         """Generate an LLM-summarized report from current data."""
         context_parts = []
 
+        # For RF propagation, use deterministic formatter
+        swpc_data = None
+        ducting_data = None
+
         if report_type in ("rf_propagation", "all"):
             if env_store:
                 adapters = getattr(env_store, '_adapters', {})
                 if "swpc" in adapters and hasattr(env_store, 'get_swpc_status'):
-                    swpc = env_store.get_swpc_status()
-                    if swpc:
-                        context_parts.append(
-                            f"Solar/Geomagnetic: SFI {swpc.get('sfi')}, "
-                            f"Kp {swpc.get('kp_current')}, "
-                            f"R{swpc.get('r_scale', 0)}/S{swpc.get('s_scale', 0)}/G{swpc.get('g_scale', 0)}"
-                        )
+                    swpc_data = env_store.get_swpc_status()
                 if "ducting" in adapters and hasattr(env_store, 'get_ducting_status'):
-                    ducting = env_store.get_ducting_status()
-                    if ducting:
-                        context_parts.append(
-                            f"Tropospheric: {ducting.get('condition', 'unknown')}, "
-                            f"dM/dz {ducting.get('min_gradient', 'N/A')} M-units/km"
-                        )
+                    ducting_data = env_store.get_ducting_status()
+
+                # If this is an RF-only report, return deterministic format immediately
+                if report_type == "rf_propagation" and swpc_data:
+                    sfi = swpc_data.get('sfi', 100)
+                    kp = swpc_data.get('kp_current', 3)
+                    try:
+                        band_conditions = self._compute_band_conditions(float(sfi), float(kp))
+                        return self._format_propagation_report(swpc_data, ducting_data, band_conditions)
+                    except Exception as e:
+                        logger.warning("Band condition calc failed: %s", e)
+                        # Fall through to context-based approach
+
+                # For "all" report type, add RF data to context
+                if swpc_data:
+                    context_parts.append(
+                        f"Solar/Geomagnetic: SFI {swpc_data.get('sfi')}, "
+                        f"Kp {swpc_data.get('kp_current')}, "
+                        f"R{swpc_data.get('r_scale', 0)}/S{swpc_data.get('s_scale', 0)}/G{swpc_data.get('g_scale', 0)}"
+                    )
+                if ducting_data:
+                    context_parts.append(
+                        f"Tropospheric: {ducting_data.get('condition', 'unknown')}, "
+                        f"dM/dz {ducting_data.get('min_gradient', 'N/A')} M-units/km"
+                    )
 
         if report_type in ("mesh_health", "all"):
             if health_engine:
                 health = getattr(health_engine, 'mesh_health', None)
-                if health:
+                if health and hasattr(health, 'score'):
+                    score = health.score
                     context_parts.append(
-                        f"Mesh: score {health.composite:.0f}/100, "
-                        f"tier {health.tier}, "
-                        f"{health.infra_online}/{health.infra_total} infra online, "
-                        f"utilization {health.util_percent:.1f}%"
+                        f"Mesh: score {score.composite:.0f}/100, "
+                        f"tier {score.tier}, "
+                        f"{score.infra_online}/{score.infra_total} infra online, "
+                        f"utilization {score.util_percent:.1f}%"
                     )
 
         if report_type in ("weather_fire", "all"):
@@ -840,7 +858,18 @@ class NotificationRouter:
                     if events:
                         context_parts.append(f"{source.upper()}: {len(events)} events")
 
-        raw_data = "\n".join(context_parts) if context_parts else "No data available"
+        if not context_parts:
+            # Return a graceful message for the specific report type
+            no_data_messages = {
+                "rf_propagation": "RF propagation data not available",
+                "mesh_health": "Mesh health data not available",
+                "weather_fire": "Weather/fire monitoring not configured",
+                "environmental": "Environmental monitoring not configured",
+                "all": "No monitoring data available",
+            }
+            return no_data_messages.get(report_type, "No data available")
+
+        raw_data = "\n".join(context_parts)
 
         # Generate LLM summary
         if self._llm:
@@ -849,8 +878,8 @@ class NotificationRouter:
                 messages = [{"role": "user", "content": prompt}]
                 summary = await self._llm.generate(
                     messages=messages,
-                    system_prompt="You are a concise status reporter. Output only the summary.",
-                    max_tokens=100,
+                    system_prompt="You are a concise infrastructure status reporter. Format data clearly and briefly. Output only the formatted report, no preamble or explanation.",
+                    
                 )
                 return summary.strip()
             except Exception as e:
@@ -859,44 +888,157 @@ class NotificationRouter:
         else:
             return raw_data
 
+    def _compute_band_conditions(self, sfi: float, kp: float) -> dict:
+        """Deterministic band conditions from SFI and Kp."""
+        from datetime import datetime, timezone
+        hour_utc = datetime.now(timezone.utc).hour
+        is_day = 12 <= hour_utc or hour_utc <= 3  # rough UTC daytime for US
+
+        bands = {}
+
+        # 10m (28 MHz) - needs high SFI, daytime only
+        if sfi > 140 and kp <= 2:
+            bands["10m"] = "Good"
+        elif sfi > 100 and kp <= 4 and is_day:
+            bands["10m"] = "Fair"
+        else:
+            bands["10m"] = "Poor"
+
+        # 12m (24 MHz)
+        if sfi > 120 and kp <= 3:
+            bands["12m"] = "Good"
+        elif sfi > 90 and kp <= 4 and is_day:
+            bands["12m"] = "Fair"
+        else:
+            bands["12m"] = "Poor"
+
+        # 15m (21 MHz)
+        if sfi > 100 and kp <= 3:
+            bands["15m"] = "Good"
+        elif sfi > 80 and kp <= 5:
+            bands["15m"] = "Fair"
+        else:
+            bands["15m"] = "Poor"
+
+        # 17m (18 MHz)
+        if sfi > 90 and kp <= 3:
+            bands["17m"] = "Good"
+        elif sfi > 70 and kp <= 5:
+            bands["17m"] = "Fair"
+        else:
+            bands["17m"] = "Poor"
+
+        # 20m (14 MHz) - almost always usable
+        if sfi > 80 and kp <= 3:
+            bands["20m"] = "Good"
+        elif kp <= 6:
+            bands["20m"] = "Fair"
+        else:
+            bands["20m"] = "Poor"
+
+        # 30m (10 MHz) - very reliable
+        if kp <= 4:
+            bands["30m"] = "Good"
+        elif kp <= 6:
+            bands["30m"] = "Fair"
+        else:
+            bands["30m"] = "Poor"
+
+        # 40m (7 MHz) - reliable, better at night
+        if kp <= 4:
+            bands["40m"] = "Good"
+        elif kp <= 6:
+            bands["40m"] = "Fair"
+        else:
+            bands["40m"] = "Poor"
+
+        # 80m (3.5 MHz) - night band
+        if kp <= 3:
+            bands["80m"] = "Good"
+        elif kp <= 5:
+            bands["80m"] = "Fair"
+        else:
+            bands["80m"] = "Poor"
+
+        return bands
+
+    def _format_propagation_report(self, swpc: dict, ducting: dict, band_conditions: dict) -> str:
+        """Format propagation report deterministically."""
+        sfi = swpc.get('sfi', 'N/A')
+        kp = swpc.get('kp_current', 'N/A')
+
+        lines = [f"Band Conditions (SFI {sfi}, Kp {kp}):"]
+
+        for band_list, label in [
+            (["80m", "40m"], "80-40m"),
+            (["30m", "20m"], "30-20m"),
+            (["17m", "15m"], "17-15m"),
+            (["12m", "10m"], "12-10m"),
+        ]:
+            # Take the better of the two bands in range
+            ratings = [band_conditions.get(b, "Poor") for b in band_list]
+            if "Good" in ratings:
+                rating = "Good"
+            elif "Fair" in ratings:
+                rating = "Fair"
+            else:
+                rating = "Poor"
+            lines.append(f"{label}: {rating}")
+
+        if ducting and ducting.get("condition") and ducting.get("condition") != "normal":
+            cond = ducting["condition"].replace("_", " ").title()
+            lines.append(f"Tropo: {cond}")
+        else:
+            lines.append("Tropo: Normal")
+
+        return "\n".join(lines)
+
     def _build_report_prompt(self, report_type: str, raw_data: str) -> str:
         """Build the LLM prompt for report generation."""
         prompts = {
             "rf_propagation": (
-                "You are a ham radio propagation advisor. Summarize these "
-                "current conditions in 2-3 sentences for a radio operator. "
-                "Tell them which HF bands are likely open or closed based on "
-                "the SFI and Kp values. Mention if ducting affects VHF/UHF. "
-                "Be specific about bands (10m, 15m, 20m, 40m, etc). "
-                "Keep it under 180 characters for mesh delivery.\n\n"
-                f"Current data:\n{raw_data}"
+                "Format this propagation data as a band-by-band HF report. "
+                "Output format:\n"
+                "Band Conditions (SFI X, Kp Y):\n"
+                "80-40m: [Good/Fair/Poor]\n"
+                "30-20m: [Good/Fair/Poor]\n"
+                "17-15m: [Good/Fair/Poor]\n"
+                "12-10m: [Good/Fair/Poor]\n"
+                "Tropo: [Normal/Enhanced/Ducting]\n\n"
+                "Determine ratings from SFI and Kp values. "
+                "Output ONLY the formatted report.\n\n"
+                f"Data:\n{raw_data}"
             ),
             "mesh_health": (
-                "You are a mesh network advisor. Summarize the current mesh "
-                "health in 2-3 sentences for the operator. Highlight any "
-                "problems or notable conditions. If everything is healthy, "
-                "say so briefly. Mention specific issues if any pillars are "
-                "low. Keep it under 180 characters for mesh delivery.\n\n"
-                f"Current data:\n{raw_data}"
+                "Format this mesh network health data as a brief status. "
+                "Include: score out of 100, tier name, infrastructure count, "
+                "and any problems. If healthy, say 'Mesh healthy' with key stats. "
+                "Example: 'Mesh healthy: 90/100, 16/16 infra online, 20% util'\n"
+                "Keep it concise. Output ONLY the status line.\n\n"
+                f"Data:\n{raw_data}"
             ),
             "weather_fire": (
-                "Summarize current weather and fire conditions in 2-3 "
-                "sentences. Highlight anything the operator should know "
-                "or act on. Keep it under 180 characters for mesh delivery.\n\n"
-                f"Current data:\n{raw_data}"
+                "Format these weather/fire alerts as a brief summary. "
+                "List count of alerts and most severe conditions. "
+                "Example: '3 weather alerts: Winter Storm Warning (ID), "
+                "Wind Advisory (OR). No active fires.'\n"
+                "Keep it concise. Output ONLY the summary.\n\n"
+                f"Data:\n{raw_data}"
             ),
             "environmental": (
-                "Summarize all current environmental conditions in 3-4 "
-                "sentences. Cover weather, fire, streams, roads — whatever "
-                "is notable. Keep it under 180 characters for mesh delivery.\n\n"
-                f"Current data:\n{raw_data}"
+                "Summarize all environmental conditions briefly. "
+                "Cover weather alerts, fires, streams, roads. "
+                "Example: 'Weather clear, no fires, 2 streams elevated, "
+                "roads open.'\n"
+                "Keep it concise. Output ONLY the summary.\n\n"
+                f"Data:\n{raw_data}"
             ),
             "all": (
-                "Summarize all current conditions for a mesh network operator "
-                "in 3-4 sentences. Cover propagation (which bands are open), "
-                "mesh health, weather, and any environmental threats. "
-                "Keep it under 180 characters for mesh delivery.\n\n"
-                f"Current data:\n{raw_data}"
+                "Summarize all conditions for a mesh network operator. "
+                "Cover: mesh health score, any infrastructure issues, "
+                "weather alerts, fire status, propagation conditions. "
+                "Be brief but complete.\n\n"
+                f"Data:\n{raw_data}"
             ),
         }
         return prompts.get(report_type, prompts["all"])

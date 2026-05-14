@@ -50,7 +50,7 @@ class MessageSummarizer:
             response = await self._llm.generate(
                 prompt,
                 system_prompt="You are a concise alert summarizer. Output only the summary, no explanation.",
-                max_tokens=100,
+                
             )
             summary = response.strip()
 
