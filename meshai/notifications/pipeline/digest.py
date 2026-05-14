@@ -72,11 +72,17 @@ class Digest:
 class DigestAccumulator:
     """Tracks priority/routine events and produces periodic digests."""
 
-    def __init__(self, mesh_char_limit: int = 200):
+    def __init__(
+        self,
+        mesh_char_limit: int = 200,
+        excluded_toggles: list[str] | None = None,
+    ):
         self._active: dict[str, list[Event]] = {}  # toggle -> events
         self._since_last: dict[str, list[Event]] = {}  # toggle -> events
         self._last_digest_at: float = 0.0
         self._mesh_char_limit = mesh_char_limit
+        self._excluded = set(excluded_toggles) if excluded_toggles is not None \
+                         else {"rf_propagation"}
         self._logger = logging.getLogger("meshai.pipeline.digest")
 
     # ---- ingress ----
@@ -84,6 +90,14 @@ class DigestAccumulator:
     def enqueue(self, event: Event) -> None:
         """SeverityRouter calls this for priority/routine events."""
         toggle = get_toggle(event.category) or "other"
+
+        # Skip excluded toggles
+        if toggle in self._excluded:
+            self._logger.debug(
+                f"skipping digest enqueue for excluded toggle {toggle}"
+            )
+            return
+
         active_for_toggle = self._active.setdefault(toggle, [])
 
         # Resolution detection
@@ -135,8 +149,15 @@ class DigestAccumulator:
         self.tick(now)
 
         digest = Digest(rendered_at=now)
-        digest.active = {k: list(v) for k, v in self._active.items() if v}
-        digest.since_last = {k: list(v) for k, v in self._since_last.items() if v}
+        # Defensive: skip excluded toggles when building output
+        digest.active = {
+            k: list(v) for k, v in self._active.items()
+            if v and k not in self._excluded
+        }
+        digest.since_last = {
+            k: list(v) for k, v in self._since_last.items()
+            if v and k not in self._excluded
+        }
         digest.mesh_compact = self._render_mesh_compact(digest, now)
         digest.full = self._render_full(digest, now)
 
@@ -149,39 +170,62 @@ class DigestAccumulator:
         """Produce a mesh-radio-friendly compact form.
 
         Format:
-          DIGEST 0700
-          ACTIVE: 2 weather, 1 fire, 1 mesh
-          NEW: 1 roads, 1 weather cleared
-        Fits under self._mesh_char_limit chars. If it overflows,
-        truncate by dropping toggles with fewest events first.
+          DIGEST HHMM
+          ACTIVE NOW
+          [Weather] Severe Thunderstorm Warning
+          [Fire] Snake River Fire — 8mi NE (+2)
+          RESOLVED
+          [Roads] US-93 reopened at MP 47
+
+        One line per toggle, showing highest-severity event headline.
+        Append (+N) if toggle has more than one event.
         """
         lines = [f"DIGEST {time.strftime('%H%M', time.localtime(now))}"]
 
-        if digest.active:
-            counts = self._compact_counts(digest.active)
-            lines.append(f"ACTIVE: {counts}")
-        if digest.since_last:
-            counts = self._compact_counts(digest.since_last)
-            lines.append(f"NEW: {counts}")
-
         if not digest.active and not digest.since_last:
-            lines.append("All quiet.")
+            lines.append("No alerts since last digest.")
+        else:
+            if digest.active:
+                lines.append("ACTIVE NOW")
+                for toggle in TOGGLE_ORDER:
+                    events = digest.active.get(toggle)
+                    if not events:
+                        continue
+                    lines.append(self._compact_toggle_line(toggle, events))
+
+            if digest.since_last:
+                lines.append("RESOLVED")
+                for toggle in TOGGLE_ORDER:
+                    events = digest.since_last.get(toggle)
+                    if not events:
+                        continue
+                    lines.append(self._compact_toggle_line(toggle, events))
 
         out = "\n".join(lines)
         if len(out) > self._mesh_char_limit:
             out = out[: self._mesh_char_limit - 1] + "…"
         return out
 
-    def _compact_counts(self, section: dict[str, list[Event]]) -> str:
-        """e.g. '2 weather, 1 fire, 1 mesh'"""
-        parts = []
-        for toggle in TOGGLE_ORDER:
-            events = section.get(toggle)
-            if not events:
-                continue
-            label = TOGGLE_LABELS.get(toggle, toggle).lower()
-            parts.append(f"{len(events)} {label}")
-        return ", ".join(parts)
+    def _compact_toggle_line(self, toggle: str, events: list[Event]) -> str:
+        """Build one compact line for a toggle: [Label] headline (+N)"""
+        label = TOGGLE_LABELS.get(toggle, toggle)
+        sorted_events = self._sort_events(events)
+        top_event = sorted_events[0]
+
+        # Get headline text
+        headline = top_event.summary or top_event.title or top_event.category
+
+        # Truncate headline at ~60 chars to keep lines readable
+        max_headline = 60
+        if len(headline) > max_headline:
+            headline = headline[:max_headline - 1] + "…"
+
+        # Append (+N) if more than one event
+        overflow = len(events) - 1
+        if overflow > 0:
+            return f"[{label}] {headline} (+{overflow})"
+        else:
+            return f"[{label}] {headline}"
 
     def _render_full(self, digest: Digest, now: float) -> str:
         """Produce the full multi-line digest for email/webhook."""
@@ -190,46 +234,38 @@ class DigestAccumulator:
             "",
         ]
 
-        if digest.active:
-            lines.append("ACTIVE NOW:")
-            for toggle in TOGGLE_ORDER:
-                events = digest.active.get(toggle)
-                if not events:
-                    continue
-                label = TOGGLE_LABELS.get(toggle, toggle)
-                for ev in self._sort_events(events):
-                    lines.append(f"  [{label}] {self._format_event_line(ev)}")
+        if not digest.active and not digest.since_last:
+            lines.append("No alerts since last digest.")
             lines.append("")
         else:
-            lines.append("ACTIVE NOW: nothing")
-            lines.append("")
+            if digest.active:
+                lines.append("ACTIVE NOW:")
+                for toggle in TOGGLE_ORDER:
+                    events = digest.active.get(toggle)
+                    if not events:
+                        continue
+                    label = TOGGLE_LABELS.get(toggle, toggle)
+                    for ev in self._sort_events(events):
+                        lines.append(f"  [{label}] {self._format_event_line(ev)}")
+                lines.append("")
 
-        if digest.since_last:
-            lines.append("SINCE LAST DIGEST:")
-            for toggle in TOGGLE_ORDER:
-                events = digest.since_last.get(toggle)
-                if not events:
-                    continue
-                label = TOGGLE_LABELS.get(toggle, toggle)
-                for ev in self._sort_events(events):
-                    lines.append(f"  [{label}] {self._format_event_line(ev)}")
-            lines.append("")
+            if digest.since_last:
+                lines.append("SINCE LAST DIGEST:")
+                for toggle in TOGGLE_ORDER:
+                    events = digest.since_last.get(toggle)
+                    if not events:
+                        continue
+                    label = TOGGLE_LABELS.get(toggle, toggle)
+                    for ev in self._sort_events(events):
+                        lines.append(f"  [{label}] {self._format_event_line(ev)}")
+                lines.append("")
 
         return "\n".join(lines).rstrip() + "\n"
 
     def _format_event_line(self, event: Event) -> str:
         """Single-line summary of an event for digest output."""
-        # Prefer event.summary if set, else fall back to title
+        # Prefer event.summary if set, else fall back to title, then category
         text = event.summary or event.title or event.category
-        # Append expires hint if available
-        if event.expires is not None and event.expires > self._now():
-            try:
-                expires_str = time.strftime(
-                    "%H:%M", time.localtime(event.expires)
-                )
-                text = f"{text} (until {expires_str})"
-            except (ValueError, OverflowError):
-                pass
         # Trim runaway text — keep digest readable
         if len(text) > 140:
             text = text[:139] + "…"
