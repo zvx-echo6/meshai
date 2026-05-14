@@ -265,6 +265,7 @@ class MeshAI:
             self.data_store = MeshDataStore(
                 source_configs=enabled_sources,
                 db_path="/data/mesh_history.db",
+                offline_threshold_hours=self.config.mesh_intelligence.offline_threshold_hours,
             )
             # Initial fetch and backfill
             self.data_store.force_refresh()

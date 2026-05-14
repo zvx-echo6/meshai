@@ -230,16 +230,19 @@ class MeshDataStore:
         self,
         source_configs: list[MeshSourceConfig],
         db_path: str = "/data/mesh_history.db",
+        offline_threshold_hours: int = 2,
     ):
         """Initialize the data store.
 
         Args:
             source_configs: List of source configurations
             db_path: Path to SQLite database for historical data
+            offline_threshold_hours: Hours before a node is considered offline
         """
         self._sources: dict[str, MeshviewSource | MeshMonitorDataSource | MQTTSource] = {}
         self._db_path = db_path
         self._db: Optional[sqlite3.Connection] = None
+        self._offline_threshold_hours = offline_threshold_hours
 
         # Live state
         self._nodes: dict[int, UnifiedNode] = {}
@@ -745,11 +748,13 @@ class MeshDataStore:
 
         node.last_heard = ts or 0.0
 
-        # NOTE: is_online is set by MeshHealthEngine.compute() using the
-        # configured offline_threshold_hours. Don't set it here with a
-        # hardcoded value - let the health engine determine online status.
-        # The health engine runs on every refresh cycle and will set is_online
-        # based on: (now - last_heard) < (offline_threshold_hours * 3600)
+        # Compute is_online based on configured threshold
+        # This ensures correct status immediately, before health engine runs
+        if node.last_heard:
+            offline_threshold = time.time() - (self._offline_threshold_hours * 3600)
+            node.is_online = node.last_heard > offline_threshold
+        else:
+            node.is_online = False
 
         # Hops, SNR, RSSI (MM)
         node.hops_away = raw.get("hopsAway")
