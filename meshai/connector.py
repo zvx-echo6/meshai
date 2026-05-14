@@ -229,10 +229,13 @@ class MeshConnector:
 
         try:
             if destination:
-                # DM to specific node
-                # Convert hex string to int if needed
-                if destination.startswith("!"):
+                # DM to specific node - handle int or string
+                if isinstance(destination, int):
+                    dest_num = destination
+                elif destination.startswith("!"):
                     dest_num = int(destination[1:], 16)
+                elif destination.isdigit():
+                    dest_num = int(destination)
                 else:
                     dest_num = int(destination, 16)
 

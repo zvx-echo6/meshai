@@ -168,8 +168,8 @@ class MeshDMChannel(NotificationChannel):
 
         for node_id in self._node_ids:
             try:
-                dest = int(node_id[1:], 16) if node_id.startswith("!") else (int(node_id) if node_id.isdigit() else int(node_id, 16))
-                self._connector.send_message(text=message, destination=dest, channel=0)
+                node_id = str(node_id)
+                self._connector.send_message(text=message, destination=node_id, channel=0)
             except Exception as e:
                 logger.error("Failed to DM %s: %s", node_id, e)
                 success = False
@@ -199,10 +199,10 @@ class MeshDMChannel(NotificationChannel):
 
         for node_id in self._node_ids:
             try:
-                dest = int(node_id[1:], 16) if node_id.startswith("!") else (int(node_id) if node_id.isdigit() else int(node_id, 16))
+                node_id = str(node_id)
                 self._connector.send_message(
                     text="MeshAI DM test",
-                    destination=dest,
+                    destination=node_id,
                     channel=0,
                 )
                 results.append({"node": node_id, "success": True})
@@ -249,8 +249,8 @@ class MeshDMChannel(NotificationChannel):
 
         for node_id in self._node_ids:
             try:
-                dest = int(node_id[1:], 16) if node_id.startswith("!") else (int(node_id) if node_id.isdigit() else int(node_id, 16))
-                self._connector.send_message(text=message, destination=dest, channel=0)
+                node_id = str(node_id)
+                self._connector.send_message(text=message, destination=node_id, channel=0)
                 success_count += 1
             except Exception as e:
                 errors.append(f"{node_id}: {e}")

@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 SEVERITY_ORDER = ["routine", "priority", "immediate"]
 
 # State file for rule statistics
-RULE_STATS_FILE = "/opt/meshai/data/rule_stats.json"
+RULE_STATS_FILE = "/data/rule_stats.json"
 
 
 class NotificationRouter:
