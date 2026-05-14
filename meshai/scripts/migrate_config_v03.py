@@ -21,7 +21,7 @@ import os
 import re
 import shutil
 import sys
-from dataclasses import fields
+from dataclasses import asdict, fields
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +35,35 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# =============================================================================
+# DEEP COMPARISON FOR VERIFICATION
+# =============================================================================
+
+def deep_compare(old, new, path=""):
+    """Deep compare two values, returning list of difference descriptions."""
+    differences = []
+    if type(old) != type(new):
+        differences.append(f"{path}: type {type(old).__name__} vs {type(new).__name__}")
+        return differences
+    if isinstance(old, dict):
+        for key in sorted(set(old.keys()) | set(new.keys())):
+            child_path = f"{path}.{key}" if path else key
+            if key not in old:
+                differences.append(f"{child_path}: missing in backup")
+            elif key not in new:
+                differences.append(f"{child_path}: missing in new")
+            else:
+                differences.extend(deep_compare(old[key], new[key], child_path))
+    elif isinstance(old, list):
+        if len(old) != len(new):
+            differences.append(f"{path}: list length {len(old)} vs {len(new)}")
+        else:
+            for i, (o, n) in enumerate(zip(old, new)):
+                differences.extend(deep_compare(o, n, f"{path}[{i}]"))
+    elif old != new:
+        differences.append(f"{path}: {repr(old)[:50]} vs {repr(new)[:50]}")
+    return differences
 
 # =============================================================================
 # CONFIGURATION
@@ -633,24 +662,23 @@ def run_migration() -> bool:
 
         # Load with new loader
         new_config = new_load(TARGET_DIR)
-        new_dict = _dataclass_to_dict(new_config)
 
         # Load backup with old loader
         old_config = old_load(BACKUP_FILE)
-        old_dict = _dataclass_to_dict(old_config)
-
-        # Compare key fields (some will differ due to local/secret extraction)
-        differences = []
-        for key in ["timezone", "response", "history", "memory", "context"]:
-            if new_dict.get(key) != old_dict.get(key):
-                differences.append(f"{key}: {new_dict.get(key)} != {old_dict.get(key)}")
-
+        # Deep compare all fields using asdict()
+        old_dict = asdict(old_config)
+        new_dict = asdict(new_config)
+        # Remove internal fields that will differ
+        for d in [old_dict, new_dict]:
+            d.pop("_config_path", None)
+        
+        differences = deep_compare(old_dict, new_dict)
+        
         if differences:
             logger.error("Verification FAILED! Differences found:")
             for diff in differences:
                 logger.error(f"  {diff}")
             return False
-
         logger.info("  Verification PASSED - config loads correctly")
 
     except Exception as e:
