@@ -94,7 +94,7 @@ _ENV_KEYWORDS = {
     "solar", "hf", "propagation", "kp", "aurora", "blackout",
     "flood", "stream", "river", "ducting", "tropo", "duct",
     "uhf", "vhf", "band", "conditions", "forecast", "sfi",
-    "ionosphere", "geomagnetic", "storm",
+    "ionosphere", "geomagnetic", "storm", "traffic", "highway", "interstate", "gauge",
 }
 
 # City name to region mapping (hardcoded fallback)

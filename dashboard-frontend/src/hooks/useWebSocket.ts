@@ -1,21 +1,24 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import type { MeshHealth, Alert } from '@/lib/api'
+import type { MeshHealth, Alert, EnvEvent } from '@/lib/api'
 
 interface WebSocketMessage {
   type: string
-  data: unknown
+  data?: unknown
+  event?: EnvEvent
 }
 
 interface UseWebSocketReturn {
   connected: boolean
   lastHealth: MeshHealth | null
   lastAlert: Alert | null
+  lastMessage: WebSocketMessage | null
 }
 
 export function useWebSocket(): UseWebSocketReturn {
   const [connected, setConnected] = useState(false)
   const [lastHealth, setLastHealth] = useState<MeshHealth | null>(null)
   const [lastAlert, setLastAlert] = useState<Alert | null>(null)
+  const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimeoutRef = useRef<number | null>(null)
   const reconnectDelayRef = useRef(1000)
@@ -41,6 +44,9 @@ export function useWebSocket(): UseWebSocketReturn {
         try {
           const message: WebSocketMessage = JSON.parse(event.data)
 
+          // Store all messages for generic handling
+          setLastMessage(message)
+
           switch (message.type) {
             case 'health_update':
               setLastHealth(message.data as MeshHealth)
@@ -48,6 +54,7 @@ export function useWebSocket(): UseWebSocketReturn {
             case 'alert_fired':
               setLastAlert(message.data as Alert)
               break
+            // env_update messages are handled via lastMessage
           }
         } catch (e) {
           console.error('Failed to parse WebSocket message:', e)
@@ -98,5 +105,5 @@ export function useWebSocket(): UseWebSocketReturn {
     }
   }, [connect])
 
-  return { connected, lastHealth, lastAlert }
+  return { connected, lastHealth, lastAlert, lastMessage }
 }

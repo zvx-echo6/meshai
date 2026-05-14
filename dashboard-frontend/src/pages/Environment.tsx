@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Cloud,
   Sun,
@@ -10,42 +10,10 @@ import {
   Wind,
   Flame,
   Mountain,
-  HelpCircle,
+  Droplets,
+  Car,
+  Satellite,
 } from 'lucide-react'
-
-// Info button component with popover
-function InfoButton({ info }: { info: string }) {
-  const [show, setShow] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setShow(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
-
-  return (
-    <div className="relative inline-block" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setShow(!show)}
-        className="ml-1 text-slate-500 hover:text-slate-300 transition-colors"
-        aria-label="More information"
-      >
-        <HelpCircle size={14} />
-      </button>
-      {show && (
-        <div className="absolute z-50 left-0 mt-1 w-64 p-3 bg-[#1a1f2e] border border-[#2a3548] rounded-lg shadow-xl text-xs text-slate-300 leading-relaxed">
-          {info}
-        </div>
-      )}
-    </div>
-  )
-}
 import {
   fetchEnvStatus,
   fetchEnvActive,
@@ -53,12 +21,21 @@ import {
   fetchDucting,
   fetchFires,
   fetchAvalanche,
+  fetchStreams,
+  fetchTraffic,
+  fetchRoads,
+  fetchHotspots,
   type EnvStatus,
   type EnvEvent,
   type SWPCStatus,
   type DuctingStatus,
   type FireEvent,
   type AvalancheResponse,
+  type StreamGaugeEvent,
+  type TrafficEvent,
+  type RoadEvent,
+  type HotspotEvent,
+
 } from '@/lib/api'
 
 function FeedStatusCard({ feed }: { feed: { source: string; is_loaded: boolean; last_error: string | null; consecutive_errors: number; event_count: number; last_fetch: number } }) {
@@ -185,7 +162,6 @@ function SolarIndicesPanel({ swpc }: { swpc: SWPCStatus | null }) {
         <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
           <Sun size={14} />
           Solar/Geomagnetic Indices
-          <InfoButton info="Space weather data from NOAA SWPC. Solar Flux Index (SFI) indicates HF propagation quality. Kp index measures geomagnetic disturbance. Higher values can degrade or enhance radio propagation." />
         </h2>
         <div className="text-slate-500">Data not available</div>
       </div>
@@ -212,16 +188,12 @@ function SolarIndicesPanel({ swpc }: { swpc: SWPCStatus | null }) {
       <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
         <Sun size={14} />
         Solar/Geomagnetic Indices
-        <InfoButton info="Space weather data from NOAA SWPC. Solar Flux Index (SFI) indicates HF propagation quality (higher=better). Kp index measures geomagnetic disturbance (lower=better). R/S/G scales: R=Radio Blackout, S=Solar Radiation, G=Geomagnetic Storm." />
       </h2>
 
       <div className="grid grid-cols-2 gap-4 mb-4">
         {/* SFI */}
         <div className="bg-bg-hover rounded-lg p-3">
-          <div className="text-xs text-slate-500 mb-1 flex items-center">
-            Solar Flux Index
-            <InfoButton info="10.7cm solar radio flux. <70=poor HF, 70-90=fair, 90-120=good, 120-150=very good, >150=excellent. Measured daily at noon UTC." />
-          </div>
+          <div className="text-xs text-slate-500 mb-1">Solar Flux Index</div>
           <div className="text-2xl font-mono text-slate-100">
             {swpc.sfi?.toFixed(0) ?? '—'}
           </div>
@@ -230,10 +202,7 @@ function SolarIndicesPanel({ swpc }: { swpc: SWPCStatus | null }) {
 
         {/* Kp */}
         <div className="bg-bg-hover rounded-lg p-3">
-          <div className="text-xs text-slate-500 mb-1 flex items-center">
-            Planetary K-Index
-            <InfoButton info="Geomagnetic disturbance scale 0-9. Kp 0-2=quiet, 3-4=unsettled, 5=minor storm (G1), 6=moderate (G2), 7=strong (G3), 8=severe (G4), 9=extreme (G5). Higher Kp degrades HF at high latitudes." />
-          </div>
+          <div className="text-xs text-slate-500 mb-1">Planetary K-Index</div>
           <div className={`text-2xl font-mono ${getKpColor(swpc.kp_current)}`}>
             {swpc.kp_current?.toFixed(1) ?? '—'}
           </div>
@@ -294,7 +263,6 @@ function DuctingPanel({ ducting }: { ducting: DuctingStatus | null }) {
         <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
           <Wind size={14} />
           Tropospheric Ducting
-          <InfoButton info="Atmospheric conditions that trap VHF/UHF signals, allowing propagation far beyond normal line-of-sight. Measured as refractivity gradient (dM/dz) in M-units/km. Negative values indicate ducting." />
         </h2>
         <div className="text-slate-500">Data not available</div>
       </div>
@@ -325,15 +293,11 @@ function DuctingPanel({ ducting }: { ducting: DuctingStatus | null }) {
       <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
         <Wind size={14} />
         Tropospheric Ducting
-        <InfoButton info="Atmospheric conditions that trap VHF/UHF signals, allowing propagation far beyond normal line-of-sight. Ducting can extend 900 MHz Meshtastic range significantly. Surface ducts form near the ground; elevated ducts form aloft." />
       </h2>
 
       {/* Condition */}
       <div className="bg-bg-hover rounded-lg p-4 mb-4">
-        <div className="text-xs text-slate-500 mb-1 flex items-center">
-          Condition
-          <InfoButton info="Normal: Standard refraction. Super-refraction: Signals bend more than normal, slightly extended range. Ducting: Signals trapped in atmospheric layer, significantly extended range possible." />
-        </div>
+        <div className="text-xs text-slate-500 mb-1">Condition</div>
         <div className={`text-xl font-medium ${getConditionColor(ducting.condition)}`}>
           {formatCondition(ducting.condition)}
         </div>
@@ -396,10 +360,16 @@ export default function Environment() {
   const [ducting, setDucting] = useState<DuctingStatus | null>(null)
   const [fires, setFires] = useState<FireEvent[]>([])
   const [avalanche, setAvalanche] = useState<AvalancheResponse | null>(null)
+  const [streams, setStreams] = useState<StreamGaugeEvent[]>([])
+  const [traffic, setTraffic] = useState<TrafficEvent[]>([])
+  const [roads, setRoads] = useState<RoadEvent[]>([])
+  const [hotspots, setHotspots] = useState<HotspotEvent[]>([])
+  const [newIgnitions, setNewIgnitions] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    document.title = 'Environment — MeshAI'
     Promise.all([
       fetchEnvStatus().catch(() => null),
       fetchEnvActive().catch(() => []),
@@ -407,14 +377,23 @@ export default function Environment() {
       fetchDucting().catch(() => null),
       fetchFires().catch(() => []),
       fetchAvalanche().catch(() => null),
+      fetchStreams().catch(() => []),
+      fetchTraffic().catch(() => []),
+      fetchRoads().catch(() => []),
+      fetchHotspots().catch(() => ({ hotspots: [], new_ignitions: 0 })),
     ])
-      .then(([status, active, swpcData, ductingData, firesData, avyData]) => {
+      .then(([status, active, swpcData, ductingData, firesData, avyData, streamsData, trafficData, roadsData, hotspotsData]) => {
         setEnvStatus(status)
         setEvents(active)
         setSWPC(swpcData)
         setDucting(ductingData)
         setFires(firesData)
         setAvalanche(avyData)
+        setStreams(streamsData || [])
+        setTraffic(trafficData || [])
+        setRoads(roadsData || [])
+        setHotspots(hotspotsData?.hotspots || [])
+        setNewIgnitions(hotspotsData?.new_ignitions || 0)
         setLoading(false)
       })
       .catch((err) => {
@@ -610,6 +589,170 @@ export default function Environment() {
           )}
         </div>
       </div>
+
+      {/* Stream Gauges */}
+      {streams.length > 0 && (
+        <div className="bg-bg-card border border-border rounded-lg p-6">
+          <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
+            <Droplets size={14} />
+            Stream Gauges ({streams.length})
+          </h2>
+          <div className="space-y-2">
+            {streams.map((stream) => (
+              <div
+                key={stream.event_id}
+                className={`p-3 rounded-lg ${
+                  stream.severity === 'warning'
+                    ? 'bg-amber-500/10 border-l-2 border-amber-500'
+                    : 'bg-blue-500/10 border-l-2 border-blue-500'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-200">
+                    {stream.properties?.site_name || 'Unknown Site'}
+                  </span>
+                  <span className="text-sm font-mono text-slate-300">
+                    {stream.properties?.value?.toLocaleString()} {stream.properties?.unit}
+                  </span>
+                </div>
+                <div className="text-xs text-slate-500 mt-1">
+                  {stream.properties?.parameter}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Road Conditions */}
+      {(traffic.length > 0 || roads.length > 0) && (
+        <div className="bg-bg-card border border-border rounded-lg p-6">
+          <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
+            <Car size={14} />
+            Road Conditions
+          </h2>
+          {traffic.length > 0 && (
+            <div className="mb-4">
+              <div className="text-xs text-slate-500 mb-2 uppercase">Traffic Flow</div>
+              <div className="space-y-2">
+                {traffic.map((t) => (
+                  <div
+                    key={t.event_id}
+                    className={`p-3 rounded-lg ${
+                      t.properties?.roadClosure
+                        ? 'bg-red-500/10 border-l-2 border-red-500'
+                        : t.properties?.speedRatio < 0.5
+                        ? 'bg-amber-500/10 border-l-2 border-amber-500'
+                        : t.properties?.speedRatio < 0.8
+                        ? 'bg-yellow-500/10 border-l-2 border-yellow-500'
+                        : 'bg-green-500/10 border-l-2 border-green-500'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-slate-200">
+                        {t.properties?.corridor || 'Unknown'}
+                      </span>
+                      <span className="text-sm font-mono text-slate-300">
+                        {t.properties?.roadClosure ? 'CLOSED' : `${Math.round(t.properties?.currentSpeed || 0)}mph`}
+                      </span>
+                    </div>
+                    {!t.properties?.roadClosure && (
+                      <div className="text-xs text-slate-500 mt-1">
+                        {Math.round((t.properties?.speedRatio || 1) * 100)}% of free flow ({Math.round(t.properties?.freeFlowSpeed || 0)}mph)
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {roads.length > 0 && (
+            <div>
+              <div className="text-xs text-slate-500 mb-2 uppercase">Road Events</div>
+              <div className="space-y-2">
+                {roads.map((r) => (
+                  <div
+                    key={r.event_id}
+                    className={`p-3 rounded-lg ${
+                      r.properties?.is_closure
+                        ? 'bg-red-500/10 border-l-2 border-red-500'
+                        : 'bg-amber-500/10 border-l-2 border-amber-500'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      {r.properties?.is_closure && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-400">
+                          CLOSURE
+                        </span>
+                      )}
+                      <span className="text-sm text-slate-200 line-clamp-1">
+                        {r.headline}
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1 uppercase">
+                      {r.event_type}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Satellite Hotspots */}
+      {hotspots.length > 0 && (
+        <div className="bg-bg-card border border-border rounded-lg p-6">
+          <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
+            <Satellite size={14} />
+            Satellite Hotspots ({hotspots.length})
+            {newIgnitions > 0 && (
+              <span className="ml-2 px-2 py-0.5 text-xs rounded-full bg-red-500/20 text-red-400 animate-pulse">
+                {newIgnitions} NEW
+              </span>
+            )}
+          </h2>
+          <div className="space-y-2">
+            {hotspots.map((h) => (
+              <div
+                key={h.event_id}
+                className={`p-3 rounded-lg ${
+                  h.properties?.new_ignition
+                    ? 'bg-red-500/10 border-l-2 border-red-500'
+                    : h.severity === 'watch'
+                    ? 'bg-amber-500/10 border-l-2 border-amber-500'
+                    : 'bg-orange-500/10 border-l-2 border-orange-500'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {h.properties?.new_ignition && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-400">
+                        NEW
+                      </span>
+                    )}
+                    <span className="text-sm text-slate-200">
+                      {h.headline}
+                    </span>
+                  </div>
+                  {h.properties?.frp && (
+                    <span className="text-sm font-mono text-orange-400">
+                      {Math.round(h.properties.frp)} MW
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-slate-500 mt-1 flex items-center gap-3">
+                  <span>Conf: {h.properties?.confidence || 'N/A'}</span>
+                  {h.properties?.acq_time && <span>@{h.properties.acq_time}Z</span>}
+                  {h.properties?.near_fire && (
+                    <span>Near: {h.properties.near_fire}</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Active Events */}
       <div className="bg-bg-card border border-border rounded-lg p-6">

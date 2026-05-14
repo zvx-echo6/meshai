@@ -20,7 +20,7 @@ class NICFFiresAdapter:
     BASE_URL = "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Interagency_Perimeters_Current/FeatureServer/0/query"
 
     def __init__(self, config: "NICFFiresConfig", region_anchors: list = None):
-        self._state = config.state or "US-ID"
+        self._state = config.state
         self._tick_interval = config.tick_seconds or 600
         self._last_tick = 0.0
         self._events = []

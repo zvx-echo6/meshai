@@ -28,8 +28,8 @@ class DuctingAdapter:
     """Tropospheric ducting assessment from Open-Meteo GFS pressure levels."""
 
     def __init__(self, config: "DuctingConfig"):
-        self._lat = config.latitude or 42.56
-        self._lon = config.longitude or -114.47
+        self._lat = config.latitude
+        self._lon = config.longitude
         self._tick_interval = config.tick_seconds or 10800  # 3 hours
         self._last_tick = 0.0
         self._status = {}

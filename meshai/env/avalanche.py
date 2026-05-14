@@ -31,7 +31,7 @@ class AvalancheAdapter:
     }
 
     def __init__(self, config: "AvalancheConfig"):
-        self._center_ids = config.center_ids or ["SNFAC"]
+        self._center_ids = config.center_ids
         self._tick_interval = config.tick_seconds or 1800
         self._season_months = config.season_months or [12, 1, 2, 3, 4]
         self._last_tick = 0.0

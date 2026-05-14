@@ -712,17 +712,126 @@ export default function Reference() {
           {/* Mesh Health */}
           <TopicSection id="mesh-health" title="Mesh Health">
             <SectionHeader>Health Score</SectionHeader>
-            <p>MeshAI computes a 0-100 health score for your mesh network by looking at five areas:</p>
+            <p>MeshAI computes a 0-100 health score for your mesh network by looking at five areas, each weighted differently:</p>
             <RefTable
-              headers={['Area', 'Weight', 'What It Checks']}
+              headers={['Pillar', 'Weight', 'What It Measures']}
               rows={[
-                ['Infrastructure', '30%', 'Are your routers and repeaters online and healthy?'],
-                ['Utilization', '25%', 'Is the radio channel getting congested?'],
-                ['Coverage', '20%', 'Do nodes have backup paths, or single points of failure?'],
-                ['Behavior', '15%', 'Are nodes behaving normally (packet patterns, responsiveness)?'],
-                ['Power', '10%', 'Battery levels, solar charging, power stability'],
+                [<strong>Infrastructure</strong>, '30%', 'Are your routers online?'],
+                [<strong>Utilization</strong>, '25%', 'Is the radio channel congested?'],
+                [<strong>Coverage</strong>, '20%', 'Do nodes have redundant paths to gateways?'],
+                [<strong>Behavior</strong>, '15%', 'Are any nodes flooding the channel?'],
+                [<strong>Power</strong>, '10%', 'Are battery-powered nodes running low?'],
               ]}
             />
+            <p>The overall score is the weighted sum:</p>
+            <p className="p-3 bg-slate-800 rounded font-mono text-sm">
+              Score = (Infrastructure × 30%) + (Utilization × 25%) + (Coverage × 20%) + (Behavior × 15%) + (Power × 10%)
+            </p>
+
+            <SectionHeader>How Each Pillar Is Calculated</SectionHeader>
+
+            <SubHeader>Infrastructure (30%)</SubHeader>
+            <p>
+              This is the simplest pillar — what percentage of your infrastructure nodes are currently online?
+            </p>
+            <p className="p-3 bg-slate-800 rounded font-mono text-sm">
+              (routers online ÷ total routers) × 100
+            </p>
+            <p>
+              Only nodes with the <Mono>ROUTER</Mono>, <Mono>ROUTER_LATE</Mono>, or <Mono>ROUTER_CLIENT</Mono> role count as infrastructure. Regular client nodes going offline doesn't affect this score. If you have 5 routers and 3 are online, infrastructure scores 60.
+            </p>
+            <p>
+              <strong>Special case:</strong> If you have no routers at all (all clients), this pillar scores 100. You're not penalized for not having infrastructure — you just don't have any to track.
+            </p>
+
+            <SubHeader>Utilization (25%)</SubHeader>
+            <p>
+              MeshAI reads the channel utilization that each router reports in its telemetry — this is the firmware's own measurement of how busy the radio channel is. MeshAI uses the <strong>highest</strong> value from any infrastructure node because the busiest router is the bottleneck for the whole mesh.
+            </p>
+            <p>
+              <strong>How it works:</strong>
+            </p>
+            <ol className="list-decimal list-inside space-y-1 ml-4">
+              <li>Collect <Mono>channel_utilization</Mono> from all infrastructure nodes that report it</li>
+              <li>If no infra nodes have telemetry, try all nodes</li>
+              <li>Use the <strong>maximum</strong> value for scoring (busiest node = bottleneck)</li>
+              <li>If no nodes report utilization (older firmware), fall back to packet count estimate</li>
+            </ol>
+            <p className="mt-4">
+              <strong>Fallback method</strong> (when telemetry unavailable): estimates from packet counts using 200ms/packet airtime. This is less accurate — it assumes MediumFast preset and sums packets across all nodes.
+            </p>
+            <RefTable
+              headers={['Channel Utilization', 'Score', 'What It Means']}
+              rows={[
+                ['Under 20%', '100', 'Channel is clear — this is the goal'],
+                ['20-25%', '75-100', 'Slight degradation, occasional collisions'],
+                ['25-35%', '50-75', 'Severe degradation — firmware throttling active'],
+                ['35-45%', '25-50', 'Mesh struggling badly — reliability dropping'],
+                ['Over 45%', '0-25', 'Mesh is effectively unusable'],
+              ]}
+            />
+            <p>
+              <strong>Special case:</strong> If no utilization data is available (no telemetry and no packet data), this pillar scores 100. You're not penalized for missing data.
+            </p>
+
+            <SubHeader>Coverage (20%)</SubHeader>
+            <p>
+              Measures gateway redundancy — how many of your data sources can "see" each node. A node reported by all 3 of your gateways has full coverage. A node only seen by 1 gateway is a single point of failure.
+            </p>
+            <p className="p-3 bg-slate-800 rounded font-mono text-sm">
+              coverage_ratio = average_gateways_per_node ÷ total_sources<br/>
+              single_gw_penalty = (single_gateway_nodes ÷ total_nodes) × 40
+            </p>
+            <p>
+              If a node is seen by 2 out of 3 sources, its coverage ratio is 0.67. Infrastructure nodes with only single-gateway coverage get an extra penalty — they're critical but have no backup path.
+            </p>
+            <RefTable
+              headers={['Coverage Ratio', 'Base Score', 'After Penalty']}
+              rows={[
+                ['100% (all sources)', '100', '100 minus single-gw penalty'],
+                ['70-99%', '90', 'Minus penalties'],
+                ['50-69%', '70', 'Minus penalties'],
+                ['Under 50%', '50 or less', 'Heavy penalty'],
+              ]}
+            />
+            <p>
+              <strong>Special case:</strong> With only 1 data source, this pillar can't score well — there's no redundancy to measure. Coverage becomes meaningful when you have 2+ sources (MeshMonitor + MQTT, multiple gateways, etc.).
+            </p>
+
+            <SubHeader>Behavior (15%)</SubHeader>
+            <p>
+              Counts how many nodes are sending an unusually high number of non-text packets. This catches firmware bugs, stuck transmitters, and misconfigured nodes that are flooding the channel.
+            </p>
+            <p>
+              <strong>What counts as flooding:</strong> More than 500 non-text packets in 24 hours. Text messages don't count — the behavior pillar only flags telemetry, position, and routing packet floods.
+            </p>
+            <RefTable
+              headers={['Flagged Nodes', 'Score']}
+              rows={[
+                ['0', '100'],
+                ['1', '80'],
+                ['2-3', '60'],
+                ['4-5', '40'],
+                ['6+', '20'],
+              ]}
+            />
+            <p>
+              A single misbehaving node only drops the score to 80. It takes multiple problem nodes to seriously hurt the behavior pillar.
+            </p>
+
+            <SubHeader>Power (10%)</SubHeader>
+            <p>
+              Measures what fraction of battery-powered nodes are below the warning threshold (default 20%).
+            </p>
+            <p className="p-3 bg-slate-800 rounded font-mono text-sm">
+              100 × (1 − low_battery_nodes ÷ total_battery_nodes)
+            </p>
+            <p>
+              If 2 out of 10 battery nodes are below 20%, power scores 80.
+            </p>
+            <p>
+              <strong>Important:</strong> USB-powered nodes are excluded from this calculation. Many nodes report 100% battery even when running on wall power with no battery installed. Only nodes actually running on batteries affect this pillar.
+            </p>
 
             <SectionHeader>Health Tiers</SectionHeader>
             <RefTable

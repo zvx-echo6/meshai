@@ -93,6 +93,34 @@ export interface Alert {
   scope_value?: string
 }
 
+export interface AlertHistoryItem {
+  id?: number
+  type: string
+  severity: string
+  message: string
+  timestamp: string
+  duration?: number
+  scope_type?: string
+  scope_value?: string
+  resolved_at?: string
+}
+
+export interface AlertHistoryResponse {
+  items: AlertHistoryItem[]
+  total: number
+}
+
+export interface Subscription {
+  id: number
+  user_id: string
+  sub_type: string
+  schedule_time?: string
+  schedule_day?: string
+  scope_type: string
+  scope_value?: string
+  enabled: boolean
+}
+
 export interface EnvStatus {
   enabled: boolean
   feeds: EnvFeedHealth[]
@@ -119,6 +147,37 @@ export interface EnvEvent {
   [key: string]: unknown
 }
 
+// Kp history entry for charting
+export interface KpHistoryEntry {
+  time: string
+  value: number
+}
+
+// SFI history entry for charting
+export interface SfiHistoryEntry {
+  time: string
+  value: number
+}
+
+// Refractivity profile entry
+export interface ProfileEntry {
+  level_hPa: number
+  height_m: number
+  N: number
+  M: number
+  T_C: number
+  RH: number
+}
+
+// Gradient entry
+export interface GradientEntry {
+  from_level: number
+  to_level: number
+  from_height_m: number
+  to_height_m: number
+  gradient: number
+}
+
 export interface SWPCStatus {
   enabled: boolean
   kp_current?: number
@@ -128,6 +187,8 @@ export interface SWPCStatus {
   s_scale?: number
   g_scale?: number
   active_warnings?: string[]
+  kp_history?: KpHistoryEntry[]
+  sfi_history?: SfiHistoryEntry[]
 }
 
 export interface DuctingStatus {
@@ -137,6 +198,10 @@ export interface DuctingStatus {
   duct_thickness_m?: number | null
   duct_base_m?: number | null
   last_update?: string
+  profile?: ProfileEntry[]
+  gradients?: GradientEntry[]
+  assessment?: string
+  location?: { lat: number; lon: number }
 }
 
 export interface RFPropagation {
@@ -147,11 +212,13 @@ export interface RFPropagation {
     s_scale?: number
     g_scale?: number
     active_warnings?: string[]
+    kp_history?: KpHistoryEntry[]
   }
   uhf_ducting: {
     condition?: string
     min_gradient?: number
     duct_thickness_m?: number | null
+    profile?: ProfileEntry[]
   }
 }
 
@@ -207,6 +274,24 @@ export async function updateConfig(
 
 export async function fetchAlerts(): Promise<Alert[]> {
   return fetchJson<Alert[]>('/api/alerts/active')
+}
+
+export async function fetchAlertHistory(
+  limit: number = 50,
+  offset: number = 0,
+  type?: string,
+  severity?: string
+): Promise<AlertHistoryResponse | AlertHistoryItem[]> {
+  const params = new URLSearchParams()
+  params.set('limit', limit.toString())
+  params.set('offset', offset.toString())
+  if (type && type !== 'all') params.set('type', type)
+  if (severity && severity !== 'all') params.set('severity', severity)
+  return fetchJson<AlertHistoryResponse | AlertHistoryItem[]>(`/api/alerts/history?${params.toString()}`)
+}
+
+export async function fetchSubscriptions(): Promise<Subscription[]> {
+  return fetchJson<Subscription[]>('/api/subscriptions')
 }
 
 export async function fetchEnvStatus(): Promise<EnvStatus> {
@@ -270,6 +355,96 @@ export interface AvalancheEvent {
   fetched_at: number
 }
 
+export interface StreamGaugeEvent {
+  source: string
+  event_id: string
+  event_type: string
+  headline: string
+  severity: string
+  lat?: number
+  lon?: number
+  expires: number
+  fetched_at: number
+  properties: {
+    site_id: string
+    site_name: string
+    parameter: string
+    value: number
+    unit: string
+    timestamp: string
+  }
+}
+
+export interface TrafficEvent {
+  source: string
+  event_id: string
+  event_type: string
+  headline: string
+  severity: string
+  lat?: number
+  lon?: number
+  expires: number
+  fetched_at: number
+  properties: {
+    corridor: string
+    currentSpeed: number
+    freeFlowSpeed: number
+    speedRatio: number
+    currentTravelTime: number
+    freeFlowTravelTime: number
+    confidence: number
+    roadClosure: boolean
+  }
+}
+
+export interface RoadEvent {
+  source: string
+  event_id: string
+  event_type: string
+  headline: string
+  description?: string
+  severity: string
+  lat?: number
+  lon?: number
+  expires: number
+  fetched_at: number
+  properties: {
+    roadway: string
+    is_closure: boolean
+    last_updated?: string
+  }
+}
+
+export interface HotspotEvent {
+  source: string
+  event_id: string
+  event_type: string
+  headline: string
+  severity: string
+  lat?: number
+  lon?: number
+  expires: number
+  fetched_at: number
+  properties: {
+    new_ignition: boolean
+    confidence: string
+    frp?: number
+    brightness?: number
+    acq_date: string
+    acq_time: string
+    near_fire?: string
+    distance_to_fire_km?: number
+    distance_km?: number
+    nearest_anchor?: string
+  }
+}
+
+export interface HotspotsResponse {
+  enabled: boolean
+  hotspots: HotspotEvent[]
+  new_ignitions: number
+}
+
 export interface AvalancheResponse {
   off_season: boolean
   advisories: AvalancheEvent[]
@@ -281,6 +456,22 @@ export async function fetchFires(): Promise<FireEvent[]> {
 
 export async function fetchAvalanche(): Promise<AvalancheResponse> {
   return fetchJson<AvalancheResponse>('/api/env/avalanche')
+}
+
+export async function fetchStreams(): Promise<StreamGaugeEvent[]> {
+  return fetchJson<StreamGaugeEvent[]>('/api/env/streams')
+}
+
+export async function fetchTraffic(): Promise<TrafficEvent[]> {
+  return fetchJson<TrafficEvent[]>('/api/env/traffic')
+}
+
+export async function fetchRoads(): Promise<RoadEvent[]> {
+  return fetchJson<RoadEvent[]>('/api/env/roads')
+}
+
+export async function fetchHotspots(): Promise<HotspotsResponse> {
+  return fetchJson<HotspotsResponse>('/api/env/hotspots')
 }
 
 export async function fetchRegions(): Promise<RegionInfo[]> {

@@ -1,139 +1,218 @@
 """Alert category registry.
 
-Defines all alertable conditions with human-readable names and descriptions.
+Defines all alertable conditions with human-readable names, descriptions,
+and example messages showing what users will receive.
 """
 
 ALERT_CATEGORIES = {
     # Infrastructure alerts
     "infra_offline": {
-        "name": "Infrastructure Offline",
-        "description": "An infrastructure node stopped responding",
+        "name": "Infrastructure Node Offline",
+        "description": "An infrastructure node (router/repeater) stopped responding",
         "default_severity": "warning",
+        "example_message": "⚠ Infrastructure Offline: MHR — Mountain Harrison Rptr has not been heard for 2 hours",
     },
     "critical_node_down": {
         "name": "Critical Node Down",
-        "description": "A node marked as critical went offline",
-        "default_severity": "critical",
+        "description": "A node you marked as critical went offline",
+        "default_severity": "warning",
+        "example_message": "🚨 Critical Node Down: HPR — Hayden Peak Rptr offline for 1 hour",
     },
     "infra_recovery": {
         "name": "Infrastructure Recovery",
-        "description": "An infrastructure node came back online",
+        "description": "An offline infrastructure node came back online",
         "default_severity": "info",
+        "example_message": "✅ Recovery: MHR — Mountain Harrison Rptr back online after 2h outage",
     },
     "new_router": {
         "name": "New Router",
         "description": "A new router appeared on the mesh",
         "default_severity": "info",
+        "example_message": "📡 New Router: Snake River Relay appeared in Wood River Valley",
     },
 
     # Power alerts
     "battery_warning": {
         "name": "Battery Warning",
-        "description": "Infrastructure node battery below warning threshold",
-        "default_severity": "warning",
+        "description": "Infrastructure node battery below 30% (3.60V)",
+        "default_severity": "advisory",
+        "example_message": "🔋 Battery Warning: BLD-MTN at 28% (3.58V), solar not charging",
     },
     "battery_critical": {
         "name": "Battery Critical",
-        "description": "Infrastructure node battery below critical threshold",
-        "default_severity": "critical",
+        "description": "Infrastructure node battery below 15% (3.50V)",
+        "default_severity": "warning",
+        "example_message": "🔋 Battery Critical: BLD-MTN at 12% (3.48V) — shutdown in hours",
     },
     "battery_emergency": {
         "name": "Battery Emergency",
-        "description": "Infrastructure node battery critically low",
-        "default_severity": "emergency",
+        "description": "Infrastructure node battery below 5% (3.40V) — shutdown imminent",
+        "default_severity": "critical",
+        "example_message": "🚨 Battery Emergency: BLD-MTN at 4% (3.38V) — shutdown imminent",
     },
     "battery_trend": {
         "name": "Battery Declining",
-        "description": "Battery showing declining trend over 7 days",
-        "default_severity": "warning",
+        "description": "Battery showing declining trend over 7 days — possible solar or charging issue",
+        "default_severity": "advisory",
+        "example_message": "🔋 Battery Trend: HPR declining 85% → 62% over 7 days (-3.3%/day)",
     },
     "power_source_change": {
         "name": "Power Source Change",
-        "description": "Node switched from USB to battery (possible outage)",
+        "description": "Node switched from USB to battery — possible power outage at site",
         "default_severity": "warning",
+        "example_message": "⚡ Power Source: MHR switched from USB to battery — possible outage",
     },
     "solar_not_charging": {
         "name": "Solar Not Charging",
-        "description": "Solar panel not charging during daylight hours",
+        "description": "Solar panel not charging during daylight hours — panel issue or obstruction",
         "default_severity": "warning",
+        "example_message": "☀️ Solar Issue: BLD-MTN not charging during daylight (12:00 MDT)",
     },
 
     # Utilization alerts
+    "high_utilization": {
+        "name": "Channel Airtime High",
+        "description": "LoRa channel airtime exceeding threshold — mesh congestion",
+        "default_severity": "advisory",
+        "example_message": "📊 Channel Airtime: 47% utilization (threshold: 40%). Reliability may degrade.",
+    },
     "sustained_high_util": {
-        "name": "High Utilization",
-        "description": "Channel utilization elevated for extended period",
+        "name": "Sustained High Utilization",
+        "description": "Channel airtime elevated for extended period — ongoing congestion",
         "default_severity": "warning",
+        "example_message": "📊 Sustained Congestion: 45% channel utilization for 2+ hours. Consider reducing telemetry.",
     },
     "packet_flood": {
         "name": "Packet Flood",
-        "description": "Node sending excessive packets",
+        "description": "A single node sending excessive radio packets (NOT water flooding) — possible firmware bug or stuck transmitter",
         "default_severity": "warning",
+        "example_message": "📻 Packet Flood: Node 'BKBS' transmitting 42 packets/min (threshold: 10/min). Firmware bug?",
     },
 
     # Coverage alerts
     "infra_single_gateway": {
         "name": "Single Gateway",
-        "description": "Infrastructure node dropped to single gateway coverage",
-        "default_severity": "warning",
+        "description": "Infrastructure node dropped to single gateway coverage — reduced redundancy",
+        "default_severity": "advisory",
+        "example_message": "📶 Reduced Coverage: HPR dropped to single gateway. Previously had 3 paths.",
     },
     "feeder_offline": {
         "name": "Feeder Offline",
-        "description": "A feeder gateway stopped responding",
+        "description": "A feeder gateway stopped responding — coverage gap possible",
         "default_severity": "warning",
+        "example_message": "📡 Feeder Offline: AIDA-N2 gateway not responding. 5 nodes may lose uplink.",
     },
     "region_total_blackout": {
         "name": "Region Blackout",
-        "description": "All infrastructure in a region is offline",
-        "default_severity": "emergency",
+        "description": "All infrastructure in a region is offline — complete coverage loss",
+        "default_severity": "critical",
+        "example_message": "🚨 REGION BLACKOUT: All infrastructure in Magic Valley offline!",
     },
 
     # Health score alerts
     "mesh_score_low": {
         "name": "Mesh Health Low",
-        "description": "Overall mesh health score below threshold",
+        "description": "Overall mesh health score dropped below threshold — multiple issues likely",
         "default_severity": "warning",
+        "example_message": "📉 Mesh Health: Score 62/100 (threshold: 65). Infrastructure: 71, Connectivity: 58.",
     },
     "region_score_low": {
         "name": "Region Health Low",
-        "description": "A region's health score below threshold",
+        "description": "A region's health score below threshold — localized issues",
         "default_severity": "warning",
+        "example_message": "📉 Region Health: Magic Valley at 55/100 (threshold: 60). 2 nodes offline.",
     },
 
-    # Environmental alerts
+    # Environmental - Weather
     "weather_warning": {
         "name": "Severe Weather",
-        "description": "NWS warning or advisory for mesh area",
+        "description": "NWS warning or advisory affecting your mesh area",
         "default_severity": "warning",
+        "example_message": "⚠ Red Flag Warning — Twin Falls, Cassia counties. Gusty winds, low humidity. Until May 13 04:00Z",
     },
+
+    # Environmental - Space Weather
     "hf_blackout": {
         "name": "HF Radio Blackout",
-        "description": "R3+ solar event degrading HF propagation",
+        "description": "R3+ solar flare degrading HF propagation on sunlit side",
         "default_severity": "warning",
+        "example_message": "⚠ R3 Strong Radio Blackout — X1.2 flare. Wide-area HF blackout ~1 hour on sunlit side.",
     },
+    "geomagnetic_storm": {
+        "name": "Geomagnetic Storm",
+        "description": "G2+ geomagnetic storm — HF degraded at higher latitudes, aurora possible",
+        "default_severity": "advisory",
+        "example_message": "🌐 G2 Moderate Geomagnetic Storm — Kp=6. HF fades at high latitudes, aurora to ~55°.",
+    },
+
+    # Environmental - Tropospheric
     "tropospheric_ducting": {
         "name": "Tropospheric Ducting",
-        "description": "Atmospheric conditions extending VHF/UHF range",
+        "description": "Atmospheric conditions trapping VHF/UHF signals — extended range",
         "default_severity": "info",
+        "example_message": "📡 Tropospheric Ducting: Surface duct detected, dM/dz -45 M-units/km, ~120m thick. VHF/UHF extended range.",
+    },
+
+    # Environmental - Fire
+    "fire_proximity": {
+        "name": "Fire Near Mesh",
+        "description": "Active wildfire within alert radius of mesh infrastructure",
+        "default_severity": "warning",
+        "example_message": "🔥 Fire Near Mesh: Rock Creek Fire — 1,240 ac, 15% contained, 12 km SSW of MHR. Monitor closely.",
     },
     "wildfire_proximity": {
         "name": "Fire Near Mesh",
-        "description": "Wildfire detected within configured distance",
+        "description": "Active wildfire within alert radius of mesh infrastructure",
         "default_severity": "warning",
+        "example_message": "🔥 Fire Near Mesh: Rock Creek Fire — 1,240 ac, 15% contained, 12 km SSW of MHR.",
     },
     "new_ignition": {
         "name": "New Fire Ignition",
-        "description": "Satellite hotspot not matching any known fire",
-        "default_severity": "warning",
+        "description": "Satellite hotspot detected NOT near any known fire — potential new wildfire",
+        "default_severity": "watch",
+        "example_message": "🛰 New Ignition: Satellite fire at 42.32°N, 114.30°W — high confidence, 47 MW FRP. Not near any known fire.",
     },
-    "flood_warning": {
-        "name": "Flood Warning",
-        "description": "Stream gauge exceeds flood threshold",
+
+    # Environmental - Flood
+    "stream_flood_warning": {
+        "name": "Stream Flood Warning",
+        "description": "River gauge exceeds NWS flood stage threshold",
         "default_severity": "warning",
+        "example_message": "🌊 Stream Flood Warning: Snake River nr Twin Falls at 12.8 ft — Minor Flood Stage is 10.5 ft.",
     },
+    "stream_high_water": {
+        "name": "Stream High Water",
+        "description": "River gauge approaching flood stage — monitoring recommended",
+        "default_severity": "advisory",
+        "example_message": "🌊 High Water: Snake River at 9.8 ft — Action Stage is 9.0 ft. Monitor conditions.",
+    },
+
+    # Environmental - Roads
     "road_closure": {
         "name": "Road Closure",
-        "description": "Full road closure on monitored corridor",
+        "description": "Full road closure on a monitored corridor",
         "default_severity": "warning",
+        "example_message": "🚧 Road Closure: I-84 EB at MP 173 — full closure, construction. Detour via US-30.",
+    },
+    "traffic_congestion": {
+        "name": "Traffic Congestion",
+        "description": "Traffic speed dropped below congestion threshold on a monitored corridor",
+        "default_severity": "advisory",
+        "example_message": "🚗 Traffic Congestion: I-84 Twin Falls — 35 mph (free-flow 70 mph), 50% speed ratio",
+    },
+
+    # Environmental - Avalanche
+    "avalanche_warning": {
+        "name": "Avalanche Danger High",
+        "description": "Avalanche danger level 4 (High) or 5 (Extreme) in your area",
+        "default_severity": "warning",
+        "example_message": "⛷ Avalanche Danger HIGH: Sawtooth Zone — avoid avalanche terrain. Natural avalanches likely.",
+    },
+    "avalanche_considerable": {
+        "name": "Avalanche Danger Considerable",
+        "description": "Avalanche danger level 3 (Considerable) — most fatalities occur at this level",
+        "default_severity": "watch",
+        "example_message": "⛷ Avalanche Danger CONSIDERABLE: Sawtooth Zone — dangerous conditions on steep slopes.",
     },
 }
 
@@ -146,6 +225,7 @@ def get_category(category_id: str) -> dict:
         "name": category_id.replace("_", " ").title(),
         "description": f"Alert type: {category_id}",
         "default_severity": "info",
+        "example_message": f"Alert: {category_id}",
     }
 
 

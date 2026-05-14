@@ -60,6 +60,14 @@ class MemoryConfig:
     """Rolling summary memory settings."""
 
     enabled: bool = True  # Enable memory optimization
+
+    # MQTT-specific fields (type=mqtt only)
+    host: str = ""              # MQTT broker hostname
+    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
+    username: str = ""         # MQTT username (optional)
+    password: str = ""         # MQTT password (optional, supports )
+    topic_root: str = "msh/US"  # Topic root to subscribe to
+    use_tls: bool = False       # Enable TLS for MQTT connection
     window_size: int = 4  # Recent message pairs to keep in full
     summarize_threshold: int = 8  # Messages before re-summarizing
 
@@ -69,6 +77,14 @@ class ContextConfig:
     """Passive mesh context settings."""
 
     enabled: bool = True
+
+    # MQTT-specific fields (type=mqtt only)
+    host: str = ""              # MQTT broker hostname
+    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
+    username: str = ""         # MQTT username (optional)
+    password: str = ""         # MQTT password (optional, supports )
+    topic_root: str = "msh/US"  # Topic root to subscribe to
+    use_tls: bool = False       # Enable TLS for MQTT connection
     observe_channels: list[int] = field(default_factory=list)  # Empty = all channels
     ignore_nodes: list[str] = field(default_factory=list)  # Node IDs to ignore
     max_age: int = 2_592_000  # 30 days in seconds
@@ -80,6 +96,14 @@ class CommandsConfig:
     """Command settings."""
 
     enabled: bool = True
+
+    # MQTT-specific fields (type=mqtt only)
+    host: str = ""              # MQTT broker hostname
+    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
+    username: str = ""         # MQTT username (optional)
+    password: str = ""         # MQTT password (optional, supports )
+    topic_root: str = "msh/US"  # Topic root to subscribe to
+    use_tls: bool = False       # Enable TLS for MQTT connection
     prefix: str = "!"
     disabled_commands: list[str] = field(default_factory=list)
     custom_commands: dict = field(default_factory=dict)
@@ -179,12 +203,20 @@ class MeshSourceConfig:
     """Configuration for a mesh data source."""
 
     name: str = ""
-    type: str = ""  # "meshview" or "meshmonitor"
+    type: str = ""  # "meshview", "meshmonitor", or "mqtt"
     url: str = ""
     api_token: str = ""  # MeshMonitor only, supports ${ENV_VAR}
     refresh_interval: int = 30     # Tick interval in seconds (default 30)
     polite_mode: bool = False      # Reduces polling frequency for shared instances
     enabled: bool = True
+
+    # MQTT-specific fields (type=mqtt only)
+    host: str = ""              # MQTT broker hostname
+    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
+    username: str = ""         # MQTT username (optional)
+    password: str = ""         # MQTT password (optional, supports )
+    topic_root: str = "msh/US"  # Topic root to subscribe to
+    use_tls: bool = False       # Enable TLS for MQTT connection
 
 
 @dataclass
@@ -214,18 +246,22 @@ class AlertRulesConfig:
     battery_warning: bool = True
     battery_critical: bool = True
     battery_emergency: bool = True
-    battery_warning_threshold: int = 50
-    battery_critical_threshold: int = 25
-    battery_emergency_threshold: int = 10
+    battery_warning_threshold: int = 30
+    battery_critical_threshold: int = 15
+    battery_emergency_threshold: int = 5
+    # Voltage-based thresholds (more accurate than percentage)
+    battery_warning_voltage: float = 3.60
+    battery_critical_voltage: float = 3.50
+    battery_emergency_voltage: float = 3.40
     power_source_change: bool = True
     solar_not_charging: bool = True
 
     # Utilization
     sustained_high_util: bool = True
-    high_util_threshold: float = 20.0
+    high_util_threshold: float = 40.0
     high_util_hours: int = 6
     packet_flood: bool = True
-    packet_flood_threshold: int = 500
+    packet_flood_threshold: int = 10
 
     # Coverage
     infra_single_gateway: bool = True
@@ -234,7 +270,7 @@ class AlertRulesConfig:
 
     # Health Scores
     mesh_score_alert: bool = True
-    mesh_score_threshold: int = 70
+    mesh_score_threshold: int = 65
     region_score_alert: bool = True
     region_score_threshold: int = 60
 
@@ -246,9 +282,9 @@ class MeshIntelligenceConfig:
     enabled: bool = False
     regions: list[RegionAnchor] = field(default_factory=list)  # Fixed region anchors
     locality_radius_miles: float = 8.0  # Radius for locality clustering within regions
-    offline_threshold_hours: int = 24  # Hours before node considered offline
+    offline_threshold_hours: int = 2  # Hours before node considered offline
     packet_threshold: int = 500  # Non-text packets per 24h to flag
-    battery_warning_percent: int = 20  # Battery level for warnings
+    battery_warning_percent: int = 30  # Battery level for warnings
 
     # Alert settings
     critical_nodes: list[str] = field(default_factory=list)  # Short names of critical nodes (e.g., ["MHR", "HPR"])
@@ -263,6 +299,14 @@ class NWSConfig:
     """NWS weather alerts settings."""
 
     enabled: bool = True
+
+    # MQTT-specific fields (type=mqtt only)
+    host: str = ""              # MQTT broker hostname
+    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
+    username: str = ""         # MQTT username (optional)
+    password: str = ""         # MQTT password (optional, supports )
+    topic_root: str = "msh/US"  # Topic root to subscribe to
+    use_tls: bool = False       # Enable TLS for MQTT connection
     tick_seconds: int = 60
     areas: list = field(default_factory=lambda: ["ID"])
     severity_min: str = "moderate"
@@ -275,12 +319,28 @@ class SWPCConfig:
 
     enabled: bool = True
 
+    # MQTT-specific fields (type=mqtt only)
+    host: str = ""              # MQTT broker hostname
+    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
+    username: str = ""         # MQTT username (optional)
+    password: str = ""         # MQTT password (optional, supports )
+    topic_root: str = "msh/US"  # Topic root to subscribe to
+    use_tls: bool = False       # Enable TLS for MQTT connection
+
 
 @dataclass
 class DuctingConfig:
     """Tropospheric ducting settings."""
 
     enabled: bool = True
+
+    # MQTT-specific fields (type=mqtt only)
+    host: str = ""              # MQTT broker hostname
+    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
+    username: str = ""         # MQTT username (optional)
+    password: str = ""         # MQTT password (optional, supports )
+    topic_root: str = "msh/US"  # Topic root to subscribe to
+    use_tls: bool = False       # Enable TLS for MQTT connection
     tick_seconds: int = 10800  # 3 hours
     latitude: float = 42.56  # Twin Falls area default
     longitude: float = -114.47
@@ -306,6 +366,52 @@ class AvalancheConfig:
 
 
 @dataclass
+class USGSConfig:
+    """USGS stream gauge settings."""
+
+    enabled: bool = False
+    tick_seconds: int = 900  # Minimum 15 min per USGS guidelines
+    sites: list = field(default_factory=list)  # Site IDs, e.g. ["13090500"]
+    flood_thresholds: dict = field(default_factory=dict)  # {site_id: {flow: X, height: Y}}
+
+
+@dataclass
+class TomTomConfig:
+    """TomTom traffic flow settings."""
+
+    enabled: bool = False
+    tick_seconds: int = 300
+    api_key: str = ""  # Supports ${ENV_VAR}
+    corridors: list = field(default_factory=list)  # [{name, lat, lon}, ...]
+
+
+@dataclass
+class Roads511Config:
+    """511 road conditions settings."""
+
+    enabled: bool = False
+    tick_seconds: int = 300
+    api_key: str = ""  # Supports ${ENV_VAR}
+    base_url: str = ""  # State-specific, e.g. "https://511.idaho.gov/api/v2"
+    endpoints: list = field(default_factory=lambda: ["/get/event"])
+    bbox: list = field(default_factory=list)  # [west, south, east, north]
+
+
+@dataclass
+class FIRMSConfig:
+    """NASA FIRMS satellite fire hotspot settings."""
+
+    enabled: bool = False
+    tick_seconds: int = 1800  # 30 min default
+    map_key: str = ""  # NASA FIRMS MAP_KEY, get at https://firms.modaps.eosdis.nasa.gov/api/area/
+    source: str = "VIIRS_SNPP_NRT"  # VIIRS_SNPP_NRT, VIIRS_NOAA20_NRT, MODIS_NRT
+    bbox: list = field(default_factory=list)  # [west, south, east, north]
+    day_range: int = 1  # 1-10 days of data
+    confidence_min: str = "nominal"  # low, nominal, high
+    proximity_km: float = 10.0  # km to match known fire
+
+
+@dataclass
 class EnvironmentalConfig:
     """Environmental feeds settings."""
 
@@ -316,7 +422,74 @@ class EnvironmentalConfig:
     ducting: DuctingConfig = field(default_factory=DuctingConfig)
     fires: NICFFiresConfig = field(default_factory=NICFFiresConfig)
     avalanche: AvalancheConfig = field(default_factory=AvalancheConfig)
+    usgs: USGSConfig = field(default_factory=USGSConfig)
+    traffic: TomTomConfig = field(default_factory=TomTomConfig)
+    roads511: Roads511Config = field(default_factory=Roads511Config)
+    firms: FIRMSConfig = field(default_factory=FIRMSConfig)
 
+
+@dataclass
+class NotificationRuleConfig:
+    """Self-contained notification rule with inline delivery config."""
+
+    name: str = ""
+    enabled: bool = True
+
+    # Trigger type
+    trigger_type: str = "condition"  # "condition" or "schedule"
+
+    # Condition trigger fields
+    categories: list = field(default_factory=list)  # Empty = all categories
+    min_severity: str = "warning"
+
+    # Schedule trigger fields
+    schedule_frequency: str = "daily"  # daily, twice_daily, weekly, custom
+    schedule_time: str = "07:00"
+    schedule_time_2: str = "19:00"  # For twice_daily
+    schedule_days: list = field(default_factory=list)  # For weekly
+    schedule_cron: str = ""  # For custom
+    message_type: str = "mesh_health_summary"
+    custom_message: str = ""
+
+    # Delivery type
+    delivery_type: str = ""  # mesh_broadcast, mesh_dm, email, webhook
+
+    # Mesh broadcast fields
+    broadcast_channel: int = 0
+
+    # Mesh DM fields
+    node_ids: list = field(default_factory=list)
+
+    # Email fields
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_tls: bool = True
+    from_address: str = ""
+    recipients: list = field(default_factory=list)
+
+    # Webhook fields
+    webhook_url: str = ""
+    webhook_headers: dict = field(default_factory=dict)
+
+    # Behavior
+    cooldown_minutes: int = 10
+    override_quiet: bool = False
+
+    # Legacy field for migration (ignored in new format)
+    channel_ids: list = field(default_factory=list)
+
+
+@dataclass
+class NotificationsConfig:
+    """Notification system settings."""
+
+    enabled: bool = False
+    quiet_hours_enabled: bool = True  # Master toggle for quiet hours
+    quiet_hours_start: str = "22:00"
+    quiet_hours_end: str = "06:00"
+    rules: list = field(default_factory=list)  # List of NotificationRuleConfig
 
 @dataclass
 class DashboardConfig:
@@ -348,6 +521,7 @@ class Config:
     mesh_intelligence: MeshIntelligenceConfig = field(default_factory=MeshIntelligenceConfig)
     environmental: EnvironmentalConfig = field(default_factory=EnvironmentalConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
+    notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
 
     _config_path: Optional[Path] = field(default=None, repr=False)
 
@@ -364,6 +538,69 @@ class Config:
             if value := os.environ.get(env_var):
                 return value
         return ""
+
+
+def _migrate_legacy_channels(notifications, data: dict):
+    """Migrate legacy channels+rules format to self-contained rules."""
+    old_channels = data.get("channels", [])
+    old_rules = data.get("rules", [])
+
+    if not old_channels:
+        return
+
+    _config_logger.info("Migrating %d legacy notification channels to inline rules", len(old_channels))
+
+    # Build channel lookup
+    channel_map = {}
+    for ch in old_channels:
+        if isinstance(ch, dict):
+            channel_map[ch.get("id", "")] = ch
+
+    # Convert each old rule + referenced channels to new format
+    migrated_rules = []
+    for old_rule in old_rules:
+        if not isinstance(old_rule, dict):
+            continue
+
+        channel_ids = old_rule.get("channel_ids", [])
+        if not channel_ids:
+            continue
+
+        for ch_id in channel_ids:
+            ch = channel_map.get(ch_id)
+            if not ch:
+                continue
+
+            # Create new rule with inline delivery config
+            new_rule = NotificationRuleConfig(
+                name=old_rule.get("name", "") or ch_id,
+                enabled=ch.get("enabled", True),
+                trigger_type="condition",
+                categories=old_rule.get("categories", []),
+                min_severity=old_rule.get("min_severity", "warning"),
+                delivery_type=ch.get("type", "mesh_broadcast"),
+                broadcast_channel=ch.get("channel_index", 0),
+                node_ids=ch.get("node_ids", []),
+                smtp_host=ch.get("smtp_host", ""),
+                smtp_port=ch.get("smtp_port", 587),
+                smtp_user=ch.get("smtp_user", ""),
+                smtp_password=ch.get("smtp_password", ""),
+                smtp_tls=ch.get("smtp_tls", True),
+                from_address=ch.get("from_address", ""),
+                recipients=ch.get("recipients", []),
+                webhook_url=ch.get("url", ""),
+                webhook_headers=ch.get("headers", {}),
+                cooldown_minutes=10,
+                override_quiet=old_rule.get("override_quiet", False),
+            )
+            migrated_rules.append(new_rule)
+
+    # Replace rules with migrated ones (migrated rules come first, then any new-format rules)
+    if migrated_rules:
+        # Keep only non-migrated rules (those without channel_ids)
+        existing_new_rules = [r for r in notifications.rules if not getattr(r, 'channel_ids', [])]
+        notifications.rules = migrated_rules + existing_new_rules
+        _config_logger.info("Migrated to %d self-contained rules", len(notifications.rules))
 
 
 def _dict_to_dataclass(cls, data: dict):
@@ -413,6 +650,24 @@ def _dict_to_dataclass(cls, data: dict):
             kwargs[key] = _dict_to_dataclass(NICFFiresConfig, value)
         elif key == "avalanche" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(AvalancheConfig, value)
+        elif key == "usgs" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(USGSConfig, value)
+        elif key == "traffic" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(TomTomConfig, value)
+        elif key == "roads511" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(Roads511Config, value)
+        elif key == "firms" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(FIRMSConfig, value)
+        elif key == "dashboard" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(DashboardConfig, value)
+        elif key == "notifications" and isinstance(value, dict):
+            notifications = _dict_to_dataclass(NotificationsConfig, value)
+            if "rules" in value and isinstance(value["rules"], list):
+                notifications.rules = [_dict_to_dataclass(NotificationRuleConfig, r) if isinstance(r, dict) else r for r in value["rules"]]
+            # Migrate old channels+rules format if present
+            if "channels" in value and isinstance(value["channels"], list) and value["channels"]:
+                _migrate_legacy_channels(notifications, value)
+            kwargs[key] = notifications
         else:
             kwargs[key] = value
 

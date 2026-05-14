@@ -44,6 +44,7 @@ class MeshAI:
         self.mesh_reporter = None
         self.subscription_manager = None
         self.alert_engine = None
+        self.notification_router = None
         self.env_store = None  # Environmental feeds store
         self._last_sub_check: float = 0.0
         self.router: Optional[MessageRouter] = None
@@ -178,6 +179,7 @@ class MeshAI:
         if self.knowledge:
             self.knowledge.close()
         if self.data_store:
+            await self.data_store.stop_mqtt_sources()
             self.data_store.close()
         if self.subscription_manager:
             self.subscription_manager.close()
@@ -266,6 +268,8 @@ class MeshAI:
             )
             # Initial fetch and backfill
             self.data_store.force_refresh()
+            # Start MQTT source subscription loops
+            await self.data_store.start_mqtt_sources()
             # Log status
             for status in self.data_store.get_status():
                 if status["is_loaded"]:
@@ -334,6 +338,18 @@ class MeshAI:
             )
             logger.info(f"Alert engine initialized (critical: {mi.critical_nodes}, channel: {mi.alert_channel})")
 
+
+        # Notification router
+        if self.config.notifications.enabled:
+            from .notifications.router import NotificationRouter
+            self.notification_router = NotificationRouter(
+                config=self.config.notifications,
+                connector=self.connector,
+                llm_backend=self.llm,
+                timezone=self.config.timezone,
+            )
+            logger.info("Notification router initialized")
+
         # Environmental feeds
         env_cfg = self.config.environmental
         if env_cfg.enabled:
@@ -391,6 +407,7 @@ class MeshAI:
             health_engine=self.health_engine,
             subscription_manager=self.subscription_manager,
             env_store=self.env_store,
+            notification_router=self.notification_router,
         )
 
         # Message router
@@ -403,6 +420,7 @@ class MeshAI:
             health_engine=self.health_engine,
             mesh_reporter=self.mesh_reporter,
             env_store=self.env_store,
+            # notification_router not used by MessageRouter
         )
 
         # Responder
@@ -545,30 +563,38 @@ class MeshAI:
             message = alert["message"]
             logger.info(f"ALERT: {message}")
 
-            # Send to alert channel if configured
-            if alert_channel >= 0 and self.connector:
+            # Route through notification router if enabled
+            if self.notification_router:
+                try:
+                    await self.notification_router.process_alert(alert)
+                except Exception as e:
+                    logger.error(f"Notification router error: {e}")
+
+            # Fallback: Send to alert channel if no notification router
+            elif alert_channel >= 0 and self.connector:
                 try:
                     self.connector.send_message(
                         text=message,
-                        destination=None,  # Broadcast
+                        destination=None,
                         channel=alert_channel,
                     )
                     logger.info(f"Alert sent to channel {alert_channel}")
                 except Exception as e:
                     logger.error(f"Failed to send channel alert: {e}")
 
-            # Send DMs to matching subscribers
-            if self.alert_engine and self.subscription_manager:
-                subscribers = self.alert_engine.get_subscribers_for_alert(alert)
-                for sub in subscribers:
-                    user_id = sub["user_id"]
-                    try:
-                        await self._send_sub_dm(user_id, message)
-                        logger.info(f"Alert DM sent to {user_id}: {alert['type']}")
-                    except Exception as e:
-                        logger.error(f"Failed to send alert DM to {user_id}: {e}")
+                # Fallback: Send DMs to matching subscribers
+                if self.alert_engine and self.subscription_manager:
+                    subscribers = self.alert_engine.get_subscribers_for_alert(alert)
+                    for sub in subscribers:
+                        user_id = sub["user_id"]
+                        try:
+                            await self._send_sub_dm(user_id, message)
+                            logger.info(f"Alert DM sent to {user_id}: {alert['type']}")
+                        except Exception as e:
+                            logger.error(f"Failed to send alert DM to {user_id}: {e}")
 
-        self.alert_engine.clear_pending()
+        if self.alert_engine:
+            self.alert_engine.clear_pending()
 
     async def _check_scheduled_subs(self) -> None:
         """Check for and deliver due scheduled reports."""

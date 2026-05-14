@@ -20,6 +20,9 @@ def _serialize_health_score(score) -> dict:
         "infra_online": score.infra_online,
         "infra_total": score.infra_total,
         "util_percent": round(score.util_percent, 1),
+        "util_max_percent": round(getattr(score, 'util_max_percent', score.util_percent), 1),
+        "util_method": getattr(score, 'util_method', 'unknown'),
+        "util_node_count": getattr(score, 'util_node_count', 0),
         "flagged_nodes": score.flagged_nodes,
         "battery_warnings": score.battery_warnings,
         "solar_index": round(score.solar_index, 1),
@@ -76,6 +79,9 @@ async def get_health(request: Request):
         "infra_online": score.infra_online,
         "infra_total": score.infra_total,
         "util_percent": round(score.util_percent, 1),
+        "util_max_percent": round(getattr(score, 'util_max_percent', score.util_percent), 1),
+        "util_method": getattr(score, 'util_method', 'unknown'),
+        "util_node_count": getattr(score, 'util_node_count', 0),
         "flagged_nodes": score.flagged_nodes,
         "battery_warnings": score.battery_warnings,
         "total_nodes": health.total_nodes,
@@ -354,3 +360,50 @@ async def get_edges(request: Request):
         })
 
     return edges
+
+
+
+@router.get("/channels")
+async def get_channels(request: Request):
+    """Get radio channels from the connected Meshtastic interface."""
+    connector = getattr(request.app.state, "connector", None)
+
+    if not connector or not connector.connected:
+        return []
+
+    try:
+        interface = connector._interface
+        if not interface or not hasattr(interface, "localNode"):
+            return []
+
+        local_node = interface.localNode
+        if not local_node or not hasattr(local_node, "channels"):
+            return []
+
+        channels = []
+        for ch in local_node.channels:
+            if ch is None:
+                continue
+
+            # Get channel settings
+            settings = getattr(ch, "settings", None)
+            name = getattr(settings, "name", "") if settings else ""
+            role_val = getattr(ch, "role", 0)
+
+            # Map role enum to string
+            role_map = {0: "DISABLED", 1: "PRIMARY", 2: "SECONDARY"}
+            role = role_map.get(role_val, "UNKNOWN")
+
+            channels.append({
+                "index": ch.index,
+                "name": name or f"Channel {ch.index}",
+                "role": role,
+                "enabled": role_val != 0,
+            })
+
+        return channels
+
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Failed to get channels: {e}")
+        return []
