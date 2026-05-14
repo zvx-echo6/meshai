@@ -137,11 +137,14 @@ function AlertItem({ alert }: { alert: Alert }) {
     switch (severity.toLowerCase()) {
       case 'critical':
       case 'emergency':
+      case 'immediate':
         return { bg: 'bg-red-500/10', border: 'border-red-500', icon: AlertCircle, iconColor: 'text-red-500' }
       case 'warning':
+      case 'priority':
         return { bg: 'bg-amber-500/10', border: 'border-amber-500', icon: AlertTriangle, iconColor: 'text-amber-500' }
+      case 'routine':
       default:
-        return { bg: 'bg-green-500/10', border: 'border-green-500', icon: Info, iconColor: 'text-green-500' }
+        return { bg: 'bg-blue-500/10', border: 'border-blue-500', icon: Info, iconColor: 'text-blue-500' }
     }
   }
 
@@ -444,13 +447,20 @@ const SOURCE_ICONS: Record<string, { icon: typeof Cloud; color: string; label: s
   roads: { icon: Construction, color: 'text-amber-400', label: '511' },
 }
 
-// Severity badge colors
+// Severity badge colors (3-level system + legacy support)
 const SEVERITY_COLORS: Record<string, string> = {
+  // New 3-level system
+  routine: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+  priority: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+  immediate: 'bg-red-600/20 text-red-300 border-red-600/30',
+  // NWS native (for raw event display)
   info: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-  advisory: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+  advisory: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
   moderate: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-  watch: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
-  warning: 'bg-red-500/20 text-red-400 border-red-500/30',
+  watch: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+  warning: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+  severe: 'bg-red-500/20 text-red-400 border-red-500/30',
+  extreme: 'bg-red-600/20 text-red-300 border-red-600/30',
   critical: 'bg-red-600/20 text-red-300 border-red-600/30',
   emergency: 'bg-red-700/20 text-red-200 border-red-700/30',
 }

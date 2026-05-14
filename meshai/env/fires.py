@@ -109,13 +109,13 @@ class NICFFiresAdapter:
             # Severity based on distance
             if distance_km is not None:
                 if distance_km < 25:
-                    severity = "warning"
+                    severity = "priority"
                 elif distance_km < 50:
-                    severity = "watch"
+                    severity = "routine"
                 else:
-                    severity = "advisory"
+                    severity = "routine"
             else:
-                severity = "advisory"
+                severity = "routine"
 
             # Format headline
             headline = f"{name} -- {int(acres):,} ac, {int(pct_contained)}% contained"

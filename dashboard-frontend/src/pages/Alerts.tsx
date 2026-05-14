@@ -59,30 +59,21 @@ function getAlertIcon(type: string) {
 
 function getSeverityStyles(severity: string) {
   switch (severity?.toLowerCase()) {
-    case 'critical':
-    case 'emergency':
+    case 'immediate':
       return {
         bg: 'bg-red-500/10',
         border: 'border-red-500',
         badge: 'bg-red-500/20 text-red-400',
         iconColor: 'text-red-500',
       }
-    case 'warning':
+    case 'priority':
       return {
         bg: 'bg-amber-500/10',
         border: 'border-amber-500',
         badge: 'bg-amber-500/20 text-amber-400',
         iconColor: 'text-amber-500',
       }
-    case 'watch':
-      return {
-        bg: 'bg-yellow-500/10',
-        border: 'border-yellow-500',
-        badge: 'bg-yellow-500/20 text-yellow-400',
-        iconColor: 'text-yellow-500',
-      }
-    case 'advisory':
-    case 'info':
+    case 'routine':
     default:
       return {
         bg: 'bg-blue-500/10',

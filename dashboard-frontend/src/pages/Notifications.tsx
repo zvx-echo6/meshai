@@ -98,12 +98,9 @@ interface ChannelTestResult {
 
 // Severity levels with descriptions
 const SEVERITY_OPTIONS = [
-  { value: 'info', label: 'Info', description: 'Routine updates (ducting detected, new router appeared)' },
-  { value: 'advisory', label: 'Advisory', description: 'Worth knowing (weather advisory, traffic slow, battery declining)' },
-  { value: 'watch', label: 'Watch', description: 'Pay attention (fire within 50km, weather watch, stream rising)' },
-  { value: 'warning', label: 'Warning', description: 'Act now (fire within 25km, severe weather, critical battery)' },
-  { value: 'critical', label: 'Critical', description: 'Serious issue (critical node down, battery emergency)' },
-  { value: 'emergency', label: 'Emergency', description: 'Life safety (extreme weather, fire at infrastructure, total blackout)' },
+  { value: 'routine', label: 'Routine', description: 'Informational, no time pressure (ducting, new node, weather advisory, battery declining)' },
+  { value: 'priority', label: 'Priority', description: 'Needs attention soon (severe weather, fire nearby, node offline, HF blackout)' },
+  { value: 'immediate', label: 'Immediate', description: 'Act now, drop everything (fire at infrastructure, extreme weather, region blackout)' },
 ]
 
 // Notification rule templates
@@ -117,7 +114,7 @@ const RULE_TEMPLATES = [
       enabled: true,
       trigger_type: "condition" as const,
       categories: ["infra_offline", "critical_node_down", "infra_recovery", "battery_warning", "battery_critical", "battery_emergency", "high_utilization", "packet_flood", "mesh_score_low"],
-      min_severity: "advisory",
+      min_severity: "routine",
       delivery_type: "mesh_broadcast",
       broadcast_channel: 0,
       cooldown_minutes: 30,
@@ -149,7 +146,7 @@ const RULE_TEMPLATES = [
       enabled: true,
       trigger_type: "condition" as const,
       categories: ["weather_warning", "fire_proximity", "new_ignition", "stream_flood_warning"],
-      min_severity: "warning",
+      min_severity: "priority",
       delivery_type: "mesh_broadcast",
       broadcast_channel: 0,
       cooldown_minutes: 15,
@@ -181,7 +178,7 @@ const RULE_TEMPLATES = [
       enabled: true,
       trigger_type: "condition" as const,
       categories: ["hf_blackout", "tropospheric_ducting", "geomagnetic_storm"],
-      min_severity: "info",
+      min_severity: "routine",
       delivery_type: "mesh_broadcast",
       broadcast_channel: 0,
       cooldown_minutes: 60,
@@ -213,7 +210,7 @@ const RULE_TEMPLATES = [
       enabled: true,
       trigger_type: "condition" as const,
       categories: ["road_closure", "traffic_congestion"],
-      min_severity: "warning",
+      min_severity: "routine",
       delivery_type: "mesh_broadcast",
       broadcast_channel: 0,
       cooldown_minutes: 30,
@@ -245,7 +242,7 @@ const RULE_TEMPLATES = [
       enabled: true,
       trigger_type: "condition" as const,
       categories: [] as string[],
-      min_severity: "emergency",
+      min_severity: "immediate",
       delivery_type: "mesh_broadcast",
       broadcast_channel: 0,
       cooldown_minutes: 5,
@@ -543,13 +540,13 @@ function SeveritySelector({ value, onChange }: {
   onChange: (v: string) => void
 }) {
   const [isOpen, setIsOpen] = useState(false)
-  const selected = SEVERITY_OPTIONS.find(s => s.value === value) || SEVERITY_OPTIONS[3]
+  const selected = SEVERITY_OPTIONS.find(s => s.value === value) || SEVERITY_OPTIONS[0]
 
   return (
     <div className="space-y-1">
       <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
         Severity Threshold
-        <InfoButton info="Only alerts at or above this severity trigger this rule. Lower threshold = more notifications. 'Warning' is recommended for most rules." />
+        <InfoButton info="Only alerts at or above this severity trigger this rule. ROUTINE = informational, PRIORITY = needs attention, IMMEDIATE = act now." />
       </label>
       <div className="relative">
         <button
@@ -1431,7 +1428,7 @@ export default function Notifications() {
     enabled: true,
     trigger_type: 'condition',
     categories: [],
-    min_severity: 'warning',
+    min_severity: 'routine',
     schedule_frequency: 'daily',
     schedule_time: '07:00',
     schedule_time_2: '19:00',
@@ -1779,7 +1776,7 @@ export default function Notifications() {
                 checked={config.quiet_hours_enabled ?? true}
                 onChange={(v) => setConfig({ ...config, quiet_hours_enabled: v })}
                 helper="Suppress non-emergency alerts during sleeping hours"
-                info="When enabled, alerts below emergency severity are held during quiet hours. When disabled, all alerts deliver anytime."
+                info="When enabled, ROUTINE alerts are suppressed during quiet hours. PRIORITY and IMMEDIATE always deliver."
               />
 
               {config.quiet_hours_enabled && (

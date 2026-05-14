@@ -440,7 +440,7 @@ class NotificationRuleConfig:
 
     # Condition trigger fields
     categories: list = field(default_factory=list)  # Empty = all categories
-    min_severity: str = "warning"
+    min_severity: str = "routine"
 
     # Schedule trigger fields
     schedule_frequency: str = "daily"  # daily, twice_daily, weekly, custom

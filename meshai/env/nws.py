@@ -29,6 +29,16 @@ class NWSAlertsAdapter:
         self._backoff_until = 0.0
         self._is_loaded = False
 
+
+    def _map_nws_severity(self, nws_severity: str) -> str:
+        """Map NWS severity to 3-level system."""
+        if nws_severity == "extreme":
+            return "immediate"
+        elif nws_severity in ("severe", "warning"):
+            return "priority"
+        else:  # moderate, minor, unknown
+            return "routine"
+
     def tick(self) -> bool:
         """Execute one polling tick.
 

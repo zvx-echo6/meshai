@@ -190,13 +190,13 @@ class TomTomTrafficAdapter:
 
             # Determine severity
             if road_closure:
-                severity = "warning"
+                severity = "priority"
             elif ratio >= 0.8:
-                severity = "info"
+                severity = "routine"
             elif ratio >= 0.5:
-                severity = "advisory"
+                severity = "routine"
             else:
-                severity = "warning"
+                severity = "priority"
 
             # Format headline
             if road_closure:

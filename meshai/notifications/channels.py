@@ -168,7 +168,7 @@ class MeshDMChannel(NotificationChannel):
 
         for node_id in self._node_ids:
             try:
-                dest = int(node_id, 16) if node_id.startswith("!") else (int(node_id) if node_id.isdigit() else node_id)
+                dest = int(node_id[1:], 16) if node_id.startswith("!") else (int(node_id) if node_id.isdigit() else int(node_id, 16))
                 self._connector.send_message(text=message, destination=dest, channel=0)
             except Exception as e:
                 logger.error("Failed to DM %s: %s", node_id, e)
@@ -199,7 +199,7 @@ class MeshDMChannel(NotificationChannel):
 
         for node_id in self._node_ids:
             try:
-                dest = int(node_id, 16) if node_id.startswith("!") else (int(node_id) if node_id.isdigit() else node_id)
+                dest = int(node_id[1:], 16) if node_id.startswith("!") else (int(node_id) if node_id.isdigit() else int(node_id, 16))
                 self._connector.send_message(
                     text="MeshAI DM test",
                     destination=dest,
@@ -249,7 +249,7 @@ class MeshDMChannel(NotificationChannel):
 
         for node_id in self._node_ids:
             try:
-                dest = int(node_id, 16) if node_id.startswith("!") else (int(node_id) if node_id.isdigit() else node_id)
+                dest = int(node_id[1:], 16) if node_id.startswith("!") else (int(node_id) if node_id.isdigit() else int(node_id, 16))
                 self._connector.send_message(text=message, destination=dest, channel=0)
                 success_count += 1
             except Exception as e:
@@ -529,10 +529,9 @@ class WebhookChannel(NotificationChannel):
         if "discord.com" in self._url or "slack.com" in self._url:
             severity = alert.get("severity", "info")
             color = {
-                "emergency": 0xFF0000,
-                "critical": 0xFF4444,
-                "warning": 0xFFAA00,
-                "info": 0x0099FF,
+                "immediate": 0xFF0000,
+                "priority": 0xFFAA00,
+                "routine": 0x0099FF,
             }.get(severity, 0x888888)
             payload = {
                 "embeds": [{

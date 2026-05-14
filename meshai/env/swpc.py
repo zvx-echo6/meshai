@@ -244,7 +244,7 @@ class SWPCAdapter:
                 "source": "swpc",
                 "event_id": f"swpc_r{r_scale}_{int(time.time())}",
                 "event_type": f"R{r_scale} Radio Blackout",
-                "severity": "warning" if r_scale >= 3 else "advisory",
+                "severity": "priority" if r_scale >= 3 else "routine",
                 "headline": f"R{r_scale} Radio Blackout in progress",
                 "expires": time.time() + 3600,  # 1hr TTL
                 "areas": [],

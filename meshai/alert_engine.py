@@ -142,7 +142,7 @@ class AlertEngine:
                         alerts.append(self._make_alert(
                             alert_type, name, short, node_num, region,
                             f"{emoji} {name} went offline in {region_display}.{escalation}",
-                            is_critical,
+                            "immediate" if is_critical else "priority",
                         ))
                         state.fire(now)
 
@@ -153,7 +153,7 @@ class AlertEngine:
                         alerts.append(self._make_alert(
                             "infra_recovery", name, short, node_num, region,
                             f"\u2705 {name} is back online in {region_display}.",
-                            is_critical,
+                            "immediate" if is_critical else "priority",
                         ))
                         state.resolve()
 
@@ -196,7 +196,7 @@ class AlertEngine:
                         alerts.append(self._make_alert(
                             "power_source_change", name, short, node_num, region,
                             f"\u26A1 {name} switched from USB to battery in {region_display}. Possible power outage.",
-                            is_critical,
+                            "immediate" if is_critical else "priority",
                         ))
                         state.fire(now)
                 elif prev_source == "battery" and current_source == "usb":
@@ -217,7 +217,7 @@ class AlertEngine:
                             alerts.append(self._make_alert(
                                 "battery_emergency", name, short, node_num, region,
                                 f"\U0001F6A8 {name} battery EMERGENCY at {bat:.0f}% in {region_display}.",
-                                is_critical,
+                                "immediate" if is_critical else "priority",
                             ))
                             state.fire(now)
 
@@ -229,7 +229,7 @@ class AlertEngine:
                             alerts.append(self._make_alert(
                                 "battery_critical", name, short, node_num, region,
                                 f"\U0001F50B {name} battery critical at {bat:.0f}% in {region_display}.",
-                                is_critical,
+                                "immediate" if is_critical else "priority",
                             ))
                             state.fire(now)
 
@@ -241,7 +241,7 @@ class AlertEngine:
                             alerts.append(self._make_alert(
                                 "battery_warning", name, short, node_num, region,
                                 f"\U0001F50B {name} battery low at {bat:.0f}% in {region_display}.",
-                                is_critical,
+                                "immediate" if is_critical else "priority",
                             ))
                             state.fire(now)
 
@@ -261,7 +261,7 @@ class AlertEngine:
                         alerts.append(self._make_alert(
                             "battery_trend", name, short, node_num, region,
                             f"\U0001F50B {name} battery declining: {trend['start']:.0f}% \u2192 {trend['end']:.0f}% over 7 days ({trend['rate']:.1f}%/day) in {region_display}.",
-                            is_critical,
+                            "immediate" if is_critical else "priority",
                         ))
                         state.fire(now)
 
@@ -283,7 +283,7 @@ class AlertEngine:
                                 alerts.append(self._make_alert(
                                     "solar_not_charging", name, short, node_num, region,
                                     f"\u2600\uFE0F {name} solar not charging in {region_display}.",
-                                    is_critical,
+                                    "immediate" if is_critical else "priority",
                                 ))
                                 state.fire(now)
                 except Exception:
@@ -364,7 +364,7 @@ class AlertEngine:
                         alerts.append(self._make_alert(
                             "infra_single_gateway", name, short, node_num, region,
                             f"\u26A0\uFE0F {name} dropped to single gateway in {region_display}. At risk if gateway fails.",
-                            is_critical,
+                            "immediate" if is_critical else "priority",
                         ))
                         state.fire(now)
                 elif prev_gw is not None and prev_gw <= 1.0 and node.avg_gateways > 1.0:
@@ -397,7 +397,7 @@ class AlertEngine:
                             "message": f"\U0001F4E1 Feeder gateway {feeder} stopped responding.",
                             "scope_type": "mesh",
                             "scope_value": None,
-                            "is_critical": False,
+                            "severity": "routine",
                         })
                         state.fire(now)
 
@@ -438,7 +438,7 @@ class AlertEngine:
                             "message": f"\U0001F6A8 TOTAL BLACKOUT: All infrastructure in {region_display} is offline!",
                             "scope_type": "region",
                             "scope_value": region.name,
-                            "is_critical": True,
+                            "severity": "immediate",
                         })
                         state.fire(now)
 
@@ -469,7 +469,7 @@ class AlertEngine:
                         "message": f"\U0001F4C9 Mesh health dropped to {current:.0f}/100 (threshold: {threshold}).",
                         "scope_type": "mesh",
                         "scope_value": None,
-                        "is_critical": False,
+                        "severity": "routine",
                     })
                     state.fire(now)
             elif current >= threshold:
@@ -498,7 +498,7 @@ class AlertEngine:
                             "message": f"\U0001F4C9 {region_display} health dropped to {current:.0f}/100 (threshold: {threshold}).",
                             "scope_type": "region",
                             "scope_value": region.name,
-                            "is_critical": False,
+                            "severity": "routine",
                         })
                         state.fire(now)
                 elif current >= threshold:
@@ -550,7 +550,7 @@ class AlertEngine:
             logger.debug(f"Battery trend query error: {e}")
             return None
 
-    def _make_alert(self, alert_type, name, short, node_num, region, message, is_critical):
+    def _make_alert(self, alert_type, name, short, node_num, region, message, severity="priority"):
         return {
             "type": alert_type,
             "node_name": name,
@@ -560,7 +560,7 @@ class AlertEngine:
             "message": message,
             "scope_type": "region" if region and region != "Unknown" else "mesh",
             "scope_value": region if region and region != "Unknown" else None,
-            "is_critical": is_critical,
+            "severity": severity,
         }
 
     def _get_region_display(self, region: str) -> str:
@@ -616,14 +616,13 @@ class AlertEngine:
             alerts.append({
                 "type": "weather_warning",
                 "message": f"Warning: {evt['event_type']}: {evt.get('headline', '')[:150]}",
-                "severity": evt["severity"],
                 "node_num": None,
                 "node_name": evt["event_type"],
                 "node_short": "NWS",
                 "region": "",
                 "scope_type": "mesh",
                 "scope_value": None,
-                "is_critical": evt["severity"] in ("extreme", "emergency"),
+                "severity": "immediate" if evt["severity"] == "extreme" else "priority",
             })
 
         # SWPC R-scale >= 3 (HF blackout affecting mesh backhaul)
@@ -637,14 +636,14 @@ class AlertEngine:
                 alerts.append({
                     "type": "hf_blackout",
                     "message": f"Warning: R{r_scale} HF Radio Blackout -- mesh backhaul links may degrade",
-                    "severity": "warning",
+                    "severity": "priority",
                     "node_num": None,
                     "node_name": f"R{r_scale} Blackout",
                     "node_short": "SWPC",
                     "region": "",
                     "scope_type": "mesh",
                     "scope_value": None,
-                    "is_critical": r_scale >= 4,
+                    "severity": "immediate" if r_scale >= 4 else "priority",
                 })
 
         # Tropospheric ducting (informational -- not critical but operators want to know)
@@ -659,14 +658,14 @@ class AlertEngine:
                 alerts.append({
                     "type": "tropospheric_ducting",
                     "message": f"Tropospheric {condition} detected (dM/dz {gradient} M-units/km)",
-                    "severity": "info",
+                    "severity": "routine",
                     "node_num": None,
                     "node_name": "Ducting",
                     "node_short": "TROPO",
                     "region": "",
                     "scope_type": "mesh",
                     "scope_value": None,
-                    "is_critical": False,
+                    "severity": "routine",
                 })
 
         # Wildfire proximity alerts
@@ -690,14 +689,14 @@ class AlertEngine:
                     alerts.append({
                         "type": "wildfire_proximity",
                         "message": f"Wildfire '{name}' within {int(distance_km)} km of {anchor} -- {int(acres):,} ac, {int(pct)}% contained",
-                        "severity": "critical",
+                        "severity": "immediate",
                         "node_num": None,
                         "node_name": name,
                         "node_short": "FIRE",
                         "region": anchor,
                         "scope_type": "mesh",
                         "scope_value": None,
-                        "is_critical": True,
+                        "severity": "immediate",
                     })
 
             elif distance_km < 50:
@@ -709,14 +708,14 @@ class AlertEngine:
                     alerts.append({
                         "type": "wildfire_proximity",
                         "message": f"Wildfire '{name}' {int(distance_km)} km from {anchor} -- {int(acres):,} ac, {int(pct)}% contained",
-                        "severity": "warning",
+                        "severity": "priority",
                         "node_num": None,
                         "node_name": name,
                         "node_short": "FIRE",
                         "region": anchor,
                         "scope_type": "mesh",
                         "scope_value": None,
-                        "is_critical": False,
+                        "severity": "routine",
                     })
 
         return alerts

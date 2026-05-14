@@ -214,21 +214,21 @@ class FIRMSAdapter:
             # Determine severity
             if not near_fire:
                 # Potential new ignition
-                severity = "watch"
+                severity = "routine"
                 new_ignition = True
                 headline = f"NEW HOTSPOT detected"
             else:
                 # Near known fire
-                severity = "advisory"
+                severity = "routine"
                 new_ignition = False
                 headline = f"Hotspot near {fire_name}"
 
             # Bump severity for high FRP
             if frp is not None and frp > 100:
-                if severity == "advisory":
-                    severity = "watch"
-                elif severity == "watch":
-                    severity = "warning"
+                if severity == "routine":
+                    severity = "routine"
+                elif severity == "routine":
+                    severity = "priority"
                 headline += f" ({int(frp)} MW)"
 
             # Compute proximity to region anchors

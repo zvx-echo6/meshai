@@ -82,28 +82,37 @@ function FeedStatusCard({ feed }: { feed: { source: string; is_loaded: boolean; 
 function AlertEventCard({ event }: { event: EnvEvent }) {
   const getSeverityStyles = (severity: string) => {
     switch (severity.toLowerCase()) {
+      // NWS native severity levels
       case 'extreme':
       case 'severe':
+      // Our 3-level system
+      case 'immediate':
         return {
           bg: 'bg-red-500/10',
           border: 'border-red-500',
           icon: AlertCircle,
           iconColor: 'text-red-500',
         }
+      // NWS native
       case 'moderate':
       case 'warning':
+      // Our 3-level system
+      case 'priority':
         return {
           bg: 'bg-amber-500/10',
           border: 'border-amber-500',
           icon: AlertTriangle,
           iconColor: 'text-amber-500',
         }
+      // NWS native
       case 'minor':
+      // Our 3-level system
+      case 'routine':
         return {
-          bg: 'bg-yellow-500/10',
-          border: 'border-yellow-500',
+          bg: 'bg-blue-500/10',
+          border: 'border-blue-500',
           icon: Info,
-          iconColor: 'text-yellow-500',
+          iconColor: 'text-blue-500',
         }
       default:
         return {

@@ -129,13 +129,13 @@ class AvalancheAdapter:
                 level_key, level_name = self.DANGER_LEVELS.get(danger_level, ("no_rating", "No Rating"))
 
                 if danger_level >= 4:
-                    severity = "warning"
+                    severity = "priority"
                 elif danger_level >= 3:
-                    severity = "watch"
+                    severity = "routine"
                 elif danger_level >= 2:
-                    severity = "advisory"
+                    severity = "routine"
                 else:
-                    severity = "info"
+                    severity = "routine"
 
                 # Compute centroid
                 geom = feature.get("geometry")

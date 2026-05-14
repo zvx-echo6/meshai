@@ -294,13 +294,13 @@ class Roads511Adapter:
 
             # Determine severity
             if is_closure:
-                severity = "warning"
+                severity = "priority"
             elif "construction" in str(event_type).lower():
-                severity = "advisory"
+                severity = "routine"
             elif "incident" in str(event_type).lower():
-                severity = "advisory"
+                severity = "routine"
             else:
-                severity = "info"
+                severity = "routine"
 
             # Format headline
             if roadway and description:

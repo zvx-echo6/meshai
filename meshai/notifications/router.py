@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Severity levels in order
-SEVERITY_ORDER = ["info", "advisory", "watch", "warning", "critical", "emergency"]
+SEVERITY_ORDER = ["routine", "priority", "immediate"]
 
 # State file for rule statistics
 RULE_STATS_FILE = "/opt/meshai/data/rule_stats.json"
@@ -164,7 +164,7 @@ class NotificationRouter:
                 continue
 
             if self._quiet_enabled and self._in_quiet_hours():
-                if severity not in ("emergency", "critical"):
+                if severity == "routine":
                     if not rule.get("override_quiet", False):
                         continue
 

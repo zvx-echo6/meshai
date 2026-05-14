@@ -353,7 +353,7 @@ class USGSStreamsAdapter:
                 nwps_stages = self._lookup_nwps_stages(site_id)
 
                 # Determine severity based on flood stages (for gage height)
-                severity = "info"
+                severity = "routine"
                 flood_status = None
 
                 if param_type == "height" and nwps_stages:
@@ -363,23 +363,23 @@ class USGSStreamsAdapter:
                     action = nwps_stages.get("action_stage")
 
                     if major and value >= major:
-                        severity = "critical"
+                        severity = "immediate"
                         flood_status = "Major Flood"
                     elif moderate and value >= moderate:
-                        severity = "warning"
+                        severity = "priority"
                         flood_status = "Moderate Flood"
                     elif minor and value >= minor:
-                        severity = "warning"
+                        severity = "priority"
                         flood_status = "Minor Flood"
                     elif action and value >= action:
-                        severity = "advisory"
+                        severity = "routine"
                         flood_status = "Action Stage"
 
                 # Fall back to legacy manual thresholds
                 if severity == "info":
                     threshold = self._flood_thresholds.get(site_id, {}).get(param_type)
                     if threshold and value > threshold:
-                        severity = "warning"
+                        severity = "priority"
 
                 # Format headline
                 if param_type == "flow":
