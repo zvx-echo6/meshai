@@ -2116,7 +2116,7 @@ class MeshDataStore:
         infra_roles = {"ROUTER", "ROUTER_CLIENT", "ROUTER_LATE", "REPEATER"}
         return [n for n in self._nodes.values() if n.role in infra_roles]
 
-    def get_low_battery_nodes(self, threshold: float = 20.0) -> list[UnifiedNode]:
+    def get_low_battery_nodes(self, threshold: float = 30.0) -> list[UnifiedNode]:
         """Get nodes with low battery."""
         return [
             n

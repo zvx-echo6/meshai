@@ -284,6 +284,7 @@ class MeshIntelligenceConfig:
     locality_radius_miles: float = 8.0  # Radius for locality clustering within regions
     offline_threshold_hours: int = 2  # Hours before node considered offline
     packet_threshold: int = 500  # Non-text packets per 24h to flag
+    # TODO: behavior pillar uses wrong scale - see meshai-v03-notification-handoff.md bug #2
     battery_warning_percent: int = 30  # Battery level for warnings
 
     # Alert settings

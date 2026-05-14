@@ -28,6 +28,7 @@ INFRASTRUCTURE_ROLES = {"ROUTER", "ROUTER_LATE", "ROUTER_CLIENT"}
 DEFAULT_LOCALITY_RADIUS_MILES = 8.0
 DEFAULT_OFFLINE_THRESHOLD_HOURS = 2  # Hours before node considered offline
 DEFAULT_PACKET_THRESHOLD = 7200  # Non-text packets per 24h (5/min avg)
+# TODO: behavior pillar uses wrong scale - see meshai-v03-notification-handoff.md bug #2
 # NOTE: This is aligned with notification config's packet_flood threshold.
 # 5 packets/min avg × 60 min × 24 hr = 7,200 packets/day.
 # A node averaging 5+ non-text packets/min is misbehaving.
