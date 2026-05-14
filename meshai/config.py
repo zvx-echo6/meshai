@@ -230,6 +230,7 @@ class RegionAnchor:
     description: str = ""          # e.g., "Twin Falls, Burley, Jerome along I-84/US-93"
     aliases: list[str] = field(default_factory=list)  # e.g., ["southern Idaho", "magic valley"]
     cities: list[str] = field(default_factory=list)   # e.g., ["Twin Falls", "Burley", "Jerome"]
+    nws_zones: list[str] = field(default_factory=list)  # NWS zone codes (e.g., ["IDZ016", "IDZ030"])
 
 
 @dataclass
