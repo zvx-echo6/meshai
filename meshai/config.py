@@ -578,7 +578,7 @@ def _migrate_legacy_channels(notifications, data: dict):
                 enabled=ch.get("enabled", True),
                 trigger_type="condition",
                 categories=old_rule.get("categories", []),
-                min_severity=old_rule.get("min_severity", "warning"),
+                min_severity=old_rule.get("min_severity", "priority"),
                 delivery_type=ch.get("type", "mesh_broadcast"),
                 broadcast_channel=ch.get("channel_index", 0),
                 node_ids=ch.get("node_ids", []),

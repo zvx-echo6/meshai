@@ -150,7 +150,7 @@ class NotificationRouter:
     async def process_alert(self, alert: dict) -> bool:
         """Route an alert through matching rules."""
         category = alert.get("type", "")
-        severity = alert.get("severity", "info")
+        severity = alert.get("severity", "routine")
         delivered = False
 
         for rule in self._rules:
@@ -160,7 +160,7 @@ class NotificationRouter:
             if rule_categories and category not in rule_categories:
                 continue
 
-            min_severity = rule.get("min_severity", "info")
+            min_severity = rule.get("min_severity", "routine")
             if not self._severity_meets(severity, min_severity):
                 continue
 
@@ -392,7 +392,7 @@ class NotificationRouter:
 
         rule_name = rule_dict.get("name", f"Rule {rule_index}")
         rule_categories = rule_dict.get("categories", [])
-        min_severity = rule_dict.get("min_severity", "info")
+        min_severity = rule_dict.get("min_severity", "routine")
         delivery_type = rule_dict.get("delivery_type", "")
 
         # Legacy support
@@ -536,7 +536,7 @@ class NotificationRouter:
                 for alert in alert_engine.get_pending_alerts():
                     all_events.append({
                         "type": alert.get("type", ""),
-                        "severity": alert.get("severity", "info"),
+                        "severity": alert.get("severity", "routine"),
                         "message": alert.get("message", ""),
                         "headline": alert.get("message", "")[:80],
                     })
@@ -548,7 +548,7 @@ class NotificationRouter:
                 for event in env_store.get_active():
                     all_events.append({
                         "type": event.get("type", event.get("category", "")),
-                        "severity": event.get("severity", "info"),
+                        "severity": event.get("severity", "routine"),
                         "message": event.get("message", event.get("headline", str(event))),
                         "headline": event.get("headline", event.get("message", "Event"))[:80],
                     })
@@ -761,7 +761,7 @@ class NotificationRouter:
             "enabled": True,
             "trigger_type": "condition",
             "categories": categories if categories else [],
-            "min_severity": "warning",
+            "min_severity": "priority",
             "delivery_type": "mesh_dm",
             "node_ids": [node_id],
             "cooldown_minutes": 10,

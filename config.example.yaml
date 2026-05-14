@@ -217,11 +217,13 @@ environmental:
     proximity_km: 10.0  # km to match known fire perimeters
 
 
-# === NOTIFICATION DELIVERY ===
+# === NOTIFICATION DELIVERY (TRANSITIONAL) ===
+# NOTE: This notifications schema will be replaced in v0.3 by the 8-toggle model.
+# These rule examples are transitional until Phase 1.2 lands. Do not extend.
+# Severity levels: routine (informational), priority (needs attention), immediate (act now)
+#
 # Route alerts to channels (mesh, email, webhook) based on rules.
 # Categories match alert types from alert_engine.py.
-# Severity levels: info, advisory, watch, warning, critical, emergency
-#
 notifications:
   enabled: false
   quiet_hours_enabled: true    # Master toggle for quiet hours feature
@@ -236,7 +238,7 @@ notifications:
       enabled: true
       trigger_type: condition
       categories: []           # Empty = all categories
-      min_severity: "emergency"
+      min_severity: "immediate"
       delivery_type: mesh_broadcast
       broadcast_channel: 0
       cooldown_minutes: 5
@@ -247,7 +249,7 @@ notifications:
       enabled: true
       trigger_type: condition
       categories: ["infra_offline", "critical_node_down"]
-      min_severity: "warning"
+      min_severity: "priority"
       delivery_type: mesh_broadcast
       broadcast_channel: 0
       cooldown_minutes: 30
@@ -258,7 +260,7 @@ notifications:
       enabled: true
       trigger_type: condition
       categories: ["wildfire_proximity", "new_ignition"]
-      min_severity: "advisory"
+      min_severity: "routine"
       delivery_type: mesh_broadcast
       broadcast_channel: 0
       cooldown_minutes: 60
@@ -269,7 +271,7 @@ notifications:
       enabled: true
       trigger_type: condition
       categories: ["weather_warning"]
-      min_severity: "warning"
+      min_severity: "priority"
       delivery_type: mesh_broadcast
       broadcast_channel: 0
       cooldown_minutes: 30
@@ -280,7 +282,7 @@ notifications:
     #   enabled: true
     #   trigger_type: condition
     #   categories: ["wildfire_proximity", "new_ignition"]
-    #   min_severity: "advisory"
+    #   min_severity: "routine"
     #   delivery_type: email
     #   smtp_host: "smtp.gmail.com"
     #   smtp_port: 587
@@ -296,7 +298,7 @@ notifications:
     #   enabled: true
     #   trigger_type: condition
     #   categories: []
-    #   min_severity: "warning"
+    #   min_severity: "priority"
     #   delivery_type: webhook
     #   webhook_url: "https://discord.com/api/webhooks/..."
     #   cooldown_minutes: 10
@@ -316,7 +318,7 @@ notifications:
     #   enabled: true
     #   trigger_type: condition
     #   categories: ["battery_warning"]
-    #   min_severity: "warning"
+    #   min_severity: "priority"
     #   delivery_type: ""        # Empty = no delivery, just tracks matches
 
 # === WEB DASHBOARD ===

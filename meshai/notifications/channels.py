@@ -292,7 +292,7 @@ class EmailChannel(NotificationChannel):
             return False
 
         alert_type = alert.get("type", "alert")
-        severity = alert.get("severity", "info").upper()
+        severity = alert.get("severity", "routine").upper()
         message = alert.get("message", "")
         subject = "[MeshAI %s] %s" % (severity, alert_type.replace("_", " ").title())
         body = "MeshAI Alert\n\nType: %s\nSeverity: %s\nTime: %s\n\n%s\n\n---\nAutomated message from MeshAI." % (
@@ -518,7 +518,7 @@ class WebhookChannel(NotificationChannel):
         """POST alert to webhook URL."""
         payload = {
             "type": alert.get("type"),
-            "severity": alert.get("severity", "info"),
+            "severity": alert.get("severity", "routine"),
             "message": alert.get("message", ""),
             "timestamp": time.time(),
             "node_name": alert.get("node_name"),
@@ -527,7 +527,7 @@ class WebhookChannel(NotificationChannel):
 
         # Discord/Slack format
         if "discord.com" in self._url or "slack.com" in self._url:
-            severity = alert.get("severity", "info")
+            severity = alert.get("severity", "routine")
             color = {
                 "immediate": 0xFF0000,
                 "priority": 0xFFAA00,
@@ -669,7 +669,7 @@ class WebhookChannel(NotificationChannel):
         else:
             payload = {
                 "type": "test",
-                "severity": "info",
+                "severity": "routine",
                 "message": "MeshAI channel connectivity test",
                 "timestamp": time.time(),
             }
@@ -730,7 +730,7 @@ class WebhookChannel(NotificationChannel):
     async def deliver_test(self, message: str) -> tuple[bool, str]:
         """Deliver a specific test message via webhook."""
         try:
-            test_alert = {"type": "test", "severity": "info", "message": message}
+            test_alert = {"type": "test", "severity": "routine", "message": message}
             success = await self.deliver(test_alert, {})
             if success:
                 try:
