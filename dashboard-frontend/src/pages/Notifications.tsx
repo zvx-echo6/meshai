@@ -274,7 +274,7 @@ const RULE_TEMPLATES = [
       enabled: true,
       trigger_type: "schedule" as const,
       categories: [] as string[],
-      min_severity: "info",
+      min_severity: "routine",
       schedule_frequency: "daily" as const,
       schedule_time: "07:00",
       schedule_time_2: "",

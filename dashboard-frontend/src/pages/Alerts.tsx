@@ -194,7 +194,7 @@ function AlertHistoryTable({
     'packet_flood',
   ]
 
-  const severities = ['all', 'critical', 'warning', 'watch', 'info']
+  const severities = ["all", "immediate", "priority", "routine"]
 
   return (
     <div className="bg-bg-card border border-border rounded-lg">

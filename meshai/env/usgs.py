@@ -376,7 +376,7 @@ class USGSStreamsAdapter:
                         flood_status = "Action Stage"
 
                 # Fall back to legacy manual thresholds
-                if severity == "info":
+                if severity == "routine":
                     threshold = self._flood_thresholds.get(site_id, {}).get(param_type)
                     if threshold and value > threshold:
                         severity = "priority"
