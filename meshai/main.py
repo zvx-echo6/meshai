@@ -16,7 +16,8 @@ from .cli import run_configurator
 from .commands import CommandDispatcher
 from .commands.dispatcher import create_dispatcher
 from .commands.status import set_start_time
-from .config import Config, load_config
+from .config import Config
+from .config_loader import load_config, get_config_dir_from_path
 from .connector import MeshConnector, MeshMessage
 from .context import MeshContext
 from .history import ConversationHistory
@@ -712,12 +713,21 @@ def main() -> None:
         run_configurator(args.config_file)
         return
 
-    # Load config
-    config = load_config(args.config_file)
+    # Load config - support both old (/data/config.yaml) and new (/data/config/) layouts
+    config_path = args.config_file
+    config_dir = get_config_dir_from_path(config_path)
 
-    # Check if config exists
-    if not args.config_file.exists():
-        logger.warning(f"Config file not found: {args.config_file}")
+    # Check for new multi-file layout first
+    if (config_dir / "config.yaml").exists():
+        logger.info(f"Loading config from multi-file layout: {config_dir}")
+        config = load_config(config_dir)
+    elif config_path.exists():
+        # Fall back to legacy single-file loading
+        logger.info(f"Loading legacy config: {config_path}")
+        from .config import load_config as legacy_load
+        config = legacy_load(config_path)
+    else:
+        logger.warning(f"Config not found at {config_path} or {config_dir}")
         logger.info("Run 'meshai --config' to create one, or copy config.example.yaml")
         sys.exit(1)
 

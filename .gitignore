@@ -1,3 +1,13 @@
+# Operator-identifying config and secrets (v0.3 split)
+/data/config/local.yaml
+/data/config/secrets/
+/data/secrets/
+.env
+.env.local
+.env.*
+!.env.example
+local.yaml
+!local.yaml.example
 # Python
 __pycache__/
 *.py[cod]
@@ -49,3 +59,13 @@ data/
 # OS
 .DS_Store
 Thumbs.db
+# Operator-identifying config and secrets (v0.3 split)
+/data/config/local.yaml
+/data/config/secrets/
+/data/secrets/
+.env
+.env.local
+.env.*
+!.env.example
+local.yaml
+!local.yaml.example
