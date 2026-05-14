@@ -6,9 +6,12 @@ import {
   Cloud,
   Settings,
   Bell,
+  BellRing,
+  BookOpen,
 } from 'lucide-react'
 import { fetchStatus, type SystemStatus } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
+import { useToast } from './ToastProvider'
 
 interface LayoutProps {
   children: ReactNode
@@ -20,6 +23,8 @@ const navItems = [
   { path: '/environment', label: 'Environment', icon: Cloud },
   { path: '/config', label: 'Config', icon: Settings },
   { path: '/alerts', label: 'Alerts', icon: Bell },
+  { path: '/notifications', label: 'Notifications', icon: BellRing },
+  { path: '/reference', label: 'Reference', icon: BookOpen },
 ]
 
 function formatUptime(seconds: number): string {
@@ -39,8 +44,21 @@ function getPageTitle(pathname: string): string {
 
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation()
-  const { connected } = useWebSocket()
+  const { connected, lastAlert } = useWebSocket()
+  const { addToast } = useToast()
   const [status, setStatus] = useState<SystemStatus | null>(null)
+  const [lastAlertId, setLastAlertId] = useState<string | null>(null)
+
+  // Trigger toast on new alerts
+  useEffect(() => {
+    if (lastAlert) {
+      const alertId = `${lastAlert.type}-${lastAlert.message}-${lastAlert.timestamp}`
+      if (alertId !== lastAlertId) {
+        setLastAlertId(alertId)
+        addToast(lastAlert)
+      }
+    }
+  }, [lastAlert, lastAlertId, addToast])
   const [currentTime, setCurrentTime] = useState(new Date())
 
   useEffect(() => {
