@@ -424,6 +424,14 @@ def load_config(config_dir: Path = Path("/data/config")) -> Config:
     # Load orchestrator with !include support
     _logger.debug(f"Loading config from {orchestrator_path}")
     data = _load_yaml_with_includes(orchestrator_path)
+    # Hoist meshtastic.connection and meshtastic.commands to top level
+    # meshtastic.yaml contains both sections under wrapper keys
+    if "meshtastic" in data and isinstance(data["meshtastic"], dict):
+        meshtastic = data.pop("meshtastic")
+        if "connection" in meshtastic:
+            data["connection"] = meshtastic["connection"]
+        if "commands" in meshtastic:
+            data["commands"] = meshtastic["commands"]
 
     # Load local.yaml
     local_path = config_dir / "local.yaml"
