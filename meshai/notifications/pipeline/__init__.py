@@ -1,12 +1,12 @@
 """Notification pipeline package.
 
-Phase 2.1 + 2.2:
+Phase 2.1 + 2.2 + 2.3a:
   - EventBus: pub/sub ingress
   - Inhibitor: suppresses redundant events by inhibit_keys
   - Grouper: coalesces events sharing group_key within a window
   - SeverityRouter: forks immediate vs digest
   - Dispatcher: routes immediate via channels (existing rules schema)
-  - StubDigestQueue: placeholder for Phase 2.3
+  - DigestAccumulator: tracks priority/routine events for periodic digest
 
 Usage:
     from meshai.notifications.pipeline import build_pipeline
@@ -18,22 +18,19 @@ from meshai.notifications.channels import create_channel
 from meshai.notifications.pipeline.bus import EventBus, get_bus
 from meshai.notifications.pipeline.severity_router import (
     SeverityRouter,
-    StubDigestQueue,
+    StubDigestQueue,  # kept for Phase 2.1 backward-compat tests
 )
 from meshai.notifications.pipeline.dispatcher import Dispatcher
 from meshai.notifications.pipeline.inhibitor import Inhibitor
 from meshai.notifications.pipeline.grouper import Grouper
+from meshai.notifications.pipeline.digest import DigestAccumulator, Digest
 
 
 def build_pipeline(config) -> EventBus:
-    """Build the pipeline and return the EventBus.
-
-    Wiring:
-      bus -> inhibitor -> grouper -> severity_router -> (dispatcher | digest_stub)
-    """
+    """Build the pipeline and return the EventBus."""
     bus = EventBus()
     dispatcher = Dispatcher(config, create_channel)
-    digest = StubDigestQueue()
+    digest = DigestAccumulator()
     severity_router = SeverityRouter(
         immediate_handler=dispatcher.dispatch,
         digest_handler=digest.enqueue,
@@ -45,13 +42,13 @@ def build_pipeline(config) -> EventBus:
 
 
 def build_pipeline_components(config) -> tuple:
-    """Like build_pipeline, but returns all components for test inspection.
+    """Like build_pipeline, but returns all components for tests.
 
     Returns (bus, inhibitor, grouper, severity_router, dispatcher, digest).
     """
     bus = EventBus()
     dispatcher = Dispatcher(config, create_channel)
-    digest = StubDigestQueue()
+    digest = DigestAccumulator()
     severity_router = SeverityRouter(
         immediate_handler=dispatcher.dispatch,
         digest_handler=digest.enqueue,
@@ -69,6 +66,8 @@ __all__ = [
     "Dispatcher",
     "Inhibitor",
     "Grouper",
+    "DigestAccumulator",
+    "Digest",
     "build_pipeline",
     "build_pipeline_components",
     "get_bus",
