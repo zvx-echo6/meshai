@@ -21,13 +21,31 @@ async def get_env_status(request: Request):
 
 @router.get("/env/active")
 async def get_active_env(request: Request):
-    """Get active environmental events."""
+    """Get active environmental events with local zone marking."""
     env_store = getattr(request.app.state, "env_store", None)
 
     if not env_store:
         return []
 
-    return env_store.get_active()
+    events = env_store.get_active()
+    mesh_zones = set(getattr(env_store, '_mesh_zones', []))
+
+    # Dedup by event_id and add is_local field
+    seen_ids = set()
+    result = []
+    for event in events:
+        event_id = event.get("event_id")
+        if event_id and event_id in seen_ids:
+            continue
+        if event_id:
+            seen_ids.add(event_id)
+
+        # Mark as local if event zones overlap with configured mesh zones
+        event_zones = set(event.get("areas", []))
+        event["is_local"] = bool(event_zones & mesh_zones)
+        result.append(event)
+
+    return result
 
 
 @router.get("/env/swpc")

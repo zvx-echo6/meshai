@@ -465,7 +465,7 @@ const SEVERITY_COLORS: Record<string, string> = {
   emergency: 'bg-red-700/20 text-red-200 border-red-700/30',
 }
 
-function EventFeedItem({ event }: { event: EnvEvent }) {
+function EventFeedItem({ event, isLocal }: { event: EnvEvent; isLocal?: boolean }) {
   const sourceConfig = SOURCE_ICONS[event.source] || { icon: Info, color: 'text-slate-400', label: event.source }
   const Icon = sourceConfig.icon
   const severityStyle = SEVERITY_COLORS[event.severity?.toLowerCase()] || SEVERITY_COLORS.info
@@ -483,18 +483,43 @@ function EventFeedItem({ event }: { event: EnvEvent }) {
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
   }
 
+  // Build display title: prefer event_type + area_desc, fall back to headline
+  const eventType = (event as Record<string, unknown>).event_type as string | undefined
+  const areaDesc = (event as Record<string, unknown>).area_desc as string | undefined
+  const description = (event as Record<string, unknown>).description as string | undefined
+
+  let title = event.headline
+  if (eventType && areaDesc) {
+    // Shorten area description (remove "County" repetition)
+    const shortArea = areaDesc.replace(/ County/g, '').split(';')[0]
+    title = `${eventType} — ${shortArea}`
+  } else if (eventType) {
+    title = eventType
+  }
+
+  // Get first sentence of description as subtitle
+  const subtitle = description ? description.split('. ')[0] : null
+
   return (
-    <div className="flex items-start gap-2 py-2 border-b border-border/50 last:border-0">
+    <div className={`flex items-start gap-2 py-2 border-b border-border/50 last:border-0 ${isLocal ? 'border-l-2 border-l-blue-500 pl-2 -ml-2' : ''}`}>
       <Icon size={14} className={`mt-0.5 flex-shrink-0 ${sourceConfig.color}`} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5">
           <span className={`px-1.5 py-0.5 rounded text-xs border ${severityStyle}`}>
             {event.severity || 'info'}
           </span>
+          {isLocal && (
+            <span className="px-1.5 py-0.5 rounded text-xs bg-blue-500/20 text-blue-400 border border-blue-500/30">
+              LOCAL
+            </span>
+          )}
           <span className="text-xs text-slate-500">{sourceConfig.label}</span>
           <span className="text-xs text-slate-600 ml-auto">{formatTime(event.fetched_at)}</span>
         </div>
-        <div className="text-sm text-slate-200 truncate">{event.headline}</div>
+        <div className={`text-sm truncate ${isLocal ? 'text-slate-100' : 'text-slate-300'}`}>{title}</div>
+        {subtitle && (
+          <div className="text-xs text-slate-500 truncate mt-0.5">{subtitle}</div>
+        )}
       </div>
     </div>
   )
@@ -502,8 +527,31 @@ function EventFeedItem({ event }: { event: EnvEvent }) {
 
 // Live Event Feed Card
 function LiveEventFeed({ events, envStatus }: { events: EnvEvent[]; envStatus: EnvStatus | null }) {
+  // Severity order for sorting
+  const severityOrder: Record<string, number> = { immediate: 0, priority: 1, routine: 2 }
+
   const sortedEvents = useMemo(() => {
-    return [...events].sort((a, b) => (b.fetched_at || 0) - (a.fetched_at || 0))
+    // Dedup by event_id
+    const seen = new Set<string>()
+    const deduped = events.filter(e => {
+      if (!e.event_id) return true
+      if (seen.has(e.event_id)) return false
+      seen.add(e.event_id)
+      return true
+    })
+
+    // Sort: local first, then by severity, then by time
+    return deduped.sort((a, b) => {
+      const aLocal = (a as Record<string, unknown>).is_local ? 1 : 0
+      const bLocal = (b as Record<string, unknown>).is_local ? 1 : 0
+      if (aLocal !== bLocal) return bLocal - aLocal  // local first
+
+      const aSev = severityOrder[a.severity?.toLowerCase() || 'routine'] ?? 2
+      const bSev = severityOrder[b.severity?.toLowerCase() || 'routine'] ?? 2
+      if (aSev !== bSev) return aSev - bSev  // higher severity first
+
+      return (b.fetched_at || 0) - (a.fetched_at || 0)  // newest first
+    })
   }, [events])
 
   // Calculate feed health summary
@@ -528,7 +576,11 @@ function LiveEventFeed({ events, envStatus }: { events: EnvEvent[]; envStatus: E
       {sortedEvents.length > 0 ? (
         <div className="flex-1 overflow-y-auto max-h-80 pr-1 -mr-1">
           {sortedEvents.map((event, i) => (
-            <EventFeedItem key={event.event_id || i} event={event} />
+            <EventFeedItem
+              key={event.event_id || i}
+              event={event}
+              isLocal={(event as Record<string, unknown>).is_local as boolean | undefined}
+            />
           ))}
         </div>
       ) : (
