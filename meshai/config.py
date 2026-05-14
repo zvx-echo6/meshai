@@ -450,6 +450,7 @@ class NotificationRuleConfig:
     schedule_time_2: str = "19:00"  # For twice_daily
     schedule_days: list = field(default_factory=list)  # For weekly
     schedule_cron: str = ""  # For custom
+    schedule_match: Optional[str] = None  # "digest" for digest deliveries
     message_type: str = "mesh_health_summary"
     custom_message: str = ""
 
@@ -484,6 +485,14 @@ class NotificationRuleConfig:
 
 
 @dataclass
+class DigestConfig:
+    """Digest scheduler settings."""
+
+    schedule: str = "07:00"  # HH:MM time to fire digest
+    include: list[str] = field(default_factory=list)  # Toggle names to include (empty = default set)
+
+
+@dataclass
 class NotificationsConfig:
     """Notification system settings."""
 
@@ -491,6 +500,7 @@ class NotificationsConfig:
     quiet_hours_enabled: bool = True  # Master toggle for quiet hours
     quiet_hours_start: str = "22:00"
     quiet_hours_end: str = "06:00"
+    digest: DigestConfig = field(default_factory=DigestConfig)
     rules: list = field(default_factory=list)  # List of NotificationRuleConfig
 
 @dataclass
@@ -662,6 +672,8 @@ def _dict_to_dataclass(cls, data: dict):
             kwargs[key] = _dict_to_dataclass(FIRMSConfig, value)
         elif key == "dashboard" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(DashboardConfig, value)
+        elif key == "digest" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(DigestConfig, value)
         elif key == "notifications" and isinstance(value, dict):
             notifications = _dict_to_dataclass(NotificationsConfig, value)
             if "rules" in value and isinstance(value["rules"], list):

@@ -230,6 +230,17 @@ notifications:
   quiet_hours_start: "22:00"   # Suppress non-emergency alerts during quiet hours
   quiet_hours_end: "06:00"
 
+  # Digest scheduler settings
+  # The digest collects priority/routine events and delivers a summary
+  # at the configured time to rules with trigger_type='schedule' and
+  # schedule_match='digest'.
+  digest:
+    schedule: "07:00"          # HH:MM local time to fire digest
+    include: []                # Toggle names to include (empty = default set)
+    # Default set: weather, fire, seismic, avalanche, roads, mesh_health, tracking, other
+    # Excludes rf_propagation by default
+    # Example: include: ["weather", "fire", "mesh_health"]
+
   # Notification rules - each rule is self-contained with its own delivery config
   # Default baseline rules are created on fresh install
   rules:
@@ -277,6 +288,29 @@ notifications:
       cooldown_minutes: 30
       override_quiet: false
 
+    # Example: Morning Digest -> mesh broadcast
+    # Delivers the accumulated digest at the configured schedule time
+    # - name: "Morning Digest Mesh"
+    #   enabled: false
+    #   trigger_type: schedule
+    #   schedule_match: "digest"   # Required for digest delivery
+    #   delivery_type: mesh_broadcast
+    #   broadcast_channel: 0
+
+    # Example: Morning Digest -> email
+    # - name: "Morning Digest Email"
+    #   enabled: false
+    #   trigger_type: schedule
+    #   schedule_match: "digest"
+    #   delivery_type: email
+    #   smtp_host: "smtp.gmail.com"
+    #   smtp_port: 587
+    #   smtp_user: "you@gmail.com"
+    #   smtp_password: "${SMTP_PASSWORD}"
+    #   smtp_tls: true
+    #   from_address: "meshai@yourdomain.com"
+    #   recipients: ["admin@yourdomain.com"]
+
     # Example: Fire alerts -> email
     # - name: "Fire Alerts Email"
     #   enabled: true
@@ -302,16 +336,6 @@ notifications:
     #   delivery_type: webhook
     #   webhook_url: "https://discord.com/api/webhooks/..."
     #   cooldown_minutes: 10
-
-    # Example: Daily health report -> mesh broadcast
-    # - name: "Morning Briefing"
-    #   enabled: true
-    #   trigger_type: schedule
-    #   schedule_frequency: daily
-    #   schedule_time: "07:00"
-    #   message_type: mesh_health_summary
-    #   delivery_type: mesh_broadcast
-    #   broadcast_channel: 0
 
     # Example: Rule with no delivery (matches and logs, but doesn't send)
     # - name: "Monitor Only"
