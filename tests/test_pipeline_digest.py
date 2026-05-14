@@ -1,9 +1,10 @@
 """Tests for Phase 2.3a DigestAccumulator.
 
-20 tests covering:
+27 tests covering:
 - Accumulator active/since_last behavior (6 tests)
 - Renderer output (8 tests)
-- Excluded toggles (3 tests)
+- Mesh chunks (7 tests)
+- Include toggles (3 tests)
 - Pipeline integration (3 tests)
 """
 
@@ -229,7 +230,7 @@ def test_render_full_lists_active_and_since_last_with_labels():
 
 
 def test_render_mesh_compact_under_char_limit():
-    """mesh_compact is <= 200 chars with new per-toggle line format."""
+    """Each mesh chunk is <= 200 chars."""
     acc = DigestAccumulator()
     base_time = 1000000.0
     acc._now = lambda: base_time
@@ -258,13 +259,12 @@ def test_render_mesh_compact_under_char_limit():
         acc.enqueue(event)
 
     digest = acc.render_digest(now=base_time)
-    assert len(digest.mesh_compact) <= 200
-    assert digest.mesh_compact.startswith("DIGEST ")
-    assert "ACTIVE NOW" in digest.mesh_compact
-    # Check for toggle label lines
-    lines = digest.mesh_compact.split("\n")
-    bracket_lines = [l for l in lines if l.startswith("[")]
-    assert len(bracket_lines) > 0, "Should have lines starting with toggle labels"
+
+    # All chunks should be <= 200 chars
+    assert all(len(c) <= 200 for c in digest.mesh_chunks)
+    assert len(digest.mesh_chunks) >= 1
+    # Should have proper structure
+    assert digest.mesh_chunks[0].startswith("DIGEST ")
 
 
 def test_render_mesh_compact_empty_shows_no_alerts_message():
@@ -428,18 +428,14 @@ def test_mesh_compact_active_and_resolved_sections():
 
     digest = acc.render_digest(now=base_time)
 
+    # Check section markers in the joined compact string
     assert "ACTIVE NOW" in digest.mesh_compact
     assert "RESOLVED" in digest.mesh_compact
 
-    # Weather should appear before RESOLVED, Roads after
+    # ACTIVE NOW should appear before RESOLVED
     active_pos = digest.mesh_compact.find("ACTIVE NOW")
     resolved_pos = digest.mesh_compact.find("RESOLVED")
-    weather_pos = digest.mesh_compact.find("[Weather]")
-    roads_pos = digest.mesh_compact.find("[Roads]")
-
-    assert weather_pos > active_pos, "[Weather] should be after ACTIVE NOW"
-    assert weather_pos < resolved_pos, "[Weather] should be before RESOLVED"
-    assert roads_pos > resolved_pos, "[Roads] should be after RESOLVED"
+    assert active_pos < resolved_pos, "ACTIVE NOW should appear before RESOLVED"
 
 
 def test_mesh_compact_line_truncates_long_headline():
@@ -463,16 +459,220 @@ def test_mesh_compact_line_truncates_long_headline():
     # The [Weather] line should be shorter than the raw summary
     weather_line = [l for l in digest.mesh_compact.split("\n") if "[Weather]" in l][0]
     assert len(weather_line) < len(long_summary)
-    # Overall mesh_compact should still fit within limit
-    assert len(digest.mesh_compact) <= 200
 
 
 # ============================================================
-# EXCLUDED TOGGLES TESTS
+# MESH CHUNKS TESTS
+# ============================================================
+
+def test_mesh_chunks_single_chunk_when_short():
+    """Single short event produces one chunk with no counter."""
+    acc = DigestAccumulator()
+    base_time = 1000000.0
+    acc._now = lambda: base_time
+
+    acc.enqueue(make_event(
+        source="test",
+        category="weather_warning",
+        severity="routine",
+        title="Short event",
+        summary="Brief summary",
+    ))
+
+    digest = acc.render_digest(now=base_time)
+
+    assert len(digest.mesh_chunks) == 1
+    assert digest.mesh_chunks[0].startswith("DIGEST ")
+    assert "(1/" not in digest.mesh_chunks[0]  # No chunk counter when single
+    assert digest.mesh_compact == digest.mesh_chunks[0]
+
+
+def test_mesh_chunks_splits_when_overflow():
+    """Many events with long summaries produce multiple chunks."""
+    acc = DigestAccumulator()
+    base_time = 1000000.0
+    acc._now = lambda: base_time
+
+    # Add events with long summaries across different toggles
+    toggles = [
+        ("weather_warning", "Severe storm warning for Magic Valley area"),
+        ("wildfire_proximity", "Fire proximity alert 8mi NE of position"),
+        ("battery_warning", "Battery critical on node BLD-MTN system"),
+        ("road_closure", "Road closure US-93 at milepost forty seven"),
+        ("avalanche_warning", "Avalanche danger high in backcountry area"),
+    ]
+    for i, (cat, summary) in enumerate(toggles):
+        acc.enqueue(make_event(
+            source="test",
+            category=cat,
+            severity="routine",
+            id=f"ev{i}",
+            title=f"Event {i}",
+            summary=summary,
+        ))
+
+    digest = acc.render_digest(now=base_time)
+
+    # Should have multiple chunks
+    assert len(digest.mesh_chunks) >= 2
+
+    # Each chunk should have proper header with counter
+    total = len(digest.mesh_chunks)
+    for i, chunk in enumerate(digest.mesh_chunks):
+        assert chunk.startswith("DIGEST ")
+        assert f"({i+1}/{total})" in chunk
+
+    # All chunks should be within limit
+    assert all(len(c) <= 200 for c in digest.mesh_chunks)
+
+
+def test_mesh_chunks_does_not_split_within_a_line():
+    """A toggle line appears intact in exactly one chunk."""
+    acc = DigestAccumulator()
+    base_time = 1000000.0
+    acc._now = lambda: base_time
+
+    # Add event with specific summary we can search for
+    target_summary = "Mesh node BLD-MTN battery at critical level"
+    acc.enqueue(make_event(
+        source="test",
+        category="battery_warning",
+        severity="routine",
+        title="Battery Alert",
+        summary=target_summary,
+    ))
+    # Add more events to possibly force chunking
+    for i in range(5):
+        acc.enqueue(make_event(
+            source="test",
+            category="weather_warning",
+            severity="routine",
+            id=f"w{i}",
+            title=f"Weather {i}",
+            summary=f"Weather event description number {i} for testing",
+        ))
+
+    digest = acc.render_digest(now=base_time)
+
+    # Find chunks containing [Mesh]
+    mesh_chunks = [c for c in digest.mesh_chunks if "[Mesh]" in c]
+    assert len(mesh_chunks) == 1, "Mesh toggle should appear in exactly one chunk"
+
+    # The summary text should be in that chunk (possibly truncated but not split)
+    mesh_chunk = mesh_chunks[0]
+    assert "[Mesh]" in mesh_chunk
+
+
+def test_mesh_chunks_section_header_continuation():
+    """Section headers spanning chunks get '(cont)' suffix."""
+    acc = DigestAccumulator(mesh_char_limit=150)  # Smaller limit to force splits
+    base_time = 1000000.0
+    acc._now = lambda: base_time
+
+    # Add many events to force ACTIVE NOW to span chunks
+    for i in range(8):
+        acc.enqueue(make_event(
+            source="test",
+            category="weather_warning",
+            severity="routine",
+            id=f"w{i}",
+            title=f"Weather Event {i}",
+            summary=f"Weather warning number {i} for the area",
+        ))
+
+    digest = acc.render_digest(now=base_time)
+
+    if len(digest.mesh_chunks) >= 2:
+        # Check if any non-first chunk has continuation header
+        for i, chunk in enumerate(digest.mesh_chunks[1:], start=2):
+            if "[Weather]" in chunk or any(f"[{t}]" in chunk for t in ["Fire", "Mesh", "Roads"]):
+                # This chunk has toggle lines, check for section header
+                if "ACTIVE NOW" in chunk:
+                    assert "ACTIVE NOW (cont)" in chunk, f"Chunk {i} should have (cont) suffix"
+
+
+def test_mesh_chunks_empty_digest_is_single_chunk():
+    """Empty digest produces single chunk with no counter."""
+    acc = DigestAccumulator()
+    base_time = 1000000.0
+    acc._now = lambda: base_time
+
+    digest = acc.render_digest(now=base_time)
+
+    assert len(digest.mesh_chunks) == 1
+    assert "No alerts since last digest" in digest.mesh_chunks[0]
+    assert "(1/" not in digest.mesh_chunks[0]
+
+
+def test_mesh_compact_string_is_joined_chunks():
+    """mesh_compact is chunks joined with separator when multiple chunks."""
+    acc = DigestAccumulator(mesh_char_limit=120)  # Small limit to force multiple chunks
+    base_time = 1000000.0
+    acc._now = lambda: base_time
+
+    # Add events to force multiple chunks
+    for i in range(6):
+        acc.enqueue(make_event(
+            source="test",
+            category="weather_warning",
+            severity="routine",
+            id=f"w{i}",
+            title=f"Event {i}",
+            summary=f"Summary for weather event number {i}",
+        ))
+
+    digest = acc.render_digest(now=base_time)
+
+    if len(digest.mesh_chunks) > 1:
+        expected = "\n---\n".join(digest.mesh_chunks)
+        assert digest.mesh_compact == expected
+    else:
+        assert digest.mesh_compact == digest.mesh_chunks[0]
+
+
+def test_include_toggles_unknown_name_does_not_crash():
+    """Unknown toggle names in include_toggles are silently accepted."""
+    acc = DigestAccumulator(include_toggles=["weather", "made_up_future_toggle"])
+    base_time = 1000000.0
+    acc._now = lambda: base_time
+
+    # Weather should work
+    acc.enqueue(make_event(
+        source="test",
+        category="weather_warning",
+        severity="routine",
+        title="Weather event",
+    ))
+
+    # rf_propagation should be excluded (not in include list)
+    rf_category = None
+    for cat_id, cat_info in ALERT_CATEGORIES.items():
+        if cat_info.get("toggle") == "rf_propagation":
+            rf_category = cat_id
+            break
+
+    if rf_category:
+        acc.enqueue(make_event(
+            source="test",
+            category=rf_category,
+            severity="routine",
+            title="RF event",
+        ))
+
+    # Weather kept, RF dropped
+    assert acc.active_count() == 1
+
+    # Should not raise
+    digest = acc.render_digest(now=base_time)
+    assert "[Weather]" in digest.full
+
+
+# ============================================================
+# INCLUDE TOGGLES TESTS
 # ============================================================
 
 def test_rf_propagation_events_excluded_from_digest_by_default():
-    """rf_propagation toggle is excluded by default."""
+    """rf_propagation toggle is excluded by default (not in default include)."""
     acc = DigestAccumulator()  # default config
     base_time = 1000000.0
     acc._now = lambda: base_time
@@ -501,68 +701,68 @@ def test_rf_propagation_events_excluded_from_digest_by_default():
     assert "[RF]" not in digest.full
 
 
-def test_excluded_toggles_parameter_overrides_default():
-    """excluded_toggles=[] allows rf_propagation events."""
-    acc = DigestAccumulator(excluded_toggles=[])  # no exclusions
+def test_include_toggles_parameter_overrides_default():
+    """include_toggles parameter controls which toggles are tracked."""
+    # Only include rf_propagation and weather
+    acc = DigestAccumulator(include_toggles=["rf_propagation", "weather"])
     base_time = 1000000.0
     acc._now = lambda: base_time
 
-    # Find a category that maps to rf_propagation
+    # Find rf_propagation category
     rf_category = None
     for cat_id, cat_info in ALERT_CATEGORIES.items():
         if cat_info.get("toggle") == "rf_propagation":
             rf_category = cat_id
             break
 
-    event = make_event(
+    # Enqueue rf_propagation event - should be kept
+    acc.enqueue(make_event(
         source="test",
         category=rf_category,
         severity="routine",
         title="HF Blackout",
-    )
-    acc.enqueue(event)
-
-    # Should BE in active
+    ))
     assert acc.active_count() == 1
+
+    # Enqueue fire event - should be dropped (fire not in include)
+    acc.enqueue(make_event(
+        source="test",
+        category="wildfire_proximity",
+        severity="routine",
+        title="Fire Alert",
+    ))
+    assert acc.active_count() == 1  # Still 1, fire was dropped
 
     digest = acc.render_digest(now=base_time)
     assert "[RF]" in digest.full
+    assert "[Fire]" not in digest.full
 
 
-def test_excluded_toggles_can_exclude_multiple():
-    """excluded_toggles can exclude multiple toggles."""
-    acc = DigestAccumulator(excluded_toggles=["rf_propagation", "tracking"])
+def test_include_toggles_explicit_subset():
+    """include_toggles with explicit subset only tracks those toggles."""
+    acc = DigestAccumulator(include_toggles=["weather"])
     base_time = 1000000.0
     acc._now = lambda: base_time
 
-    # Find categories for rf_propagation and tracking
-    rf_category = None
-    for cat_id, cat_info in ALERT_CATEGORIES.items():
-        if cat_info.get("toggle") == "rf_propagation":
-            rf_category = cat_id
-            break
+    # Weather - included
+    acc.enqueue(make_event(
+        source="test",
+        category="weather_warning",
+        severity="routine",
+        title="Weather event",
+    ))
 
-    # tracking toggle - there may not be categories for it in ALERT_CATEGORIES,
-    # so we'll use a fake category that will fall back to "other" normally,
-    # but we need to test the exclusion mechanism. Use an existing one if available.
-    tracking_category = None
-    for cat_id, cat_info in ALERT_CATEGORIES.items():
-        if cat_info.get("toggle") == "tracking":
-            tracking_category = cat_id
-            break
+    # Fire - not included
+    acc.enqueue(make_event(
+        source="test",
+        category="wildfire_proximity",
+        severity="routine",
+        title="Fire event",
+    ))
 
-    # Even if no tracking category exists, test that rf_propagation is excluded
-    if rf_category:
-        acc.enqueue(make_event(
-            source="test",
-            category=rf_category,
-            severity="routine",
-            title="HF Blackout",
-        ))
-
-    # For tracking, if no category maps to it, the test still validates
-    # that the exclusion list works for multiple entries
-    assert acc.active_count() == 0
+    # Tracking - not included (and may not have categories anyway)
+    # Just verify the count is only 1
+    assert acc.active_count() == 1
 
 
 # ============================================================

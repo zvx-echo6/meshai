@@ -62,6 +62,7 @@ class Digest:
     rendered_at: float
     active: dict[str, list[Event]] = field(default_factory=dict)
     since_last: dict[str, list[Event]] = field(default_factory=dict)
+    mesh_chunks: list[str] = field(default_factory=list)
     mesh_compact: str = ""
     full: str = ""
 
@@ -70,19 +71,31 @@ class Digest:
 
 
 class DigestAccumulator:
-    """Tracks priority/routine events and produces periodic digests."""
+    """Tracks priority/routine events and produces periodic digests.
+
+    Args:
+        mesh_char_limit: Maximum characters per mesh chunk (default 200).
+        include_toggles: List of toggle names to include in digest output.
+            If None, defaults to all toggles in TOGGLE_ORDER except
+            rf_propagation. Unknown toggle names in the list are silently
+            accepted (TOGGLE_ORDER drives display order, include_toggles
+            drives which toggles are tracked).
+    """
 
     def __init__(
         self,
         mesh_char_limit: int = 200,
-        excluded_toggles: list[str] | None = None,
+        include_toggles: list[str] | None = None,
     ):
         self._active: dict[str, list[Event]] = {}  # toggle -> events
         self._since_last: dict[str, list[Event]] = {}  # toggle -> events
         self._last_digest_at: float = 0.0
         self._mesh_char_limit = mesh_char_limit
-        self._excluded = set(excluded_toggles) if excluded_toggles is not None \
-                         else {"rf_propagation"}
+        # Default: all known toggles except rf_propagation
+        if include_toggles is None:
+            self._included = set(TOGGLE_ORDER) - {"rf_propagation"}
+        else:
+            self._included = set(include_toggles)
         self._logger = logging.getLogger("meshai.pipeline.digest")
 
     # ---- ingress ----
@@ -91,10 +104,10 @@ class DigestAccumulator:
         """SeverityRouter calls this for priority/routine events."""
         toggle = get_toggle(event.category) or "other"
 
-        # Skip excluded toggles
-        if toggle in self._excluded:
+        # Skip non-included toggles
+        if toggle not in self._included:
             self._logger.debug(
-                f"skipping digest enqueue for excluded toggle {toggle}"
+                f"skipping digest enqueue for non-included toggle {toggle}"
             )
             return
 
@@ -149,16 +162,21 @@ class DigestAccumulator:
         self.tick(now)
 
         digest = Digest(rendered_at=now)
-        # Defensive: skip excluded toggles when building output
+        # Defensive: skip non-included toggles when building output
         digest.active = {
             k: list(v) for k, v in self._active.items()
-            if v and k not in self._excluded
+            if v and k in self._included
         }
         digest.since_last = {
             k: list(v) for k, v in self._since_last.items()
-            if v and k not in self._excluded
+            if v and k in self._included
         }
-        digest.mesh_compact = self._render_mesh_compact(digest, now)
+        digest.mesh_chunks = self._render_mesh_chunks(digest, now)
+        # mesh_compact: join chunks for backward compatibility
+        if len(digest.mesh_chunks) == 1:
+            digest.mesh_compact = digest.mesh_chunks[0]
+        else:
+            digest.mesh_compact = "\n---\n".join(digest.mesh_chunks)
         digest.full = self._render_full(digest, now)
 
         # Clear since_last; active stays for the next cycle
@@ -166,45 +184,152 @@ class DigestAccumulator:
         self._last_digest_at = now
         return digest
 
-    def _render_mesh_compact(self, digest: Digest, now: float) -> str:
-        """Produce a mesh-radio-friendly compact form.
+    def _render_mesh_chunks(self, digest: Digest, now: float) -> list[str]:
+        """Produce mesh-radio-friendly compact chunks.
 
-        Format:
-          DIGEST HHMM
-          ACTIVE NOW
-          [Weather] Severe Thunderstorm Warning
-          [Fire] Snake River Fire — 8mi NE (+2)
-          RESOLVED
-          [Roads] US-93 reopened at MP 47
-
-        One line per toggle, showing highest-severity event headline.
-        Append (+N) if toggle has more than one event.
+        Returns a list of strings, each ≤ self._mesh_char_limit chars.
+        Single-chunk output has no "(1/N)" suffix. Multi-chunk output
+        has "(k/N)" counters and "(cont)" suffixes on section headers
+        that span chunks.
         """
-        lines = [f"DIGEST {time.strftime('%H%M', time.localtime(now))}"]
+        time_str = time.strftime('%H%M', time.localtime(now))
 
+        # Empty digest case
         if not digest.active and not digest.since_last:
-            lines.append("No alerts since last digest.")
-        else:
-            if digest.active:
-                lines.append("ACTIVE NOW")
-                for toggle in TOGGLE_ORDER:
-                    events = digest.active.get(toggle)
-                    if not events:
-                        continue
-                    lines.append(self._compact_toggle_line(toggle, events))
+            return [f"DIGEST {time_str}\nNo alerts since last digest."]
 
-            if digest.since_last:
-                lines.append("RESOLVED")
-                for toggle in TOGGLE_ORDER:
-                    events = digest.since_last.get(toggle)
-                    if not events:
-                        continue
-                    lines.append(self._compact_toggle_line(toggle, events))
+        # Build logical lines with section markers
+        # Each item is (section, line) where section is "active", "resolved", or None
+        logical_lines: list[tuple[str | None, str]] = []
 
-        out = "\n".join(lines)
-        if len(out) > self._mesh_char_limit:
-            out = out[: self._mesh_char_limit - 1] + "…"
-        return out
+        if digest.active:
+            logical_lines.append(("active", "ACTIVE NOW"))
+            for toggle in TOGGLE_ORDER:
+                events = digest.active.get(toggle)
+                if not events:
+                    continue
+                logical_lines.append(("active", self._compact_toggle_line(toggle, events)))
+
+        if digest.since_last:
+            logical_lines.append(("resolved", "RESOLVED"))
+            for toggle in TOGGLE_ORDER:
+                events = digest.since_last.get(toggle)
+                if not events:
+                    continue
+                logical_lines.append(("resolved", self._compact_toggle_line(toggle, events)))
+
+        # Pack lines into chunks
+        return self._pack_lines_into_chunks(logical_lines, time_str)
+
+    def _pack_lines_into_chunks(
+        self,
+        logical_lines: list[tuple[str | None, str]],
+        time_str: str,
+    ) -> list[str]:
+        """Pack logical lines into chunks respecting char limit.
+
+        Args:
+            logical_lines: List of (section, line) tuples where section
+                is "active", "resolved", or None for headers.
+            time_str: Time string for headers (e.g., "0700").
+
+        Returns:
+            List of chunk strings, each ≤ self._mesh_char_limit.
+        """
+        if not logical_lines:
+            return [f"DIGEST {time_str}\nNo alerts since last digest."]
+
+        limit = self._mesh_char_limit
+        chunks: list[list[str]] = []  # List of line lists
+        current_chunk: list[str] = []
+        current_len = 0
+        last_section_in_chunk: str | None = None
+        sections_started: set[str] = set()
+
+        # Placeholder header - will be fixed up later
+        header_placeholder = f"DIGEST {time_str}"
+
+        def start_new_chunk():
+            nonlocal current_chunk, current_len, last_section_in_chunk
+            if current_chunk:
+                chunks.append(current_chunk)
+            current_chunk = [header_placeholder]
+            current_len = len(header_placeholder)
+            last_section_in_chunk = None
+
+        start_new_chunk()
+
+        i = 0
+        while i < len(logical_lines):
+            section, line = logical_lines[i]
+            is_section_header = line in ("ACTIVE NOW", "RESOLVED")
+
+            # Check if this is a section header - ensure it has at least one
+            # toggle line following it in this chunk
+            if is_section_header:
+                # Look ahead for the next toggle line
+                next_toggle_idx = i + 1
+                if next_toggle_idx < len(logical_lines):
+                    _, next_line = logical_lines[next_toggle_idx]
+                    # Calculate space needed for header + newline + next line
+                    needed = len(line) + 1 + len(next_line)
+                    if current_len + 1 + needed > limit:
+                        # Section header + next line won't fit, start new chunk
+                        start_new_chunk()
+                        sections_started.add(section)
+                        last_section_in_chunk = section
+                        current_chunk.append(line)
+                        current_len += 1 + len(line)
+                        i += 1
+                        continue
+
+            # Calculate line length with newline
+            line_with_newline = 1 + len(line)  # newline before line
+
+            # Would this line fit?
+            if current_len + line_with_newline > limit:
+                # Start new chunk
+                start_new_chunk()
+
+                # If continuing a section, add "(cont)" header
+                if section and section in sections_started and not is_section_header:
+                    cont_header = "ACTIVE NOW (cont)" if section == "active" else "RESOLVED (cont)"
+                    current_chunk.append(cont_header)
+                    current_len += 1 + len(cont_header)
+                    last_section_in_chunk = section
+
+            # Add the line
+            if is_section_header:
+                sections_started.add(section)
+                last_section_in_chunk = section
+            current_chunk.append(line)
+            current_len += 1 + len(line)
+            i += 1
+
+        # Don't forget the last chunk
+        if current_chunk and len(current_chunk) > 1:  # More than just header
+            chunks.append(current_chunk)
+        elif current_chunk and len(current_chunk) == 1:
+            # Only header in chunk - shouldn't happen but handle gracefully
+            if chunks:
+                # Merge with previous chunk if possible
+                pass
+            else:
+                chunks.append(current_chunk)
+
+        # Fix up headers with chunk counts
+        total_chunks = len(chunks)
+        result: list[str] = []
+
+        for idx, chunk_lines in enumerate(chunks):
+            # Fix header line
+            if total_chunks == 1:
+                chunk_lines[0] = f"DIGEST {time_str}"
+            else:
+                chunk_lines[0] = f"DIGEST {time_str} ({idx + 1}/{total_chunks})"
+            result.append("\n".join(chunk_lines))
+
+        return result if result else [f"DIGEST {time_str}\nNo alerts since last digest."]
 
     def _compact_toggle_line(self, toggle: str, events: list[Event]) -> str:
         """Build one compact line for a toggle: [Label] headline (+N)"""
