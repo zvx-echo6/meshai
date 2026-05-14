@@ -40,6 +40,7 @@ class NotificationRouter:
         self._timezone = timezone
         self._recent: dict[tuple, float] = {}  # (rule_name, category, event_key) -> last_sent_time
         self._summarizer = MessageSummarizer(llm_backend) if llm_backend else None
+        self._llm = llm_backend
         self._connector = connector
         self._config = config
 
@@ -624,12 +625,20 @@ class NotificationRouter:
                 channel = self._create_channel_for_rule(rule_dict)
                 if channel:
                     try:
-                        if action == "send_status" and live_data_lines:
-                            # Filter out the warning line for status message
-                            data_lines = [l for l in live_data_lines if not l.startswith("[!]")]
-                            status_msg = "[STATUS] " + " | ".join(data_lines[:4])
-                            if len(status_msg) > 200:
-                                status_msg = status_msg[:195] + "..."
+                        if action == "send_status":
+                            # Determine report type from rule categories
+                            report_type = "all"
+                            if rule_categories:
+                                if any(c in rule_categories for c in ["hf_blackout", "geomagnetic_storm", "tropospheric_ducting"]):
+                                    report_type = "rf_propagation"
+                                elif any(c in rule_categories for c in ["infra_offline", "critical_node_down", "mesh_score_low", "battery_warning"]):
+                                    report_type = "mesh_health"
+                                elif any(c in rule_categories for c in ["weather_warning", "fire_proximity", "new_ignition"]):
+                                    report_type = "weather_fire"
+
+                            status_msg = await self.generate_report(report_type, env_store, health_engine)
+                            if len(status_msg) > 195:
+                                status_msg = status_msg[:192] + "..."
                             success, result = await channel.deliver_test(status_msg)
                             delivered = success
                             delivery_result = result if success else f"Failed: {result}"
@@ -637,9 +646,9 @@ class NotificationRouter:
                                 delivery_error = result
 
                         elif action == "send_live" and matching_alerts:
-                            live_msg = f"[LIVE TEST] {matching_alerts[0].get('message', '')}"
-                            if len(live_msg) > 200:
-                                live_msg = live_msg[:195] + "..."
+                            live_msg = matching_alerts[0].get('message', '')
+                            if len(live_msg) > 195:
+                                live_msg = live_msg[:192] + "..."
                             success, result = await channel.deliver_test(live_msg)
                             delivered = success
                             delivery_result = result if success else f"Failed: {result}"
@@ -775,6 +784,122 @@ class NotificationRouter:
                 categories = rule.get("categories", [])
                 return categories if categories else ["all"]
         return []
+
+    async def generate_report(self, report_type: str, env_store, health_engine) -> str:
+        """Generate an LLM-summarized report from current data."""
+        context_parts = []
+
+        if report_type in ("rf_propagation", "all"):
+            if env_store:
+                adapters = getattr(env_store, '_adapters', {})
+                if "swpc" in adapters and hasattr(env_store, 'get_swpc_status'):
+                    swpc = env_store.get_swpc_status()
+                    if swpc:
+                        context_parts.append(
+                            f"Solar/Geomagnetic: SFI {swpc.get('sfi')}, "
+                            f"Kp {swpc.get('kp_current')}, "
+                            f"R{swpc.get('r_scale', 0)}/S{swpc.get('s_scale', 0)}/G{swpc.get('g_scale', 0)}"
+                        )
+                if "ducting" in adapters and hasattr(env_store, 'get_ducting_status'):
+                    ducting = env_store.get_ducting_status()
+                    if ducting:
+                        context_parts.append(
+                            f"Tropospheric: {ducting.get('condition', 'unknown')}, "
+                            f"dM/dz {ducting.get('min_gradient', 'N/A')} M-units/km"
+                        )
+
+        if report_type in ("mesh_health", "all"):
+            if health_engine:
+                health = getattr(health_engine, 'mesh_health', None)
+                if health:
+                    context_parts.append(
+                        f"Mesh: score {health.composite:.0f}/100, "
+                        f"tier {health.tier}, "
+                        f"{health.infra_online}/{health.infra_total} infra online, "
+                        f"utilization {health.util_percent:.1f}%"
+                    )
+
+        if report_type in ("weather_fire", "all"):
+            if env_store and hasattr(env_store, 'get_active'):
+                nws = env_store.get_active(source="nws")
+                fires = env_store.get_active(source="nifc")
+                if nws:
+                    headlines = [e.get("headline", "")[:80] for e in nws[:3]]
+                    context_parts.append(f"Weather: {len(nws)} active alerts: {'; '.join(headlines)}")
+                else:
+                    context_parts.append("Weather: No active alerts")
+                if fires:
+                    context_parts.append(f"Fires: {len(fires)} active")
+                else:
+                    context_parts.append("Fires: None active")
+
+        if report_type in ("environmental", "all"):
+            if env_store and hasattr(env_store, 'get_active'):
+                for source in ["usgs", "traffic", "roads511", "avalanche"]:
+                    events = env_store.get_active(source=source)
+                    if events:
+                        context_parts.append(f"{source.upper()}: {len(events)} events")
+
+        raw_data = "\n".join(context_parts) if context_parts else "No data available"
+
+        # Generate LLM summary
+        if self._llm:
+            prompt = self._build_report_prompt(report_type, raw_data)
+            try:
+                messages = [{"role": "user", "content": prompt}]
+                summary = await self._llm.generate(
+                    messages=messages,
+                    system_prompt="You are a concise status reporter. Output only the summary.",
+                    max_tokens=100,
+                )
+                return summary.strip()
+            except Exception as e:
+                logger.warning("LLM report generation failed: %s", e)
+                return raw_data
+        else:
+            return raw_data
+
+    def _build_report_prompt(self, report_type: str, raw_data: str) -> str:
+        """Build the LLM prompt for report generation."""
+        prompts = {
+            "rf_propagation": (
+                "You are a ham radio propagation advisor. Summarize these "
+                "current conditions in 2-3 sentences for a radio operator. "
+                "Tell them which HF bands are likely open or closed based on "
+                "the SFI and Kp values. Mention if ducting affects VHF/UHF. "
+                "Be specific about bands (10m, 15m, 20m, 40m, etc). "
+                "Keep it under 180 characters for mesh delivery.\n\n"
+                f"Current data:\n{raw_data}"
+            ),
+            "mesh_health": (
+                "You are a mesh network advisor. Summarize the current mesh "
+                "health in 2-3 sentences for the operator. Highlight any "
+                "problems or notable conditions. If everything is healthy, "
+                "say so briefly. Mention specific issues if any pillars are "
+                "low. Keep it under 180 characters for mesh delivery.\n\n"
+                f"Current data:\n{raw_data}"
+            ),
+            "weather_fire": (
+                "Summarize current weather and fire conditions in 2-3 "
+                "sentences. Highlight anything the operator should know "
+                "or act on. Keep it under 180 characters for mesh delivery.\n\n"
+                f"Current data:\n{raw_data}"
+            ),
+            "environmental": (
+                "Summarize all current environmental conditions in 3-4 "
+                "sentences. Cover weather, fire, streams, roads — whatever "
+                "is notable. Keep it under 180 characters for mesh delivery.\n\n"
+                f"Current data:\n{raw_data}"
+            ),
+            "all": (
+                "Summarize all current conditions for a mesh network operator "
+                "in 3-4 sentences. Cover propagation (which bands are open), "
+                "mesh health, weather, and any environmental threats. "
+                "Keep it under 180 characters for mesh delivery.\n\n"
+                f"Current data:\n{raw_data}"
+            ),
+        }
+        return prompts.get(report_type, prompts["all"])
 
     def cleanup_recent(self, max_age: int = 3600):
         """Clean up old entries from recent alerts cache."""
