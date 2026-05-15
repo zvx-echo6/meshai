@@ -12,7 +12,7 @@ Phase 2.4:
 
 Usage:
     from meshai.notifications.pipeline import build_pipeline, start_pipeline, stop_pipeline
-    bus = build_pipeline(config)
+    bus = build_pipeline(config, llm_backend)  # llm_backend from main.py
     bus.emit(event)
 
     # Async lifecycle
@@ -35,39 +35,19 @@ from meshai.notifications.pipeline.digest import DigestAccumulator, Digest
 from meshai.notifications.pipeline.scheduler import DigestScheduler
 
 
-def _create_llm_backend(config):
-    """Create an LLM backend from config, or return None if unavailable."""
-    try:
-        from meshai.backends import OpenAIBackend, AnthropicBackend, GoogleBackend
-
-        api_key = config.resolve_api_key()
-        if not api_key:
-            return None
-
-        backend_name = config.llm.backend.lower()
-        # Use minimal memory settings for digest summaries
-        if backend_name == "openai":
-            return OpenAIBackend(config.llm, api_key, 0, 0)
-        elif backend_name == "anthropic":
-            return AnthropicBackend(config.llm, api_key, 0, 0)
-        elif backend_name == "google":
-            return GoogleBackend(config.llm, api_key, 0, 0)
-        else:
-            return OpenAIBackend(config.llm, api_key, 0, 0)
-    except Exception:
-        return None
-
-
-def build_pipeline(config) -> EventBus:
+def build_pipeline(config, llm_backend) -> EventBus:
     """Build the pipeline and return the EventBus.
+
+    Args:
+        config: Full Config object.
+        llm_backend: An already-constructed LLMBackend instance
+            (from main.py or a test). Pipeline components share
+            this single instance. May be None for fallback behavior.
 
     Components are stashed on bus._pipeline_components for lifecycle use.
     """
     bus = EventBus()
     dispatcher = Dispatcher(config, create_channel)
-
-    # Build LLM backend for digest summarization
-    llm_backend = _create_llm_backend(config)
 
     # Build include_toggles from config
     digest_cfg = getattr(config.notifications, "digest", None)
@@ -116,16 +96,20 @@ def build_pipeline(config) -> EventBus:
     return bus
 
 
-def build_pipeline_components(config) -> tuple:
+def build_pipeline_components(config, llm_backend) -> tuple:
     """Like build_pipeline, but returns all components for tests.
 
-    Returns (bus, inhibitor, grouper, toggle_filter, dispatcher, accumulator).
+    Args:
+        config: Full Config object.
+        llm_backend: An already-constructed LLMBackend instance
+            (from main.py or a test). Pipeline components share
+            this single instance. May be None for fallback behavior.
+
+    Returns:
+        (bus, inhibitor, grouper, toggle_filter, dispatcher, accumulator).
     """
     bus = EventBus()
     dispatcher = Dispatcher(config, create_channel)
-
-    # Build LLM backend for digest summarization
-    llm_backend = _create_llm_backend(config)
 
     # Build include_toggles from config
     digest_cfg = getattr(config.notifications, "digest", None)

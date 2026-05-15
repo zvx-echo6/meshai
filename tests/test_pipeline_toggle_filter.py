@@ -1,6 +1,7 @@
 """Tests for ToggleFilter (Phase 2.4)."""
 
 import pytest
+from unittest.mock import MagicMock, AsyncMock
 
 from meshai.notifications.events import make_event
 from meshai.notifications.pipeline.toggle_filter import ToggleFilter
@@ -101,16 +102,31 @@ class TestToggleFilterPipelineWiring:
 
     def test_toggle_filter_pipeline_drops_disabled_toggle(self):
         """Events for disabled toggles don't reach dispatcher or accumulator."""
-        # Create config with only weather enabled
         config = Config()
-        # We'll check by using build_pipeline_components and inspecting
-        # In Phase 2.4, build_pipeline_components returns toggle_filter
+
+        # Pass mock LLM backend
+        mock_backend = MagicMock()
+        mock_backend.generate = AsyncMock(return_value="stub summary")
 
         # Note: without toggles.enabled set, filter is a no-op
         # This test verifies the wiring is correct
-        bus, inhibitor, grouper, toggle_filter, dispatcher, accumulator = \
-            build_pipeline_components(config)
+        bus, inhibitor, grouper, toggle_filter, dispatcher, accumulator =             build_pipeline_components(config, mock_backend)
 
         # Verify toggle_filter is in the chain
         assert toggle_filter is not None
         assert hasattr(toggle_filter, 'handle')
+
+    def test_build_pipeline_uses_provided_backend(self):
+        """build_pipeline_components uses the provided llm_backend."""
+        config = Config()
+
+        # Sentinel backend with unique attribute
+        sentinel = MagicMock()
+        sentinel.unique_marker = "I_AM_THE_SENTINEL"
+        sentinel.generate = AsyncMock(return_value="sentinel summary")
+
+        bus, inhibitor, grouper, toggle_filter, dispatcher, accumulator =             build_pipeline_components(config, sentinel)
+
+        # Accumulator should have the exact sentinel instance
+        assert accumulator._llm is sentinel
+        assert accumulator._llm.unique_marker == "I_AM_THE_SENTINEL"

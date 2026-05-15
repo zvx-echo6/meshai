@@ -50,6 +50,13 @@ class FailingLLMBackend:
         raise RuntimeError("LLM unavailable")
 
 
+def _make_mock_backend():
+    """Create a standard mock LLM backend for tests."""
+    mock = MagicMock()
+    mock.generate = AsyncMock(return_value="stub summary")
+    return mock
+
+
 # ============================================================
 # ACCUMULATOR EVENT LOGGING TESTS
 # ============================================================
@@ -478,7 +485,7 @@ def test_pipeline_routes_event_to_accumulator():
     """Events via bus.emit end up in DigestAccumulator."""
     config = Config()
     bus, inhibitor, grouper, toggle_filter, dispatcher, accumulator = \
-        build_pipeline_components(config)
+        build_pipeline_components(config, _make_mock_backend())
 
     event = make_event(
         source="test",
@@ -499,7 +506,7 @@ def test_pipeline_routes_immediate_to_both():
     """Immediate events go to both dispatcher and accumulator in Phase 2.4."""
     config = Config()
     bus, inhibitor, grouper, toggle_filter, dispatcher, accumulator = \
-        build_pipeline_components(config)
+        build_pipeline_components(config, _make_mock_backend())
 
     event = make_event(
         source="test",
