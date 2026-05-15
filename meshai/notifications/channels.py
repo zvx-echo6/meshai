@@ -17,6 +17,8 @@ if TYPE_CHECKING:
     from ..config import NotificationRuleConfig
     from .events import NotificationPayload
 
+from meshai.notifications.renderers import MeshRenderer, EmailRenderer, WebhookRenderer
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,6 +63,7 @@ class MeshBroadcastChannel(NotificationChannel):
     def __init__(self, connector: "MeshConnector", channel_index: int = 0):
         self._connector = connector
         self._channel = channel_index
+        self._renderer = MeshRenderer()
 
     async def deliver(self, alert: "NotificationPayload", rule: "NotificationRuleConfig") -> bool:
         """Send alert to mesh channel."""
@@ -69,13 +72,25 @@ class MeshBroadcastChannel(NotificationChannel):
             return False
 
         try:
-            message = alert.message or ""
-            self._connector.send_message(
-                text=message,
-                destination=None,
-                channel=self._channel,
-            )
-            logger.info("Broadcast alert to channel %d", self._channel)
+            # If payload already has chunk metadata (from digest), use message directly
+            if alert.chunk_index is not None:
+                self._connector.send_message(
+                    text=alert.message or "",
+                    destination=None,
+                    channel=self._channel,
+                )
+                logger.info("Broadcast pre-chunked alert to channel %d", self._channel)
+                return True
+
+            # Render to chunks for single-event delivery
+            chunks = self._renderer.render(alert)
+            for chunk in chunks:
+                self._connector.send_message(
+                    text=chunk,
+                    destination=None,
+                    channel=self._channel,
+                )
+            logger.info("Broadcast %d chunk(s) to channel %d", len(chunks), self._channel)
             return True
         except Exception as e:
             logger.error("Failed to broadcast alert: %s", e)
@@ -159,22 +174,29 @@ class MeshDMChannel(NotificationChannel):
     def __init__(self, connector: "MeshConnector", node_ids: list[str]):
         self._connector = connector
         self._node_ids = node_ids
+        self._renderer = MeshRenderer()
 
     async def deliver(self, alert: "NotificationPayload", rule: "NotificationRuleConfig") -> bool:
         """Send alert via DM to configured nodes."""
         if not self._connector:
             return False
 
-        message = alert.message or ""
-        success = True
+        # If payload already has chunk metadata (from digest), use message directly
+        if alert.chunk_index is not None:
+            messages = [alert.message or ""]
+        else:
+            # Render to chunks for single-event delivery
+            messages = self._renderer.render(alert)
 
+        success = True
         for node_id in self._node_ids:
-            try:
-                node_id = str(node_id)
-                self._connector.send_message(text=message, destination=node_id, channel=0)
-            except Exception as e:
-                logger.error("Failed to DM %s: %s", node_id, e)
-                success = False
+            for message in messages:
+                try:
+                    node_id = str(node_id)
+                    self._connector.send_message(text=message, destination=node_id, channel=0)
+                except Exception as e:
+                    logger.error("Failed to DM %s: %s", node_id, e)
+                    success = False
 
         return success
 
@@ -287,19 +309,17 @@ class EmailChannel(NotificationChannel):
         self._tls = smtp_tls
         self._from = from_address
         self._recipients = recipients
+        self._renderer = EmailRenderer()
 
     async def deliver(self, alert: "NotificationPayload", rule: "NotificationRuleConfig") -> bool:
         """Send alert via email."""
         if not self._recipients:
             return False
 
-        alert_type = alert.event_type or "alert"
-        severity = (alert.severity or "routine").upper()
-        message = alert.message or ""
-        subject = "[MeshAI %s] %s" % (severity, alert_type.replace("_", " ").title())
-        body = "MeshAI Alert\n\nType: %s\nSeverity: %s\nTime: %s\n\n%s\n\n---\nAutomated message from MeshAI." % (
-            alert_type, severity, time.strftime("%Y-%m-%d %H:%M:%S"), message
-        )
+        # Use renderer for subject and body
+        rendered = self._renderer.render(alert)
+        subject = rendered["subject"]
+        body = rendered["body"]
 
         try:
             loop = asyncio.get_event_loop()
@@ -515,17 +535,12 @@ class WebhookChannel(NotificationChannel):
     def __init__(self, url: str, headers: Optional[dict] = None):
         self._url = url
         self._headers = headers or {}
+        self._renderer = WebhookRenderer()
 
     async def deliver(self, alert: "NotificationPayload", rule: "NotificationRuleConfig") -> bool:
         """POST alert to webhook URL."""
-        payload = {
-            "type": alert.event_type,
-            "severity": alert.severity or "routine",
-            "message": alert.message or "",
-            "timestamp": alert.timestamp or time.time(),
-            "node_name": alert.node_name,
-            "region": alert.region,
-        }
+        # Use renderer for generic JSON payload
+        payload = self._renderer.render(alert)
 
         # Discord/Slack format
         if "discord.com" in self._url or "slack.com" in self._url:
