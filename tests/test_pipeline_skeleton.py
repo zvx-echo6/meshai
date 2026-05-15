@@ -2,6 +2,10 @@
 
 These tests verify the core routing and dispatch behavior of the
 notification pipeline without requiring real channel backends.
+
+Updated in Phase 2.4: Events now go to BOTH dispatcher and accumulator
+(no severity-based fork). SeverityRouter class kept for backward
+compatibility but not used in production wiring.
 """
 
 import pytest
@@ -39,6 +43,7 @@ class ConfigStub:
 class TestImmediateDispatch:
 
     def test_immediate_event_with_matching_rule_dispatches(self):
+        """Immediate events reach the dispatcher and get delivered."""
         rule = NotificationRuleConfigStub(
             enabled=True,
             trigger_type="condition",
@@ -74,72 +79,111 @@ class TestImmediateDispatch:
         assert alert["message"]
 
 
-class TestDigestRouting:
+class TestTeeRouting:
+    """Phase 2.4: Events go to BOTH dispatcher and accumulator."""
 
-    def test_routine_event_goes_to_digest_not_dispatcher(self):
+    def test_routine_event_goes_to_both_dispatcher_and_accumulator(self):
+        """Routine events reach both dispatcher and accumulator in Phase 2.4."""
         rule = NotificationRuleConfigStub(
             enabled=True,
             trigger_type="condition",
             categories=["test_cat"],
             min_severity="routine",
+            delivery_type="mesh_broadcast",
         )
         config = ConfigStub(
             notifications=NotificationsConfigStub(rules=[rule])
         )
-        mock_factory = Mock()
-        bus = EventBus()
-        dispatcher = Dispatcher(config, mock_factory)
-        digest = StubDigestQueue()
-        with patch.object(dispatcher, "dispatch", wraps=dispatcher.dispatch) as mock_dispatch:
-            router = SeverityRouter(
-                immediate_handler=mock_dispatch,
-                digest_handler=digest.enqueue,
-            )
-            bus.subscribe(router.handle)
-            event = make_event(
-                source="test",
-                category="test_cat",
-                severity="routine",
-                title="Routine Alert",
-            )
-            bus.emit(event)
-            assert len(digest) == 1
-            mock_dispatch.assert_not_called()
+        mock_channel = Mock()
+        mock_factory = Mock(return_value=mock_channel)
 
-    def test_priority_event_goes_to_digest_not_dispatcher(self):
+        # Create dispatcher and track calls
+        dispatcher = Dispatcher(config, mock_factory)
+        dispatch_calls = []
+        original_dispatch = dispatcher.dispatch
+        def tracking_dispatch(event):
+            dispatch_calls.append(event)
+            original_dispatch(event)
+        dispatcher.dispatch = tracking_dispatch
+
+        # Create accumulator mock
+        accumulator_calls = []
+        def mock_enqueue(event):
+            accumulator_calls.append(event)
+
+        # Tee closure (Phase 2.4 pattern)
+        def tee(event):
+            dispatcher.dispatch(event)
+            mock_enqueue(event)
+
+        bus = EventBus()
+        bus.subscribe(tee)
+
+        event = make_event(
+            source="test",
+            category="test_cat",
+            severity="routine",
+            title="Routine Alert",
+        )
+        bus.emit(event)
+
+        # Both paths received the event
+        assert len(dispatch_calls) == 1
+        assert len(accumulator_calls) == 1
+        # Dispatcher found a matching rule and delivered
+        assert mock_channel.deliver.call_count == 1
+
+    def test_priority_event_goes_to_both_dispatcher_and_accumulator(self):
+        """Priority events reach both dispatcher and accumulator in Phase 2.4."""
         rule = NotificationRuleConfigStub(
             enabled=True,
             trigger_type="condition",
             categories=["test_cat"],
             min_severity="routine",
+            delivery_type="mesh_broadcast",
         )
         config = ConfigStub(
             notifications=NotificationsConfigStub(rules=[rule])
         )
-        mock_factory = Mock()
-        bus = EventBus()
+        mock_channel = Mock()
+        mock_factory = Mock(return_value=mock_channel)
+
         dispatcher = Dispatcher(config, mock_factory)
-        digest = StubDigestQueue()
-        with patch.object(dispatcher, "dispatch", wraps=dispatcher.dispatch) as mock_dispatch:
-            router = SeverityRouter(
-                immediate_handler=mock_dispatch,
-                digest_handler=digest.enqueue,
-            )
-            bus.subscribe(router.handle)
-            event = make_event(
-                source="test",
-                category="test_cat",
-                severity="priority",
-                title="Priority Alert",
-            )
-            bus.emit(event)
-            assert len(digest) == 1
-            mock_dispatch.assert_not_called()
+        dispatch_calls = []
+        original_dispatch = dispatcher.dispatch
+        def tracking_dispatch(event):
+            dispatch_calls.append(event)
+            original_dispatch(event)
+        dispatcher.dispatch = tracking_dispatch
+
+        accumulator_calls = []
+        def mock_enqueue(event):
+            accumulator_calls.append(event)
+
+        def tee(event):
+            dispatcher.dispatch(event)
+            mock_enqueue(event)
+
+        bus = EventBus()
+        bus.subscribe(tee)
+
+        event = make_event(
+            source="test",
+            category="test_cat",
+            severity="priority",
+            title="Priority Alert",
+        )
+        bus.emit(event)
+
+        assert len(dispatch_calls) == 1
+        assert len(accumulator_calls) == 1
+        assert mock_channel.deliver.call_count == 1
 
 
 class TestNoMatchingRule:
 
     def test_immediate_event_with_no_matching_rule_skips_silently(self):
+        """Events with no matching rules don't crash."""
         config = ConfigStub(
             notifications=NotificationsConfigStub(rules=[])
         )
@@ -165,6 +209,7 @@ class TestNoMatchingRule:
 class TestSubscriberIsolation:
 
     def test_subscriber_exception_isolation(self):
+        """Exceptions in one subscriber don't affect others."""
         bus = EventBus()
 
         def failing_handler(event):
@@ -186,6 +231,7 @@ class TestSubscriberIsolation:
 class TestUnknownSeverity:
 
     def test_unknown_severity_dropped_without_crash(self):
+        """Events with unknown severity are dropped gracefully."""
         config = ConfigStub(
             notifications=NotificationsConfigStub(rules=[])
         )

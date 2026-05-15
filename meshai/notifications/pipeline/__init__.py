@@ -1,13 +1,14 @@
 """Notification pipeline package.
 
-Phase 2.1 + 2.2 + 2.3a + 2.3b:
+Phase 2.4:
   - EventBus: pub/sub ingress
   - Inhibitor: suppresses redundant events by inhibit_keys
   - Grouper: coalesces events sharing group_key within a window
-  - SeverityRouter: forks immediate vs digest
-  - Dispatcher: routes immediate via channels (existing rules schema)
-  - DigestAccumulator: tracks priority/routine events for periodic digest
-  - DigestScheduler: fires digest at configured time (Phase 2.3b)
+  - ToggleFilter: drops events whose toggle isn't enabled
+  - Tee: sends events to both dispatcher and accumulator
+  - Dispatcher: routes to channels based on rules
+  - DigestAccumulator: logs events for LLM-summarized periodic digest
+  - DigestScheduler: fires digest at configured time
 
 Usage:
     from meshai.notifications.pipeline import build_pipeline, start_pipeline, stop_pipeline
@@ -29,8 +30,32 @@ from meshai.notifications.pipeline.severity_router import (
 from meshai.notifications.pipeline.dispatcher import Dispatcher
 from meshai.notifications.pipeline.inhibitor import Inhibitor
 from meshai.notifications.pipeline.grouper import Grouper
+from meshai.notifications.pipeline.toggle_filter import ToggleFilter
 from meshai.notifications.pipeline.digest import DigestAccumulator, Digest
 from meshai.notifications.pipeline.scheduler import DigestScheduler
+
+
+def _create_llm_backend(config):
+    """Create an LLM backend from config, or return None if unavailable."""
+    try:
+        from meshai.backends import OpenAIBackend, AnthropicBackend, GoogleBackend
+
+        api_key = config.resolve_api_key()
+        if not api_key:
+            return None
+
+        backend_name = config.llm.backend.lower()
+        # Use minimal memory settings for digest summaries
+        if backend_name == "openai":
+            return OpenAIBackend(config.llm, api_key, 0, 0)
+        elif backend_name == "anthropic":
+            return AnthropicBackend(config.llm, api_key, 0, 0)
+        elif backend_name == "google":
+            return GoogleBackend(config.llm, api_key, 0, 0)
+        else:
+            return OpenAIBackend(config.llm, api_key, 0, 0)
+    except Exception:
+        return None
 
 
 def build_pipeline(config) -> EventBus:
@@ -41,6 +66,9 @@ def build_pipeline(config) -> EventBus:
     bus = EventBus()
     dispatcher = Dispatcher(config, create_channel)
 
+    # Build LLM backend for digest summarization
+    llm_backend = _create_llm_backend(config)
+
     # Build include_toggles from config
     digest_cfg = getattr(config.notifications, "digest", None)
     include_toggles = None
@@ -49,12 +77,30 @@ def build_pipeline(config) -> EventBus:
         if include_list:
             include_toggles = list(include_list)
 
-    digest = DigestAccumulator(include_toggles=include_toggles)
-    severity_router = SeverityRouter(
-        immediate_handler=dispatcher.dispatch,
-        digest_handler=digest.enqueue,
+    accumulator = DigestAccumulator(
+        llm_backend=llm_backend,
+        include_toggles=include_toggles,
     )
-    grouper = Grouper(next_handler=severity_router.handle)
+
+    # Tee closure: events go to BOTH dispatcher and accumulator
+    def _tee(event):
+        dispatcher.dispatch(event)
+        accumulator.enqueue(event)
+
+    # Build enabled toggles set from config
+    toggles_cfg = getattr(config.notifications, "toggles", None)
+    enabled_toggles = None
+    if toggles_cfg is not None:
+        enabled_list = getattr(toggles_cfg, "enabled", None)
+        if enabled_list:
+            enabled_toggles = set(enabled_list)
+
+    toggle_filter = ToggleFilter(
+        next_handler=_tee,
+        enabled_toggles=enabled_toggles,
+    )
+
+    grouper = Grouper(next_handler=toggle_filter.handle)
     inhibitor = Inhibitor(next_handler=grouper.handle)
     bus.subscribe(inhibitor.handle)
 
@@ -62,9 +108,9 @@ def build_pipeline(config) -> EventBus:
     bus._pipeline_components = {
         "inhibitor": inhibitor,
         "grouper": grouper,
-        "severity_router": severity_router,
+        "toggle_filter": toggle_filter,
         "dispatcher": dispatcher,
-        "digest": digest,
+        "accumulator": accumulator,
     }
 
     return bus
@@ -73,10 +119,13 @@ def build_pipeline(config) -> EventBus:
 def build_pipeline_components(config) -> tuple:
     """Like build_pipeline, but returns all components for tests.
 
-    Returns (bus, inhibitor, grouper, severity_router, dispatcher, digest).
+    Returns (bus, inhibitor, grouper, toggle_filter, dispatcher, accumulator).
     """
     bus = EventBus()
     dispatcher = Dispatcher(config, create_channel)
+
+    # Build LLM backend for digest summarization
+    llm_backend = _create_llm_backend(config)
 
     # Build include_toggles from config
     digest_cfg = getattr(config.notifications, "digest", None)
@@ -86,15 +135,34 @@ def build_pipeline_components(config) -> tuple:
         if include_list:
             include_toggles = list(include_list)
 
-    digest = DigestAccumulator(include_toggles=include_toggles)
-    severity_router = SeverityRouter(
-        immediate_handler=dispatcher.dispatch,
-        digest_handler=digest.enqueue,
+    accumulator = DigestAccumulator(
+        llm_backend=llm_backend,
+        include_toggles=include_toggles,
     )
-    grouper = Grouper(next_handler=severity_router.handle)
+
+    # Tee closure: events go to BOTH dispatcher and accumulator
+    def _tee(event):
+        dispatcher.dispatch(event)
+        accumulator.enqueue(event)
+
+    # Build enabled toggles set from config
+    toggles_cfg = getattr(config.notifications, "toggles", None)
+    enabled_toggles = None
+    if toggles_cfg is not None:
+        enabled_list = getattr(toggles_cfg, "enabled", None)
+        if enabled_list:
+            enabled_toggles = set(enabled_list)
+
+    toggle_filter = ToggleFilter(
+        next_handler=_tee,
+        enabled_toggles=enabled_toggles,
+    )
+
+    grouper = Grouper(next_handler=toggle_filter.handle)
     inhibitor = Inhibitor(next_handler=grouper.handle)
     bus.subscribe(inhibitor.handle)
-    return bus, inhibitor, grouper, severity_router, dispatcher, digest
+
+    return bus, inhibitor, grouper, toggle_filter, dispatcher, accumulator
 
 
 async def start_pipeline(bus: EventBus, config) -> DigestScheduler:
@@ -111,10 +179,10 @@ async def start_pipeline(bus: EventBus, config) -> DigestScheduler:
     if components is None:
         raise RuntimeError("bus missing _pipeline_components; use build_pipeline()")
 
-    digest = components["digest"]
+    accumulator = components["accumulator"]
 
     scheduler = DigestScheduler(
-        accumulator=digest,
+        accumulator=accumulator,
         config=config,
         channel_factory=create_channel,
     )
@@ -143,6 +211,7 @@ __all__ = [
     "Dispatcher",
     "Inhibitor",
     "Grouper",
+    "ToggleFilter",
     "DigestAccumulator",
     "Digest",
     "DigestScheduler",

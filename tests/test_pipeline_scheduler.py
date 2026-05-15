@@ -1,6 +1,9 @@
-"""Tests for DigestScheduler (Phase 2.3b).
+"""Tests for DigestScheduler (Phase 2.3b + 2.4).
 
 Uses asyncio.run() since pytest-asyncio is not available in the container.
+
+Updated in Phase 2.4: render_digest is now async, accumulator mocks
+must return awaitables.
 """
 
 import asyncio
@@ -8,12 +11,12 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Optional
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock, AsyncMock, call
 
 import pytest
 
 from meshai.notifications.events import make_event
-from meshai.notifications.pipeline.digest import DigestAccumulator
+from meshai.notifications.pipeline.digest import DigestAccumulator, Digest
 from meshai.notifications.pipeline.scheduler import DigestScheduler
 
 
@@ -61,6 +64,12 @@ class MockChannel:
         self.deliveries.append(payload)
 
 
+class MockLLMBackend:
+    """Mock LLM backend for accumulator."""
+    async def generate(self, messages, system_prompt, max_tokens=200):
+        return "Mock summary."
+
+
 def make_scheduler(
     schedule: str = "07:00",
     rules: Optional[list] = None,
@@ -90,7 +99,8 @@ def make_scheduler(
         return ch
 
     if accumulator is None:
-        accumulator = DigestAccumulator()
+        # Use mock LLM backend for async render_digest
+        accumulator = DigestAccumulator(llm_backend=MockLLMBackend())
 
     scheduler = DigestScheduler(
         accumulator=accumulator,
@@ -124,37 +134,31 @@ class TestScheduleComputation:
     def test_parse_schedule_invalid_falls_back(self):
         """Invalid schedules fall back to 07:00."""
         scheduler, _, _ = make_scheduler()
-        # Bad format
         assert scheduler._parse_schedule("7:00:00") == (7, 0)
         assert scheduler._parse_schedule("invalid") == (7, 0)
         assert scheduler._parse_schedule("") == (7, 0)
-        # Out of range
         assert scheduler._parse_schedule("25:00") == (7, 0)
         assert scheduler._parse_schedule("12:60") == (7, 0)
 
     def test_next_fire_at_future_today(self):
         """If schedule time is later today, returns today's timestamp."""
-        # Set clock to 06:00 on a known date
         base_dt = datetime(2024, 6, 15, 6, 0, 0)
         base_ts = base_dt.timestamp()
 
         scheduler, _, _ = make_scheduler(schedule="07:00", clock=lambda: base_ts)
         next_fire = scheduler._next_fire_at(base_ts)
 
-        # Should be 07:00 same day
         expected_dt = datetime(2024, 6, 15, 7, 0, 0)
         assert abs(next_fire - expected_dt.timestamp()) < 1
 
     def test_next_fire_at_past_today_schedules_tomorrow(self):
         """If schedule time has passed today, returns tomorrow's timestamp."""
-        # Set clock to 08:00 on a known date
         base_dt = datetime(2024, 6, 15, 8, 0, 0)
         base_ts = base_dt.timestamp()
 
         scheduler, _, _ = make_scheduler(schedule="07:00", clock=lambda: base_ts)
         next_fire = scheduler._next_fire_at(base_ts)
 
-        # Should be 07:00 next day
         expected_dt = datetime(2024, 6, 16, 7, 0, 0)
         assert abs(next_fire - expected_dt.timestamp()) < 1
 
@@ -166,7 +170,6 @@ class TestScheduleComputation:
         scheduler, _, _ = make_scheduler(schedule="07:00", clock=lambda: base_ts)
         next_fire = scheduler._next_fire_at(base_ts)
 
-        # Should be 07:00 next day
         expected_dt = datetime(2024, 6, 16, 7, 0, 0)
         assert abs(next_fire - expected_dt.timestamp()) < 1
 
@@ -181,7 +184,7 @@ class TestScheduleComputation:
         config.notifications.digest = None
 
         scheduler = DigestScheduler(
-            accumulator=DigestAccumulator(),
+            accumulator=DigestAccumulator(llm_backend=MockLLMBackend()),
             config=config,
             channel_factory=lambda r: MockChannel(),
         )
@@ -195,8 +198,7 @@ class TestFireBehavior:
 
     def test_fire_delivers_to_matching_rule(self):
         """_fire() delivers digest to rules with schedule_match='digest'."""
-        accumulator = DigestAccumulator()
-        # Add an event so digest has content
+        accumulator = DigestAccumulator(llm_backend=MockLLMBackend())
         accumulator.enqueue(make_event(
             source="test",
             category="weather_warning",
@@ -223,7 +225,6 @@ class TestFireBehavior:
         payload = ch.deliveries[0]
         assert payload["category"] == "digest"
         assert payload["severity"] == "routine"
-        assert "Test alert" in payload["message"] or "Weather" in payload["message"]
 
     def test_fire_skips_disabled_rules(self):
         """Disabled rules are not delivered to."""
@@ -236,7 +237,6 @@ class TestFireBehavior:
 
         asyncio.run(run_fire())
 
-        # Channel should not be created for disabled rule
         assert "disabled" not in channels
 
     def test_fire_skips_non_schedule_rules(self):
@@ -265,8 +265,10 @@ class TestFireBehavior:
 
     def test_fire_mesh_delivery_chunks(self):
         """Mesh delivery types get per-chunk delivery."""
-        accumulator = DigestAccumulator(mesh_char_limit=100)
-        # Add multiple events to force chunking
+        accumulator = DigestAccumulator(
+            llm_backend=MockLLMBackend(),
+            mesh_char_limit=100,
+        )
         for i in range(5):
             accumulator.enqueue(make_event(
                 source="test",
@@ -289,16 +291,14 @@ class TestFireBehavior:
         asyncio.run(run_fire())
 
         ch = channels["mesh"]
-        # Should have multiple deliveries (one per chunk)
         assert len(ch.deliveries) >= 1
-        # Check chunk metadata
         for payload in ch.deliveries:
             assert "chunk_index" in payload
             assert "chunk_total" in payload
 
     def test_fire_email_delivery_full_text(self):
         """Email delivery type gets single full-text delivery."""
-        accumulator = DigestAccumulator()
+        accumulator = DigestAccumulator(llm_backend=MockLLMBackend())
         accumulator.enqueue(make_event(
             source="test",
             category="weather_warning",
@@ -321,7 +321,7 @@ class TestFireBehavior:
         assert len(ch.deliveries) == 1
         payload = ch.deliveries[0]
         assert "chunk_index" not in payload
-        assert "--- " in payload["message"]  # Full format has header
+        assert "--- " in payload["message"]
 
     def test_fire_updates_last_fire_at(self):
         """_fire() updates last_fire_at timestamp."""
@@ -402,9 +402,7 @@ class TestLifecycle:
         scheduler, _, _ = make_scheduler()
 
         async def run_stop():
-            # Never started
             await scheduler.stop()
-            # Should not raise
 
         asyncio.run(run_stop())
 
@@ -414,10 +412,8 @@ class TestLifecycle:
 
         async def fake_sleep(duration):
             sleep_calls.append(duration)
-            # Actually sleep briefly so we can cancel
             await asyncio.sleep(0.01)
 
-        # Set clock far from schedule time to get long sleep
         base_dt = datetime(2024, 6, 15, 8, 0, 0)
         scheduler, _, _ = make_scheduler(
             schedule="07:00",
@@ -427,13 +423,10 @@ class TestLifecycle:
 
         async def run_test():
             await scheduler.start()
-            # Give task time to enter sleep
             await asyncio.sleep(0.05)
             await scheduler.stop()
 
         asyncio.run(run_test())
-
-        # Task should have exited cleanly
 
 
 # ---- Integration Tests ----
@@ -444,9 +437,8 @@ class TestIntegration:
     def test_scheduler_fires_on_schedule(self):
         """Scheduler fires when schedule time arrives."""
         fire_times = []
-        accumulator = DigestAccumulator()
+        accumulator = DigestAccumulator(llm_backend=MockLLMBackend())
 
-        # Start at 06:59:59.95 (50ms before 07:00), delay will be ~50ms
         clock_time = [datetime(2024, 6, 15, 6, 59, 59, 950000).timestamp()]
 
         def fake_clock():
@@ -458,31 +450,27 @@ class TestIntegration:
             accumulator=accumulator,
         )
 
-        # Track when fire happens
         original_fire = scheduler._fire
 
         async def tracking_fire(now):
             fire_times.append(now)
             await original_fire(now)
-            # After first fire, advance clock so next cycle has long delay
             clock_time[0] = datetime(2024, 6, 15, 8, 0, 0).timestamp()
 
         scheduler._fire = tracking_fire
 
         async def run_test():
             await scheduler.start()
-            # Wait for the ~50ms delay plus some buffer
             await asyncio.sleep(0.2)
             await scheduler.stop()
 
         asyncio.run(run_test())
 
-        # Should have fired once
         assert len(fire_times) >= 1
 
     def test_scheduler_multiple_rules(self):
         """Scheduler delivers to multiple matching rules."""
-        accumulator = DigestAccumulator()
+        accumulator = DigestAccumulator(llm_backend=MockLLMBackend())
         accumulator.enqueue(make_event(
             source="test",
             category="weather_warning",
@@ -507,7 +495,6 @@ class TestIntegration:
 
         asyncio.run(run_fire())
 
-        # All three should have received deliveries
         assert "mesh1" in channels
         assert "mesh2" in channels
         assert "email" in channels
@@ -517,7 +504,7 @@ class TestIntegration:
 
     def test_scheduler_handles_delivery_error(self):
         """Scheduler continues after delivery error."""
-        accumulator = DigestAccumulator()
+        accumulator = DigestAccumulator(llm_backend=MockLLMBackend())
         accumulator.enqueue(make_event(
             source="test",
             category="weather_warning",
@@ -554,7 +541,6 @@ class TestIntegration:
 
         asyncio.run(run_fire())
 
-        # Both rules should have been attempted
         assert "bad" in call_order
         assert "good" in call_order
 

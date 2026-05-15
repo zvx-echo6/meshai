@@ -484,6 +484,14 @@ class NotificationRuleConfig:
     channel_ids: list = field(default_factory=list)
 
 
+
+@dataclass
+class TogglesConfig:
+    """Master toggle filter settings."""
+
+    enabled: list[str] = field(default_factory=list)  # Toggle names that are enabled (empty = all)
+
+
 @dataclass
 class DigestConfig:
     """Digest scheduler settings."""
@@ -500,6 +508,7 @@ class NotificationsConfig:
     quiet_hours_enabled: bool = True  # Master toggle for quiet hours
     quiet_hours_start: str = "22:00"
     quiet_hours_end: str = "06:00"
+    toggles: TogglesConfig = field(default_factory=TogglesConfig)
     digest: DigestConfig = field(default_factory=DigestConfig)
     rules: list = field(default_factory=list)  # List of NotificationRuleConfig
 
@@ -672,6 +681,8 @@ def _dict_to_dataclass(cls, data: dict):
             kwargs[key] = _dict_to_dataclass(FIRMSConfig, value)
         elif key == "dashboard" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(DashboardConfig, value)
+        elif key == "toggles" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(TogglesConfig, value)
         elif key == "digest" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(DigestConfig, value)
         elif key == "notifications" and isinstance(value, dict):

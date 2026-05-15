@@ -98,7 +98,8 @@ class DigestScheduler:
     async def _fire(self, now: float) -> None:
         """Render and deliver one digest."""
         self._logger.info(f"Firing digest at {datetime.fromtimestamp(now):%H:%M}")
-        digest = self._accumulator.render_digest(now)
+        # render_digest is now async in Phase 2.4+
+        digest = await self._accumulator.render_digest(now)
         self._last_fire_at = now
 
         rules = self._matching_rules()
