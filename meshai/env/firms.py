@@ -3,9 +3,11 @@
 import json
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+from meshai.notifications.events import Event, make_event
 
 if TYPE_CHECKING:
     from ..config import FIRMSConfig
@@ -341,6 +343,62 @@ class FIRMSAdapter:
             return (min_dist, nearest_name)
 
         return (None, None)
+
+    def to_event(self, evt: dict) -> Optional["Event"]:
+        """Translate a stored FIRMS event dict into a pipeline Event.
+
+        Args:
+            evt: Internal event dict from get_events()
+
+        Returns:
+            Event instance ready for EventBus emission, or None if
+            the dict is missing required fields (lat/lon).
+        """
+        try:
+            lat = evt.get("lat")
+            lon = evt.get("lon")
+            if lat is None or lon is None:
+                return None  # Can't make a useful Event without coords
+
+            props = evt.get("properties", {}) or {}
+            is_new_ignition = bool(props.get("new_ignition", False))
+            category = "new_ignition" if is_new_ignition else "wildfire_proximity"
+
+            severity = evt.get("severity", "routine")
+
+            title = evt.get("headline", "") or "Fire Hotspot"
+
+            # Build a richer summary including FRP, confidence, distance
+            summary_parts = [title]
+            if props.get("frp") is not None:
+                summary_parts.append(f"FRP {int(props['frp'])} MW")
+            if props.get("confidence"):
+                summary_parts.append(f"conf {props['confidence']}")
+            if props.get("distance_km") is not None and props.get("nearest_anchor"):
+                summary_parts.append(
+                    f"{int(props['distance_km'])} km from {props['nearest_anchor']}"
+                )
+            summary = " | ".join(summary_parts)[:300]
+
+            spatial_key = f"firms:{round(lat, 2):.2f}:{round(lon, 2):.2f}"
+
+            return make_event(
+                source="firms",
+                category=category,
+                severity=severity,
+                title=title,
+                summary=summary,
+                timestamp=evt.get("fetched_at"),
+                expires=evt.get("expires"),
+                region=props.get("nearest_anchor"),
+                lat=lat,
+                lon=lon,
+                group_key=spatial_key,
+                inhibit_keys=[spatial_key],
+            )
+        except Exception:
+            logger.exception(f"FIRMS to_event failed for evt: {evt.get('event_id')}")
+            return None
 
     def get_events(self) -> list:
         """Get current hotspot events."""
