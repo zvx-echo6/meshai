@@ -2,10 +2,11 @@
 
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from ..config import EnvironmentalConfig
+    from ..notifications.pipeline import EventBus
 
 logger = logging.getLogger(__name__)
 
@@ -13,9 +14,15 @@ logger = logging.getLogger(__name__)
 class EnvironmentalStore:
     """Cache and tick-driver for all environmental feed adapters."""
 
-    def __init__(self, config: "EnvironmentalConfig", region_anchors: list = None):
+    def __init__(
+        self,
+        config: "EnvironmentalConfig",
+        region_anchors: list = None,
+        event_bus: Optional["EventBus"] = None,
+    ):
         self._adapters = {}  # name -> adapter instance
         self._events = {}  # (source, event_id) -> event dict
+        self._event_bus = event_bus  # Pipeline EventBus for emission
         self._swpc_status = {}  # Kp/SFI/scales snapshot
         self._ducting_status = {}  # tropo ducting assessment
         self._mesh_zones = config.nws_zones or []
@@ -87,12 +94,29 @@ class EnvironmentalStore:
             self._swpc_status = adapter.get_status()
             # Also ingest any alert events (R-scale >= 3)
             for evt in adapter.get_events():
-                self._events[(evt["source"], evt["event_id"])] = evt
+                key = (evt["source"], evt["event_id"])
+                is_new = key not in self._events
+                self._events[key] = evt
+                if is_new and self._event_bus and hasattr(adapter, "to_event"):
+                    self._emit_event(adapter, evt)
         elif name == "ducting":
             self._ducting_status = adapter.get_status()
         else:
             for evt in adapter.get_events():
-                self._events[(evt["source"], evt["event_id"])] = evt
+                key = (evt["source"], evt["event_id"])
+                is_new = key not in self._events
+                self._events[key] = evt
+                if is_new and self._event_bus and hasattr(adapter, "to_event"):
+                    self._emit_event(adapter, evt)
+
+    def _emit_event(self, adapter, raw_evt: dict):
+        """Convert raw event to pipeline Event and emit to bus."""
+        try:
+            event = adapter.to_event(raw_evt)
+            self._event_bus.emit(event)
+            logger.debug("Emitted %s event %s to pipeline", event.source, event.id)
+        except Exception as e:
+            logger.warning("Failed to emit event to pipeline: %s", e)
 
     def _purge_expired(self):
         """Remove expired events."""

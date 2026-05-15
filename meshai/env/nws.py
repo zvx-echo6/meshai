@@ -4,9 +4,11 @@ import json
 import logging
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+from meshai.notifications.events import Event, make_event
 
 if TYPE_CHECKING:
     from ..config import NWSConfig
@@ -38,6 +40,71 @@ class NWSAlertsAdapter:
             return "priority"
         else:  # moderate, minor, unknown
             return "routine"
+
+    def _derive_category(self, event_type: str) -> str:
+        """Derive notification category from NWS event type suffix.
+
+        NWS event types like "Red Flag Warning", "Winter Storm Watch",
+        "Wind Advisory" map to our fine-grained weather categories.
+
+        Args:
+            event_type: NWS event type string (e.g., "Tornado Warning")
+
+        Returns:
+            Category key: weather_warning, weather_watch, weather_advisory,
+            or weather_statement
+        """
+        event_type_lower = event_type.lower()
+        if event_type_lower.endswith("warning"):
+            return "weather_warning"
+        elif event_type_lower.endswith("watch"):
+            return "weather_watch"
+        elif event_type_lower.endswith("advisory"):
+            return "weather_advisory"
+        else:
+            # Covers "Special Weather Statement", "Short Term Forecast", etc.
+            return "weather_statement"
+
+    def to_event(self, raw: dict) -> Event:
+        """Convert internal event dict to pipeline Event.
+
+        Args:
+            raw: Internal event dict from get_events()
+
+        Returns:
+            Event instance ready for EventBus emission
+        """
+        event_type = raw.get("event_type", "Unknown")
+        category = self._derive_category(event_type)
+        nws_severity = raw.get("severity", "unknown")
+        severity = self._map_nws_severity(nws_severity)
+
+        # Build group_key for dedup: same alert ID should merge
+        group_key = raw.get("event_id", "")
+
+        # Build inhibit_keys: a Warning supersedes Watch/Advisory for same hazard
+        inhibit_keys = []
+        if category == "weather_warning":
+            # Warning inhibits corresponding Watch/Advisory
+            base = event_type.rsplit(" ", 1)[0] if " " in event_type else event_type
+            inhibit_keys = [f"nws:{base} Watch", f"nws:{base} Advisory"]
+
+        return make_event(
+            source="nws",
+            category=category,
+            severity=severity,
+            title=raw.get("headline", event_type),
+            summary=raw.get("headline", ""),
+            body=raw.get("description", ""),
+            effective=raw.get("onset") or None,
+            expires=raw.get("expires") or None,
+            lat=raw.get("lat"),
+            lon=raw.get("lon"),
+            nws_zones=raw.get("areas", []),
+            group_key=group_key,
+            inhibit_keys=inhibit_keys,
+            data=raw,
+        )
 
     def tick(self) -> bool:
         """Execute one polling tick.

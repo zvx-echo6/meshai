@@ -174,10 +174,31 @@ ALERT_CATEGORIES = {
 
     # Environmental - Weather
     "weather_warning": {
-        "name": "Severe Weather",
-        "description": "NWS warning or advisory affecting your mesh area",
+        "name": "Severe Weather Warning",
+        "description": "NWS Warning affecting your mesh area — highest urgency weather alert",
         "default_severity": "priority",
         "example_message": "⚠ Red Flag Warning — Twin Falls, Cassia counties. Gusty winds, low humidity. Until May 13 04:00Z",
+        "toggle": "weather",
+    },
+    "weather_watch": {
+        "name": "Weather Watch",
+        "description": "NWS Watch affecting your mesh area — conditions favorable for hazardous weather",
+        "default_severity": "routine",
+        "example_message": "⏳ Winter Storm Watch — Wood River Valley. Heavy snow possible Thu night through Fri.",
+        "toggle": "weather",
+    },
+    "weather_advisory": {
+        "name": "Weather Advisory",
+        "description": "NWS Advisory affecting your mesh area — weather may cause inconvenience",
+        "default_severity": "routine",
+        "example_message": "ℹ Wind Advisory — Magic Valley. SW winds 25-35 mph with gusts to 50 mph.",
+        "toggle": "weather",
+    },
+    "weather_statement": {
+        "name": "Weather Statement",
+        "description": "NWS Special Weather Statement — general awareness, no specific hazard",
+        "default_severity": "routine",
+        "example_message": "📋 Special Weather Statement — Isolated thunderstorms possible this afternoon.",
         "toggle": "weather",
     },
 
