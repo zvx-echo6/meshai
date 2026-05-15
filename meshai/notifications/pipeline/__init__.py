@@ -21,6 +21,8 @@ Usage:
     await stop_pipeline(scheduler)
 """
 
+import asyncio
+
 from meshai.notifications.channels import create_channel
 from meshai.notifications.pipeline.bus import EventBus, get_bus
 from meshai.notifications.pipeline.severity_router import (
@@ -35,7 +37,7 @@ from meshai.notifications.pipeline.digest import DigestAccumulator, Digest
 from meshai.notifications.pipeline.scheduler import DigestScheduler
 
 
-def build_pipeline(config, llm_backend) -> EventBus:
+def build_pipeline(config, llm_backend, connector=None) -> EventBus:
     """Build the pipeline and return the EventBus.
 
     Args:
@@ -43,11 +45,12 @@ def build_pipeline(config, llm_backend) -> EventBus:
         llm_backend: An already-constructed LLMBackend instance
             (from main.py or a test). Pipeline components share
             this single instance. May be None for fallback behavior.
+        connector: Optional MeshtasticConnector for mesh channels.
 
     Components are stashed on bus._pipeline_components for lifecycle use.
     """
     bus = EventBus()
-    dispatcher = Dispatcher(config, create_channel)
+    dispatcher = Dispatcher(config, create_channel, connector=connector)
 
     # Build include_toggles from config
     digest_cfg = getattr(config.notifications, "digest", None)
@@ -63,8 +66,13 @@ def build_pipeline(config, llm_backend) -> EventBus:
     )
 
     # Tee closure: events go to BOTH dispatcher and accumulator
+    # dispatcher.dispatch() is async, so fire-and-forget with create_task
     def _tee(event):
-        dispatcher.dispatch(event)
+        try:
+            asyncio.create_task(dispatcher.dispatch(event))
+        except RuntimeError:
+            # No running event loop (e.g. sync tests) - skip async dispatch
+            pass
         accumulator.enqueue(event)
 
     # Build enabled toggles set from config
@@ -91,12 +99,13 @@ def build_pipeline(config, llm_backend) -> EventBus:
         "toggle_filter": toggle_filter,
         "dispatcher": dispatcher,
         "accumulator": accumulator,
+        "connector": connector,
     }
 
     return bus
 
 
-def build_pipeline_components(config, llm_backend) -> tuple:
+def build_pipeline_components(config, llm_backend, connector=None) -> tuple:
     """Like build_pipeline, but returns all components for tests.
 
     Args:
@@ -104,12 +113,13 @@ def build_pipeline_components(config, llm_backend) -> tuple:
         llm_backend: An already-constructed LLMBackend instance
             (from main.py or a test). Pipeline components share
             this single instance. May be None for fallback behavior.
+        connector: Optional MeshtasticConnector for mesh channels.
 
     Returns:
         (bus, inhibitor, grouper, toggle_filter, dispatcher, accumulator).
     """
     bus = EventBus()
-    dispatcher = Dispatcher(config, create_channel)
+    dispatcher = Dispatcher(config, create_channel, connector=connector)
 
     # Build include_toggles from config
     digest_cfg = getattr(config.notifications, "digest", None)
@@ -125,8 +135,13 @@ def build_pipeline_components(config, llm_backend) -> tuple:
     )
 
     # Tee closure: events go to BOTH dispatcher and accumulator
+    # dispatcher.dispatch() is async, so fire-and-forget with create_task
     def _tee(event):
-        dispatcher.dispatch(event)
+        try:
+            asyncio.create_task(dispatcher.dispatch(event))
+        except RuntimeError:
+            # No running event loop (e.g. sync tests) - skip async dispatch
+            pass
         accumulator.enqueue(event)
 
     # Build enabled toggles set from config
@@ -165,10 +180,12 @@ async def start_pipeline(bus: EventBus, config) -> DigestScheduler:
 
     accumulator = components["accumulator"]
 
+    connector = components.get("connector")
     scheduler = DigestScheduler(
         accumulator=accumulator,
         config=config,
         channel_factory=create_channel,
+        connector=connector,
     )
     await scheduler.start()
 

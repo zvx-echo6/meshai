@@ -8,7 +8,8 @@ import time
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
-from .channels import create_channel, NotificationChannel
+from .channels import create_channel_from_dict, NotificationChannel
+from .events import NotificationPayload
 from .summarizer import MessageSummarizer
 
 if TYPE_CHECKING:
@@ -142,7 +143,7 @@ class NotificationRouter:
             return None
 
         try:
-            return create_channel(config, self._connector)
+            return create_channel_from_dict(config, self._connector)
         except Exception as e:
             logger.warning("Failed to create channel for rule '%s': %s", rule.get("name"), e)
             return None
@@ -199,7 +200,20 @@ class NotificationRouter:
                         else:
                             delivery_alert = {**alert, "message": message[:195] + "..."}
 
-                success = await channel.deliver(delivery_alert, rule)
+                # Convert dict to NotificationPayload for channel interface
+                payload = NotificationPayload(
+                    message=delivery_alert.get("message", ""),
+                    category=delivery_alert.get("type", "unknown"),
+                    severity=delivery_alert.get("severity", "routine"),
+                    timestamp=delivery_alert.get("timestamp", time.time()),
+                    node_id=delivery_alert.get("node_id"),
+                    node_name=delivery_alert.get("node_name"),
+                    region=delivery_alert.get("region"),
+                    event_type=delivery_alert.get("type"),
+                )
+                # Rule is a dict here; channels don't use it so we pass None
+                # for the rule parameter (channels ignore it anyway)
+                success = await channel.deliver(payload, None)
                 if success:
                     delivered = True
                     self._record_fire(rule_name)
@@ -255,7 +269,7 @@ class NotificationRouter:
             {success, message, error, details}
         """
         try:
-            channel = create_channel(channel_config, self._connector)
+            channel = create_channel_from_dict(channel_config, self._connector)
             return await channel.test_connection()
         except ValueError as e:
             return {

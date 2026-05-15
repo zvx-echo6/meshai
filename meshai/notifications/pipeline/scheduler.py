@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from typing import Callable, Optional
 
 from meshai.notifications.pipeline.digest import DigestAccumulator
+from meshai.notifications.events import NotificationPayload
 
 
 class DigestScheduler:
@@ -23,12 +24,14 @@ class DigestScheduler:
         accumulator: DigestAccumulator,
         config,
         channel_factory: Callable,
+        connector=None,
         clock: Optional[Callable[[], float]] = None,
         sleep: Optional[Callable[[float], "asyncio.Future"]] = None,
     ):
         self._accumulator = accumulator
         self._config = config
         self._channel_factory = channel_factory
+        self._connector = connector
         self._clock = clock or time.time
         self._sleep = sleep or asyncio.sleep
         self._task: Optional[asyncio.Task] = None
@@ -120,7 +123,7 @@ class DigestScheduler:
 
     async def _deliver_to_rule(self, rule, digest, now: float) -> None:
         """Hand the rendered digest to a channel based on rule.delivery_type."""
-        channel = self._channel_factory(rule)
+        channel = self._channel_factory(rule, self._connector)
         delivery_type = rule.delivery_type
 
         if delivery_type in ("mesh_broadcast", "mesh_dm"):
@@ -128,31 +131,27 @@ class DigestScheduler:
             chunks = digest.mesh_chunks
             total = len(chunks)
             for i, chunk in enumerate(chunks, start=1):
-                payload = {
-                    "category": "digest",
-                    "severity": "routine",
-                    "message": chunk,
-                    "node_id": None,
-                    "region": None,
-                    "timestamp": now,
-                    "chunk_index": i,
-                    "chunk_total": total,
-                }
-                channel.deliver(payload)
+                payload = NotificationPayload(
+                    message=chunk,
+                    category="digest",
+                    severity="routine",
+                    timestamp=now,
+                    chunk_index=i,
+                    chunk_total=total,
+                )
+                await channel.deliver(payload, rule)
             self._logger.info(
                 f"Delivered {total} mesh chunk(s) to rule {rule.name!r}"
             )
         else:
             # Single full-form delivery
-            payload = {
-                "category": "digest",
-                "severity": "routine",
-                "message": digest.full,
-                "node_id": None,
-                "region": None,
-                "timestamp": now,
-            }
-            channel.deliver(payload)
+            payload = NotificationPayload(
+                message=digest.full,
+                category="digest",
+                severity="routine",
+                timestamp=now,
+            )
+            await channel.deliver(payload, rule)
             self._logger.info(
                 f"Delivered digest to rule {rule.name!r} via {delivery_type}"
             )

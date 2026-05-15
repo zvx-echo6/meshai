@@ -60,8 +60,9 @@ class MockChannel:
     def __init__(self):
         self.deliveries = []
 
-    def deliver(self, payload: dict):
+    async def deliver(self, payload, rule=None):
         self.deliveries.append(payload)
+        return True
 
 
 class MockLLMBackend:
@@ -93,7 +94,7 @@ def make_scheduler(
 
     channels = {}
 
-    def channel_factory(rule):
+    def channel_factory(rule, connector=None):
         ch = MockChannel()
         channels[rule.name] = ch
         return ch
@@ -223,8 +224,8 @@ class TestFireBehavior:
         ch = channels["digest-mesh"]
         assert len(ch.deliveries) == 1
         payload = ch.deliveries[0]
-        assert payload["category"] == "digest"
-        assert payload["severity"] == "routine"
+        assert payload.category == "digest"
+        assert payload.severity == "routine"
 
     def test_fire_skips_disabled_rules(self):
         """Disabled rules are not delivered to."""
@@ -293,8 +294,8 @@ class TestFireBehavior:
         ch = channels["mesh"]
         assert len(ch.deliveries) >= 1
         for payload in ch.deliveries:
-            assert "chunk_index" in payload
-            assert "chunk_total" in payload
+            assert payload.chunk_index is not None
+            assert payload.chunk_total is not None
 
     def test_fire_email_delivery_full_text(self):
         """Email delivery type gets single full-text delivery."""
@@ -320,8 +321,8 @@ class TestFireBehavior:
         ch = channels["email"]
         assert len(ch.deliveries) == 1
         payload = ch.deliveries[0]
-        assert "chunk_index" not in payload
-        assert "--- " in payload["message"]
+        assert payload.chunk_index is None
+        assert "--- " in payload.message
 
     def test_fire_updates_last_fire_at(self):
         """_fire() updates last_fire_at timestamp."""
@@ -350,7 +351,7 @@ class TestFireBehavior:
 
         ch = channels["mesh"]
         assert len(ch.deliveries) == 1
-        assert "No alerts" in ch.deliveries[0]["message"]
+        assert "No alerts" in ch.deliveries[0].message
 
 
 # ---- Lifecycle Tests ----
@@ -520,11 +521,11 @@ class TestIntegration:
 
         call_order = []
 
-        def bad_channel_factory(rule):
+        def bad_channel_factory(rule, connector=None):
             call_order.append(rule.name)
             if rule.name == "bad":
                 ch = MagicMock()
-                ch.deliver.side_effect = RuntimeError("delivery failed")
+                ch.deliver = AsyncMock(side_effect=RuntimeError("delivery failed"))
                 return ch
             return MockChannel()
 

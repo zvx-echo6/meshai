@@ -14,6 +14,8 @@ import httpx
 
 if TYPE_CHECKING:
     from ..connector import MeshConnector
+    from ..config import NotificationRuleConfig
+    from .events import NotificationPayload
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +26,7 @@ class NotificationChannel(ABC):
     channel_type: str = "base"
 
     @abstractmethod
-    async def deliver(self, alert: dict, rule: dict) -> bool:
+    async def deliver(self, alert: "NotificationPayload", rule: "NotificationRuleConfig") -> bool:
         """Send alert. Returns True on success."""
         raise NotImplementedError
 
@@ -60,14 +62,14 @@ class MeshBroadcastChannel(NotificationChannel):
         self._connector = connector
         self._channel = channel_index
 
-    async def deliver(self, alert: dict, rule: dict) -> bool:
+    async def deliver(self, alert: "NotificationPayload", rule: "NotificationRuleConfig") -> bool:
         """Send alert to mesh channel."""
         if not self._connector:
             logger.warning("No mesh connector available")
             return False
 
         try:
-            message = alert.get("message", "")
+            message = alert.message or ""
             self._connector.send_message(
                 text=message,
                 destination=None,
@@ -158,12 +160,12 @@ class MeshDMChannel(NotificationChannel):
         self._connector = connector
         self._node_ids = node_ids
 
-    async def deliver(self, alert: dict, rule: dict) -> bool:
+    async def deliver(self, alert: "NotificationPayload", rule: "NotificationRuleConfig") -> bool:
         """Send alert via DM to configured nodes."""
         if not self._connector:
             return False
 
-        message = alert.get("message", "")
+        message = alert.message or ""
         success = True
 
         for node_id in self._node_ids:
@@ -286,14 +288,14 @@ class EmailChannel(NotificationChannel):
         self._from = from_address
         self._recipients = recipients
 
-    async def deliver(self, alert: dict, rule: dict) -> bool:
+    async def deliver(self, alert: "NotificationPayload", rule: "NotificationRuleConfig") -> bool:
         """Send alert via email."""
         if not self._recipients:
             return False
 
-        alert_type = alert.get("type", "alert")
-        severity = alert.get("severity", "routine").upper()
-        message = alert.get("message", "")
+        alert_type = alert.event_type or "alert"
+        severity = (alert.severity or "routine").upper()
+        message = alert.message or ""
         subject = "[MeshAI %s] %s" % (severity, alert_type.replace("_", " ").title())
         body = "MeshAI Alert\n\nType: %s\nSeverity: %s\nTime: %s\n\n%s\n\n---\nAutomated message from MeshAI." % (
             alert_type, severity, time.strftime("%Y-%m-%d %H:%M:%S"), message
@@ -514,20 +516,20 @@ class WebhookChannel(NotificationChannel):
         self._url = url
         self._headers = headers or {}
 
-    async def deliver(self, alert: dict, rule: dict) -> bool:
+    async def deliver(self, alert: "NotificationPayload", rule: "NotificationRuleConfig") -> bool:
         """POST alert to webhook URL."""
         payload = {
-            "type": alert.get("type"),
-            "severity": alert.get("severity", "routine"),
-            "message": alert.get("message", ""),
-            "timestamp": time.time(),
-            "node_name": alert.get("node_name"),
-            "region": alert.get("region"),
+            "type": alert.event_type,
+            "severity": alert.severity or "routine",
+            "message": alert.message or "",
+            "timestamp": alert.timestamp or time.time(),
+            "node_name": alert.node_name,
+            "region": alert.region,
         }
 
         # Discord/Slack format
         if "discord.com" in self._url or "slack.com" in self._url:
-            severity = alert.get("severity", "routine")
+            severity = alert.severity or "routine"
             color = {
                 "immediate": 0xFF0000,
                 "priority": 0xFFAA00,
@@ -535,8 +537,8 @@ class WebhookChannel(NotificationChannel):
             }.get(severity, 0x888888)
             payload = {
                 "embeds": [{
-                    "title": "MeshAI: %s" % alert.get("type", "unknown"),
-                    "description": alert.get("message", ""),
+                    "title": "MeshAI: %s" % (alert.event_type or "unknown"),
+                    "description": alert.message or "",
                     "color": color,
                 }]
             }
@@ -545,14 +547,14 @@ class WebhookChannel(NotificationChannel):
         elif "ntfy" in self._url:
             headers = {
                 **self._headers,
-                "Title": "MeshAI: %s" % alert.get("type", "alert"),
+                "Title": "MeshAI: %s" % (alert.event_type or "alert"),
                 "Priority": "3",
             }
             try:
                 async with httpx.AsyncClient() as client:
                     resp = await client.post(
                         self._url,
-                        content=alert.get("message", ""),
+                        content=alert.message or "",
                         headers=headers,
                         timeout=10,
                     )
@@ -745,8 +747,52 @@ class WebhookChannel(NotificationChannel):
             return False, f"Webhook failed: {e}"
 
 
-def create_channel(config: dict, connector=None) -> NotificationChannel:
-    """Create a channel instance from config."""
+def create_channel(rule: "NotificationRuleConfig", connector=None) -> NotificationChannel:
+    """Create a channel instance from a NotificationRuleConfig.
+    
+    Args:
+        rule: NotificationRuleConfig with delivery_type and channel settings
+        connector: MeshConnector instance (required for mesh channels)
+    
+    Returns:
+        NotificationChannel instance
+    """
+    delivery_type = rule.delivery_type
+
+    if delivery_type == "mesh_broadcast":
+        return MeshBroadcastChannel(
+            connector=connector,
+            channel_index=rule.broadcast_channel,
+        )
+    elif delivery_type == "mesh_dm":
+        return MeshDMChannel(
+            connector=connector,
+            node_ids=rule.node_ids,
+        )
+    elif delivery_type == "email":
+        return EmailChannel(
+            smtp_host=rule.smtp_host,
+            smtp_port=rule.smtp_port,
+            smtp_user=rule.smtp_user,
+            smtp_password=rule.smtp_password,
+            smtp_tls=rule.smtp_tls,
+            from_address=rule.from_address,
+            recipients=rule.recipients,
+        )
+    elif delivery_type == "webhook":
+        return WebhookChannel(
+            url=rule.webhook_url,
+            headers=rule.webhook_headers,
+        )
+    else:
+        raise ValueError("Unknown delivery type: %s" % delivery_type)
+
+
+def create_channel_from_dict(config: dict, connector=None) -> NotificationChannel:
+    """Create a channel instance from a dict config (legacy interface).
+    
+    Used by old router.py and test_channel API. Will be removed in Phase 2.7.
+    """
     channel_type = config.get("type", "")
 
     if channel_type == "mesh_broadcast":

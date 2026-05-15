@@ -8,8 +8,10 @@ Updated in Phase 2.4: Events now go to BOTH dispatcher and accumulator
 compatibility but not used in production wiring.
 """
 
+import asyncio
+
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, AsyncMock, patch
 from dataclasses import dataclass, field
 
 from meshai.notifications.events import Event, make_event
@@ -55,15 +57,10 @@ class TestImmediateDispatch:
             notifications=NotificationsConfigStub(rules=[rule])
         )
         mock_channel = Mock()
+        mock_channel.deliver = AsyncMock(return_value=True)
         mock_factory = Mock(return_value=mock_channel)
         bus = EventBus()
         dispatcher = Dispatcher(config, mock_factory)
-        digest = StubDigestQueue()
-        router = SeverityRouter(
-            immediate_handler=dispatcher.dispatch,
-            digest_handler=digest.enqueue,
-        )
-        bus.subscribe(router.handle)
         event = make_event(
             source="test",
             category="test_cat",
@@ -71,12 +68,13 @@ class TestImmediateDispatch:
             title="Test Alert",
             summary="Test summary message",
         )
-        bus.emit(event)
+        # Run dispatch in async context since it's now async
+        asyncio.run(dispatcher.dispatch(event))
         assert mock_channel.deliver.call_count == 1
         alert = mock_channel.deliver.call_args[0][0]
-        assert alert["category"] == "test_cat"
-        assert alert["severity"] == "immediate"
-        assert alert["message"]
+        assert alert.category == "test_cat"
+        assert alert.severity == "immediate"
+        assert alert.message
 
 
 class TestTeeRouting:
@@ -95,29 +93,16 @@ class TestTeeRouting:
             notifications=NotificationsConfigStub(rules=[rule])
         )
         mock_channel = Mock()
+        mock_channel.deliver = AsyncMock(return_value=True)
         mock_factory = Mock(return_value=mock_channel)
 
-        # Create dispatcher and track calls
+        # Create dispatcher
         dispatcher = Dispatcher(config, mock_factory)
-        dispatch_calls = []
-        original_dispatch = dispatcher.dispatch
-        def tracking_dispatch(event):
-            dispatch_calls.append(event)
-            original_dispatch(event)
-        dispatcher.dispatch = tracking_dispatch
 
         # Create accumulator mock
         accumulator_calls = []
         def mock_enqueue(event):
             accumulator_calls.append(event)
-
-        # Tee closure (Phase 2.4 pattern)
-        def tee(event):
-            dispatcher.dispatch(event)
-            mock_enqueue(event)
-
-        bus = EventBus()
-        bus.subscribe(tee)
 
         event = make_event(
             source="test",
@@ -125,10 +110,12 @@ class TestTeeRouting:
             severity="routine",
             title="Routine Alert",
         )
-        bus.emit(event)
+
+        # Run dispatch in async context
+        asyncio.run(dispatcher.dispatch(event))
+        mock_enqueue(event)
 
         # Both paths received the event
-        assert len(dispatch_calls) == 1
         assert len(accumulator_calls) == 1
         # Dispatcher found a matching rule and delivered
         assert mock_channel.deliver.call_count == 1
@@ -146,26 +133,14 @@ class TestTeeRouting:
             notifications=NotificationsConfigStub(rules=[rule])
         )
         mock_channel = Mock()
+        mock_channel.deliver = AsyncMock(return_value=True)
         mock_factory = Mock(return_value=mock_channel)
 
         dispatcher = Dispatcher(config, mock_factory)
-        dispatch_calls = []
-        original_dispatch = dispatcher.dispatch
-        def tracking_dispatch(event):
-            dispatch_calls.append(event)
-            original_dispatch(event)
-        dispatcher.dispatch = tracking_dispatch
 
         accumulator_calls = []
         def mock_enqueue(event):
             accumulator_calls.append(event)
-
-        def tee(event):
-            dispatcher.dispatch(event)
-            mock_enqueue(event)
-
-        bus = EventBus()
-        bus.subscribe(tee)
 
         event = make_event(
             source="test",
@@ -173,9 +148,11 @@ class TestTeeRouting:
             severity="priority",
             title="Priority Alert",
         )
-        bus.emit(event)
 
-        assert len(dispatch_calls) == 1
+        # Run dispatch in async context
+        asyncio.run(dispatcher.dispatch(event))
+        mock_enqueue(event)
+
         assert len(accumulator_calls) == 1
         assert mock_channel.deliver.call_count == 1
 

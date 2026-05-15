@@ -133,6 +133,52 @@ class Event:
         return cls(**d)
 
 
+
+@dataclass
+class NotificationPayload:
+    """Per-delivery alert content handed to a NotificationChannel.
+
+    This is the runtime alert shape: derived from an Event (or
+    built directly by the old router) and consumed by channels.py
+    implementations.
+    """
+    message: str                       # The rendered text to deliver
+    category: str                      # e.g. "weather_warning"
+    severity: str                      # "immediate" | "priority" | "routine"
+    timestamp: float                   # Unix epoch when generated
+
+    # Optional context fields (None when not applicable)
+    node_id: Optional[str] = None
+    node_name: Optional[str] = None
+    region: Optional[str] = None
+    event_type: Optional[str] = None   # Maps to old dict's "type" field
+
+    # Chunk metadata for mesh deliveries (set by scheduler/digest path)
+    chunk_index: Optional[int] = None
+    chunk_total: Optional[int] = None
+
+    # Source Event reference for advanced channel use (renderers in 2.5b)
+    source_event: Optional["Event"] = None
+
+
+def make_payload_from_event(event: "Event", **overrides) -> NotificationPayload:
+    """Helper to convert an Event into a NotificationPayload."""
+    p = NotificationPayload(
+        message=event.summary or event.title or event.category,
+        category=event.category,
+        severity=event.severity,
+        timestamp=event.timestamp,
+        node_id=event.node_ids[0] if event.node_ids else None,
+        region=event.region,
+        event_type=event.category,
+        source_event=event,
+    )
+    for k, v in overrides.items():
+        setattr(p, k, v)
+    return p
+
+
+
 def make_event(
     source: str,
     category: str,

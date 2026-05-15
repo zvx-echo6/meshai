@@ -4,12 +4,15 @@ The dispatcher routes immediate-severity events through the existing
 NotificationRuleConfig rules and delivers via channels.py. This is the
 transitional bridge between the new Event pipeline and the existing
 channel implementations.
+
+Phase 2.5a: dispatch() is now async, takes a connector at construction,
+and properly awaits channel.deliver(payload, rule).
 """
 
 import logging
-from typing import Callable
+from typing import Callable, Optional
 
-from meshai.notifications.events import Event
+from meshai.notifications.events import Event, make_payload_from_event
 
 
 class Dispatcher:
@@ -17,21 +20,26 @@ class Dispatcher:
 
     SEVERITY_RANK = {"routine": 0, "priority": 1, "immediate": 2}
 
-    def __init__(self, config, channel_factory: Callable):
+    def __init__(self, config, channel_factory: Callable, connector=None):
         """Initialize.
 
         Args:
             config: The full Config object (provides config.notifications.rules)
-            channel_factory: Callable taking a NotificationRuleConfig and
-                returning a NotificationChannel. This is create_channel
-                from meshai/notifications/channels.py.
+            channel_factory: Callable taking (rule, connector) and returning
+                a NotificationChannel. This is create_channel from
+                meshai/notifications/channels.py.
+            connector: MeshConnector instance for mesh channel deliveries.
         """
         self._config = config
         self._channel_factory = channel_factory
+        self._connector = connector
         self._logger = logging.getLogger("meshai.pipeline.dispatcher")
 
-    def dispatch(self, event: Event) -> None:
-        """Deliver an immediate-severity event to all matching channels."""
+    async def dispatch(self, event: Event) -> None:
+        """Deliver an immediate-severity event to all matching channels.
+        
+        This method is async and awaits each channel.deliver() call.
+        """
         rules = self._matching_rules(event)
         if not rules:
             self._logger.debug(
@@ -40,19 +48,17 @@ class Dispatcher:
             return
         for rule in rules:
             try:
-                channel = self._channel_factory(rule)
-                alert = {
-                    "category": event.category,
-                    "severity": event.severity,
-                    "message": event.summary or event.title,
-                    "node_id": event.node_ids[0] if event.node_ids else None,
-                    "region": event.region,
-                    "timestamp": event.timestamp,
-                }
-                channel.deliver(alert)
-                self._logger.info(
-                    f"Dispatched event {event.id} via {rule.delivery_type}"
-                )
+                channel = self._channel_factory(rule, self._connector)
+                payload = make_payload_from_event(event)
+                success = await channel.deliver(payload, rule)
+                if success:
+                    self._logger.info(
+                        f"Dispatched event {event.id} via {rule.delivery_type}"
+                    )
+                else:
+                    self._logger.warning(
+                        f"Channel delivery returned False for rule {rule.name}"
+                    )
             except Exception:
                 self._logger.exception(
                     f"Channel delivery failed for rule {rule.name}"
