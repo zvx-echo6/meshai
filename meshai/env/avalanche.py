@@ -4,9 +4,11 @@ import json
 import logging
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+from meshai.notifications.events import Event, make_event
 
 if TYPE_CHECKING:
     from ..config import AvalancheConfig
@@ -226,6 +228,79 @@ class AvalancheAdapter:
             pass
 
         return (None, None)
+
+    def to_event(self, evt: dict) -> Optional["Event"]:
+        """Translate a stored avalanche advisory into a pipeline Event.
+
+        Only elevated danger is emitted: the category is chosen from
+        danger_level, so a Low/Moderate/No-Rating advisory is intentionally
+        NOT emitted (returns None). High/Extreme (4-5) -> avalanche_warning;
+        Considerable (3) -> avalanche_watch.
+
+        Args:
+            evt: Internal event dict from get_events()
+
+        Returns:
+            Event instance ready for EventBus emission, or None if the dict
+            is missing its centroid or event_id, or the danger is not elevated.
+        """
+        try:
+            lat = evt.get("lat")
+            lon = evt.get("lon")
+            if lat is None or lon is None:
+                return None  # No centroid -- can't make a useful Event
+
+            event_id = evt.get("event_id")
+            if not event_id:
+                return None  # No stable identity to group/inhibit on
+
+            danger_level = evt.get("danger_level")
+            if danger_level is None:
+                return None
+
+            # Category from danger level: High/Extreme (4-5) is a warning,
+            # Considerable (3) is a watch, anything below is not actionable.
+            if danger_level >= 4:
+                category = "avalanche_warning"
+            elif danger_level == 3:
+                category = "avalanche_watch"
+            else:
+                return None  # Low/Moderate/No-Rating -- do not emit
+
+            severity = evt.get("severity", "routine")
+            title = evt.get("headline") or evt.get("zone_name") or "Avalanche Advisory"
+
+            # Summary: headline plus the danger name and travel advice.
+            summary_parts = [title]
+            danger_name = evt.get("danger_name")
+            if danger_name:
+                summary_parts.append(f"Danger: {danger_name}")
+            travel = evt.get("travel_advice")
+            if travel:
+                summary_parts.append(str(travel))
+            summary = " | ".join(summary_parts)[:300]
+
+            # event_id is already the stable "avy_{center}_{zone}" key. Re-polls
+            # of the same zone coalesce on this group_key; using it as the sole
+            # inhibit_key lets the pipeline Inhibitor suppress lower-severity
+            # re-emissions while a higher-severity one is active (severity
+            # tiering delegated to the Inhibitor).
+            return make_event(
+                source="avalanche",
+                category=category,
+                severity=severity,
+                title=title,
+                summary=summary,
+                timestamp=evt.get("fetched_at"),
+                expires=evt.get("expires"),
+                lat=lat,
+                lon=lon,
+                group_key=event_id,
+                inhibit_keys=[event_id],
+            )
+        except Exception:
+            logger.exception(f"Avalanche to_event failed for evt: {evt.get('event_id')}")
+            return None
 
     def is_off_season(self) -> bool:
         """Check if currently off season."""
