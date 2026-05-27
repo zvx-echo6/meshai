@@ -114,7 +114,12 @@ class EnvironmentalStore:
         try:
             event = adapter.to_event(raw_evt)
             self._event_bus.emit(event)
-            logger.debug("Emitted %s event %s to pipeline", event.source, event.id)
+            logger.info(
+                "Emitted %s event %s (%s) to pipeline bus",
+                event.source,
+                event.id,
+                event.category,
+            )
         except Exception as e:
             logger.warning("Failed to emit event to pipeline: %s", e)
 
