@@ -3,10 +3,12 @@
 import json
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode
+
+from meshai.notifications.events import Event, make_event
 
 if TYPE_CHECKING:
     from ..config import NICFFiresConfig
@@ -230,6 +232,78 @@ class NICFFiresAdapter:
             return (min_dist, nearest_name)
 
         return (None, None)
+
+    def to_event(self, evt: dict) -> Optional["Event"]:
+        """Translate a stored NIFC/WFIGS fire perimeter into a pipeline Event.
+
+        Every active perimeter with a reported size maps to a single
+        wildfire_incident category; the adapter's proximity-based severity
+        (priority when near a region anchor, else routine) is passed through
+        unchanged. Severity tiering is delegated to the pipeline Inhibitor.
+
+        Args:
+            evt: Internal event dict from get_events()
+
+        Returns:
+            Event instance ready for EventBus emission, or None if the dict is
+            missing its centroid, event_id, or a reported acreage.
+        """
+        try:
+            lat = evt.get("lat")
+            lon = evt.get("lon")
+            if lat is None or lon is None:
+                return None  # No centroid -- can't make a useful Event
+
+            event_id = evt.get("event_id")
+            if not event_id:
+                return None  # No stable identity to group/inhibit on
+
+            acres = evt.get("acres")
+            if not acres:
+                return None  # No reported size -- low-signal, do not emit
+
+            severity = evt.get("severity", "routine")
+            name = evt.get("name") or "Wildfire"
+
+            # Summary: size, containment, and proximity to nearest anchor.
+            summary_parts = [name]
+            try:
+                summary_parts.append(f"{int(acres):,} ac")
+            except (TypeError, ValueError):
+                pass
+            pct = evt.get("pct_contained")
+            if pct is not None:
+                try:
+                    summary_parts.append(f"{int(pct)}% contained")
+                except (TypeError, ValueError):
+                    pass
+            anchor = evt.get("nearest_anchor")
+            dist = evt.get("distance_km")
+            if anchor and dist is not None:
+                summary_parts.append(f"{int(dist)} km from {anchor}")
+            summary = " | ".join(summary_parts)[:300]
+
+            # event_id is already the stable "nifc_{name}_{state}" key. Re-polls
+            # of the same incident coalesce on this group_key; using it as the
+            # sole inhibit_key lets the pipeline Inhibitor suppress lower-severity
+            # re-emissions while a higher-severity one is active (severity tiering
+            # delegated to the Inhibitor).
+            return make_event(
+                source="nifc",
+                category="wildfire_incident",
+                severity=severity,
+                title=name,
+                summary=summary,
+                timestamp=evt.get("fetched_at"),
+                expires=evt.get("expires"),
+                lat=lat,
+                lon=lon,
+                group_key=event_id,
+                inhibit_keys=[event_id],
+            )
+        except Exception:
+            logger.exception(f"NIFC to_event failed for evt: {evt.get('event_id')}")
+            return None
 
     def get_events(self) -> list:
         """Get current fire events."""
