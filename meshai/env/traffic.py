@@ -4,10 +4,12 @@ import json
 import logging
 import os
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode
+
+from meshai.notifications.events import Event, make_event
 
 if TYPE_CHECKING:
     from ..config import TomTomConfig
@@ -233,6 +235,68 @@ class TomTomTrafficAdapter:
             logger.warning(f"TomTom parse error for {name}: {e}")
             self._last_error = f"Parse error: {e}"
             self._consecutive_errors += 1
+            return None
+
+    def to_event(self, evt: dict) -> Optional["Event"]:
+        """Translate a stored traffic event dict into a pipeline Event.
+
+        Args:
+            evt: Internal event dict from get_events()
+
+        Returns:
+            Event instance ready for EventBus emission, or None if the
+            dict is missing required fields (lat/lon or corridor identity).
+        """
+        try:
+            lat = evt.get("lat")
+            lon = evt.get("lon")
+            if lat is None or lon is None:
+                return None  # Can't make a useful Event without coords
+
+            props = evt.get("properties", {}) or {}
+            corridor = props.get("corridor")
+            if not corridor:
+                return None  # No stable identity to group/inhibit on
+
+            severity = evt.get("severity", "routine")
+            title = evt.get("headline", "") or f"Traffic: {corridor}"
+
+            # Richer summary: speed vs free flow, closure, confidence
+            summary_parts = [title]
+            if props.get("roadClosure"):
+                summary_parts.append("road closed")
+            if props.get("currentSpeed") is not None and props.get("freeFlowSpeed"):
+                summary_parts.append(
+                    f"{int(props['currentSpeed'])}/{int(props['freeFlowSpeed'])} mph"
+                )
+            if props.get("speedRatio") is not None:
+                summary_parts.append(f"{int(props['speedRatio'] * 100)}% free flow")
+            if props.get("confidence") is not None:
+                summary_parts.append(f"conf {props['confidence']}")
+            summary = " | ".join(summary_parts)[:300]
+
+            # Stable per-corridor key (matches the adapter's own event_id
+            # derivation). Re-polls of the same corridor coalesce on this
+            # group_key; using it as the sole inhibit_key lets the pipeline
+            # Inhibitor suppress lower-severity re-emissions while a
+            # higher-severity one is active for the same corridor.
+            corridor_key = f"traffic_{str(corridor).replace(' ', '_').lower()}"
+
+            return make_event(
+                source="traffic",
+                category="traffic_congestion",
+                severity=severity,
+                title=title,
+                summary=summary,
+                timestamp=evt.get("fetched_at"),
+                expires=evt.get("expires"),
+                lat=lat,
+                lon=lon,
+                group_key=corridor_key,
+                inhibit_keys=[corridor_key],
+            )
+        except Exception:
+            logger.exception(f"Traffic to_event failed for evt: {evt.get('event_id')}")
             return None
 
     def get_events(self) -> list:
