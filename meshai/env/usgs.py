@@ -13,6 +13,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode
 
+from meshai.notifications.events import Event, make_event
+
 if TYPE_CHECKING:
     from ..config import USGSConfig
 
@@ -434,6 +436,76 @@ class USGSStreamsAdapter:
             logger.info(f"USGS streams updated: {len(new_events)} readings from {len(site_ids)} sites")
 
         return changed
+
+    def to_event(self, evt: dict) -> Optional["Event"]:
+        """Translate a stored USGS gauge reading into a pipeline Event.
+
+        Only elevated readings are emitted: the category is chosen from
+        flood_status, so a routine (below-action-stage) reading -- which has
+        no flood_status -- is intentionally NOT emitted (returns None).
+
+        Args:
+            evt: Internal event dict from get_events()
+
+        Returns:
+            Event instance ready for EventBus emission, or None if the dict
+            is missing lat/lon or event_id, or the reading is not elevated.
+        """
+        try:
+            lat = evt.get("lat")
+            lon = evt.get("lon")
+            if lat is None or lon is None:
+                return None  # Can't make a useful Event without coords
+
+            event_id = evt.get("event_id")
+            if not event_id:
+                return None  # No stable identity to group/inhibit on
+
+            props = evt.get("properties", {}) or {}
+            flood_status = props.get("flood_status")
+            if not flood_status:
+                return None  # routine reading -- not actionable, do not emit
+
+            # Category from flood_status: an exceeded stage is a flood warning;
+            # "Action Stage" (approaching) is high water.
+            if "Flood" in str(flood_status):
+                category = "stream_flood_warning"
+            else:  # "Action Stage"
+                category = "stream_high_water"
+
+            severity = evt.get("severity", "routine")
+            title = evt.get("headline", "") or props.get("site_name") or "Stream Gauge"
+
+            # Summary: reading value/unit and the flood status
+            summary_parts = [title]
+            value = props.get("value")
+            unit = props.get("unit")
+            if value is not None:
+                summary_parts.append(f"{value} {unit}".strip())
+            summary_parts.append(str(flood_status))
+            summary = " | ".join(summary_parts)[:300]
+
+            # event_id is already the stable "{site_id}_{param}" key. Re-polls of
+            # the same gauge/parameter coalesce on this group_key; using it as the
+            # sole inhibit_key lets the pipeline Inhibitor suppress lower-severity
+            # re-emissions while a higher-severity one is active (severity tiering
+            # delegated to the Inhibitor).
+            return make_event(
+                source="usgs",
+                category=category,
+                severity=severity,
+                title=title,
+                summary=summary,
+                timestamp=evt.get("fetched_at"),
+                expires=evt.get("expires"),
+                lat=lat,
+                lon=lon,
+                group_key=event_id,
+                inhibit_keys=[event_id],
+            )
+        except Exception:
+            logger.exception(f"USGS to_event failed for evt: {evt.get('event_id')}")
+            return None
 
     def get_events(self) -> list:
         """Get current stream gauge events."""

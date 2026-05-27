@@ -113,6 +113,8 @@ class EnvironmentalStore:
         """Convert raw event to pipeline Event and emit to bus."""
         try:
             event = adapter.to_event(raw_evt)
+            if event is None:
+                return  # adapter declined to emit (non-actionable reading)
             self._event_bus.emit(event)
             logger.info(
                 "Emitted %s event %s (%s) to pipeline bus",
