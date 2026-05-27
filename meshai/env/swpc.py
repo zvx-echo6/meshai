@@ -3,9 +3,11 @@
 import json
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+from meshai.notifications.events import Event, make_event
 
 if TYPE_CHECKING:
     from ..config import SWPCConfig
@@ -235,21 +237,107 @@ class SWPCAdapter:
                     pass
 
     def _update_events(self):
-        """Generate events for significant space weather conditions."""
-        # Generate events for R-scale >= 3 (radio blackout)
+        """Generate events for active space weather conditions (R/S/G scales).
+
+        One event per active NOAA scale (Radio blackout / Solar radiation /
+        Geomagnetic storm) at level >= 1. The event_id is a STABLE
+        "swpc_{scale}{level}" key (no timestamp), so a sustained condition
+        dedups across ticks and only an escalation to a new level re-notifies.
+        """
         self._events = []
-        r_scale = self._status.get("r_scale", 0)
-        if r_scale >= 3:
+        now = time.time()
+
+        scale_defs = [
+            ("r", "r_scale", "Radio Blackout"),
+            ("s", "s_scale", "Solar Radiation Storm"),
+            ("g", "g_scale", "Geomagnetic Storm"),
+        ]
+
+        for code, status_key, label in scale_defs:
+            level = self._status.get(status_key, 0) or 0
+            if level < 1:
+                continue
+
+            if level >= 5:
+                severity = "immediate"
+            elif level >= 3:
+                severity = "priority"
+            else:
+                severity = "routine"
+
+            scale_letter = code.upper()
             self._events.append({
                 "source": "swpc",
-                "event_id": f"swpc_r{r_scale}_{int(time.time())}",
-                "event_type": f"R{r_scale} Radio Blackout",
-                "severity": "priority" if r_scale >= 3 else "routine",
-                "headline": f"R{r_scale} Radio Blackout in progress",
-                "expires": time.time() + 3600,  # 1hr TTL
+                "event_id": f"swpc_{code}{level}",  # STABLE: scale+level, no timestamp
+                "event_type": f"{scale_letter}{level} {label}",
+                "scale": scale_letter,
+                "level": level,
+                "severity": severity,
+                "headline": f"{scale_letter}{level} {label} in progress",
+                "expires": now + 3600,  # 1hr TTL
                 "areas": [],
-                "fetched_at": time.time(),
+                "fetched_at": now,
             })
+
+    def to_event(self, evt: dict) -> Optional["Event"]:
+        """Translate a stored SWPC scale condition into a pipeline Event.
+
+        Category is chosen from the NOAA scale; severity (level-tiered) is
+        passed through unchanged. SWPC conditions are global, so the Event
+        carries no lat/lon and is tagged region="global".
+
+        Args:
+            evt: Internal event dict from get_events()
+
+        Returns:
+            Event instance ready for EventBus emission, or None if the dict is
+            missing its scale/level (or level < 1) or event_id.
+        """
+        try:
+            scale = evt.get("scale")
+            if not scale:
+                return None  # No scale discriminator
+
+            level = evt.get("level")
+            if level is None or level < 1:
+                return None  # Quiet/baseline -- not actionable
+
+            event_id = evt.get("event_id")
+            if not event_id:
+                return None  # No stable identity to group/inhibit on
+
+            category = {
+                "R": "rf_propagation_alert",
+                "S": "solar_radiation_storm",
+                "G": "geomagnetic_storm",
+            }.get(scale)
+            if category is None:
+                return None  # Unknown scale
+
+            severity = evt.get("severity", "routine")
+            title = evt.get("headline") or evt.get("event_type") or f"{scale}{level} space weather"
+
+            # event_id is the stable "swpc_{scale}{level}" key. A sustained
+            # condition coalesces on this group_key (re-polls dedup); an
+            # escalation to a higher level yields a new key and re-notifies.
+            # Single inhibit key; severity tiering delegated to the Inhibitor.
+            return make_event(
+                source="swpc",
+                category=category,
+                severity=severity,
+                title=title,
+                summary=title,
+                timestamp=evt.get("fetched_at"),
+                expires=evt.get("expires"),
+                lat=None,
+                lon=None,
+                region="global",
+                group_key=event_id,
+                inhibit_keys=[event_id],
+            )
+        except Exception:
+            logger.exception(f"SWPC to_event failed for evt: {evt.get('event_id')}")
+            return None
 
     def get_status(self) -> dict:
         """Get current SWPC status."""
