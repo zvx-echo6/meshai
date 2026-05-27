@@ -8,10 +8,12 @@ import json
 import logging
 import os
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from urllib.parse import urljoin
+
+from meshai.notifications.events import Event, make_event
 
 if TYPE_CHECKING:
     from ..config import Roads511Config
@@ -346,6 +348,64 @@ class Roads511Adapter:
 
         except Exception as e:
             logger.debug(f"511 event parse error: {e} - item: {item}")
+            return None
+
+    def to_event(self, evt: dict) -> Optional["Event"]:
+        """Translate a stored 511 road event dict into a pipeline Event.
+
+        Args:
+            evt: Internal event dict from get_events()
+
+        Returns:
+            Event instance ready for EventBus emission, or None if the
+            dict is missing required fields (lat/lon or event_id).
+        """
+        try:
+            lat = evt.get("lat")
+            lon = evt.get("lon")
+            if lat is None or lon is None:
+                return None  # Can't make a useful Event without coords
+
+            event_id = evt.get("event_id")
+            if not event_id:
+                return None  # No stable identity to group/inhibit on
+
+            props = evt.get("properties", {}) or {}
+            severity = evt.get("severity", "routine")
+            title = evt.get("headline", "") or evt.get("event_type", "") or "Road Event"
+
+            # Richer summary: closure status, roadway, description
+            summary_parts = [title]
+            if props.get("is_closure"):
+                summary_parts.append("road closed")
+            roadway = props.get("roadway")
+            if roadway and str(roadway) not in title:
+                summary_parts.append(str(roadway))
+            desc = evt.get("description")
+            if desc and desc not in title:
+                summary_parts.append(desc)
+            summary = " | ".join(summary_parts)[:300]
+
+            # The stored event_id is already the stable "511_{id}" key. Re-polls
+            # of the same incident coalesce on this group_key; using it as the
+            # sole inhibit_key lets the pipeline Inhibitor suppress
+            # lower-severity re-emissions while a higher-severity one is active
+            # for the same incident (severity tiering delegated to Inhibitor).
+            return make_event(
+                source="511",
+                category="road_closure",
+                severity=severity,
+                title=title,
+                summary=summary,
+                timestamp=evt.get("fetched_at"),
+                expires=evt.get("expires"),
+                lat=lat,
+                lon=lon,
+                group_key=event_id,
+                inhibit_keys=[event_id],
+            )
+        except Exception:
+            logger.exception(f"511 to_event failed for evt: {evt.get('event_id')}")
             return None
 
     def get_events(self) -> list:
