@@ -137,3 +137,10 @@ def test_start_no_op_when_all_native():
     c, env, rec = make_consumer()
     asyncio.run(c.start())   # must not raise / must not require NATS
     assert c._nc is None
+
+
+def test_consumer_config_uses_deliver_policy_new():
+    """C.3.1: Central subscriptions use deliver_policy=NEW (no full-backlog replay)."""
+    from meshai.central.consumer import consumer_config
+    from nats.js.api import DeliverPolicy
+    assert consumer_config().deliver_policy == DeliverPolicy.NEW

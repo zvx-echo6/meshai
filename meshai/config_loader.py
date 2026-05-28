@@ -573,16 +573,66 @@ def save_section(
     rejected_secrets = []
 
     # Check for secret fields and reject them
+    # --- secret-ref preservation (v0.4 C.3.1) -------------------------------
+    # A GUI save round-trips the *interpolated* value of a ${VAR} secret (the
+    # GET returns the resolved key string). Without this, save_section would
+    # drop the on-disk ${VAR} placeholder and lose the secret reference. So we
+    # read the raw on-disk values (pre-interpolation) and, for each secret
+    # field, decide:
+    #   on-disk ${VAR} and new value == resolved(VAR) -> keep the ${VAR} ref
+    #   on-disk ${VAR} and new value != resolved(VAR) -> intentional change, store it
+    #   no on-disk ${VAR} ref                          -> reject (never write a raw
+    #                                                     secret to a domain file)
+    _raw_on_disk = {}
+    if target_path.exists():
+        try:
+            with open(target_path) as _rf:
+                _raw_on_disk = yaml.safe_load(_rf) or {}
+        except Exception:
+            _raw_on_disk = {}
+    if target_file in ("meshtastic.yaml", "config.yaml") and isinstance(_raw_on_disk, dict):
+        _raw_section = _raw_on_disk.get(section_name) or {}
+    else:
+        _raw_section = _raw_on_disk if isinstance(_raw_on_disk, dict) else {}
+
+    _secrets_path = config_dir.parent / "secrets" / ".env"
+    if not _secrets_path.exists():
+        _secrets_path = Path("/data/secrets/.env")
+    _env_file = dotenv_values(_secrets_path) if _secrets_path.exists() else {}
+
+    _VAR_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+
+    def _resolve_var(name: str):
+        v = os.environ.get(name)
+        return v if v is not None else _env_file.get(name)
+
+    def _ondisk_ref(field_path: str):
+        node = _raw_section
+        for part in field_path.split("."):
+            if isinstance(node, dict) and part in node:
+                node = node[part]
+            else:
+                return None
+        return node
+
     def check_secrets(d: dict, path: str = "") -> dict:
         cleaned = {}
         for key, value in d.items():
             field_path = f"{path}.{key}" if path else key
             if _is_secret_field(section_name, field_path):
-                rejected_secrets.append(field_path)
-                _logger.error(
-                    f"Rejected attempt to save secret field '{section_name}.{field_path}'. "
-                    "Secret fields must be set via /data/secrets/.env"
-                )
+                ref = _ondisk_ref(field_path)
+                m = _VAR_RE.match(ref) if isinstance(ref, str) else None
+                if m:
+                    if _resolve_var(m.group(1)) == (value if isinstance(value, str) else str(value)):
+                        cleaned[key] = ref  # unchanged secret -> preserve ${VAR} placeholder
+                    else:
+                        cleaned[key] = value  # intentional change -> store new value
+                else:
+                    rejected_secrets.append(field_path)
+                    _logger.error(
+                        f"Rejected attempt to save secret field '{section_name}.{field_path}'. "
+                        "Secret fields must be set via /data/secrets/.env"
+                    )
             elif isinstance(value, dict):
                 cleaned[key] = check_secrets(value, field_path)
             elif isinstance(value, list):

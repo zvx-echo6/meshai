@@ -22,6 +22,17 @@ from meshai.notifications.events import Event, make_event
 logger = logging.getLogger("meshai.central.consumer")
 
 
+def consumer_config():
+    """JetStream consumer config for Central subscriptions.
+
+    deliver_policy=NEW: subscribe to messages published AFTER consumer creation.
+    Avoids replaying the entire retained backlog on first flip (could be 330k+
+    msgs for high-volume streams like traffic_flow).
+    """
+    from nats.js.api import ConsumerConfig, DeliverPolicy
+    return ConsumerConfig(deliver_policy=DeliverPolicy.NEW)
+
+
 # meshai adapter (env-config attr) -> Central subject filters it consumes.
 # Adapters with no Central equivalent (avalanche, ducting, roads511) are absent;
 # setting source=central on those subscribes to nothing (logged).
@@ -229,7 +240,8 @@ class CentralConsumer:
         self._js = self._nc.jetstream()
         for subj in subjects:
             durable = self._central.durable + "-" + re.sub(r"[^a-z0-9]+", "_", subj.lower())
-            sub = await self._js.subscribe(subj, durable=durable, cb=self._on_message)
+            sub = await self._js.subscribe(
+                subj, durable=durable, cb=self._on_message, config=consumer_config())
             self._subs.append(sub)
         logger.info("CentralConsumer started; %d subjects subscribed: %s",
                     len(subjects), subjects)
