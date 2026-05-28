@@ -4,7 +4,7 @@ import ChannelPicker from '@/components/ChannelPicker'
 import {
   Settings, Bot, Wifi, MessageSquare, Database, Brain, Eye,
   Terminal, Cpu, Cloud, Radio, BookOpen, Layers, Activity,
-  Thermometer, LayoutDashboard, Save, RotateCcw, RefreshCw,
+  LayoutDashboard, Save, RotateCcw, RefreshCw,
   Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle,
   Check, X, Eye as EyeIcon, EyeOff, ExternalLink
 } from 'lucide-react'
@@ -233,7 +233,6 @@ const SECTIONS: { key: SectionKey; label: string; icon: typeof Settings }[] = [
   { key: 'knowledge', label: 'Knowledge', icon: BookOpen },
   { key: 'mesh_sources', label: 'Mesh Sources', icon: Layers },
   { key: 'mesh_intelligence', label: 'Intelligence', icon: Activity },
-  { key: 'environmental', label: 'Environmental', icon: Thermometer },
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
 ]
 
@@ -281,7 +280,7 @@ const AVAILABLE_COMMANDS = [
 ]
 
 // US States for dropdown
-const US_STATES = [
+export const US_STATES = [
   { value: 'US-AL', label: 'Alabama' }, { value: 'US-AK', label: 'Alaska' },
   { value: 'US-AZ', label: 'Arizona' }, { value: 'US-AR', label: 'Arkansas' },
   { value: 'US-CA', label: 'California' }, { value: 'US-CO', label: 'Colorado' },
@@ -375,7 +374,7 @@ function SectionDescription({ text }: { text: string }) {
 }
 
 // Form components
-function TextInput({ label, value, onChange, type = 'text', placeholder = '', helper = '', info = '', infoLink = '' }: {
+export function TextInput({ label, value, onChange, type = 'text', placeholder = '', helper = '', info = '', infoLink = '' }: {
   label: string
   value: string
   onChange: (v: string) => void
@@ -417,7 +416,7 @@ function TextInput({ label, value, onChange, type = 'text', placeholder = '', he
   )
 }
 
-function NumberInput({ label, value, onChange, min, max, step = 1, helper = '', info = '', infoLink = '' }: {
+export function NumberInput({ label, value, onChange, min, max, step = 1, helper = '', info = '', infoLink = '' }: {
   label: string
   value: number
   onChange: (v: number) => void
@@ -448,7 +447,7 @@ function NumberInput({ label, value, onChange, min, max, step = 1, helper = '', 
   )
 }
 
-function Toggle({ label, checked, onChange, helper = '', info = '', infoLink = '' }: {
+export function Toggle({ label, checked, onChange, helper = '', info = '', infoLink = '' }: {
   label: string
   checked: boolean
   onChange: (v: boolean) => void
@@ -482,7 +481,7 @@ function Toggle({ label, checked, onChange, helper = '', info = '', infoLink = '
   )
 }
 
-function SelectInput({ label, value, onChange, options, helper = '', info = '', infoLink = '' }: {
+export function SelectInput({ label, value, onChange, options, helper = '', info = '', infoLink = '' }: {
   label: string
   value: string
   onChange: (v: string) => void
@@ -537,7 +536,7 @@ function TextArea({ label, value, onChange, rows = 4, helper = '', info = '', in
   )
 }
 
-function ListInput({ label, value, onChange, helper = '', info = '', infoLink = '' }: {
+export function ListInput({ label, value, onChange, helper = '', info = '', infoLink = '' }: {
   label: string
   value: string[]
   onChange: (v: string[]) => void
@@ -575,7 +574,7 @@ function ListInput({ label, value, onChange, helper = '', info = '', infoLink = 
   )
 }
 
-function NumberListInput({ label, value, onChange, helper = '', info = '', infoLink = '' }: {
+export function NumberListInput({ label, value, onChange, helper = '', info = '', infoLink = '' }: {
   label: string
   value: number[]
   onChange: (v: number[]) => void
@@ -1752,415 +1751,6 @@ function MeshIntelligenceSection({ data, onChange }: { data: MeshIntelligenceCon
   )
 }
 
-function EnvironmentalSection({ data, onChange }: { data: EnvironmentalConfig; onChange: (d: EnvironmentalConfig) => void }) {
-  return (
-    <div className="space-y-6">
-      <SectionDescription text={SECTION_DESCRIPTIONS.environmental} />
-      <Toggle
-        label="Enable Environmental Feeds"
-        checked={data.enabled}
-        onChange={(v) => onChange({ ...data, enabled: v })}
-        helper="Activate live data polling"
-      />
-
-      {data.enabled && (
-        <>
-          <ListInput
-            label="NWS Zones"
-            value={data.nws_zones}
-            onChange={(v) => onChange({ ...data, nws_zones: v })}
-            helper="Zone IDs like IDZ016, IDZ030"
-            info="NWS forecast zones covering your mesh area. Find yours at https://www.weather.gov/pimar/PubZone"
-            infoLink="https://www.weather.gov/pimar/PubZone"
-          />
-
-          <div className="border border-[#1e2a3a] rounded-lg p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-slate-300">NWS Weather Alerts</span>
-              <Toggle label="" checked={data.nws.enabled} onChange={(v) => onChange({ ...data, nws: { ...data.nws, enabled: v } })} />
-            </div>
-            {data.nws.enabled && (
-              <>
-                <TextInput
-                  label="User Agent"
-                  value={data.nws.user_agent}
-                  onChange={(v) => onChange({ ...data, nws: { ...data.nws, user_agent: v } })}
-                  placeholder="(MeshAI, your@email.com)"
-                  helper="Required format: (app_name, contact_email)"
-                  info="Required by NWS. You make it up - just use the format (app_name, your_email). No signup needed."
-                />
-                <div className="grid grid-cols-2 gap-4">
-                  <NumberInput
-                    label="Tick Seconds"
-                    value={data.nws.tick_seconds}
-                    onChange={(v) => onChange({ ...data, nws: { ...data.nws, tick_seconds: v } })}
-                    min={30}
-                    helper="Polling interval"
-                  />
-                  <SelectInput
-                    label="Min Severity"
-                    value={data.nws.severity_min}
-                    onChange={(v) => onChange({ ...data, nws: { ...data.nws, severity_min: v } })}
-                    options={[
-                      { value: 'minor', label: 'Minor' },
-                      { value: 'moderate', label: 'Moderate' },
-                      { value: 'severe', label: 'Severe' },
-                      { value: 'extreme', label: 'Extreme' },
-                    ]}
-                    helper="Filter out lower severity alerts"
-                    info="Minimum severity level to display. 'Moderate' filters out minor advisories. 'Severe' shows only serious warnings."
-                  />
-                </div>
-              </>
-            )}
-          </div>
-
-          <div className="border border-[#1e2a3a] rounded-lg p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-sm font-medium text-slate-300">NOAA Space Weather (SWPC)</span>
-                <p className="text-xs text-slate-600">Solar indices, geomagnetic storms, HF propagation</p>
-              </div>
-              <Toggle label="" checked={data.swpc.enabled} onChange={(v) => onChange({ ...data, swpc: { ...data.swpc, enabled: v } })} />
-            </div>
-          </div>
-
-          <div className="border border-[#1e2a3a] rounded-lg p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-sm font-medium text-slate-300">Tropospheric Ducting</span>
-                <p className="text-xs text-slate-600">VHF/UHF extended range conditions</p>
-              </div>
-              <Toggle label="" checked={data.ducting.enabled} onChange={(v) => onChange({ ...data, ducting: { ...data.ducting, enabled: v } })} />
-            </div>
-            {data.ducting.enabled && (
-              <div className="grid grid-cols-3 gap-4">
-                <NumberInput
-                  label="Tick Seconds"
-                  value={data.ducting.tick_seconds}
-                  onChange={(v) => onChange({ ...data, ducting: { ...data.ducting, tick_seconds: v } })}
-                  min={60}
-                />
-                <NumberInput
-                  label="Latitude"
-                  value={data.ducting.latitude}
-                  onChange={(v) => onChange({ ...data, ducting: { ...data.ducting, latitude: v } })}
-                  step={0.01}
-                  info="Center point of your mesh coverage area. The ducting adapter checks atmospheric conditions at this location."
-                />
-                <NumberInput
-                  label="Longitude"
-                  value={data.ducting.longitude}
-                  onChange={(v) => onChange({ ...data, ducting: { ...data.ducting, longitude: v } })}
-                  step={0.01}
-                />
-              </div>
-            )}
-          </div>
-
-          <div className="border border-[#1e2a3a] rounded-lg p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-sm font-medium text-slate-300">NIFC Fire Perimeters</span>
-                <p className="text-xs text-slate-600">Active wildfires from National Interagency Fire Center</p>
-              </div>
-              <Toggle label="" checked={data.fires.enabled} onChange={(v) => onChange({ ...data, fires: { ...data.fires, enabled: v } })} />
-            </div>
-            {data.fires.enabled && (
-              <div className="grid grid-cols-2 gap-4">
-                <NumberInput
-                  label="Tick Seconds"
-                  value={data.fires.tick_seconds}
-                  onChange={(v) => onChange({ ...data, fires: { ...data.fires, tick_seconds: v } })}
-                  min={60}
-                />
-                <SelectInput
-                  label="State"
-                  value={data.fires.state}
-                  onChange={(v) => onChange({ ...data, fires: { ...data.fires, state: v } })}
-                  options={US_STATES}
-                  helper="Filter fires by state"
-                  info="Two-letter state code for NIFC wildfire filtering."
-                />
-              </div>
-            )}
-          </div>
-
-          <div className="border border-[#1e2a3a] rounded-lg p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-sm font-medium text-slate-300">Avalanche Advisories</span>
-                <p className="text-xs text-slate-600">Backcountry avalanche danger ratings</p>
-              </div>
-              <Toggle label="" checked={data.avalanche.enabled} onChange={(v) => onChange({ ...data, avalanche: { ...data.avalanche, enabled: v } })} />
-            </div>
-            {data.avalanche.enabled && (
-              <>
-                <NumberInput
-                  label="Tick Seconds"
-                  value={data.avalanche.tick_seconds}
-                  onChange={(v) => onChange({ ...data, avalanche: { ...data.avalanche, tick_seconds: v } })}
-                  min={60}
-                />
-                <ListInput
-                  label="Center IDs"
-                  value={data.avalanche.center_ids}
-                  onChange={(v) => onChange({ ...data, avalanche: { ...data.avalanche, center_ids: v } })}
-                  helper="e.g., SNFAC, IPAC, FAC"
-                  info="Find your local center at https://avalanche.org/avalanche-centers/"
-                  infoLink="https://avalanche.org/avalanche-centers/"
-                />
-                <NumberListInput
-                  label="Season Months"
-                  value={data.avalanche.season_months}
-                  onChange={(v) => onChange({ ...data, avalanche: { ...data.avalanche, season_months: v } })}
-                  helper="e.g., 12, 1, 2, 3, 4"
-                  info="Months when avalanche forecasts are active. Default Dec-Apr. Adjust for your region's season."
-                />
-              </>
-            )}
-          </div>
-
-          <div className="border border-[#1e2a3a] rounded-lg p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-sm font-medium text-slate-300">USGS Stream Gauges</span>
-                <p className="text-xs text-slate-600">River and stream water levels</p>
-              </div>
-              <Toggle label="" checked={data.usgs?.enabled || false} onChange={(v) => onChange({ ...data, usgs: { ...data.usgs, enabled: v, tick_seconds: data.usgs?.tick_seconds || 900, sites: data.usgs?.sites || [] } })} />
-            </div>
-            {data.usgs?.enabled && (
-              <>
-                <NumberInput
-                  label="Tick Seconds"
-                  value={data.usgs.tick_seconds}
-                  onChange={(v) => onChange({ ...data, usgs: { ...data.usgs, tick_seconds: v } })}
-                  min={900}
-                  helper="Minimum 15 min (900s)"
-                />
-                <ListInput
-                  label="Site IDs"
-                  value={data.usgs.sites}
-                  onChange={(v) => onChange({ ...data, usgs: { ...data.usgs, sites: v } })}
-                  helper="USGS gauge site numbers"
-                  info="Find site IDs at waterdata.usgs.gov/nwis"
-                  infoLink="https://waterdata.usgs.gov/nwis"
-                />
-              </>
-            )}
-          </div>
-
-          <div className="border border-[#1e2a3a] rounded-lg p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-sm font-medium text-slate-300">TomTom Traffic</span>
-                <p className="text-xs text-slate-600">Traffic flow on monitored corridors</p>
-              </div>
-              <Toggle label="" checked={data.traffic?.enabled || false} onChange={(v) => onChange({ ...data, traffic: { ...data.traffic, enabled: v, tick_seconds: data.traffic?.tick_seconds || 300, api_key: data.traffic?.api_key || '', corridors: data.traffic?.corridors || [] } })} />
-            </div>
-            {data.traffic?.enabled && (
-              <>
-                <TextInput
-                  label="API Key"
-                  value={data.traffic.api_key}
-                  onChange={(v) => onChange({ ...data, traffic: { ...data.traffic, api_key: v } })}
-                  type="password"
-                  helper="Get key at developer.tomtom.com"
-                  infoLink="https://developer.tomtom.com"
-                />
-                <NumberInput
-                  label="Tick Seconds"
-                  value={data.traffic.tick_seconds}
-                  onChange={(v) => onChange({ ...data, traffic: { ...data.traffic, tick_seconds: v } })}
-                  min={60}
-                />
-                <div className="text-xs text-slate-500 mt-2">Corridors (each with name, lat, lon):</div>
-                {(data.traffic.corridors || []).map((c, i) => (
-                  <div key={i} className="grid grid-cols-4 gap-2 items-end">
-                    <TextInput label="Name" value={c.name} onChange={(v) => {
-                      const newCorridors = [...data.traffic.corridors]
-                      newCorridors[i] = { ...c, name: v }
-                      onChange({ ...data, traffic: { ...data.traffic, corridors: newCorridors } })
-                    }} />
-                    <NumberInput label="Lat" value={c.lat} onChange={(v) => {
-                      const newCorridors = [...data.traffic.corridors]
-                      newCorridors[i] = { ...c, lat: v }
-                      onChange({ ...data, traffic: { ...data.traffic, corridors: newCorridors } })
-                    }} step={0.01} />
-                    <NumberInput label="Lon" value={c.lon} onChange={(v) => {
-                      const newCorridors = [...data.traffic.corridors]
-                      newCorridors[i] = { ...c, lon: v }
-                      onChange({ ...data, traffic: { ...data.traffic, corridors: newCorridors } })
-                    }} step={0.01} />
-                    <button
-                      onClick={() => onChange({ ...data, traffic: { ...data.traffic, corridors: data.traffic.corridors.filter((_, j) => j !== i) } })}
-                      className="px-2 py-2 text-xs text-red-400 hover:text-red-300 border border-red-400/30 rounded"
-                    >Remove</button>
-                  </div>
-                ))}
-                <button
-                  onClick={() => onChange({ ...data, traffic: { ...data.traffic, corridors: [...(data.traffic.corridors || []), { name: '', lat: 0, lon: 0 }] } })}
-                  className="text-xs text-accent hover:underline"
-                >+ Add Corridor</button>
-              </>
-            )}
-          </div>
-
-          <div className="border border-[#1e2a3a] rounded-lg p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-sm font-medium text-slate-300">511 Road Conditions</span>
-                <p className="text-xs text-slate-600">State DOT road events and closures</p>
-              </div>
-              <Toggle label="" checked={data.roads511?.enabled || false} onChange={(v) => onChange({ ...data, roads511: { ...data.roads511, enabled: v, tick_seconds: data.roads511?.tick_seconds || 300, api_key: data.roads511?.api_key || '', base_url: data.roads511?.base_url || '', endpoints: data.roads511?.endpoints || ['/get/event'], bbox: data.roads511?.bbox || [] } })} />
-            </div>
-            {data.roads511?.enabled && (
-              <>
-                <TextInput
-                  label="Base URL"
-                  value={data.roads511.base_url}
-                  onChange={(v) => onChange({ ...data, roads511: { ...data.roads511, base_url: v } })}
-                  placeholder="https://511.yourstate.gov/api/v2"
-                  helper="State 511 API endpoint"
-                />
-                <TextInput
-                  label="API Key"
-                  value={data.roads511.api_key}
-                  onChange={(v) => onChange({ ...data, roads511: { ...data.roads511, api_key: v } })}
-                  type="password"
-                  helper="Leave empty if not required"
-                />
-                <NumberInput
-                  label="Tick Seconds"
-                  value={data.roads511.tick_seconds}
-                  onChange={(v) => onChange({ ...data, roads511: { ...data.roads511, tick_seconds: v } })}
-                  min={60}
-                />
-                <ListInput
-                  label="Endpoints"
-                  value={data.roads511.endpoints}
-                  onChange={(v) => onChange({ ...data, roads511: { ...data.roads511, endpoints: v } })}
-                  helper="e.g., /get/event, /get/mountainpasses"
-                />
-                <div className="grid grid-cols-4 gap-2">
-                  <NumberInput label="West" value={data.roads511.bbox?.[0] || 0} onChange={(v) => {
-                    const bbox = [...(data.roads511.bbox || [0, 0, 0, 0])]
-                    bbox[0] = v
-                    onChange({ ...data, roads511: { ...data.roads511, bbox } })
-                  }} step={0.01} />
-                  <NumberInput label="South" value={data.roads511.bbox?.[1] || 0} onChange={(v) => {
-                    const bbox = [...(data.roads511.bbox || [0, 0, 0, 0])]
-                    bbox[1] = v
-                    onChange({ ...data, roads511: { ...data.roads511, bbox } })
-                  }} step={0.01} />
-                  <NumberInput label="East" value={data.roads511.bbox?.[2] || 0} onChange={(v) => {
-                    const bbox = [...(data.roads511.bbox || [0, 0, 0, 0])]
-                    bbox[2] = v
-                    onChange({ ...data, roads511: { ...data.roads511, bbox } })
-                  }} step={0.01} />
-                  <NumberInput label="North" value={data.roads511.bbox?.[3] || 0} onChange={(v) => {
-                    const bbox = [...(data.roads511.bbox || [0, 0, 0, 0])]
-                    bbox[3] = v
-                    onChange({ ...data, roads511: { ...data.roads511, bbox } })
-                  }} step={0.01} />
-                </div>
-                <div className="text-xs text-slate-500">Bounding box filter (leave all 0 to disable)</div>
-              </>
-            )}
-          </div>
-
-          <div className="border border-[#1e2a3a] rounded-lg p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-sm font-medium text-slate-300">NASA FIRMS Satellite Fire Detection</span>
-                <p className="text-xs text-slate-600">Near real-time thermal anomalies from satellites</p>
-              </div>
-              <Toggle label="" checked={data.firms?.enabled || false} onChange={(v) => onChange({ ...data, firms: { ...data.firms, enabled: v, tick_seconds: data.firms?.tick_seconds || 1800, map_key: data.firms?.map_key || '', source: data.firms?.source || 'VIIRS_SNPP_NRT', bbox: data.firms?.bbox || [], day_range: data.firms?.day_range || 1, confidence_min: data.firms?.confidence_min || 'nominal', proximity_km: data.firms?.proximity_km || 10 } })} />
-            </div>
-            {data.firms?.enabled && (
-              <>
-                <TextInput
-                  label="MAP Key"
-                  value={data.firms.map_key}
-                  onChange={(v) => onChange({ ...data, firms: { ...data.firms, map_key: v } })}
-                  type="password"
-                  helper="Get key at firms.modaps.eosdis.nasa.gov/api/area/"
-                  infoLink="https://firms.modaps.eosdis.nasa.gov/api/area/"
-                />
-                <NumberInput
-                  label="Tick Seconds"
-                  value={data.firms.tick_seconds}
-                  onChange={(v) => onChange({ ...data, firms: { ...data.firms, tick_seconds: v } })}
-                  min={300}
-                  helper="Minimum 5 min (300s)"
-                />
-                <SelectInput
-                  label="Satellite Source"
-                  value={data.firms.source}
-                  onChange={(v) => onChange({ ...data, firms: { ...data.firms, source: v } })}
-                  options={[
-                    { value: 'VIIRS_SNPP_NRT', label: 'VIIRS SNPP (Near Real-Time)' },
-                    { value: 'VIIRS_NOAA20_NRT', label: 'VIIRS NOAA-20 (Near Real-Time)' },
-                    { value: 'MODIS_NRT', label: 'MODIS (Near Real-Time)' },
-                  ]}
-                />
-                <NumberInput
-                  label="Day Range"
-                  value={data.firms.day_range}
-                  onChange={(v) => onChange({ ...data, firms: { ...data.firms, day_range: v } })}
-                  min={1}
-                  max={10}
-                  helper="1-10 days of data"
-                />
-                <SelectInput
-                  label="Minimum Confidence"
-                  value={data.firms.confidence_min}
-                  onChange={(v) => onChange({ ...data, firms: { ...data.firms, confidence_min: v } })}
-                  options={[
-                    { value: 'low', label: 'Low' },
-                    { value: 'nominal', label: 'Nominal' },
-                    { value: 'high', label: 'High' },
-                  ]}
-                />
-                <NumberInput
-                  label="Proximity (km)"
-                  value={data.firms.proximity_km}
-                  onChange={(v) => onChange({ ...data, firms: { ...data.firms, proximity_km: v } })}
-                  step={0.5}
-                  helper="Distance to match known fires"
-                />
-                <div className="grid grid-cols-4 gap-2">
-                  <NumberInput label="West" value={data.firms.bbox?.[0] || 0} onChange={(v) => {
-                    const bbox = [...(data.firms.bbox || [0, 0, 0, 0])]
-                    bbox[0] = v
-                    onChange({ ...data, firms: { ...data.firms, bbox } })
-                  }} step={0.01} />
-                  <NumberInput label="South" value={data.firms.bbox?.[1] || 0} onChange={(v) => {
-                    const bbox = [...(data.firms.bbox || [0, 0, 0, 0])]
-                    bbox[1] = v
-                    onChange({ ...data, firms: { ...data.firms, bbox } })
-                  }} step={0.01} />
-                  <NumberInput label="East" value={data.firms.bbox?.[2] || 0} onChange={(v) => {
-                    const bbox = [...(data.firms.bbox || [0, 0, 0, 0])]
-                    bbox[2] = v
-                    onChange({ ...data, firms: { ...data.firms, bbox } })
-                  }} step={0.01} />
-                  <NumberInput label="North" value={data.firms.bbox?.[3] || 0} onChange={(v) => {
-                    const bbox = [...(data.firms.bbox || [0, 0, 0, 0])]
-                    bbox[3] = v
-                    onChange({ ...data, firms: { ...data.firms, bbox } })
-                  }} step={0.01} />
-                </div>
-                <div className="text-xs text-slate-500">Bounding box for monitoring area (required)</div>
-              </>
-            )}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
 function DashboardSection({ data, onChange }: { data: DashboardConfig; onChange: (d: DashboardConfig) => void }) {
   return (
     <div className="space-y-4">
@@ -2324,7 +1914,6 @@ export default function Config() {
       case 'knowledge': return <KnowledgeSection data={config.knowledge} onChange={(d) => updateSection('knowledge', d)} />
       case 'mesh_sources': return <MeshSourcesSection data={config.mesh_sources} onChange={(d) => updateSection('mesh_sources', d)} />
       case 'mesh_intelligence': return <MeshIntelligenceSection data={config.mesh_intelligence} onChange={(d) => updateSection('mesh_intelligence', d)} />
-      case 'environmental': return <EnvironmentalSection data={config.environmental} onChange={(d) => updateSection('environmental', d)} />
       case 'dashboard': return <DashboardSection data={config.dashboard} onChange={(d) => updateSection('dashboard', d)} />
       default: return null
     }

@@ -1,787 +1,458 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
-  Cloud,
-  Sun,
-  AlertTriangle,
-  AlertCircle,
-  Info,
-  CheckCircle,
-  Activity,
-  Wind,
-  Flame,
-  Mountain,
-  Droplets,
-  Car,
-  Satellite,
+  Cloud, Flame, Radio, Car, Mountain, Satellite, Activity,
+  Save, RotateCcw, RefreshCw, AlertCircle, AlertTriangle, Info,
 } from 'lucide-react'
 import {
-  fetchEnvStatus,
-  fetchEnvActive,
-  fetchSWPC,
-  fetchDucting,
-  fetchFires,
-  fetchAvalanche,
-  fetchStreams,
-  fetchTraffic,
-  fetchRoads,
-  fetchHotspots,
-  type EnvStatus,
-  type EnvEvent,
-  type SWPCStatus,
-  type DuctingStatus,
-  type FireEvent,
-  type AvalancheResponse,
-  type StreamGaugeEvent,
-  type TrafficEvent,
-  type RoadEvent,
-  type HotspotEvent,
-
+  Toggle, TextInput, NumberInput, SelectInput, ListInput, NumberListInput,
+  US_STATES,
+} from './Config'
+import {
+  fetchEnvStatus, fetchEnvActive,
+  type EnvStatus, type EnvEvent,
 } from '@/lib/api'
 
-function FeedStatusCard({ feed }: { feed: { source: string; is_loaded: boolean; last_error: string | null; consecutive_errors: number; event_count: number; last_fetch: number } }) {
-  const getStatusColor = () => {
-    if (!feed.is_loaded) return 'bg-red-500'
-    if (feed.consecutive_errors > 0) return 'bg-amber-500'
-    return 'bg-green-500'
-  }
+type FeedSource = 'native' | 'central'
 
-  const getStatusText = () => {
-    if (!feed.is_loaded) return 'Not loaded'
-    if (feed.consecutive_errors > 0) return `${feed.consecutive_errors} errors`
-    return 'Healthy'
-  }
+interface EnvConfig {
+  enabled: boolean
+  nws_zones: string[]
+  nws: { enabled: boolean; user_agent: string; tick_seconds: number; severity_min: string; feed_source?: FeedSource }
+  swpc: { enabled: boolean; feed_source?: FeedSource }
+  ducting: { enabled: boolean; tick_seconds: number; latitude: number; longitude: number; feed_source?: FeedSource }
+  fires: { enabled: boolean; tick_seconds: number; state: string; feed_source?: FeedSource }
+  avalanche: { enabled: boolean; tick_seconds: number; center_ids: string[]; season_months: number[]; feed_source?: FeedSource }
+  usgs: { enabled: boolean; tick_seconds: number; sites: string[]; feed_source?: FeedSource }
+  usgs_quake: { enabled: boolean; tick_seconds: number; feed_url: string; min_magnitude: number; bbox: number[]; region: string; feed_source?: FeedSource }
+  traffic: { enabled: boolean; tick_seconds: number; api_key: string; corridors: { name: string; lat: number; lon: number }[]; feed_source?: FeedSource }
+  roads511: { enabled: boolean; tick_seconds: number; api_key: string; base_url: string; endpoints: string[]; bbox: number[]; feed_source?: FeedSource }
+  firms: { enabled: boolean; tick_seconds: number; map_key: string; source: string; bbox: number[]; day_range: number; confidence_min: string; proximity_km: number; feed_source?: FeedSource }
+  central?: { enabled: boolean; url: string; durable: string }
+}
 
-  const formatLastFetch = (ts: number) => {
-    if (!ts) return 'Never'
-    const date = new Date(ts * 1000)
-    return date.toLocaleTimeString()
-  }
+type FeedHealth = EnvStatus['feeds'][number]
 
+// ---------------------------------------------------------------- status cards
+function FeedStatusCard({ feed }: { feed: FeedHealth }) {
+  const color = !feed.is_loaded ? 'bg-red-500' : feed.consecutive_errors > 0 ? 'bg-amber-500' : 'bg-green-500'
+  const text = !feed.is_loaded ? 'Not loaded' : feed.consecutive_errors > 0 ? `${feed.consecutive_errors} errors` : 'Healthy'
+  const lastFetch = feed.last_fetch ? new Date(feed.last_fetch * 1000).toLocaleTimeString() : 'Never'
   return (
     <div className="bg-bg-hover rounded-lg p-4">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${getStatusColor()}`} />
-          <span className="text-sm font-medium text-slate-200 uppercase">
-            {feed.source}
-          </span>
+          <div className={`w-2 h-2 rounded-full ${color}`} />
+          <span className="text-sm font-medium text-slate-200 uppercase">{feed.source}</span>
         </div>
-        <span className="text-xs text-slate-400">{getStatusText()}</span>
+        <span className="text-xs text-slate-400">{text}</span>
       </div>
       <div className="text-xs text-slate-500 space-y-1">
         <div>Events: {feed.event_count}</div>
-        <div>Last fetch: {formatLastFetch(feed.last_fetch)}</div>
-        {feed.last_error && (
-          <div className="text-amber-500 truncate">{feed.last_error}</div>
-        )}
+        <div>Last fetch: {lastFetch}</div>
+        {feed.last_error && <div className="text-amber-500 truncate">{feed.last_error}</div>}
       </div>
     </div>
   )
 }
 
-function AlertEventCard({ event }: { event: EnvEvent }) {
-  const getSeverityStyles = (severity: string) => {
-    switch (severity.toLowerCase()) {
-      // NWS native severity levels
-      case 'extreme':
-      case 'severe':
-      // Our 3-level system
-      case 'immediate':
-        return {
-          bg: 'bg-red-500/10',
-          border: 'border-red-500',
-          icon: AlertCircle,
-          iconColor: 'text-red-500',
-        }
-      // NWS native
-      case 'moderate':
-      case 'warning':
-      // Our 3-level system
-      case 'priority':
-        return {
-          bg: 'bg-amber-500/10',
-          border: 'border-amber-500',
-          icon: AlertTriangle,
-          iconColor: 'text-amber-500',
-        }
-      // NWS native
-      case 'minor':
-      // Our 3-level system
-      case 'routine':
-        return {
-          bg: 'bg-blue-500/10',
-          border: 'border-blue-500',
-          icon: Info,
-          iconColor: 'text-blue-500',
-        }
-      default:
-        return {
-          bg: 'bg-slate-500/10',
-          border: 'border-slate-500',
-          icon: Info,
-          iconColor: 'text-slate-400',
-        }
-    }
-  }
-
-  const styles = getSeverityStyles(event.severity)
-  const Icon = styles.icon
-
-  const formatExpires = (ts?: number) => {
-    if (!ts) return null
-    const date = new Date(ts * 1000)
-    return date.toLocaleString()
-  }
-
+function EventCard({ event }: { event: EnvEvent }) {
+  const sev = event.severity.toLowerCase()
+  const styles = (sev === 'extreme' || sev === 'severe' || sev === 'immediate')
+    ? { bg: 'bg-red-500/10', border: 'border-red-500', Icon: AlertCircle, color: 'text-red-500' }
+    : (sev === 'moderate' || sev === 'warning' || sev === 'priority')
+    ? { bg: 'bg-amber-500/10', border: 'border-amber-500', Icon: AlertTriangle, color: 'text-amber-500' }
+    : { bg: 'bg-blue-500/10', border: 'border-blue-500', Icon: Info, color: 'text-blue-500' }
+  const Icon = styles.Icon
   return (
-    <div className={`p-4 rounded-lg ${styles.bg} border-l-2 ${styles.border}`}>
+    <div className={`p-3 rounded-lg ${styles.bg} border-l-2 ${styles.border}`}>
       <div className="flex items-start gap-3">
-        <Icon size={18} className={styles.iconColor} />
+        <Icon size={16} className={styles.color} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-sm font-medium text-slate-200">
-              {event.event_type}
-            </span>
-            <span className={`text-xs px-1.5 py-0.5 rounded ${styles.bg} ${styles.iconColor}`}>
-              {event.severity}
-            </span>
+            <span className="text-sm font-medium text-slate-200">{event.event_type}</span>
+            <span className={`text-xs px-1.5 py-0.5 rounded ${styles.bg} ${styles.color}`}>{event.severity}</span>
           </div>
-          <div className="text-sm text-slate-300 mb-2">{event.headline}</div>
-          {event.description && (
-            <div className="text-xs text-slate-400 mb-2 line-clamp-2">
-              {event.description}
-            </div>
-          )}
-          <div className="flex items-center gap-4 text-xs text-slate-500">
-            <span className="uppercase">{event.source}</span>
-            {event.expires && (
-              <span>Expires: {formatExpires(event.expires)}</span>
-            )}
-          </div>
+          <div className="text-sm text-slate-300">{event.headline}</div>
         </div>
       </div>
     </div>
   )
 }
 
-function SolarIndicesPanel({ swpc }: { swpc: SWPCStatus | null }) {
-  if (!swpc || !swpc.enabled) {
-    return (
-      <div className="bg-bg-card border border-border rounded-lg p-6">
-        <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
-          <Sun size={14} />
-          Solar/Geomagnetic Indices
-        </h2>
-        <div className="text-slate-500">Data not available</div>
-      </div>
-    )
-  }
-
-  const getKpColor = (kp?: number) => {
-    if (kp === undefined) return 'text-slate-400'
-    if (kp <= 2) return 'text-green-500'
-    if (kp <= 4) return 'text-amber-500'
-    if (kp <= 6) return 'text-orange-500'
-    return 'text-red-500'
-  }
-
-  const getScaleColor = (scale?: number) => {
-    if (scale === undefined || scale === 0) return 'text-green-500'
-    if (scale <= 2) return 'text-amber-500'
-    if (scale <= 3) return 'text-orange-500'
-    return 'text-red-500'
-  }
-
+// ---------------------------------------------------------------- feed_source toggle
+function FeedSourceToggle({ value, onChange, disabled, centralDisabled }: {
+  value: FeedSource; onChange: (v: FeedSource) => void; disabled: boolean; centralDisabled: boolean
+}) {
+  const base = 'px-2 py-1 text-xs transition-colors'
   return (
-    <div className="bg-bg-card border border-border rounded-lg p-6">
-      <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
-        <Sun size={14} />
-        Solar/Geomagnetic Indices
-      </h2>
+    <div className={`flex rounded border border-[#1e2a3a] overflow-hidden ${disabled ? 'opacity-40' : ''}`}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onChange('native')}
+        className={`${base} ${value === 'native' ? 'bg-accent text-white' : 'text-slate-400 hover:text-slate-200'}`}
+      >native</button>
+      <button
+        type="button"
+        disabled={disabled || centralDisabled}
+        title={centralDisabled ? 'Central not available for this adapter' : ''}
+        onClick={() => { if (!centralDisabled) onChange('central') }}
+        className={`${base} ${centralDisabled ? 'text-slate-600 cursor-not-allowed' : value === 'central' ? 'bg-accent text-white' : 'text-slate-400 hover:text-slate-200'}`}
+      >central</button>
+    </div>
+  )
+}
 
-      <div className="grid grid-cols-2 gap-4 mb-4">
-        {/* SFI */}
-        <div className="bg-bg-hover rounded-lg p-3">
-          <div className="text-xs text-slate-500 mb-1">Solar Flux Index</div>
-          <div className="text-2xl font-mono text-slate-100">
-            {swpc.sfi?.toFixed(0) ?? '—'}
-          </div>
-          <div className="text-xs text-slate-500">SFI (10.7 cm)</div>
+// ---------------------------------------------------------------- adapter panel
+function AdapterPanel({ title, subtitle, enabled, onEnabled, feedSource, onFeedSource, hasCentral, nativeOnly, hasKey, health, events, children }: {
+  title: string; subtitle?: string
+  enabled: boolean; onEnabled: (v: boolean) => void
+  feedSource: FeedSource; onFeedSource: (v: FeedSource) => void
+  hasCentral: boolean; nativeOnly: boolean; hasKey: boolean
+  health?: FeedHealth; events?: EnvEvent[]; children?: ReactNode
+}) {
+  const centralDisabled = nativeOnly || !hasCentral
+  return (
+    <div className="border border-[#1e2a3a] rounded-lg p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <span className="text-sm font-medium text-slate-300">{title}</span>
+          {subtitle && <p className="text-xs text-slate-600">{subtitle}</p>}
         </div>
-
-        {/* Kp */}
-        <div className="bg-bg-hover rounded-lg p-3">
-          <div className="text-xs text-slate-500 mb-1">Planetary K-Index</div>
-          <div className={`text-2xl font-mono ${getKpColor(swpc.kp_current)}`}>
-            {swpc.kp_current?.toFixed(1) ?? '—'}
-          </div>
-          <div className="text-xs text-slate-500">Kp</div>
-        </div>
-      </div>
-
-      {/* NOAA Scales */}
-      <div className="bg-bg-hover rounded-lg p-3 mb-4">
-        <div className="text-xs text-slate-500 mb-2">NOAA Space Weather Scales</div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1">
-            <span className="text-xs text-slate-400">R:</span>
-            <span className={`text-sm font-mono ${getScaleColor(swpc.r_scale)}`}>
-              {swpc.r_scale ?? 0}
-            </span>
+            <span className="text-[10px] uppercase tracking-wide text-slate-600">source</span>
+            <FeedSourceToggle value={feedSource} onChange={onFeedSource} disabled={!enabled} centralDisabled={centralDisabled} />
           </div>
-          <div className="flex items-center gap-1">
-            <span className="text-xs text-slate-400">S:</span>
-            <span className={`text-sm font-mono ${getScaleColor(swpc.s_scale)}`}>
-              {swpc.s_scale ?? 0}
-            </span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="text-xs text-slate-400">G:</span>
-            <span className={`text-sm font-mono ${getScaleColor(swpc.g_scale)}`}>
-              {swpc.g_scale ?? 0}
-            </span>
-          </div>
-        </div>
-        <div className="text-xs text-slate-500 mt-2">
-          Radio Blackout / Solar Radiation / Geomagnetic Storm
+          <Toggle label="" checked={enabled} onChange={onEnabled} />
         </div>
       </div>
-
-      {/* Active Warnings */}
-      {swpc.active_warnings && swpc.active_warnings.length > 0 && (
-        <div className="space-y-2">
-          <div className="text-xs text-slate-500">Active Warnings</div>
-          {swpc.active_warnings.slice(0, 3).map((warning, i) => (
-            <div
-              key={i}
-              className="text-xs text-amber-400 bg-amber-500/10 rounded p-2"
-            >
-              {warning}
+      {!hasKey && (
+        <div className="text-xs text-amber-400 bg-amber-500/10 rounded p-2">
+          API key not configured — contact admin
+        </div>
+      )}
+      {nativeOnly && (
+        <div className="text-[11px] text-slate-600">Central not available for this adapter — native only</div>
+      )}
+      <div className={enabled ? 'space-y-3' : 'space-y-3 opacity-40 pointer-events-none select-none'}>
+        {children}
+      </div>
+      {(health || (events && events.length > 0)) && (
+        <div className="pt-2 border-t border-[#1e2a3a] space-y-3">
+          <div className="text-[10px] uppercase tracking-wide text-slate-600">Live status</div>
+          {health ? <FeedStatusCard feed={health} /> : <div className="text-xs text-slate-600">No status reported.</div>}
+          {events && events.length > 0 && (
+            <div className="space-y-2">
+              {events.slice(0, 5).map((e, i) => <EventCard key={i} event={e} />)}
             </div>
-          ))}
+          )}
         </div>
       )}
     </div>
   )
 }
 
-function DuctingPanel({ ducting }: { ducting: DuctingStatus | null }) {
-  if (!ducting || !ducting.enabled) {
-    return (
-      <div className="bg-bg-card border border-border rounded-lg p-6">
-        <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
-          <Wind size={14} />
-          Tropospheric Ducting
-        </h2>
-        <div className="text-slate-500">Data not available</div>
-      </div>
-    )
-  }
+// ---------------------------------------------------------------- families
+type AdapterKey = 'nws' | 'fires' | 'firms' | 'swpc' | 'ducting' | 'traffic' | 'roads511' | 'usgs_quake' | 'usgs' | 'avalanche'
 
-  const getConditionColor = (condition?: string) => {
-    switch (condition) {
-      case 'normal':
-        return 'text-green-500'
-      case 'super_refraction':
-        return 'text-amber-500'
-      case 'surface_duct':
-      case 'elevated_duct':
-        return 'text-blue-400'
-      default:
-        return 'text-slate-400'
-    }
-  }
+interface AdapterMeta { label: string; subtitle: string; health: string; hasCentral: boolean; nativeOnly: boolean; hasKey: boolean }
 
-  const formatCondition = (condition?: string) => {
-    if (!condition) return 'Unknown'
-    return condition.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())
-  }
-
-  return (
-    <div className="bg-bg-card border border-border rounded-lg p-6">
-      <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
-        <Wind size={14} />
-        Tropospheric Ducting
-      </h2>
-
-      {/* Condition */}
-      <div className="bg-bg-hover rounded-lg p-4 mb-4">
-        <div className="text-xs text-slate-500 mb-1">Condition</div>
-        <div className={`text-xl font-medium ${getConditionColor(ducting.condition)}`}>
-          {formatCondition(ducting.condition)}
-        </div>
-      </div>
-
-      {/* Refractivity Gradient */}
-      <div className="grid grid-cols-2 gap-4 mb-4">
-        <div className="bg-bg-hover rounded-lg p-3">
-          <div className="text-xs text-slate-500 mb-1">Min Gradient</div>
-          <div className="text-lg font-mono text-slate-100">
-            {ducting.min_gradient ?? '—'}
-          </div>
-          <div className="text-xs text-slate-500">M-units/km</div>
-        </div>
-
-        {ducting.duct_thickness_m && (
-          <div className="bg-bg-hover rounded-lg p-3">
-            <div className="text-xs text-slate-500 mb-1">Duct Thickness</div>
-            <div className="text-lg font-mono text-slate-100">
-              {ducting.duct_thickness_m}
-            </div>
-            <div className="text-xs text-slate-500">meters</div>
-          </div>
-        )}
-
-        {ducting.duct_base_m && (
-          <div className="bg-bg-hover rounded-lg p-3">
-            <div className="text-xs text-slate-500 mb-1">Duct Base</div>
-            <div className="text-lg font-mono text-slate-100">
-              {ducting.duct_base_m}
-            </div>
-            <div className="text-xs text-slate-500">meters AGL</div>
-          </div>
-        )}
-      </div>
-
-      {/* Reference */}
-      <div className="text-xs text-slate-500 bg-bg-hover rounded p-2">
-        <div>dM/dz reference:</div>
-        <div className="mt-1 space-y-0.5">
-          <div>&gt;79: Normal propagation</div>
-          <div>0–79: Super-refraction</div>
-          <div>&lt;0: Ducting (trapping layer)</div>
-        </div>
-      </div>
-
-      {ducting.last_update && (
-        <div className="text-xs text-slate-500 mt-3">
-          Last update: {ducting.last_update}
-        </div>
-      )}
-    </div>
-  )
+const META: Record<AdapterKey, AdapterMeta> = {
+  nws: { label: 'NWS Weather Alerts', subtitle: 'National Weather Service alerts', health: 'nws', hasCentral: true, nativeOnly: false, hasKey: true },
+  fires: { label: 'NIFC Fire Perimeters', subtitle: 'Active wildfires (National Interagency Fire Center)', health: 'nifc', hasCentral: true, nativeOnly: false, hasKey: true },
+  firms: { label: 'NASA FIRMS Hotspots', subtitle: 'Satellite thermal-anomaly detections', health: 'firms', hasCentral: true, nativeOnly: false, hasKey: false },
+  swpc: { label: 'NOAA Space Weather (SWPC)', subtitle: 'Solar indices, geomagnetic storms', health: 'swpc', hasCentral: true, nativeOnly: false, hasKey: true },
+  ducting: { label: 'Tropospheric Ducting', subtitle: 'VHF/UHF extended-range conditions', health: 'ducting', hasCentral: false, nativeOnly: true, hasKey: true },
+  traffic: { label: 'TomTom Traffic', subtitle: 'Traffic flow on monitored corridors', health: 'traffic', hasCentral: true, nativeOnly: false, hasKey: true },
+  roads511: { label: '511 Road Conditions', subtitle: 'State DOT road events and closures', health: 'roads511', hasCentral: false, nativeOnly: true, hasKey: false },
+  usgs_quake: { label: 'USGS Earthquakes', subtitle: 'Seismic events from the USGS feed', health: 'usgs_quake', hasCentral: true, nativeOnly: false, hasKey: true },
+  usgs: { label: 'USGS Stream Gauges', subtitle: 'River and stream water levels', health: 'usgs', hasCentral: true, nativeOnly: false, hasKey: true },
+  avalanche: { label: 'Avalanche Advisories', subtitle: 'Backcountry avalanche danger ratings', health: 'avalanche', hasCentral: false, nativeOnly: true, hasKey: true },
 }
 
+const FAMILIES: { key: string; label: string; icon: typeof Cloud; adapters: AdapterKey[] }[] = [
+  { key: 'weather', label: 'Weather', icon: Cloud, adapters: ['nws'] },
+  { key: 'fire', label: 'Fire', icon: Flame, adapters: ['fires', 'firms'] },
+  { key: 'rf', label: 'RF Propagation', icon: Radio, adapters: ['swpc', 'ducting'] },
+  { key: 'roads', label: 'Roads', icon: Car, adapters: ['traffic', 'roads511'] },
+  { key: 'geohazards', label: 'Geohazards', icon: Mountain, adapters: ['usgs_quake', 'usgs', 'avalanche'] },
+  { key: 'tracking', label: 'Tracking', icon: Satellite, adapters: [] },
+  { key: 'mesh', label: 'Mesh Health', icon: Activity, adapters: [] },
+]
+
+// ---------------------------------------------------------------- main page
 export default function Environment() {
-  const [envStatus, setEnvStatus] = useState<EnvStatus | null>(null)
+  const [env, setEnv] = useState<EnvConfig | null>(null)
+  const [original, setOriginal] = useState<string>('')
+  const [status, setStatus] = useState<EnvStatus | null>(null)
   const [events, setEvents] = useState<EnvEvent[]>([])
-  const [swpc, setSWPC] = useState<SWPCStatus | null>(null)
-  const [ducting, setDucting] = useState<DuctingStatus | null>(null)
-  const [fires, setFires] = useState<FireEvent[]>([])
-  const [avalanche, setAvalanche] = useState<AvalancheResponse | null>(null)
-  const [streams, setStreams] = useState<StreamGaugeEvent[]>([])
-  const [traffic, setTraffic] = useState<TrafficEvent[]>([])
-  const [roads, setRoads] = useState<RoadEvent[]>([])
-  const [hotspots, setHotspots] = useState<HotspotEvent[]>([])
-  const [newIgnitions, setNewIgnitions] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
+  const [restartRequired, setRestartRequired] = useState(false)
+  const [family, setFamily] = useState('weather')
+  const [adapter, setAdapter] = useState<AdapterKey | null>('nws')
 
   useEffect(() => {
     document.title = 'Environment — MeshAI'
-    Promise.all([
-      fetchEnvStatus().catch(() => null),
-      fetchEnvActive().catch(() => []),
-      fetchSWPC().catch(() => null),
-      fetchDucting().catch(() => null),
-      fetchFires().catch(() => []),
-      fetchAvalanche().catch(() => null),
-      fetchStreams().catch(() => []),
-      fetchTraffic().catch(() => []),
-      fetchRoads().catch(() => []),
-      fetchHotspots().catch(() => ({ hotspots: [], new_ignitions: 0 })),
-    ])
-      .then(([status, active, swpcData, ductingData, firesData, avyData, streamsData, trafficData, roadsData, hotspotsData]) => {
-        setEnvStatus(status)
-        setEvents(active)
-        setSWPC(swpcData)
-        setDucting(ductingData)
-        setFires(firesData)
-        setAvalanche(avyData)
-        setStreams(streamsData || [])
-        setTraffic(trafficData || [])
-        setRoads(roadsData || [])
-        setHotspots(hotspotsData?.hotspots || [])
-        setNewIgnitions(hotspotsData?.new_ignitions || 0)
+    ;(async () => {
+      try {
+        const res = await fetch('/api/config/environmental')
+        const data = await res.json()
+        setEnv(data)
+        setOriginal(JSON.stringify(data))
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to load config')
+      } finally {
         setLoading(false)
-      })
-      .catch((err) => {
-        setError(err.message)
-        setLoading(false)
-      })
+      }
+    })()
   }, [])
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-slate-400">Loading environmental data...</div>
-      </div>
-    )
+  useEffect(() => {
+    const load = async () => {
+      try {
+        setStatus(await fetchEnvStatus())
+        setEvents(await fetchEnvActive())
+      } catch { /* status is best-effort */ }
+    }
+    load()
+    const t = setInterval(load, 30000)
+    return () => clearInterval(t)
+  }, [])
+
+  const hasChanges = env !== null && JSON.stringify(env) !== original
+
+  const save = async () => {
+    if (!env) return
+    setSaving(true); setError(null); setSuccess(null)
+    try {
+      const res = await fetch('/api/config/environmental', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(env),
+      })
+      const result = await res.json()
+      if (!res.ok) throw new Error(result.detail || 'Save failed')
+      setOriginal(JSON.stringify(env))
+      setSuccess('Environmental config saved')
+      if (result.restart_required) setRestartRequired(true)
+      setTimeout(() => setSuccess(null), 3000)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
   }
 
-  if (error) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-red-400">Error: {error}</div>
-      </div>
-    )
+  const discard = () => { if (env) setEnv(JSON.parse(original)) }
+  const restart = async () => {
+    try { await fetch('/api/restart', { method: 'POST' }); setRestartRequired(false); setSuccess('Restart initiated') }
+    catch { setError('Restart failed') }
   }
 
-  if (!envStatus?.enabled) {
-    return (
-      <div className="flex flex-col items-center justify-center h-[60vh] text-center">
-        <div className="w-16 h-16 rounded-full bg-bg-card border border-border flex items-center justify-center mb-6">
-          <Cloud size={32} className="text-slate-500" />
+  const up = (patch: Partial<EnvConfig>) => env && setEnv({ ...env, ...patch })
+
+  if (loading) return <div className="flex items-center justify-center h-64 text-slate-400">Loading environmental config…</div>
+  if (!env) return <div className="flex items-center justify-center h-64 text-red-400">{error || 'No config'}</div>
+
+  const healthFor = (key: AdapterKey): FeedHealth | undefined =>
+    status?.feeds.find((f) => f.source === META[key].health)
+  const eventsFor = (key: AdapterKey): EnvEvent[] =>
+    events.filter((e) => e.source === META[key].health)
+
+  const fam = FAMILIES.find((f) => f.key === family)!
+  const activeAdapter: AdapterKey | null =
+    fam.adapters.length === 0 ? null : (adapter && fam.adapters.includes(adapter) ? adapter : fam.adapters[0])
+
+  // -- per-adapter settings forms (preserve all existing settings) --
+  const renderSettings = (key: AdapterKey) => {
+    switch (key) {
+      case 'nws': return (<>
+        <ListInput label="NWS Zones" value={env.nws_zones} onChange={(v) => up({ nws_zones: v })} helper="Zone IDs like IDZ016, IDZ030" infoLink="https://www.weather.gov/pimar/PubZone" />
+        <TextInput label="User Agent" value={env.nws.user_agent} onChange={(v) => up({ nws: { ...env.nws, user_agent: v } })} placeholder="(MeshAI, you@email.com)" helper="Format: (app_name, contact_email)" />
+        <div className="grid grid-cols-2 gap-4">
+          <NumberInput label="Tick Seconds" value={env.nws.tick_seconds} onChange={(v) => up({ nws: { ...env.nws, tick_seconds: v } })} min={30} />
+          <SelectInput label="Min Severity" value={env.nws.severity_min} onChange={(v) => up({ nws: { ...env.nws, severity_min: v } })} options={[{ value: 'minor', label: 'Minor' }, { value: 'moderate', label: 'Moderate' }, { value: 'severe', label: 'Severe' }, { value: 'extreme', label: 'Extreme' }]} />
         </div>
-        <h2 className="text-xl font-semibold text-slate-300 mb-2">
-          Environmental Feeds Disabled
-        </h2>
-        <p className="text-slate-500 max-w-md">
-          Enable environmental feeds in config.yaml to see weather alerts,
-          space weather indices, and tropospheric ducting data.
-        </p>
-      </div>
-    )
+      </>)
+      case 'swpc': return <div className="text-xs text-slate-500">No additional settings.</div>
+      case 'ducting': return (
+        <div className="grid grid-cols-3 gap-4">
+          <NumberInput label="Tick Seconds" value={env.ducting.tick_seconds} onChange={(v) => up({ ducting: { ...env.ducting, tick_seconds: v } })} min={60} />
+          <NumberInput label="Latitude" value={env.ducting.latitude} onChange={(v) => up({ ducting: { ...env.ducting, latitude: v } })} step={0.01} />
+          <NumberInput label="Longitude" value={env.ducting.longitude} onChange={(v) => up({ ducting: { ...env.ducting, longitude: v } })} step={0.01} />
+        </div>)
+      case 'fires': return (
+        <div className="grid grid-cols-2 gap-4">
+          <NumberInput label="Tick Seconds" value={env.fires.tick_seconds} onChange={(v) => up({ fires: { ...env.fires, tick_seconds: v } })} min={60} />
+          <SelectInput label="State" value={env.fires.state} onChange={(v) => up({ fires: { ...env.fires, state: v } })} options={US_STATES} />
+        </div>)
+      case 'avalanche': return (<>
+        <NumberInput label="Tick Seconds" value={env.avalanche.tick_seconds} onChange={(v) => up({ avalanche: { ...env.avalanche, tick_seconds: v } })} min={60} />
+        <ListInput label="Center IDs" value={env.avalanche.center_ids} onChange={(v) => up({ avalanche: { ...env.avalanche, center_ids: v } })} helper="e.g., SNFAC" infoLink="https://avalanche.org/avalanche-centers/" />
+        <NumberListInput label="Season Months" value={env.avalanche.season_months} onChange={(v) => up({ avalanche: { ...env.avalanche, season_months: v } })} helper="e.g., 12, 1, 2, 3, 4" />
+      </>)
+      case 'usgs': return (<>
+        <NumberInput label="Tick Seconds" value={env.usgs.tick_seconds} onChange={(v) => up({ usgs: { ...env.usgs, tick_seconds: v } })} min={900} helper="Minimum 15 min (900s)" />
+        <ListInput label="Site IDs" value={env.usgs.sites} onChange={(v) => up({ usgs: { ...env.usgs, sites: v } })} helper="USGS gauge site numbers" infoLink="https://waterdata.usgs.gov/nwis" />
+      </>)
+      case 'usgs_quake': return (<>
+        <NumberInput label="Tick Seconds" value={env.usgs_quake.tick_seconds} onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, tick_seconds: v } })} min={60} />
+        <NumberInput label="Min Magnitude" value={env.usgs_quake.min_magnitude} onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, min_magnitude: v } })} step={0.1} min={0} />
+        <TextInput label="Region Tag" value={env.usgs_quake.region} onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, region: v } })} />
+        <div className="grid grid-cols-4 gap-2">
+          {(['West', 'South', 'East', 'North'] as const).map((lbl, i) => (
+            <NumberInput key={lbl} label={lbl} value={env.usgs_quake.bbox?.[i] ?? 0} onChange={(v) => { const b = [...(env.usgs_quake.bbox || [0, 0, 0, 0])]; b[i] = v; up({ usgs_quake: { ...env.usgs_quake, bbox: b } }) }} step={0.01} />
+          ))}
+        </div>
+        <div className="text-xs text-slate-500">Bounding box [W,S,E,N] geographic filter</div>
+      </>)
+      case 'traffic': return (<>
+        <TextInput label="API Key" value={env.traffic.api_key} onChange={(v) => up({ traffic: { ...env.traffic, api_key: v } })} type="password" helper="developer.tomtom.com" />
+        <NumberInput label="Tick Seconds" value={env.traffic.tick_seconds} onChange={(v) => up({ traffic: { ...env.traffic, tick_seconds: v } })} min={60} />
+        <div className="text-xs text-slate-500 mt-2">Corridors:</div>
+        {(env.traffic.corridors || []).map((c, i) => (
+          <div key={i} className="grid grid-cols-4 gap-2 items-end">
+            <TextInput label="Name" value={c.name} onChange={(v) => { const n = [...env.traffic.corridors]; n[i] = { ...c, name: v }; up({ traffic: { ...env.traffic, corridors: n } }) }} />
+            <NumberInput label="Lat" value={c.lat} onChange={(v) => { const n = [...env.traffic.corridors]; n[i] = { ...c, lat: v }; up({ traffic: { ...env.traffic, corridors: n } }) }} step={0.01} />
+            <NumberInput label="Lon" value={c.lon} onChange={(v) => { const n = [...env.traffic.corridors]; n[i] = { ...c, lon: v }; up({ traffic: { ...env.traffic, corridors: n } }) }} step={0.01} />
+            <button onClick={() => up({ traffic: { ...env.traffic, corridors: env.traffic.corridors.filter((_, j) => j !== i) } })} className="px-2 py-2 text-xs text-red-400 hover:text-red-300 border border-red-400/30 rounded">Remove</button>
+          </div>
+        ))}
+        <button onClick={() => up({ traffic: { ...env.traffic, corridors: [...(env.traffic.corridors || []), { name: '', lat: 0, lon: 0 }] } })} className="text-xs text-accent hover:underline">+ Add Corridor</button>
+      </>)
+      case 'roads511': return (<>
+        <TextInput label="Base URL" value={env.roads511.base_url} onChange={(v) => up({ roads511: { ...env.roads511, base_url: v } })} placeholder="https://511.yourstate.gov/api/v2" />
+        <TextInput label="API Key" value={env.roads511.api_key} onChange={(v) => up({ roads511: { ...env.roads511, api_key: v } })} type="password" helper="Leave empty if not required" />
+        <NumberInput label="Tick Seconds" value={env.roads511.tick_seconds} onChange={(v) => up({ roads511: { ...env.roads511, tick_seconds: v } })} min={60} />
+        <ListInput label="Endpoints" value={env.roads511.endpoints} onChange={(v) => up({ roads511: { ...env.roads511, endpoints: v } })} helper="e.g., /get/event" />
+        <div className="grid grid-cols-4 gap-2">
+          {(['West', 'South', 'East', 'North'] as const).map((lbl, i) => (
+            <NumberInput key={lbl} label={lbl} value={env.roads511.bbox?.[i] ?? 0} onChange={(v) => { const b = [...(env.roads511.bbox || [0, 0, 0, 0])]; b[i] = v; up({ roads511: { ...env.roads511, bbox: b } }) }} step={0.01} />
+          ))}
+        </div>
+      </>)
+      case 'firms': return (<>
+        <TextInput label="MAP Key" value={env.firms.map_key} onChange={(v) => up({ firms: { ...env.firms, map_key: v } })} type="password" helper="firms.modaps.eosdis.nasa.gov/api/area/" infoLink="https://firms.modaps.eosdis.nasa.gov/api/area/" />
+        <NumberInput label="Tick Seconds" value={env.firms.tick_seconds} onChange={(v) => up({ firms: { ...env.firms, tick_seconds: v } })} min={300} />
+        <SelectInput label="Satellite Source" value={env.firms.source} onChange={(v) => up({ firms: { ...env.firms, source: v } })} options={[{ value: 'VIIRS_SNPP_NRT', label: 'VIIRS SNPP (NRT)' }, { value: 'VIIRS_NOAA20_NRT', label: 'VIIRS NOAA-20 (NRT)' }, { value: 'MODIS_NRT', label: 'MODIS (NRT)' }]} />
+        <div className="grid grid-cols-3 gap-4">
+          <NumberInput label="Day Range" value={env.firms.day_range} onChange={(v) => up({ firms: { ...env.firms, day_range: v } })} min={1} max={10} />
+          <SelectInput label="Min Confidence" value={env.firms.confidence_min} onChange={(v) => up({ firms: { ...env.firms, confidence_min: v } })} options={[{ value: 'low', label: 'Low' }, { value: 'nominal', label: 'Nominal' }, { value: 'high', label: 'High' }]} />
+          <NumberInput label="Proximity (km)" value={env.firms.proximity_km} onChange={(v) => up({ firms: { ...env.firms, proximity_km: v } })} step={0.5} />
+        </div>
+        <div className="grid grid-cols-4 gap-2">
+          {(['West', 'South', 'East', 'North'] as const).map((lbl, i) => (
+            <NumberInput key={lbl} label={lbl} value={env.firms.bbox?.[i] ?? 0} onChange={(v) => { const b = [...(env.firms.bbox || [0, 0, 0, 0])]; b[i] = v; up({ firms: { ...env.firms, bbox: b } }) }} step={0.01} />
+          ))}
+        </div>
+      </>)
+    }
+  }
+
+  const a = env as unknown as Record<AdapterKey, { enabled: boolean; feed_source?: FeedSource }>
+  const setAdapterField = (key: AdapterKey, patch: { enabled?: boolean; feed_source?: FeedSource }) => {
+    const cur = (env as any)[key] || {}
+    up({ [key]: { ...cur, ...patch } } as unknown as Partial<EnvConfig>)
   }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* Header + master enable + save bar */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-slate-200">Environment</h1>
-        <div className="text-xs text-slate-500">
-          {events.length} active event{events.length !== 1 ? 's' : ''}
-        </div>
-      </div>
-
-      {/* Feed Status */}
-      <div className="bg-bg-card border border-border rounded-lg p-6">
-        <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
-          <Activity size={14} />
-          Feed Status
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {envStatus.feeds.map((feed) => (
-            <FeedStatusCard key={feed.source} feed={feed} />
-          ))}
-        </div>
-      </div>
-
-      {/* Main content grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Solar Indices */}
-        <SolarIndicesPanel swpc={swpc} />
-
-        {/* Tropospheric Ducting */}
-        <DuctingPanel ducting={ducting} />
-      </div>
-
-      {/* Fires and Avalanche */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Wildfires */}
-        <div className="bg-bg-card border border-border rounded-lg p-6">
-          <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
-            <Flame size={14} />
-            Active Wildfires ({fires.length})
-          </h2>
-          {fires.length > 0 ? (
-            <div className="space-y-3">
-              {fires.map((fire) => (
-                <div
-                  key={fire.event_id}
-                  className={`p-3 rounded-lg ${
-                    fire.severity === 'warning'
-                      ? 'bg-red-500/10 border-l-2 border-red-500'
-                      : fire.severity === 'watch'
-                      ? 'bg-amber-500/10 border-l-2 border-amber-500'
-                      : 'bg-slate-500/10 border-l-2 border-slate-500'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-medium text-slate-200">
-                      {fire.name}
-                    </span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${
-                      fire.severity === 'warning'
-                        ? 'bg-red-500/20 text-red-400'
-                        : fire.severity === 'watch'
-                        ? 'bg-amber-500/20 text-amber-400'
-                        : 'bg-slate-500/20 text-slate-400'
-                    }`}>
-                      {fire.severity}
-                    </span>
-                  </div>
-                  <div className="text-xs text-slate-400 space-y-1">
-                    <div>{fire.acres.toLocaleString()} acres, {fire.pct_contained}% contained</div>
-                    {fire.distance_km && fire.nearest_anchor && (
-                      <div>{Math.round(fire.distance_km)} km from {fire.nearest_anchor}</div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 text-slate-500 py-4">
-              <CheckCircle size={16} className="text-green-500" />
-              <span>No active wildfires in the area</span>
-            </div>
-          )}
-        </div>
-
-        {/* Avalanche */}
-        <div className="bg-bg-card border border-border rounded-lg p-6">
-          <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
-            <Mountain size={14} />
-            Avalanche Advisories
-          </h2>
-          {avalanche?.off_season ? (
-            <div className="text-slate-500 py-4">
-              <p>Off season - check back in December</p>
-            </div>
-          ) : avalanche && avalanche.advisories.length > 0 ? (
-            <div className="space-y-3">
-              {avalanche.advisories.map((avy) => (
-                <div
-                  key={avy.event_id}
-                  className={`p-3 rounded-lg ${
-                    avy.danger_level >= 4
-                      ? 'bg-red-500/10 border-l-2 border-red-500'
-                      : avy.danger_level >= 3
-                      ? 'bg-amber-500/10 border-l-2 border-amber-500'
-                      : avy.danger_level >= 2
-                      ? 'bg-yellow-500/10 border-l-2 border-yellow-500'
-                      : 'bg-green-500/10 border-l-2 border-green-500'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-medium text-slate-200">
-                      {avy.zone_name}
-                    </span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${
-                      avy.danger_level >= 4
-                        ? 'bg-red-500/20 text-red-400'
-                        : avy.danger_level >= 3
-                        ? 'bg-amber-500/20 text-amber-400'
-                        : avy.danger_level >= 2
-                        ? 'bg-yellow-500/20 text-yellow-400'
-                        : 'bg-green-500/20 text-green-400'
-                    }`}>
-                      {avy.danger_name}
-                    </span>
-                  </div>
-                  <div className="text-xs text-slate-400">
-                    {avy.center}
-                  </div>
-                  {avy.travel_advice && (
-                    <div className="text-xs text-slate-500 mt-2 line-clamp-2">
-                      {avy.travel_advice}
-                    </div>
-                  )}
-                </div>
-              ))}
-              {avalanche.advisories[0]?.center_link && (
-                <a
-                  href={avalanche.advisories[0].center_link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-blue-400 hover:underline"
-                >
-                  View full forecast
-                </a>
-              )}
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 text-slate-500 py-4">
-              <CheckCircle size={16} className="text-green-500" />
-              <span>No avalanche advisories</span>
-            </div>
+        <div className="flex items-center gap-3">
+          <Toggle label="Feeds Enabled" checked={env.enabled} onChange={(v) => up({ enabled: v })} />
+          {hasChanges && (
+            <>
+              <button onClick={discard} className="flex items-center gap-1 px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 border border-border rounded">
+                <RotateCcw size={14} /> Discard
+              </button>
+              <button onClick={save} disabled={saving} className="flex items-center gap-1 px-3 py-1.5 text-sm bg-accent text-white rounded disabled:opacity-50">
+                <Save size={14} /> {saving ? 'Saving…' : 'Save'}
+              </button>
+            </>
           )}
         </div>
       </div>
 
-      {/* Stream Gauges */}
-      {streams.length > 0 && (
-        <div className="bg-bg-card border border-border rounded-lg p-6">
-          <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
-            <Droplets size={14} />
-            Stream Gauges ({streams.length})
-          </h2>
-          <div className="space-y-2">
-            {streams.map((stream) => (
-              <div
-                key={stream.event_id}
-                className={`p-3 rounded-lg ${
-                  stream.severity === 'warning'
-                    ? 'bg-amber-500/10 border-l-2 border-amber-500'
-                    : 'bg-blue-500/10 border-l-2 border-blue-500'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-200">
-                    {stream.properties?.site_name || 'Unknown Site'}
-                  </span>
-                  <span className="text-sm font-mono text-slate-300">
-                    {stream.properties?.value?.toLocaleString()} {stream.properties?.unit}
-                  </span>
-                </div>
-                <div className="text-xs text-slate-500 mt-1">
-                  {stream.properties?.parameter}
-                </div>
-              </div>
-            ))}
-          </div>
+      {error && <div className="text-sm text-red-400 bg-red-500/10 rounded p-3">{error}</div>}
+      {success && <div className="text-sm text-green-400 bg-green-500/10 rounded p-3">{success}</div>}
+      {restartRequired && (
+        <div className="flex items-center justify-between text-sm text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded p-3">
+          <span className="flex items-center gap-2"><RefreshCw size={14} /> A restart is required for some changes to take effect.</span>
+          <button onClick={restart} className="px-3 py-1 bg-amber-500/20 hover:bg-amber-500/30 rounded">Restart now</button>
         </div>
       )}
 
-      {/* Road Conditions */}
-      {(traffic.length > 0 || roads.length > 0) && (
-        <div className="bg-bg-card border border-border rounded-lg p-6">
-          <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
-            <Car size={14} />
-            Road Conditions
-          </h2>
-          {traffic.length > 0 && (
-            <div className="mb-4">
-              <div className="text-xs text-slate-500 mb-2 uppercase">Traffic Flow</div>
-              <div className="space-y-2">
-                {traffic.map((t) => (
-                  <div
-                    key={t.event_id}
-                    className={`p-3 rounded-lg ${
-                      t.properties?.roadClosure
-                        ? 'bg-red-500/10 border-l-2 border-red-500'
-                        : t.properties?.speedRatio < 0.5
-                        ? 'bg-amber-500/10 border-l-2 border-amber-500'
-                        : t.properties?.speedRatio < 0.8
-                        ? 'bg-yellow-500/10 border-l-2 border-yellow-500'
-                        : 'bg-green-500/10 border-l-2 border-green-500'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-slate-200">
-                        {t.properties?.corridor || 'Unknown'}
-                      </span>
-                      <span className="text-sm font-mono text-slate-300">
-                        {t.properties?.roadClosure ? 'CLOSED' : `${Math.round(t.properties?.currentSpeed || 0)}mph`}
-                      </span>
-                    </div>
-                    {!t.properties?.roadClosure && (
-                      <div className="text-xs text-slate-500 mt-1">
-                        {Math.round((t.properties?.speedRatio || 1) * 100)}% of free flow ({Math.round(t.properties?.freeFlowSpeed || 0)}mph)
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {roads.length > 0 && (
+      {/* Family tabs */}
+      <div className="flex gap-1 border-b border-border overflow-x-auto">
+        {FAMILIES.map(({ key, label, icon: Icon }) => (
+          <button key={key} onClick={() => { setFamily(key); const f = FAMILIES.find((x) => x.key === key)!; setAdapter(f.adapters[0] ?? null) }}
+            className={`flex items-center gap-2 px-4 py-2 text-sm whitespace-nowrap border-b-2 -mb-px transition-colors ${family === key ? 'border-accent text-accent' : 'border-transparent text-slate-400 hover:text-slate-200'}`}>
+            <Icon size={15} /> {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tracking placeholder */}
+      {family === 'tracking' && (
+        <div className="flex flex-col items-center justify-center h-[40vh] text-center">
+          <Satellite size={32} className="text-slate-600 mb-4" />
+          <p className="text-slate-500 max-w-md">No adapters yet. ADS-B / AIS / satellite passes are planned for v0.5.</p>
+        </div>
+      )}
+
+      {/* Mesh Health (no env adapters; central greyed for future migration) */}
+      {family === 'mesh' && (
+        <div className="border border-[#1e2a3a] rounded-lg p-4 space-y-3">
+          <div className="flex items-center justify-between">
             <div>
-              <div className="text-xs text-slate-500 mb-2 uppercase">Road Events</div>
-              <div className="space-y-2">
-                {roads.map((r) => (
-                  <div
-                    key={r.event_id}
-                    className={`p-3 rounded-lg ${
-                      r.properties?.is_closure
-                        ? 'bg-red-500/10 border-l-2 border-red-500'
-                        : 'bg-amber-500/10 border-l-2 border-amber-500'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      {r.properties?.is_closure && (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-400">
-                          CLOSURE
-                        </span>
-                      )}
-                      <span className="text-sm text-slate-200 line-clamp-1">
-                        {r.headline}
-                      </span>
-                    </div>
-                    <div className="text-xs text-slate-500 mt-1 uppercase">
-                      {r.event_type}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <span className="text-sm font-medium text-slate-300">Mesh Health</span>
+              <p className="text-xs text-slate-600">Node/infra telemetry — sourced from the mesh, not an environmental feed.</p>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] uppercase tracking-wide text-slate-600">source</span>
+              <FeedSourceToggle value="native" onChange={() => {}} disabled={false} centralDisabled={true} />
+            </div>
+          </div>
+          <div className="text-[11px] text-slate-600">Central not available — reserved for a future migration.</div>
+        </div>
+      )}
+
+      {/* Adapter sub-tabs + panel */}
+      {fam.adapters.length > 0 && activeAdapter && (
+        <>
+          {fam.adapters.length > 1 && (
+            <div className="flex gap-1">
+              {fam.adapters.map((k) => (
+                <button key={k} onClick={() => setAdapter(k)}
+                  className={`px-3 py-1.5 text-sm rounded ${activeAdapter === k ? 'bg-bg-hover text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
+                  {META[k].label}
+                </button>
+              ))}
             </div>
           )}
-        </div>
+          <AdapterPanel
+            title={META[activeAdapter].label}
+            subtitle={META[activeAdapter].subtitle}
+            enabled={a[activeAdapter]?.enabled ?? false}
+            onEnabled={(v) => setAdapterField(activeAdapter, { enabled: v })}
+            feedSource={(a[activeAdapter]?.feed_source ?? 'native')}
+            onFeedSource={(v) => setAdapterField(activeAdapter, { feed_source: v })}
+            hasCentral={META[activeAdapter].hasCentral}
+            nativeOnly={META[activeAdapter].nativeOnly}
+            hasKey={META[activeAdapter].hasKey}
+            health={healthFor(activeAdapter)}
+            events={eventsFor(activeAdapter)}
+          >
+            {renderSettings(activeAdapter)}
+          </AdapterPanel>
+        </>
       )}
-
-      {/* Satellite Hotspots */}
-      {hotspots.length > 0 && (
-        <div className="bg-bg-card border border-border rounded-lg p-6">
-          <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
-            <Satellite size={14} />
-            Satellite Hotspots ({hotspots.length})
-            {newIgnitions > 0 && (
-              <span className="ml-2 px-2 py-0.5 text-xs rounded-full bg-red-500/20 text-red-400 animate-pulse">
-                {newIgnitions} NEW
-              </span>
-            )}
-          </h2>
-          <div className="space-y-2">
-            {hotspots.map((h) => (
-              <div
-                key={h.event_id}
-                className={`p-3 rounded-lg ${
-                  h.properties?.new_ignition
-                    ? 'bg-red-500/10 border-l-2 border-red-500'
-                    : h.severity === 'watch'
-                    ? 'bg-amber-500/10 border-l-2 border-amber-500'
-                    : 'bg-orange-500/10 border-l-2 border-orange-500'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {h.properties?.new_ignition && (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-400">
-                        NEW
-                      </span>
-                    )}
-                    <span className="text-sm text-slate-200">
-                      {h.headline}
-                    </span>
-                  </div>
-                  {h.properties?.frp && (
-                    <span className="text-sm font-mono text-orange-400">
-                      {Math.round(h.properties.frp)} MW
-                    </span>
-                  )}
-                </div>
-                <div className="text-xs text-slate-500 mt-1 flex items-center gap-3">
-                  <span>Conf: {h.properties?.confidence || 'N/A'}</span>
-                  {h.properties?.acq_time && <span>@{h.properties.acq_time}Z</span>}
-                  {h.properties?.near_fire && (
-                    <span>Near: {h.properties.near_fire}</span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Active Events */}
-      <div className="bg-bg-card border border-border rounded-lg p-6">
-        <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
-          <AlertTriangle size={14} />
-          Active Events ({events.length})
-        </h2>
-        {events.length > 0 ? (
-          <div className="space-y-3">
-            {events.map((event) => (
-              <AlertEventCard key={event.event_id} event={event} />
-            ))}
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 text-slate-500 py-4">
-            <CheckCircle size={16} className="text-green-500" />
-            <span>No active environmental events</span>
-          </div>
-        )}
-      </div>
     </div>
   )
 }
