@@ -144,3 +144,22 @@ def test_consumer_config_uses_deliver_policy_new():
     from meshai.central.consumer import consumer_config
     from nats.js.api import DeliverPolicy
     assert consumer_config().deliver_policy == DeliverPolicy.NEW
+
+
+def test_subject_domain_fallback_for_unmapped_category():
+    """D.1: an unmapped category (traffic 'work_zone.wzdx') falls back to the
+    subject domain instead of returning 'other'."""
+    import json
+    from meshai.central.consumer import CentralConsumer, category_from_subject
+    from meshai.config import EnvironmentalConfig
+    from meshai.notifications.pipeline.bus import EventBus
+    assert category_from_subject("central.traffic.work_zone.ok") == "traffic_congestion"
+    rec = []
+    bus = EventBus(); bus.subscribe(rec.append)
+    c = CentralConsumer(EnvironmentalConfig(), bus)
+    env = {"id": "wz1", "data": {"id": "wz1", "adapter": "wzdx",
+           "category": "work_zone.wzdx", "time": "2026-05-28T00:00:00Z", "severity": 1,
+           "geo": {"centroid": [-96.2, 36.15], "primary_region": "US-OK", "regions": ["US-OK"]},
+           "data": {"road": "I-44"}}}
+    ev = c._handle("central.traffic.work_zone.ok", json.dumps(env).encode())
+    assert ev is not None and ev.category == "traffic_congestion"

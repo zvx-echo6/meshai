@@ -77,6 +77,30 @@ def map_category(central_category: str) -> str:
     return "other"
 
 
+# Subject-domain fallback: some Central categories are not domain-prefixed
+# (e.g. traffic's "work_zone.wzdx"), so when the category table misses we map by
+# the stable subject domain token (central.<domain>.<...>) instead of "other".
+_SUBJECT_DOMAIN_CATEGORY = {
+    "wx": "weather_warning",
+    "fire": "wildfire_incident",
+    "quake": "earthquake_event",
+    "hydro": "stream_flow",
+    "space": "geomagnetic_storm",
+    "disaster": "disaster_event",
+    "traffic": "traffic_congestion",
+    "traffic_flow": "traffic_flow",
+    "traffic_cameras": "traffic_camera",
+}
+
+
+def category_from_subject(subject: str) -> Optional[str]:
+    """Map a NATS subject (central.<domain>.<...>) to a meshai category."""
+    parts = (subject or "").split(".")
+    if len(parts) >= 2 and parts[0] == "central":
+        return _SUBJECT_DOMAIN_CATEGORY.get(parts[1])
+    return None
+
+
 def map_severity(sev: Optional[int]) -> str:
     """Central int severity (0-4 / None) -> meshai severity string.
 
@@ -152,6 +176,9 @@ class CentralConsumer:
             group_key = re.sub(r":removed$", "", group_key)
 
         cat_raw = inner.get("category") or envelope.get("centralcategory") or ""
+        category = map_category(cat_raw)
+        if category == "other":
+            category = category_from_subject(subject) or "other"
 
         geo = inner.get("geo") or {}
         lat = lon = None
@@ -187,7 +214,7 @@ class CentralConsumer:
 
         return make_event(
             source=inner.get("adapter") or "central",
-            category=map_category(cat_raw),
+            category=category,
             severity=map_severity(inner.get("severity")),
             **kwargs,
         )
