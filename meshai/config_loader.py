@@ -595,10 +595,14 @@ def save_section(
                 cleaned[key] = value
         return cleaned
 
-    data = check_secrets(data)
-
-    # Extract local fields
-    domain_data, local_updates = _extract_local_fields(section_name, data)
+    # List sections (e.g. mesh_sources) have no top-level dict to scan for
+    # local fields; clean each item for secrets and write the list directly.
+    if isinstance(data, list):
+        domain_data = [check_secrets(item) if isinstance(item, dict) else item for item in data]
+        local_updates = {}
+    else:
+        data = check_secrets(data)
+        domain_data, local_updates = _extract_local_fields(section_name, data)
 
     # Load existing target file
     if target_path.exists():

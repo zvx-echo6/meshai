@@ -11,6 +11,7 @@ from meshai.config import (
     load_config,
     save_config,
 )
+from meshai.config_loader import save_section, get_config_dir_from_path
 
 logger = logging.getLogger(__name__)
 
@@ -102,9 +103,6 @@ async def update_config_section(section: str, request: Request):
         raise HTTPException(status_code=422, detail=f"Invalid JSON: {e}")
 
     try:
-        # Load fresh config from file to avoid conflicts
-        config = load_config(config_path)
-
         # Get the section's dataclass type
         field_info = Config.__dataclass_fields__.get(section)
         if not field_info:
@@ -112,31 +110,39 @@ async def update_config_section(section: str, request: Request):
 
         field_type = field_info.type
 
-        # Handle list types (mesh_sources)
+        # Validate by coercing to the dataclass (runs __post_init__ validators),
+        # then persist via the multi-file / !include-aware save_section. The
+        # monolithic save_config cannot parse the !include orchestrator and blew
+        # up on every save in the prod layout (v0.4 C.2.1 fix).
         if section == "mesh_sources":
             from meshai.config import MeshSourceConfig
             new_value = [
                 _dict_to_dataclass(MeshSourceConfig, item) if isinstance(item, dict) else item
                 for item in body
             ]
-        # Handle dataclass types
+            data_to_save = [
+                _dataclass_to_dict(v) if hasattr(v, "__dataclass_fields__") else v
+                for v in new_value
+            ]
         elif hasattr(field_type, "__dataclass_fields__"):
             new_value = _dict_to_dataclass(field_type, body)
+            data_to_save = _dataclass_to_dict(new_value)
         else:
             new_value = body
+            data_to_save = body
 
-        # Set the section on config
-        setattr(config, section, new_value)
-
-        # Save config to file
-        save_config(config, config_path)
+        config_dir = get_config_dir_from_path(config_path)
+        save_section(section, data_to_save, config_dir)
 
         # Determine if restart is required
         restart_required = section in RESTART_REQUIRED_SECTIONS
 
-        # Update live config if restart not required
-        if not restart_required:
-            request.app.state.config = config
+        # Keep the live config in sync (no disk reload needed) when no restart is required
+        if not restart_required and getattr(request.app.state, "config", None) is not None:
+            try:
+                setattr(request.app.state.config, section, new_value)
+            except Exception:
+                pass
 
         logger.info(f"Config section '{section}' updated, restart_required={restart_required}")
 
