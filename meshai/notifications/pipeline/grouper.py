@@ -51,6 +51,12 @@ class Grouper:
         event with the same group_key. The held event is emitted
         later via tick().
         """
+        # Immediate-severity events bypass the coalescing window entirely
+        # (Phase 2.16.1): they must be delivered without buffering latency.
+        if event.severity == "immediate":
+            self._next(event)
+            return
+
         if not event.group_key:
             self._next(event)
             return

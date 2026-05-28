@@ -654,8 +654,21 @@ def _dict_to_dataclass(cls, data: dict):
 
         field_type = field_types[key]
 
+        # Notifications needs special rules/channels coercion -- must run
+        # BEFORE the generic nested-dataclass handler, which would otherwise
+        # shadow it and leave rules as raw dicts (Phase 2.16.1 fix).
+        if key == "notifications" and isinstance(value, dict):
+            notifications = _dict_to_dataclass(NotificationsConfig, value)
+            if "rules" in value and isinstance(value["rules"], list):
+                notifications.rules = [
+                    _dict_to_dataclass(NotificationRuleConfig, r) if isinstance(r, dict) else r
+                    for r in value["rules"]
+                ]
+            if "channels" in value and isinstance(value["channels"], list) and value["channels"]:
+                _migrate_legacy_channels(notifications, value)
+            kwargs[key] = notifications
         # Handle nested dataclasses
-        if hasattr(field_type, "__dataclass_fields__") and isinstance(value, dict):
+        elif hasattr(field_type, "__dataclass_fields__") and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(field_type, value)
         # Handle list of MeshSourceConfig
         elif key == "mesh_sources" and isinstance(value, list):
@@ -701,14 +714,6 @@ def _dict_to_dataclass(cls, data: dict):
             kwargs[key] = _dict_to_dataclass(TogglesConfig, value)
         elif key == "digest" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(DigestConfig, value)
-        elif key == "notifications" and isinstance(value, dict):
-            notifications = _dict_to_dataclass(NotificationsConfig, value)
-            if "rules" in value and isinstance(value["rules"], list):
-                notifications.rules = [_dict_to_dataclass(NotificationRuleConfig, r) if isinstance(r, dict) else r for r in value["rules"]]
-            # Migrate old channels+rules format if present
-            if "channels" in value and isinstance(value["channels"], list) and value["channels"]:
-                _migrate_legacy_channels(notifications, value)
-            kwargs[key] = notifications
         else:
             kwargs[key] = value
 

@@ -22,6 +22,7 @@ Usage:
 """
 
 import asyncio
+import logging
 
 from meshai.notifications.channels import create_channel
 from meshai.notifications.pipeline.bus import EventBus, get_bus
@@ -35,6 +36,9 @@ from meshai.notifications.pipeline.grouper import Grouper
 from meshai.notifications.pipeline.toggle_filter import ToggleFilter
 from meshai.notifications.pipeline.digest import DigestAccumulator, Digest
 from meshai.notifications.pipeline.scheduler import DigestScheduler
+
+
+_logger = logging.getLogger("meshai.pipeline")
 
 
 def build_pipeline(config, llm_backend, connector=None) -> EventBus:
@@ -82,6 +86,12 @@ def build_pipeline(config, llm_backend, connector=None) -> EventBus:
         enabled_list = getattr(toggles_cfg, "enabled", None)
         if enabled_list:
             enabled_toggles = set(enabled_list)
+
+    if not enabled_toggles:
+        _logger.warning(
+            "enabled_toggles is empty -- ToggleFilter passing all events. "
+            "Configure toggles to enable gating."
+        )
 
     toggle_filter = ToggleFilter(
         next_handler=_tee,
@@ -189,6 +199,30 @@ async def start_pipeline(bus: EventBus, config) -> DigestScheduler:
     )
     await scheduler.start()
 
+    # Phase 2.16.1: periodically flush the grouper so coalesced (routine/
+    # priority) events are delivered within the window even when poll cadence
+    # is sparse. Immediate events bypass the grouper and don't need this.
+    grouper = components["grouper"]
+    flush_interval = getattr(config.notifications, "grouper_flush_seconds", 5.0) or 5.0
+    flush_stop = asyncio.Event()
+
+    async def _grouper_flush_loop():
+        while not flush_stop.is_set():
+            try:
+                await asyncio.wait_for(flush_stop.wait(), timeout=flush_interval)
+                return
+            except asyncio.TimeoutError:
+                pass
+            try:
+                grouper.tick()
+            except Exception:
+                _logger.exception("Grouper flush tick failed")
+
+    flush_task = asyncio.create_task(_grouper_flush_loop(), name="grouper-flush")
+    scheduler._grouper_flush_task = flush_task
+    scheduler._grouper_flush_stop = flush_stop
+    _logger.info(f"Grouper flush task started (every {flush_interval:.0f}s)")
+
     # Stash scheduler for stop_pipeline
     bus._pipeline_scheduler = scheduler
 
@@ -202,6 +236,16 @@ async def stop_pipeline(scheduler: DigestScheduler) -> None:
         scheduler: DigestScheduler returned by start_pipeline()
     """
     if scheduler is not None:
+        flush_stop = getattr(scheduler, "_grouper_flush_stop", None)
+        flush_task = getattr(scheduler, "_grouper_flush_task", None)
+        if flush_stop is not None:
+            flush_stop.set()
+        if flush_task is not None:
+            flush_task.cancel()
+            try:
+                await flush_task
+            except (asyncio.CancelledError, Exception):
+                pass
         await scheduler.stop()
 
 

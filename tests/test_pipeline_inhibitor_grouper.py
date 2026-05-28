@@ -108,7 +108,7 @@ class TestGrouper:
     def test_event_with_group_key_is_held_not_emitted(self):
         next_handler = Mock()
         grouper = Grouper(next_handler)
-        event = make_event("e1", "immediate", group_key="fire:42")
+        event = make_event("e1", "priority", group_key="fire:42")
         grouper.handle(event)
         next_handler.assert_not_called()
         assert grouper.held_count() == 1
@@ -116,8 +116,8 @@ class TestGrouper:
     def test_second_same_group_key_replaces_first(self):
         next_handler = Mock()
         grouper = Grouper(next_handler)
-        ev1 = make_event("e1", "immediate", group_key="fire:42")
-        ev2 = make_event("e2", "immediate", group_key="fire:42")
+        ev1 = make_event("e1", "priority", group_key="fire:42")
+        ev2 = make_event("e2", "priority", group_key="fire:42")
         grouper.handle(ev1)
         grouper.handle(ev2)
         next_handler.assert_not_called()
@@ -134,7 +134,7 @@ class TestGrouper:
         grouper._now = lambda: current_time[0]
 
         current_time[0] = 0.0
-        event = make_event("e1", "immediate", group_key="g")
+        event = make_event("e1", "priority", group_key="g")
         grouper.handle(event)
         assert grouper.held_count() == 1
 
@@ -151,9 +151,9 @@ class TestGrouper:
     def test_flush_all_emits_everything_immediately(self):
         next_handler = Mock()
         grouper = Grouper(next_handler)
-        ev1 = make_event("e1", "immediate", group_key="g1")
-        ev2 = make_event("e2", "immediate", group_key="g2")
-        ev3 = make_event("e3", "immediate", group_key="g3")
+        ev1 = make_event("e1", "priority", group_key="g1")
+        ev2 = make_event("e2", "priority", group_key="g2")
+        ev3 = make_event("e3", "priority", group_key="g3")
         grouper.handle(ev1)
         grouper.handle(ev2)
         grouper.handle(ev3)
@@ -172,8 +172,8 @@ class TestInhibitorGrouperChain:
         grouper = Grouper(next_handler=terminal)
         inhibitor = Inhibitor(next_handler=grouper.handle)
 
-        # Send immediate event with group_key and inhibit_keys
-        ev1 = make_event("e1", "immediate", group_key="g1", inhibit_keys=["k1"])
+        # Send priority event with group_key and inhibit_keys (immediate would bypass)
+        ev1 = make_event("e1", "priority", group_key="g1", inhibit_keys=["k1"])
         inhibitor.handle(ev1)
         # After inhibitor: passed (no prior key)
         # After grouper: held (group_key present)
@@ -191,4 +191,4 @@ class TestInhibitorGrouperChain:
         grouper.flush_all()
         terminal.assert_called_once()
         emitted = terminal.call_args[0][0]
-        assert emitted.id == "e1"  # the immediate, not suppressed routine
+        assert emitted.id == "e1"  # the priority event, not the suppressed routine
