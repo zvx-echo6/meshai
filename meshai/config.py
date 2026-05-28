@@ -297,7 +297,19 @@ class MeshIntelligenceConfig:
 
 # Environmental feed configs
 @dataclass
-class NWSConfig:
+class _SourcedFeed:
+    """Mixin: an environmental feed is sourced 'native' (local adapter) or
+    'central' (Central NATS firehose). Default 'native' preserves v0.3 behavior."""
+
+    feed_source: str = "native"
+
+    def __post_init__(self):
+        if self.feed_source not in ("native", "central"):
+            raise ValueError(f"feed_source must be 'native' or 'central', got {self.feed_source!r}")
+
+
+@dataclass
+class NWSConfig(_SourcedFeed):
     """NWS weather alerts settings."""
 
     enabled: bool = True
@@ -316,7 +328,7 @@ class NWSConfig:
 
 
 @dataclass
-class SWPCConfig:
+class SWPCConfig(_SourcedFeed):
     """NOAA Space Weather settings."""
 
     enabled: bool = True
@@ -331,7 +343,7 @@ class SWPCConfig:
 
 
 @dataclass
-class DuctingConfig:
+class DuctingConfig(_SourcedFeed):
     """Tropospheric ducting settings."""
 
     enabled: bool = True
@@ -349,7 +361,7 @@ class DuctingConfig:
 
 
 @dataclass
-class NICFFiresConfig:
+class NICFFiresConfig(_SourcedFeed):
     """NIFC fire perimeters settings (Phase 2)."""
 
     enabled: bool = False
@@ -358,7 +370,7 @@ class NICFFiresConfig:
 
 
 @dataclass
-class AvalancheConfig:
+class AvalancheConfig(_SourcedFeed):
     """Avalanche advisory settings (Phase 2)."""
 
     enabled: bool = False
@@ -368,7 +380,7 @@ class AvalancheConfig:
 
 
 @dataclass
-class USGSConfig:
+class USGSConfig(_SourcedFeed):
     """USGS stream gauge settings."""
 
     enabled: bool = False
@@ -378,7 +390,7 @@ class USGSConfig:
 
 
 @dataclass
-class USGSQuakeConfig:
+class USGSQuakeConfig(_SourcedFeed):
     """USGS earthquake feed settings (Phase 2.14)."""
 
     enabled: bool = False
@@ -391,7 +403,7 @@ class USGSQuakeConfig:
 
 
 @dataclass
-class TomTomConfig:
+class TomTomConfig(_SourcedFeed):
     """TomTom traffic flow settings."""
 
     enabled: bool = False
@@ -401,7 +413,7 @@ class TomTomConfig:
 
 
 @dataclass
-class Roads511Config:
+class Roads511Config(_SourcedFeed):
     """511 road conditions settings."""
 
     enabled: bool = False
@@ -413,7 +425,7 @@ class Roads511Config:
 
 
 @dataclass
-class FIRMSConfig:
+class FIRMSConfig(_SourcedFeed):
     """NASA FIRMS satellite fire hotspot settings."""
 
     enabled: bool = False
@@ -424,6 +436,16 @@ class FIRMSConfig:
     day_range: int = 1  # 1-10 days of data
     confidence_min: str = "nominal"  # low, nominal, high
     proximity_km: float = 10.0  # km to match known fire
+
+
+@dataclass
+class CentralConsumerConfig:
+    """Connection settings for the Central NATS JetStream consumer (v0.4)."""
+
+    enabled: bool = False
+    url: str = "nats://central.echo6.mesh:4222"
+    durable: str = "meshai-consumer"
+    connect_timeout: float = 10.0
 
 
 @dataclass
@@ -442,6 +464,7 @@ class EnvironmentalConfig:
     traffic: TomTomConfig = field(default_factory=TomTomConfig)
     roads511: Roads511Config = field(default_factory=Roads511Config)
     firms: FIRMSConfig = field(default_factory=FIRMSConfig)
+    central: CentralConsumerConfig = field(default_factory=CentralConsumerConfig)
 
 
 @dataclass

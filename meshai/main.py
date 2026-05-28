@@ -49,6 +49,7 @@ class MeshAI:
         self.event_bus = None  # Notification pipeline EventBus (v0.3)
         self._pipeline_scheduler = None  # DigestScheduler from start_pipeline()
         self.env_store = None  # Environmental feeds store
+        self._central_consumer = None  # Central NATS consumer (v0.4)
         self._last_sub_check: float = 0.0
         self.router: Optional[MessageRouter] = None
         self.responder: Optional[Responder] = None
@@ -89,6 +90,10 @@ class MeshAI:
             from .notifications.pipeline import start_pipeline
             self._pipeline_scheduler = await start_pipeline(self.event_bus, self.config)
             logger.info("Notification pipeline started")
+
+            from .central.consumer import CentralConsumer
+            self._central_consumer = CentralConsumer(self.config.environmental, self.event_bus)
+            await self._central_consumer.start()
 
         logger.info("MeshAI started successfully")
 
@@ -182,6 +187,9 @@ class MeshAI:
         if self._pipeline_scheduler is not None:
             from .notifications.pipeline import stop_pipeline
             await stop_pipeline(self._pipeline_scheduler)
+
+        if self._central_consumer is not None:
+            await self._central_consumer.stop()
 
         if self.connector:
             self.connector.disconnect()

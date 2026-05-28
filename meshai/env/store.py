@@ -29,49 +29,53 @@ class EnvironmentalStore:
         self._region_anchors = region_anchors or []
 
         # Create adapter instances based on config
-        if config.nws.enabled:
+        if config.nws.enabled and config.nws.feed_source == "native":
             from .nws import NWSAlertsAdapter
             self._adapters["nws"] = NWSAlertsAdapter(config.nws)
 
-        if config.swpc.enabled:
+        if config.swpc.enabled and config.swpc.feed_source == "native":
             from .swpc import SWPCAdapter
             self._adapters["swpc"] = SWPCAdapter(config.swpc)
 
-        if config.ducting.enabled:
+        if config.ducting.enabled and config.ducting.feed_source == "native":
             from .ducting import DuctingAdapter
             self._adapters["ducting"] = DuctingAdapter(config.ducting)
 
-        if config.fires.enabled:
+        if config.fires.enabled and config.fires.feed_source == "native":
             from .fires import NICFFiresAdapter
             self._adapters["nifc"] = NICFFiresAdapter(config.fires, self._region_anchors)
 
-        if config.avalanche.enabled:
+        if config.avalanche.enabled and config.avalanche.feed_source == "native":
             from .avalanche import AvalancheAdapter
             self._adapters["avalanche"] = AvalancheAdapter(config.avalanche)
 
-        if config.usgs.enabled:
+        if config.usgs.enabled and config.usgs.feed_source == "native":
             from .usgs import USGSStreamsAdapter
             self._adapters["usgs"] = USGSStreamsAdapter(config.usgs)
 
-        if config.usgs_quake.enabled:
+        if config.usgs_quake.enabled and config.usgs_quake.feed_source == "native":
             from .usgs_quake import USGSQuakeAdapter
             self._adapters["usgs_quake"] = USGSQuakeAdapter(config.usgs_quake)
 
-        if config.traffic.enabled:
+        if config.traffic.enabled and config.traffic.feed_source == "native":
             from .traffic import TomTomTrafficAdapter
             self._adapters["traffic"] = TomTomTrafficAdapter(config.traffic)
 
-        if config.roads511.enabled:
+        if config.roads511.enabled and config.roads511.feed_source == "native":
             from .roads511 import Roads511Adapter
             self._adapters["roads511"] = Roads511Adapter(config.roads511)
 
         # FIRMS needs reference to NIFC adapter for cross-referencing
-        if config.firms.enabled:
+        if config.firms.enabled and config.firms.feed_source == "native":
             from .firms import FIRMSAdapter
             fires_adapter = self._adapters.get("nifc")
             self._firms = FIRMSAdapter(config.firms, self._region_anchors, fires_adapter)
             self._adapters["firms"] = self._firms
 
+        _central = [n for n in ("nws", "swpc", "ducting", "fires", "avalanche", "usgs", "usgs_quake", "traffic", "roads511", "firms")
+                    if getattr(getattr(config, n, None), "feed_source", "native") == "central"]
+        if _central:
+            logger.debug("Adapters sourced from Central (native skipped): %s", _central)
         logger.info(f"EnvironmentalStore initialized with {len(self._adapters)} adapters")
 
     def refresh(self) -> bool:
