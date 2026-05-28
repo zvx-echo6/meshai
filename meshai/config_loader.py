@@ -78,6 +78,7 @@ SECRET_FIELDS: set[str] = {
     "environmental.traffic.api_key",
     "environmental.firms.map_key",
     "notifications.rules.*.smtp_password",
+    "notifications.toggles.*.smtp_password",
 }
 
 # Secret env var names expected in .env

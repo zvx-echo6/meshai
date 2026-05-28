@@ -388,6 +388,28 @@ export default function Environment() {
         </div>
       )}
 
+      {/* Central Connection (v0.5) -- NATS source for adapters set to central */}
+      {env.central && (
+        <div className="border border-[#1e2a3a] rounded-lg p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-sm font-medium text-slate-300">Central Connection</span>
+              <p className="text-xs text-slate-600">NATS JetStream source for any adapter set to "central"</p>
+            </div>
+            <Toggle label="" checked={!!env.central.enabled}
+                    onChange={(v) => up({ central: { ...env.central!, enabled: v } })} />
+          </div>
+          <div className={env.central.enabled ? 'space-y-3' : 'space-y-3 opacity-40 pointer-events-none select-none'}>
+            <TextInput label="URL" value={env.central.url || ''}
+                       onChange={(v) => up({ central: { ...env.central!, url: v } })}
+                       placeholder="nats://central.echo6.mesh:4222" />
+            <TextInput label="Durable" value={env.central.durable || ''}
+                       onChange={(v) => up({ central: { ...env.central!, durable: v } })}
+                       placeholder="meshai-v04" />
+          </div>
+        </div>
+      )}
+
       {/* Family tabs */}
       <div className="flex gap-1 border-b border-border overflow-x-auto">
         {FAMILIES.map(({ key, label, icon: Icon }) => (

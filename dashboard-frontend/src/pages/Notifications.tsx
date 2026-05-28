@@ -3,7 +3,8 @@ import {
   Save, RotateCcw, RefreshCw, Plus, Trash2, ChevronDown, ChevronRight,
   Check, X, Eye as EyeIcon, EyeOff, Send, Clock, Zap,
   Calendar, AlertTriangle, Copy, Moon, AlertCircle, Layers,
-  Wifi, WifiOff, Mail, Globe, Radio, MessageSquare
+  Wifi, WifiOff, Mail, Globe, Radio, MessageSquare,
+  Activity, Cloud, Flame, Car, Snowflake, Mountain, MapPin
 } from 'lucide-react'
 import ChannelPicker from '@/components/ChannelPicker'
 import NodePicker from '@/components/NodePicker'
@@ -37,12 +38,33 @@ interface NotificationRuleConfig {
   override_quiet: boolean
 }
 
+interface NotificationToggle {
+  name: string
+  enabled: boolean
+  min_severity: string
+  regions: string[]
+  severity_channels: Record<string, string[]>
+  quiet_hours_override: boolean
+  broadcast_channel: number | null
+  node_ids: string[]
+  smtp_host: string
+  smtp_port: number
+  smtp_user: string
+  smtp_password: string
+  smtp_tls: boolean
+  from_address: string
+  recipients: string[]
+  webhook_url: string
+  webhook_headers: Record<string, string>
+}
+
 interface NotificationsConfig {
   enabled: boolean
   quiet_hours_enabled: boolean
   quiet_hours_start: string
   quiet_hours_end: string
   rules: NotificationRuleConfig[]
+  toggles?: Record<string, NotificationToggle>
 }
 
 interface AlertCategory {
@@ -1340,6 +1362,105 @@ function NotificationRuleCard({
 }
 
 // Main Notifications Page Component
+const TOGGLE_FAMILY_META: { key: string; label: string; Icon: typeof Activity }[] = [
+  { key: 'mesh_health', label: 'Mesh Health', Icon: Activity },
+  { key: 'weather', label: 'Weather', Icon: Cloud },
+  { key: 'fire', label: 'Fire', Icon: Flame },
+  { key: 'rf_propagation', label: 'RF Propagation', Icon: Radio },
+  { key: 'roads', label: 'Roads', Icon: Car },
+  { key: 'avalanche', label: 'Avalanche', Icon: Snowflake },
+  { key: 'seismic', label: 'Seismic', Icon: Mountain },
+  { key: 'tracking', label: 'Tracking', Icon: MapPin },
+]
+const TOGGLE_CHANNELS = ['digest', 'mesh_broadcast', 'mesh_dm', 'email', 'webhook']
+const TOGGLE_SEVERITIES = ['routine', 'priority', 'immediate']
+
+function MasterToggles({ toggles, onChange }: {
+  toggles: Record<string, NotificationToggle>
+  onChange: (t: Record<string, NotificationToggle>) => void
+}) {
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const upd = (fam: string, patch: Partial<NotificationToggle>) =>
+    onChange({ ...toggles, [fam]: { ...(toggles[fam] || {}), name: fam, ...patch } as NotificationToggle })
+  return (
+    <div className="space-y-3 mb-8">
+      <div className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+        Master Toggles
+        <InfoButton info="Per-family notification policy: enable a family, set its severity threshold, choose which channels fire at each severity, and scope to regions (PagerDuty/Grafana-style)." />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {TOGGLE_FAMILY_META.map(({ key, label, Icon }) => {
+          const t = (toggles[key] || ({} as NotificationToggle))
+          const isOpen = expanded === key
+          const chanCount = Object.values(t.severity_channels || {}).reduce((n, arr) => n + ((arr as string[])?.length || 0), 0)
+          const regionCount = (t.regions || []).length
+          return (
+            <div key={key} className="border border-[#1e2a3a] rounded-lg p-3">
+              <div className="flex items-center justify-between">
+                <button type="button" onClick={() => setExpanded(isOpen ? null : key)}
+                        className="flex items-center gap-2 text-sm text-slate-200">
+                  <Icon size={15} /> {label}
+                  {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </button>
+                <Toggle label="" checked={!!t.enabled} onChange={(v) => upd(key, { enabled: v })} />
+              </div>
+              {!isOpen && (
+                <div className="text-xs text-slate-600 mt-1">
+                  {t.enabled
+                    ? `${regionCount || 'all'} region${regionCount === 1 ? '' : 's'}, ${chanCount} channel${chanCount === 1 ? '' : 's'} at ${t.min_severity || 'priority'}+`
+                    : 'OFF'}
+                </div>
+              )}
+              {isOpen && (
+                <div className={`mt-3 space-y-3 ${t.enabled ? '' : 'opacity-40 pointer-events-none select-none'}`}>
+                  <SeveritySelector value={t.min_severity || 'priority'} onChange={(v) => upd(key, { min_severity: v })} />
+                  <div className="text-xs text-slate-500">Severity &rarr; channels</div>
+                  <table className="text-xs w-full">
+                    <thead>
+                      <tr><th></th>{TOGGLE_CHANNELS.map((c) => <th key={c} className="text-slate-500 font-normal px-1">{c.replace('_', ' ')}</th>)}</tr>
+                    </thead>
+                    <tbody>
+                      {TOGGLE_SEVERITIES.map((sev) => (
+                        <tr key={sev}>
+                          <td className="text-slate-400 pr-2">{sev}</td>
+                          {TOGGLE_CHANNELS.map((ch) => {
+                            const on = (t.severity_channels?.[sev] || []).includes(ch)
+                            return (
+                              <td key={ch} className="text-center">
+                                <input type="checkbox" checked={on} onChange={(e) => {
+                                  const cur: Record<string, string[]> = { ...(t.severity_channels || {}) }
+                                  const arr = new Set(cur[sev] || [])
+                                  if (e.target.checked) arr.add(ch); else arr.delete(ch)
+                                  cur[sev] = Array.from(arr)
+                                  upd(key, { severity_channels: cur })
+                                }} />
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <ListInput label="Regions (empty = all)" value={t.regions || []} onChange={(v) => upd(key, { regions: v })} placeholder="Add region..." />
+                  <Toggle label="Quiet-hours override (immediate only)" checked={!!t.quiet_hours_override} onChange={(v) => upd(key, { quiet_hours_override: v })} />
+                  <div className="text-xs text-slate-500 pt-1">Channel config</div>
+                  <NumberInput label="Broadcast channel" value={t.broadcast_channel ?? 0} onChange={(v) => upd(key, { broadcast_channel: v })} />
+                  <ListInput label="DM node IDs" value={t.node_ids || []} onChange={(v) => upd(key, { node_ids: v })} placeholder="!nodeid" />
+                  <ListInput label="Email recipients" value={t.recipients || []} onChange={(v) => upd(key, { recipients: v })} placeholder="ops@example.com" />
+                  <TextInput label="SMTP host" value={t.smtp_host || ''} onChange={(v) => upd(key, { smtp_host: v })} placeholder="smtp.example.com" />
+                  <NumberInput label="SMTP port" value={t.smtp_port ?? 587} onChange={(v) => upd(key, { smtp_port: v })} />
+                  <TextInput label="Webhook URL" value={t.webhook_url || ''} onChange={(v) => upd(key, { webhook_url: v })} placeholder="https://..." />
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+
 export default function Notifications() {
   const [config, setConfig] = useState<NotificationsConfig | null>(null)
   const [originalConfig, setOriginalConfig] = useState<NotificationsConfig | null>(null)
@@ -1801,6 +1922,14 @@ export default function Notifications() {
                 </>
               )}
             </div>
+
+            {/* Master Toggles */}
+            {config.toggles && (
+              <MasterToggles
+                toggles={config.toggles}
+                onChange={(t) => setConfig({ ...config, toggles: t })}
+              />
+            )}
 
             {/* Rules Section */}
             <div className="space-y-3">

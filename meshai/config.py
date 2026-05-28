@@ -480,6 +480,7 @@ class NotificationRuleConfig:
     # Condition trigger fields
     categories: list = field(default_factory=list)  # Empty = all categories
     min_severity: str = "routine"
+    region_scope: list = field(default_factory=list)  # [] = all regions
 
     # Schedule trigger fields
     schedule_frequency: str = "daily"  # daily, twice_daily, weekly, custom
@@ -523,6 +524,56 @@ class NotificationRuleConfig:
 
 
 @dataclass
+class NotificationToggle:
+    """Per-family master toggle: severity threshold + region scope + per-severity
+    channel routing (PagerDuty/Grafana-style notification policy)."""
+
+    name: str = ""
+    enabled: bool = False
+    min_severity: str = "priority"  # routine|priority|immediate
+    regions: list = field(default_factory=list)  # [] = all regions
+    # severity -> list of channel types (digest|mesh_broadcast|mesh_dm|email|webhook)
+    severity_channels: dict = field(default_factory=dict)
+    quiet_hours_override: bool = True  # immediate-only quiet-hours bypass
+    # per-channel delivery config (mirrors NotificationRuleConfig channel fields)
+    broadcast_channel: Optional[int] = None
+    node_ids: list = field(default_factory=list)
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_tls: bool = True
+    from_address: str = ""
+    recipients: list = field(default_factory=list)
+    webhook_url: str = ""
+    webhook_headers: dict = field(default_factory=dict)
+
+
+TOGGLE_FAMILIES = [
+    "mesh_health", "weather", "fire", "rf_propagation",
+    "roads", "avalanche", "seismic", "tracking",
+]
+
+
+def _default_toggles() -> dict:
+    """8 family master-toggles, all opt-in (disabled) by default."""
+    return {
+        fam: NotificationToggle(
+            name=fam,
+            enabled=False,
+            min_severity="priority",
+            regions=[],
+            severity_channels={
+                "priority": ["mesh_broadcast"],
+                "immediate": ["mesh_broadcast", "mesh_dm"],
+            },
+            quiet_hours_override=True,
+        )
+        for fam in TOGGLE_FAMILIES
+    }
+
+
+@dataclass
 class TogglesConfig:
     """Master toggle filter settings."""
 
@@ -545,7 +596,7 @@ class NotificationsConfig:
     quiet_hours_enabled: bool = True  # Master toggle for quiet hours
     quiet_hours_start: str = "22:00"
     quiet_hours_end: str = "06:00"
-    toggles: TogglesConfig = field(default_factory=TogglesConfig)
+    toggles: dict = field(default_factory=_default_toggles)  # family -> NotificationToggle
     digest: DigestConfig = field(default_factory=DigestConfig)
     rules: list = field(default_factory=list)  # List of NotificationRuleConfig
 
@@ -687,6 +738,11 @@ def _dict_to_dataclass(cls, data: dict):
                     _dict_to_dataclass(NotificationRuleConfig, r) if isinstance(r, dict) else r
                     for r in value["rules"]
                 ]
+            if "toggles" in value and isinstance(value["toggles"], dict):
+                notifications.toggles = {
+                    name: _dict_to_dataclass(NotificationToggle, t) if isinstance(t, dict) else t
+                    for name, t in value["toggles"].items()
+                }
             if "channels" in value and isinstance(value["channels"], list) and value["channels"]:
                 _migrate_legacy_channels(notifications, value)
             kwargs[key] = notifications
@@ -734,7 +790,11 @@ def _dict_to_dataclass(cls, data: dict):
         elif key == "dashboard" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(DashboardConfig, value)
         elif key == "toggles" and isinstance(value, dict):
-            kwargs[key] = _dict_to_dataclass(TogglesConfig, value)
+            # v0.5: notifications.toggles is a dict of family -> NotificationToggle
+            kwargs[key] = {
+                fam: _dict_to_dataclass(NotificationToggle, t) if isinstance(t, dict) else t
+                for fam, t in value.items()
+            }
         elif key == "digest" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(DigestConfig, value)
         else:
@@ -761,6 +821,12 @@ def _dataclass_to_dict(obj) -> dict:
                 _dataclass_to_dict(item) if hasattr(item, "__dataclass_fields__") else item
                 for item in value
             ]
+        elif isinstance(value, dict):
+            # Handle dict of dataclasses (like notifications.toggles)
+            result[field_name] = {
+                k: _dataclass_to_dict(v) if hasattr(v, "__dataclass_fields__") else v
+                for k, v in value.items()
+            }
         else:
             result[field_name] = value
     return result

@@ -35,6 +35,24 @@ VALID_TOGGLES = frozenset({
 })
 
 
+# Prefix fallback for categories not enumerated in ALERT_CATEGORIES (resolves the
+# v0.4 "category -> other" gap for phases 2.7-2.14 emitted categories).
+_TOGGLE_PREFIX_FALLBACK = [
+    ("weather", "weather"),
+    ("stream", "weather"),
+    ("wildfire", "fire"),
+    ("fire", "fire"),
+    ("earthquake", "seismic"),
+    ("quake", "seismic"),
+    ("traffic", "roads"),
+    ("road", "roads"),
+    ("geomagnetic", "rf_propagation"),
+    ("solar_radiation", "rf_propagation"),
+    ("rf_", "rf_propagation"),
+    ("avalanche", "avalanche"),
+]
+
+
 ALERT_CATEGORIES = {
     # Infrastructure alerts
     "infra_offline": {
@@ -352,4 +370,7 @@ def get_toggle(category_name: str) -> Optional[str]:
     cat_info = ALERT_CATEGORIES.get(category_name)
     if cat_info:
         return cat_info.get("toggle")
+    for prefix, toggle in _TOGGLE_PREFIX_FALLBACK:
+        if category_name.startswith(prefix):
+            return toggle
     return None
