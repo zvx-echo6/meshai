@@ -53,6 +53,10 @@ class EnvironmentalStore:
             from .usgs import USGSStreamsAdapter
             self._adapters["usgs"] = USGSStreamsAdapter(config.usgs)
 
+        if config.usgs_quake.enabled:
+            from .usgs_quake import USGSQuakeAdapter
+            self._adapters["usgs_quake"] = USGSQuakeAdapter(config.usgs_quake)
+
         if config.traffic.enabled:
             from .traffic import TomTomTrafficAdapter
             self._adapters["traffic"] = TomTomTrafficAdapter(config.traffic)

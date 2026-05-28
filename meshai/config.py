@@ -378,6 +378,19 @@ class USGSConfig:
 
 
 @dataclass
+class USGSQuakeConfig:
+    """USGS earthquake feed settings (Phase 2.14)."""
+
+    enabled: bool = False
+    tick_seconds: int = 300
+    feed_url: str = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson"
+    min_magnitude: float = 2.5
+    # [west, south, east, north] -- Magic Valley -> Borah Peak -> Yellowstone
+    bbox: list = field(default_factory=lambda: [-115.5, 42.0, -110.0, 45.2])
+    region: str = "magic_valley"
+
+
+@dataclass
 class TomTomConfig:
     """TomTom traffic flow settings."""
 
@@ -425,6 +438,7 @@ class EnvironmentalConfig:
     fires: NICFFiresConfig = field(default_factory=NICFFiresConfig)
     avalanche: AvalancheConfig = field(default_factory=AvalancheConfig)
     usgs: USGSConfig = field(default_factory=USGSConfig)
+    usgs_quake: USGSQuakeConfig = field(default_factory=USGSQuakeConfig)
     traffic: TomTomConfig = field(default_factory=TomTomConfig)
     roads511: Roads511Config = field(default_factory=Roads511Config)
     firms: FIRMSConfig = field(default_factory=FIRMSConfig)
@@ -673,6 +687,8 @@ def _dict_to_dataclass(cls, data: dict):
             kwargs[key] = _dict_to_dataclass(AvalancheConfig, value)
         elif key == "usgs" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(USGSConfig, value)
+        elif key == "usgs_quake" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(USGSQuakeConfig, value)
         elif key == "traffic" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(TomTomConfig, value)
         elif key == "roads511" and isinstance(value, dict):
