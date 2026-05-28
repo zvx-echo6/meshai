@@ -46,6 +46,21 @@ ADAPTER_SUBJECTS: dict[str, list[str]] = {
     "traffic": ["central.traffic.>"],
 }
 
+# Bridge between Central's adapter taxonomy and meshai's family-tab source names.
+# Central names some adapters differently (e.g. "wfigs_incidents" vs meshai's
+# "fires"); remap so dashboard per-adapter event filtering (which keys on the
+# native source name) works whether a feed is native or central. 1:1 names
+# (nws, usgs_quake, firms) are intentionally omitted -> passthrough.
+CENTRAL_ADAPTER_TO_SOURCE: dict[str, str] = {
+    "wfigs_incidents": "fires",
+    "wfigs_perimeters": "fires",
+    "nwis": "usgs",
+    "swpc_alerts": "swpc",
+    "swpc_kindex": "swpc",
+    "swpc_protons": "swpc",
+    "wzdx": "traffic",
+}
+
 # Central hierarchical category prefix -> meshai flat category.
 # First matching prefix wins; order matters (most specific first).
 _CATEGORY_MAP: list[tuple[str, str]] = [
@@ -212,8 +227,12 @@ class CentralConsumer:
         if exp is not None:
             kwargs["expires"] = exp
 
+        raw_adapter = inner.get("adapter") or "central"
+        source = CENTRAL_ADAPTER_TO_SOURCE.get(raw_adapter, raw_adapter)
+        if source != raw_adapter:
+            logger.debug("Central adapter %r -> meshai source %r", raw_adapter, source)
         return make_event(
-            source=inner.get("adapter") or "central",
+            source=source,
             category=category,
             severity=map_severity(inner.get("severity")),
             **kwargs,

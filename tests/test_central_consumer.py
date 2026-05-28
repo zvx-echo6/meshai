@@ -163,3 +163,28 @@ def test_subject_domain_fallback_for_unmapped_category():
            "data": {"road": "I-44"}}}
     ev = c._handle("central.traffic.work_zone.ok", json.dumps(env).encode())
     assert ev is not None and ev.category == "traffic_congestion"
+
+
+@pytest.mark.parametrize("adapter,expected", [
+    ("wfigs_incidents", "fires"),
+    ("nwis", "usgs"),
+    ("swpc_alerts", "swpc"),
+    ("wzdx", "traffic"),
+    ("nws", "nws"),                       # 1:1 passthrough
+    ("experimental_foo", "experimental_foo"),  # unknown -> passthrough
+])
+def test_central_adapter_source_remap(adapter, expected):
+    """D.2: Central adapter names map to meshai source names (unknown passes through)."""
+    import json
+    from meshai.central.consumer import CentralConsumer
+    from meshai.config import EnvironmentalConfig
+    from meshai.notifications.pipeline.bus import EventBus
+    rec = []
+    bus = EventBus(); bus.subscribe(rec.append)
+    c = CentralConsumer(EnvironmentalConfig(), bus)
+    env = {"id": "e1", "data": {"id": "e1", "adapter": adapter, "category": "wx.alert.x",
+           "time": "2026-05-28T00:00:00Z", "severity": 1,
+           "geo": {"centroid": [-114.0, 42.0], "primary_region": "US-ID", "regions": ["US-ID"]},
+           "data": {}}}
+    ev = c._handle("central.wx.alert.x", json.dumps(env).encode())
+    assert ev is not None and ev.source == expected
