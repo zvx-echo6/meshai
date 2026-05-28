@@ -5,9 +5,11 @@ import logging
 import math
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+from meshai.notifications.events import Event, make_event
 
 if TYPE_CHECKING:
     from ..config import DuctingConfig
@@ -36,6 +38,8 @@ class DuctingAdapter:
         self._consecutive_errors = 0
         self._last_error = None
         self._is_loaded = False
+        self._events = []
+        self._last_tier = None
 
     def tick(self) -> bool:
         """Execute one polling tick.
@@ -255,6 +259,187 @@ class DuctingAdapter:
                 "lon": self._lon,
             },
         }
+
+        self._update_events()
+
+    # Tier model (enhancement strength, ascending):
+    #   normal < super_refraction < duct < surface_duct
+    _TIER_ORDER = ["normal", "super_refraction", "duct", "surface_duct"]
+    # Gradient (M-units/km) at the top (more-enhanced side) of each tier:
+    #   normal/super_refraction = 79 ; super_refraction/duct = 0 ; duct/surface_duct = -100
+    _TIER_TOP_BOUNDARY = {0: 79.0, 1: 0.0, 2: -100.0}
+    TIER_DEADBAND = 5.0  # M-units of hysteresis on gradient boundaries (anti-flap)
+
+    _TIER_CATEGORY = {
+        "super_refraction": "rf_anomalous_propagation",
+        "duct": "rf_ducting_enhancement",
+        "surface_duct": "rf_ducting_enhancement",
+    }
+    _TIER_SEVERITY = {
+        "super_refraction": "routine",
+        "duct": "priority",
+        "surface_duct": "immediate",
+    }
+    _TIER_CODE = {
+        "super_refraction": "superrefraction",
+        "duct": "duct",
+        "surface_duct": "surfaceduct",
+    }
+    _TIER_LABEL = {
+        "super_refraction": "Super-refraction (enhanced range)",
+        "duct": "Tropospheric ducting (elevated)",
+        "surface_duct": "Tropospheric ducting (surface)",
+    }
+
+    def _raw_tier(self, min_gradient, condition) -> str:
+        """Map the current min M-gradient + condition to a tier (no hysteresis)."""
+        if min_gradient is None or min_gradient >= 79:
+            return "normal"
+        if min_gradient >= 0:
+            return "super_refraction"
+        # min_gradient < 0 -> ducting; strongest when it reaches the surface or is very steep
+        if condition == "surface_duct" or min_gradient < -100:
+            return "surface_duct"
+        return "duct"
+
+    def _apply_hysteresis(self, raw_tier, min_gradient, last_tier) -> str:
+        """Commit a tier change only past a deadband, to avoid boundary flapping.
+
+        The most-severe tier (surface/strong duct) is categorical (the duct
+        reaches the ground) and is never held back or held onto by the
+        gradient deadband -- it fires promptly and clears promptly.
+        """
+        if last_tier is None or raw_tier == last_tier or min_gradient is None:
+            return raw_tier
+        if raw_tier == "surface_duct" or last_tier == "surface_duct":
+            return raw_tier
+        idx_raw = self._TIER_ORDER.index(raw_tier)
+        idx_last = self._TIER_ORDER.index(last_tier)
+        if idx_raw > idx_last:
+            # toward a more-enhanced tier (gradient dropped)
+            boundary = self._TIER_TOP_BOUNDARY[idx_last]
+            return raw_tier if min_gradient <= boundary - self.TIER_DEADBAND else last_tier
+        # toward a less-enhanced tier (gradient rose)
+        boundary = self._TIER_TOP_BOUNDARY[idx_last - 1]
+        return raw_tier if min_gradient >= boundary + self.TIER_DEADBAND else last_tier
+
+    def _update_events(self):
+        """Derive the current propagation tier (with hysteresis) and stage events.
+
+        Mirrors the SWPC pattern: get_events() returns the current notable tier
+        every tick with a STABLE per-tier event_id, so the store dedups a
+        sustained tier and only a tier change re-emits. A 'normal' tier stages
+        nothing.
+        """
+        self._events = []
+        if not self._status:
+            return
+
+        min_gradient = self._status.get("min_gradient")
+        condition = self._status.get("condition")
+
+        raw_tier = self._raw_tier(min_gradient, condition)
+        tier = self._apply_hysteresis(raw_tier, min_gradient, self._last_tier)
+        self._last_tier = tier
+        self._status["tier"] = tier
+
+        if tier == "normal":
+            return  # no enhancement -- nothing to emit
+
+        now = time.time()
+        loc = f"{round(self._lat, 2)}_{round(self._lon, 2)}"
+        label = self._TIER_LABEL[tier]
+        assessment = self._status.get("assessment", "")
+        headline = f"{label} -- {assessment}".strip(" -") if assessment else label
+
+        self._events.append({
+            "source": "ducting",
+            "event_id": f"ducting_{self._TIER_CODE[tier]}_{loc}",  # STABLE per tier+location
+            "event_type": label,
+            "tier": tier,
+            "severity": self._TIER_SEVERITY[tier],
+            "headline": headline,
+            "min_gradient": min_gradient,
+            "duct_base_m": self._status.get("duct_base_m"),
+            "duct_thickness_m": self._status.get("duct_thickness_m"),
+            "surface_duct": (tier == "surface_duct"),
+            "lat": self._lat,
+            "lon": self._lon,
+            "expires": now + 6 * 3600,  # outlast the 3h poll gap so a sustained tier dedups
+            "fetched_at": now,
+        })
+
+    def get_events(self) -> list:
+        """Get current propagation-enhancement events (tier-based)."""
+        return self._events
+
+    def to_event(self, evt: dict) -> Optional["Event"]:
+        """Translate a stored ducting tier event into a pipeline Event.
+
+        Category from tier; tier-mapped severity passed through. Ducting is
+        geographic, so the Event carries the assessment location's lat/lon.
+        The stable per-tier event_id is the group_key and sole inhibit_key;
+        a tier escalation yields a new key and re-notifies.
+
+        Args:
+            evt: Internal event dict from get_events()
+
+        Returns:
+            Event instance, or None for a normal/missing tier, missing
+            location, or missing gradient.
+        """
+        try:
+            tier = evt.get("tier")
+            if not tier or tier == "normal":
+                return None  # no enhancement -- not actionable
+
+            lat = evt.get("lat")
+            lon = evt.get("lon")
+            if lat is None or lon is None:
+                return None  # missing location
+
+            if evt.get("min_gradient") is None:
+                return None  # missing the driving quantity
+
+            event_id = evt.get("event_id")
+            if not event_id:
+                return None
+
+            category = self._TIER_CATEGORY.get(tier)
+            if category is None:
+                return None  # unknown tier
+
+            severity = evt.get("severity", "routine")
+            title = evt.get("event_type") or "Tropospheric propagation enhancement"
+
+            summary_parts = [title]
+            mg = evt.get("min_gradient")
+            if mg is not None:
+                summary_parts.append(f"min M-gradient {mg}/km")
+            base = evt.get("duct_base_m")
+            thick = evt.get("duct_thickness_m")
+            if base is not None and thick:
+                summary_parts.append(f"duct base {int(base)} m, ~{int(thick)} m thick")
+            if evt.get("surface_duct"):
+                summary_parts.append("surface duct")
+            summary = " | ".join(summary_parts)[:300]
+
+            return make_event(
+                source="ducting",
+                category=category,
+                severity=severity,
+                title=title,
+                summary=summary,
+                timestamp=evt.get("fetched_at"),
+                expires=evt.get("expires"),
+                lat=lat,
+                lon=lon,
+                group_key=event_id,
+                inhibit_keys=[event_id],
+            )
+        except Exception:
+            logger.exception(f"Ducting to_event failed for evt: {evt.get('event_id')}")
+            return None
 
     def get_status(self) -> dict:
         """Get current ducting status."""

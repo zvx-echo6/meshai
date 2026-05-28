@@ -101,6 +101,12 @@ class EnvironmentalStore:
                     self._emit_event(adapter, evt)
         elif name == "ducting":
             self._ducting_status = adapter.get_status()
+            for evt in adapter.get_events():
+                key = (evt["source"], evt["event_id"])
+                is_new = key not in self._events
+                self._events[key] = evt
+                if is_new and self._event_bus and hasattr(adapter, "to_event"):
+                    self._emit_event(adapter, evt)
         else:
             for evt in adapter.get_events():
                 key = (evt["source"], evt["event_id"])
