@@ -39,7 +39,8 @@ VALID_TOGGLES = frozenset({
 # v0.4 "category -> other" gap for phases 2.7-2.14 emitted categories).
 _TOGGLE_PREFIX_FALLBACK = [
     ("weather", "weather"),
-    ("stream", "weather"),
+    # v0.5.2: stream_* (USGS hydro) belongs with Geohazards, not weather
+    ("stream", "seismic"),
     ("wildfire", "fire"),
     ("fire", "fire"),
     ("earthquake", "seismic"),
@@ -274,14 +275,19 @@ ALERT_CATEGORIES = {
         "description": "River gauge exceeds NWS flood stage threshold",
         "default_severity": "priority",
         "example_message": "🌊 Stream Flood Warning: Snake River nr Twin Falls at 12.8 ft — Minor Flood Stage is 10.5 ft.",
-        "toggle": "weather",
+        # v0.5.2: moved weather→seismic to match the GUI Geohazards family tab
+        # (Environment.tsx FAMILIES key='geohazards' groups usgs_quake+usgs+avalanche).
+        # 'seismic' is the canonical Geohazards toggle in VALID_TOGGLES; backend still
+        # has separate avalanche/seismic toggles, but USGS hydro lives with USGS quake.
+        "toggle": "seismic",
     },
     "stream_high_water": {
         "name": "Stream High Water",
         "description": "River gauge approaching flood stage — monitoring recommended",
         "default_severity": "routine",
         "example_message": "🌊 High Water: Snake River at 9.8 ft — Action Stage is 9.0 ft. Monitor conditions.",
-        "toggle": "weather",
+        # v0.5.2: moved weather→seismic — see stream_flood_warning above
+        "toggle": "seismic",
     },
 
     # Environmental - Roads

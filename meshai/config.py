@@ -535,6 +535,9 @@ class NotificationToggle:
     # severity -> list of channel types (digest|mesh_broadcast|mesh_dm|email|webhook)
     severity_channels: dict = field(default_factory=dict)
     quiet_hours_override: bool = True  # immediate-only quiet-hours bypass
+    # v0.5.2: staleness drop + per-toggle cooldown (Matt's spam fix)
+    freshness_seconds: int = 600   # drop events older than this at dispatcher entrance
+    cooldown_seconds: int = 300    # per (toggle, category, region) throttle window
     # per-channel delivery config (mirrors NotificationRuleConfig channel fields)
     broadcast_channel: Optional[int] = None
     node_ids: list = field(default_factory=list)
