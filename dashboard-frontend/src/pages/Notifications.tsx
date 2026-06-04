@@ -36,6 +36,7 @@ interface NotificationRuleConfig {
   webhook_headers: Record<string, string>
   cooldown_minutes: number
   override_quiet: boolean
+  region_scope: string[]
 }
 
 interface NotificationToggle {
@@ -73,6 +74,12 @@ interface AlertCategory {
   description: string
   default_severity: string
   example_message: string
+  toggle?: string
+}
+
+interface RegionInfo {
+  name: string
+  local_name?: string
 }
 
 interface RuleStats {
@@ -719,6 +726,7 @@ function NotificationRuleCard({
   rule,
   ruleIndex,
   categories,
+  regions,
   quietHoursEnabled,
   onChange,
   onDelete,
@@ -728,6 +736,7 @@ function NotificationRuleCard({
   rule: NotificationRuleConfig
   ruleIndex: number
   categories: AlertCategory[]
+  regions: RegionInfo[]
   quietHoursEnabled: boolean
   onChange: (r: NotificationRuleConfig) => void
   onDelete: () => void
@@ -790,6 +799,26 @@ function NotificationRuleCard({
       onChange({ ...rule, categories: current.filter(c => c !== catId) })
     } else {
       onChange({ ...rule, categories: [...current, catId] })
+    }
+  }
+
+  const selectManyCategories = (catIds: string[], action: 'add' | 'remove') => {
+    const current = rule.categories || []
+    if (action === 'add') {
+      const merged = Array.from(new Set([...current, ...catIds]))
+      onChange({ ...rule, categories: merged })
+    } else {
+      const drop = new Set(catIds)
+      onChange({ ...rule, categories: current.filter(c => !drop.has(c)) })
+    }
+  }
+
+  const toggleRegion = (regionName: string) => {
+    const current = rule.region_scope || []
+    if (current.includes(regionName)) {
+      onChange({ ...rule, region_scope: current.filter(r => r !== regionName) })
+    } else {
+      onChange({ ...rule, region_scope: [...current, regionName] })
     }
   }
 
@@ -914,7 +943,7 @@ function NotificationRuleCard({
           ) : (
             <Zap size={14} className="text-yellow-400 flex-shrink-0" />
           )}
-          <span className="font-medium text-slate-200 truncate">{rule.name || 'New Rule'}</span>
+          <span className="font-medium text-slate-200 truncate" title={rule.name || undefined}>{rule.name || 'New Rule'}</span>
           {!expanded && (
             <span className={`text-xs truncate hidden sm:block ${!rule.delivery_type ? 'text-amber-400' : 'text-slate-500'}`}>
               {getSummary()}
@@ -922,12 +951,32 @@ function NotificationRuleCard({
           )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
-          {/* Stats badge */}
-          {ruleStats && !expanded && (
-            <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 bg-slate-800 rounded text-xs text-slate-400 mr-2">
-              {ruleStats.last_fired ? formatRelativeTime(ruleStats.last_fired) : 'Never fired'}
-            </span>
-          )}
+          {/* Activity badge */}
+          {!expanded && (() => {
+            const badgeBase = 'hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs mr-2'
+            if (!rule.enabled) {
+              return <span className={`${badgeBase} bg-slate-800 text-slate-500`}>Disabled</span>
+            }
+            if (!ruleStats) return null
+            const count = ruleStats.fire_count || 0
+            const last = ruleStats.last_fired
+            const sevenDaysAgo = (Date.now() / 1000) - 7 * 86400
+            if (count > 0 && last && last >= sevenDaysAgo) {
+              return (
+                <span className={`${badgeBase} bg-green-500/10 text-green-400`} title={`Last fired ${formatRelativeTime(last)}`}>
+                  Active
+                </span>
+              )
+            }
+            if (count > 0 && last) {
+              return (
+                <span className={`${badgeBase} bg-yellow-500/10 text-yellow-400`} title={`Last fired ${formatRelativeTime(last)}`}>
+                  Idle (no recent activity)
+                </span>
+              )
+            }
+            return <span className={`${badgeBase} bg-slate-800 text-slate-400`}>No activity yet</span>
+          })()}
           {/* Source indicators */}
           {!expanded && (
             <div className="hidden md:flex items-center gap-1 mr-2">
@@ -1040,30 +1089,17 @@ function NotificationRuleCard({
               <div className="space-y-2">
                 <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
                   Alert Categories
-                  <InfoButton info="Select which types of alerts trigger this rule. Leave all unchecked to match ALL categories." />
+                  <InfoButton info="Select which types of alerts trigger this rule. Leave all unchecked to match ALL categories. Categories are grouped by family — use the 'All' / 'Clear' buttons in each header to bulk-toggle." />
                 </label>
                 <div className="text-xs text-slate-500 mb-2">
                   {(rule.categories?.length || 0) === 0 ? 'All categories (none selected)' : `${rule.categories?.length} selected`}
                 </div>
-                <div className="max-h-48 overflow-y-auto border border-[#1e2a3a] rounded-lg p-2 space-y-1">
-                  {categories.map((cat) => (
-                    <label
-                      key={cat.id}
-                      onClick={() => toggleCategory(cat.id)}
-                      className="flex items-start gap-2 p-2 rounded hover:bg-[#1e2a3a]/50 cursor-pointer"
-                    >
-                      <div className={`w-4 h-4 mt-0.5 rounded border flex items-center justify-center flex-shrink-0 ${
-                        rule.categories?.includes(cat.id) ? 'bg-accent border-accent' : 'border-slate-600'
-                      }`}>
-                        {rule.categories?.includes(cat.id) && <Check size={12} className="text-white" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm text-slate-200">{cat.name}</div>
-                        <div className="text-xs text-slate-500">{cat.description}</div>
-                      </div>
-                    </label>
-                  ))}
-                </div>
+                <GroupedCategoryPicker
+                  categories={categories}
+                  selected={rule.categories || []}
+                  onToggle={toggleCategory}
+                  onSelectMany={selectManyCategories}
+                />
               </div>
 
               {/* Source health display */}
@@ -1169,6 +1205,44 @@ function NotificationRuleCard({
               )}
             </div>
           )}
+
+          {/* REGIONS section — scope rule to specific regions; empty = all regions */}
+          <div className="space-y-2 p-4 bg-[#0a0e17] rounded-lg border border-[#1e2a3a]">
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
+              <MapPin size={14} />
+              REGIONS
+              <InfoButton info="Limit this rule to alerts from specific regions. Empty selection = all regions (backward compatible). Region names come from /api/regions." />
+            </div>
+            <div className="text-xs text-slate-500">
+              {(rule.region_scope?.length || 0) === 0
+                ? 'All regions (none selected)'
+                : `${rule.region_scope.length} of ${regions.length} selected`}
+            </div>
+            {regions.length === 0 ? (
+              <div className="text-xs text-slate-600 italic">No regions configured.</div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {regions.map(r => {
+                  const on = (rule.region_scope || []).includes(r.name)
+                  return (
+                    <button
+                      key={r.name}
+                      type="button"
+                      onClick={() => toggleRegion(r.name)}
+                      className={`px-3 py-1.5 rounded text-sm transition-colors ${
+                        on
+                          ? 'bg-accent text-white'
+                          : 'bg-[#1e2a3a] text-slate-400 hover:text-slate-200'
+                      }`}
+                      title={r.local_name || r.name}
+                    >
+                      {r.local_name || r.name}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
 
           {/* SEND VIA section */}
           <div className="space-y-4 p-4 bg-[#0a0e17] rounded-lg border border-[#1e2a3a]">
@@ -1372,6 +1446,119 @@ const TOGGLE_FAMILY_META: { key: string; label: string; Icon: typeof Activity }[
   { key: 'seismic', label: 'Seismic', Icon: Mountain },
   { key: 'tracking', label: 'Tracking', Icon: MapPin },
 ]
+
+// Grouped category picker — shows categories family-by-family using TOGGLE_FAMILY_META
+// for icons/labels/order. Each family has a Select-all / Clear control and a count.
+// Categories whose `toggle` field doesn't match a known family fall into "Other".
+function GroupedCategoryPicker({
+  categories,
+  selected,
+  onToggle,
+  onSelectMany,
+}: {
+  categories: AlertCategory[]
+  selected: string[]
+  onToggle: (catId: string) => void
+  onSelectMany: (catIds: string[], action: 'add' | 'remove') => void
+}) {
+  const FAMILY_KEYS = new Set(TOGGLE_FAMILY_META.map(f => f.key))
+  // Group by toggle, preserving family order; collect unknowns into "other".
+  const byFamily = new Map<string, AlertCategory[]>()
+  TOGGLE_FAMILY_META.forEach(f => byFamily.set(f.key, []))
+  const other: AlertCategory[] = []
+  for (const cat of categories) {
+    const fam = cat.toggle
+    if (fam && FAMILY_KEYS.has(fam)) byFamily.get(fam)!.push(cat)
+    else other.push(cat)
+  }
+
+  // Track which families are expanded. Default: any family that has selected items
+  // starts expanded so users can see what's checked.
+  const initialOpen = new Set<string>()
+  for (const [fam, cats] of byFamily) {
+    if (cats.some(c => selected.includes(c.id))) initialOpen.add(fam)
+  }
+  if (other.some(c => selected.includes(c.id))) initialOpen.add('other')
+  const [openFamilies, setOpenFamilies] = useState<Set<string>>(initialOpen)
+  const toggleOpen = (key: string) => {
+    setOpenFamilies(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key); else next.add(key)
+      return next
+    })
+  }
+
+  const renderGroup = (key: string, label: string, Icon: typeof Activity | null, cats: AlertCategory[]) => {
+    if (!cats.length) return null
+    const isOpen = openFamilies.has(key)
+    const ids = cats.map(c => c.id)
+    const selectedInFamily = ids.filter(id => selected.includes(id)).length
+    return (
+      <div key={key} className="border border-[#1e2a3a] rounded">
+        <div className="flex items-center justify-between px-2 py-1.5 bg-[#0d1420]">
+          <button
+            type="button"
+            onClick={() => toggleOpen(key)}
+            className="flex items-center gap-2 text-sm text-slate-200 flex-1 min-w-0"
+          >
+            {isOpen ? <ChevronDown size={14} className="text-slate-500 flex-shrink-0" /> : <ChevronRight size={14} className="text-slate-500 flex-shrink-0" />}
+            {Icon && <Icon size={14} className="text-slate-400 flex-shrink-0" />}
+            <span className="truncate">{label} ({cats.length})</span>
+            {selectedInFamily > 0 && (
+              <span className="ml-1 text-xs text-accent">{selectedInFamily} selected</span>
+            )}
+          </button>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onSelectMany(ids, 'add') }}
+              className="text-xs px-2 py-0.5 rounded text-slate-400 hover:text-accent hover:bg-accent/10"
+              title="Select all in family"
+            >
+              All
+            </button>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onSelectMany(ids, 'remove') }}
+              className="text-xs px-2 py-0.5 rounded text-slate-400 hover:text-red-400 hover:bg-red-500/10"
+              title="Clear family"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+        {isOpen && (
+          <div className="p-1 space-y-1">
+            {cats.map(cat => (
+              <label
+                key={cat.id}
+                onClick={() => onToggle(cat.id)}
+                className="flex items-start gap-2 p-2 rounded hover:bg-[#1e2a3a]/50 cursor-pointer"
+              >
+                <div className={`w-4 h-4 mt-0.5 rounded border flex items-center justify-center flex-shrink-0 ${
+                  selected.includes(cat.id) ? 'bg-accent border-accent' : 'border-slate-600'
+                }`}>
+                  {selected.includes(cat.id) && <Check size={12} className="text-white" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-slate-200">{cat.name}</div>
+                  <div className="text-xs text-slate-500">{cat.description}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="max-h-96 overflow-y-auto border border-[#1e2a3a] rounded-lg p-2 space-y-2">
+      {TOGGLE_FAMILY_META.map(f => renderGroup(f.key, f.label, f.Icon, byFamily.get(f.key) || []))}
+      {renderGroup('other', 'Other', null, other)}
+    </div>
+  )
+}
 const TOGGLE_CHANNELS = ['digest', 'mesh_broadcast', 'mesh_dm', 'email', 'webhook']
 const TOGGLE_SEVERITIES = ['routine', 'priority', 'immediate']
 
@@ -1465,6 +1652,7 @@ export default function Notifications() {
   const [config, setConfig] = useState<NotificationsConfig | null>(null)
   const [originalConfig, setOriginalConfig] = useState<NotificationsConfig | null>(null)
   const [categories, setCategories] = useState<AlertCategory[]>([])
+  const [regions, setRegions] = useState<RegionInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -1476,16 +1664,20 @@ export default function Notifications() {
 
   const fetchConfig = useCallback(async () => {
     try {
-      const [configRes, categoriesRes] = await Promise.all([
+      const [configRes, categoriesRes, regionsRes] = await Promise.all([
         fetch('/api/config/notifications'),
         fetch('/api/notifications/categories'),
+        fetch('/api/regions'),
       ])
       if (!configRes.ok) throw new Error('Failed to fetch notifications config')
       const configData = await configRes.json()
       const categoriesData = await categoriesRes.json()
+      // /api/regions is best-effort — don't block the page if it fails.
+      const regionsData: RegionInfo[] = regionsRes.ok ? await regionsRes.json() : []
       setConfig(configData)
       setOriginalConfig(JSON.parse(JSON.stringify(configData)))
       setCategories(categoriesData)
+      setRegions(Array.isArray(regionsData) ? regionsData : [])
       setHasChanges(false)
       setError(null)
     } catch (err) {
@@ -1570,6 +1762,7 @@ export default function Notifications() {
     webhook_headers: {},
     cooldown_minutes: 10,
     override_quiet: false,
+    region_scope: [],
   })
 
   const addRule = () => {
@@ -1581,7 +1774,9 @@ export default function Notifications() {
     if (!config) return
     const template = RULE_TEMPLATES.find(t => t.id === templateId)
     if (!template) return
-    setConfig({ ...config, rules: [...(config.rules || []), { ...template.rule }] })
+    // Merge over defaults so future NotificationRuleConfig fields (e.g., region_scope)
+    // don't have to be back-filled into every literal template.
+    setConfig({ ...config, rules: [...(config.rules || []), { ...createDefaultRule(), ...template.rule }] })
     setShowTemplates(false)
   }
 
@@ -1949,6 +2144,7 @@ export default function Notifications() {
                   rule={rule}
                   ruleIndex={i}
                   categories={categories}
+                  regions={regions}
                   quietHoursEnabled={config.quiet_hours_enabled ?? true}
                   onChange={(r) => {
                     const newRules = [...(config.rules || [])]
