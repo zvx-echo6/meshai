@@ -64,7 +64,8 @@ _CATEGORY_EMOJI: dict[str, str] = {
     "road_incident": "🚨",
     # Avalanche
     "avalanche_warning": "⛷",
-    "avalanche_considerable": "⛷",
+    "avalanche_watch": "⛷",            # v0.5.7-avalanche
+    "avalanche_considerable": "⛷",     # legacy / forward-compat
     # Mesh health
     "infra_offline": "⚠",
     "critical_node_down": "🚨",
@@ -118,7 +119,8 @@ _CATEGORY_LABEL: dict[str, str] = {
     "road_closure": "ROADS",
     "traffic_congestion": "ROADS",
     "avalanche_warning": "AVY",
-    "avalanche_considerable": "AVY",
+    "avalanche_watch": "AVY",            # v0.5.7-avalanche
+    "avalanche_considerable": "AVY",     # legacy / forward-compat
     "earthquake_event": "QUAKE",
     "earthquake": "QUAKE",
     "critical_node_down": "MESH",

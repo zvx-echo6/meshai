@@ -423,11 +423,33 @@ ALERT_CATEGORIES = {
     },
 
     # Environmental - Avalanche
+    # v0.5.7-avalanche audit (test_alert_categories_avalanche_complete enforces parity):
+    # Central v0.10.0 does NOT ship an avalanche adapter (verified against the
+    # guide TOC + producer src tree); avalanche is native-only in meshai. So
+    # the audit is single-source: meshai/env/avalanche.py emits exactly two
+    # categories based on the NWAC/CAIC danger level:
+    #   danger_level >= 4 (High, Extreme)  -> avalanche_warning
+    #   danger_level == 3 (Considerable)   -> avalanche_watch
+    #   danger_level <= 2 (Low, Moderate)  -> silently dropped (not actionable)
+    #
+    # Legacy entry kept: avalanche_considerable has no current emitter -- the
+    # Considerable-danger semantic now ships as avalanche_watch instead. The
+    # legacy registry entry remains UI-selectable as a forward-compat target
+    # (router.py source-attribution tables and composer.py emoji/label tables
+    # still reference it). Queued for cleanup if no emitter materializes by
+    # v0.6.
     "avalanche_warning": {
         "name": "Avalanche Danger High",
         "description": "Avalanche danger level 4 (High) or 5 (Extreme) in your area",
         "default_severity": "priority",
         "example_message": "⛷ Avalanche Danger HIGH: Sawtooth Zone — avoid avalanche terrain. Natural avalanches likely.",
+        "toggle": "avalanche",
+    },
+    "avalanche_watch": {
+        "name": "Avalanche Danger Considerable",
+        "description": "Avalanche danger level 3 (Considerable) — dangerous conditions on steep slopes; most avalanche fatalities occur at this level. Travel with caution and conservative decision-making.",
+        "default_severity": "routine",
+        "example_message": "⛷ Avalanche Danger CONSIDERABLE: Sawtooth Zone — dangerous conditions on steep slopes. Cautious route-finding required.",
         "toggle": "avalanche",
     },
     "avalanche_considerable": {
