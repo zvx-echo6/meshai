@@ -85,11 +85,11 @@ def test_to_event_new_ignition(adapter):
 
 
 def test_to_event_near_known_fire(adapter):
-    """Hotspot near known fire maps to wildfire_proximity."""
+    """Hotspot near known fire maps to wildfire_hotspot."""
     evt = make_firms_event(new_ignition=False, near_fire="Snake River Fire")
     event = adapter.to_event(evt)
     assert event is not None
-    assert event.category == "wildfire_proximity"
+    assert event.category == "wildfire_hotspot"
 
 
 # ============================================================
@@ -187,7 +187,7 @@ def test_to_event_missing_coords_returns_none(adapter):
 
 
 def test_to_event_missing_properties_returns_event(adapter):
-    """Missing properties dict defaults to wildfire_proximity."""
+    """Missing properties dict defaults to wildfire_hotspot."""
     evt = {
         "source": "firms",
         "event_id": "test",
@@ -201,7 +201,7 @@ def test_to_event_missing_properties_returns_event(adapter):
     # No "properties" key at all
     event = adapter.to_event(evt)
     assert event is not None
-    assert event.category == "wildfire_proximity"
+    assert event.category == "wildfire_hotspot"
 
 
 def test_to_event_does_not_raise_on_corrupted_dict(adapter):

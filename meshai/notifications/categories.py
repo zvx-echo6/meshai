@@ -252,25 +252,37 @@ ALERT_CATEGORIES = {
     },
 
     # Environmental - Fire
-    "fire_proximity": {
-        "name": "Fire Near Mesh",
-        "description": "Active wildfire within alert radius of mesh infrastructure",
-        "default_severity": "priority",
-        "example_message": "🔥 Fire Near Mesh: Rock Creek Fire — 1,240 ac, 15% contained, 12 km SSW of MHR. Monitor closely.",
-        "toggle": "fire",
-    },
-    "wildfire_proximity": {
-        "name": "Fire Near Mesh",
-        "description": "Active wildfire within alert radius of mesh infrastructure",
-        "default_severity": "priority",
-        "example_message": "🔥 Fire Near Mesh: Rock Creek Fire — 1,240 ac, 15% contained, 12 km SSW of MHR.",
-        "toggle": "fire",
-    },
+    # v0.5.7-fire audit (test_alert_categories_fire_complete enforces parity):
+    # Native: firms.py -> {new_ignition, wildfire_hotspot};
+    #         fires.py -> wildfire_incident.
+    # Central path (via map_category): fire.hotspot.* -> wildfire_hotspot;
+    #         fire.incident.* / fire.perimeter.* / fire.* -> wildfire_incident.
+    #
+    # REMOVED in v0.5.7-fire:
+    #   - fire_proximity (Matt: "fire near mesh has its own set of parameters
+    #     that I don't even know what they could be. like how far is near mesh?
+    #     I don't know I can't set that.") -- parameterized distance_max_km on
+    #     rules is queued for v0.5.8, not a registry entry.
+    #   - wildfire_proximity (duplicate of fire_proximity, same parametric flaw)
     "new_ignition": {
         "name": "New Fire Ignition",
         "description": "Satellite hotspot detected NOT near any known fire — potential new wildfire",
         "default_severity": "priority",
         "example_message": "🛰 New Ignition: Satellite fire at 42.32°N, 114.30°W — high confidence, 47 MW FRP. Not near any known fire.",
+        "toggle": "fire",
+    },
+    "wildfire_hotspot": {
+        "name": "Wildfire Hotspot",
+        "description": "Satellite thermal-anomaly detection (NASA FIRMS VIIRS/MODIS pixel) — not necessarily a new ignition",
+        "default_severity": "routine",
+        "example_message": "🔥 Wildfire Hotspot: VIIRS NOAA-20 pixel at 43.12°N, 114.85°W — high confidence, 22 MW FRP, daytime overpass.",
+        "toggle": "fire",
+    },
+    "wildfire_incident": {
+        "name": "Wildfire Incident",
+        "description": "Active wildfire incident from NIFC WFIGS — official incident record with size, containment, cause",
+        "default_severity": "priority",
+        "example_message": "🔥 Wildfire Incident: Rochelle 2 — 1,240 ac, 15% contained, Custer County ID. WF, Natural cause.",
         "toggle": "fire",
     },
 

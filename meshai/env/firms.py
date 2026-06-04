@@ -362,7 +362,11 @@ class FIRMSAdapter:
 
             props = evt.get("properties", {}) or {}
             is_new_ignition = bool(props.get("new_ignition", False))
-            category = "new_ignition" if is_new_ignition else "wildfire_proximity"
+            # v0.5.7-fire: 'wildfire_proximity' was removed from ALERT_CATEGORIES
+            # (parametric: distance threshold isn't configurable on rules until
+            # v0.5.8). Emit 'wildfire_hotspot' to align with the central FIRMS
+            # path -- both native and central FIRMS now produce the same category.
+            category = "new_ignition" if is_new_ignition else "wildfire_hotspot"
 
             severity = evt.get("severity", "routine")
 

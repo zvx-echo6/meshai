@@ -44,9 +44,10 @@ _CATEGORY_EMOJI: dict[str, str] = {
     "hf_blackout": "⚠",
     "geomagnetic_storm": "🌐",
     "tropospheric_ducting": "📡",
-    # Fire
-    "fire_proximity": "🔥",
-    "wildfire_proximity": "🔥",
+    # Fire (v0.5.7-fire: fire_proximity/wildfire_proximity removed; aligned
+    # to the new registry entries wildfire_hotspot + wildfire_incident).
+    "wildfire_hotspot": "🔥",
+    "wildfire_incident": "🔥",
     "new_ignition": "🛰",
     # Hydro (now under seismic family per v0.5.2 §5)
     "stream_flood_warning": "🌊",
@@ -94,8 +95,8 @@ _SEVERITY_EMOJI: dict[str, str] = {
 _CATEGORY_LABEL: dict[str, str] = {
     "stream_flood_warning": "FLOOD",
     "stream_high_water": "HYDRO",
-    "fire_proximity": "FIRE",
-    "wildfire_proximity": "FIRE",
+    "wildfire_hotspot": "FIRE",
+    "wildfire_incident": "FIRE",
     "new_ignition": "FIRE",
     "weather_warning": "WX",
     "weather_watch": "WX",

@@ -101,7 +101,7 @@ def test_enqueue_multiple_toggles():
     ))
     acc.enqueue(make_event(
         source="test",
-        category="wildfire_proximity",
+        category="wildfire_hotspot",
         severity="priority",
         title="Fire",
     ))
@@ -128,7 +128,7 @@ def test_enqueue_skips_excluded_toggles():
     ))
     acc.enqueue(make_event(
         source="test",
-        category="wildfire_proximity",
+        category="wildfire_hotspot",
         severity="routine",
         title="Fire",
     ))
@@ -213,7 +213,7 @@ def test_digest_calls_llm_once_per_non_empty_toggle():
     # Add events to 3 different toggles
     acc.enqueue(make_event(source="test", category="weather_warning",
                            severity="routine", title="Weather"))
-    acc.enqueue(make_event(source="test", category="wildfire_proximity",
+    acc.enqueue(make_event(source="test", category="wildfire_hotspot",
                            severity="routine", title="Fire"))
     acc.enqueue(make_event(source="test", category="battery_warning",
                            severity="routine", title="Mesh"))
@@ -329,7 +329,7 @@ def test_mesh_chunks_under_char_limit():
     acc = DigestAccumulator(llm_backend=mock_llm)
 
     # Add events to multiple toggles
-    for cat in ["weather_warning", "wildfire_proximity", "battery_warning",
+    for cat in ["weather_warning", "wildfire_hotspot", "battery_warning",
                 "road_closure", "avalanche_warning"]:
         acc.enqueue(make_event(source="test", category=cat,
                                severity="routine", title="Event"))
@@ -349,7 +349,7 @@ def test_mesh_chunks_splits_when_many_toggles():
     acc = DigestAccumulator(llm_backend=mock_llm, mesh_char_limit=150)
 
     # Add events to multiple toggles
-    for cat in ["weather_warning", "wildfire_proximity", "battery_warning",
+    for cat in ["weather_warning", "wildfire_hotspot", "battery_warning",
                 "road_closure", "avalanche_warning"]:
         acc.enqueue(make_event(source="test", category=cat,
                                severity="routine", title="Event"))
@@ -379,7 +379,7 @@ def test_mesh_compact_joins_chunks():
     mock_llm = MockLLMBackend(response="Summary of events.")
     acc = DigestAccumulator(llm_backend=mock_llm, mesh_char_limit=100)
 
-    for cat in ["weather_warning", "wildfire_proximity", "battery_warning",
+    for cat in ["weather_warning", "wildfire_hotspot", "battery_warning",
                 "road_closure"]:
         acc.enqueue(make_event(source="test", category=cat,
                                severity="routine", title="Event"))
@@ -433,7 +433,7 @@ def test_include_toggles_overrides_default():
     if rf_category:
         acc.enqueue(make_event(source="test", category=rf_category,
                                severity="routine", title="RF Event"))
-    acc.enqueue(make_event(source="test", category="wildfire_proximity",
+    acc.enqueue(make_event(source="test", category="wildfire_hotspot",
                            severity="routine", title="Fire Event"))
 
     # RF should be kept (in include list), fire should be dropped
@@ -461,7 +461,7 @@ def test_digest_orders_toggles_correctly():
     # Add events in wrong order
     acc.enqueue(make_event(source="test", category="battery_warning",
                            severity="routine", title="Mesh"))
-    acc.enqueue(make_event(source="test", category="wildfire_proximity",
+    acc.enqueue(make_event(source="test", category="wildfire_hotspot",
                            severity="routine", title="Fire"))
     acc.enqueue(make_event(source="test", category="weather_warning",
                            severity="routine", title="Weather"))

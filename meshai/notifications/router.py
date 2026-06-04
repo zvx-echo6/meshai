@@ -305,8 +305,9 @@ class NotificationRouter:
             "geomagnetic_storm": "swpc",
             "tropospheric_ducting": "ducting",
             "weather_warning": "nws",
-            "fire_proximity": "nifc",
-            "wildfire_proximity": "nifc",
+            # v0.5.7-fire: fire_proximity / wildfire_proximity removed.
+            "wildfire_incident": "nifc",
+            "wildfire_hotspot": "firms",
             "new_ignition": "firms",
             "stream_flood_warning": "usgs",
             "stream_high_water": "usgs",
@@ -422,7 +423,7 @@ class NotificationRouter:
             "hf_blackout": "swpc", "geomagnetic_storm": "swpc",
             "tropospheric_ducting": "ducting",
             "weather_warning": "nws",
-            "fire_proximity": "nifc", "wildfire_proximity": "nifc", "new_ignition": "firms",
+            "wildfire_incident": "nifc", "wildfire_hotspot": "firms", "new_ignition": "firms",  # v0.5.7-fire
             "stream_flood_warning": "usgs", "stream_high_water": "usgs",
             "road_closure": "roads511", "traffic_congestion": "traffic",
             "avalanche_warning": "avalanche", "avalanche_considerable": "avalanche",
@@ -647,7 +648,7 @@ class NotificationRouter:
                                     report_type = "rf_propagation"
                                 elif any(c in rule_categories for c in ["infra_offline", "critical_node_down", "mesh_score_low", "battery_warning"]):
                                     report_type = "mesh_health"
-                                elif any(c in rule_categories for c in ["weather_warning", "fire_proximity", "new_ignition"]):
+                                elif any(c in rule_categories for c in ["weather_warning", "wildfire_incident", "wildfire_hotspot", "new_ignition"]):  # v0.5.7-fire
                                     report_type = "weather_fire"
 
                             status_msg = await self.generate_report(report_type, env_store, health_engine)

@@ -36,10 +36,10 @@ class TestToggleFilter:
             next_handler=received.append,
             enabled_toggles={"weather"},
         )
-        # wildfire_proximity maps to "fire" toggle
+        # wildfire_hotspot maps to "fire" toggle
         event = make_event(
             source="test",
-            category="wildfire_proximity",
+            category="wildfire_hotspot",
             severity="priority",
             title="Fire",
         )

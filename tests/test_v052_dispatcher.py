@@ -206,7 +206,7 @@ def test_renderer_byte_budget_drops_optional_segments():
     severity) always survive."""
     big_title = "A" * 200
     e = make_event(
-        source="nws", category="fire_proximity", severity="immediate",
+        source="nws", category="wildfire_incident", severity="immediate",
         title=big_title, region="Wood River Valley",
         timestamp=time.time(),
         data={
@@ -234,7 +234,7 @@ def test_renderer_never_mid_character_truncation():
     shrink by codepoints + ellipsis."""
     # All four-byte emoji glyphs in a row, primary forced super long.
     e = make_event(
-        source="nws", category="wildfire_proximity", severity="priority",
+        source="nws", category="wildfire_hotspot", severity="priority",
         title="🔥" * 200,  # 800 bytes of emoji
         timestamp=time.time(),
     )

@@ -64,13 +64,23 @@ def _subjects_for(adapter: str, region: Optional[str]) -> list[str]:
 
       - region BEFORE the wildcard (nws):
             central.wx.alert.us.id.>
-      - region AFTER  the wildcard (quake / firms / usgs):
+      - region AFTER  the wildcard (quake / usgs):
             central.quake.event.>.us.id
-            central.fire.hotspot.>.us.id
             central.hydro.>.us.id      (+ ".unknown" workaround, see below)
-      - state-only token at a fixed depth (fires):
-            central.fire.incident.<state>.>
-            central.fire.perimeter.<state>.>
+      - FIRMS — no region in subject at all (per Central v0.10.0 guide):
+            central.fire.hotspot.<satellite>.<confidence>
+        State filtering must happen client-side via data.latitude/longitude.
+        v0.5.7-fire restored the legal tail-only `>` here; the pre-v0.5.7-fire
+        `central.fire.hotspot.>.us.id` was syntactically invalid AND wouldn't
+        have matched anything Central publishes (only 5 tokens, no us.<state>).
+      - state-only token at a fixed depth (fires WFIGS):
+            central.fire.incident.<state>.>      (active)
+            central.fire.perimeter.<state>.>     (active)
+            central.fire.incident.removed.<state>   (removal tombstone)
+            central.fire.perimeter.removed.<state>  (removal tombstone)
+        v0.5.7-fire added the tombstone subjects: pre-v0.5.7-fire we only
+        subscribed to the active subjects, silently dropping all WFIGS
+        fall-off signals.
       - traffic family — Convention B, bare state, no wildcard:
             central.traffic.<event_type>.id           (wzdx, tomtom_incidents,
                                                        state_511_atis)
@@ -98,9 +108,16 @@ def _subjects_for(adapter: str, region: Optional[str]) -> list[str]:
     state = region.split(".")[-1]
     table: dict[str, list[str]] = {
         "nws":        [f"central.wx.alert.{region}.>"],
+        # WFIGS (fires): active + removal tombstones. v0.5.7-fire added the
+        # two removed.<state> subjects so fall-off signals reach meshai.
         "fires":      [f"central.fire.incident.{state}.>",
-                       f"central.fire.perimeter.{state}.>"],
-        "firms":      [f"central.fire.hotspot.>.{region}"],
+                       f"central.fire.perimeter.{state}.>",
+                       f"central.fire.incident.removed.{state}",
+                       f"central.fire.perimeter.removed.{state}"],
+        # FIRMS: Central publishes central.fire.hotspot.<satellite>.<confidence>
+        # with NO region in the subject. Tail-only `>` is the only NATS-legal
+        # subscription that covers all combinations; client-side filters lat/lon.
+        "firms":      ["central.fire.hotspot.>"],
         "usgs_quake": [f"central.quake.event.>.{region}"],
         "usgs":       [f"central.hydro.>.{region}",
                        "central.hydro.>.unknown"],
@@ -291,12 +308,22 @@ class CentralConsumer:
         if not env_id:
             return None
 
-        is_tombstone = (".removed." in (subject or "")) or str(env_id).endswith(":removed")
+        # v0.5.7-fire: tombstone detection now matches both the legacy GDACS
+        # `<id>:removed` form and the WFIGS `<IrwinID>:removed:<iso>` form.
+        is_tombstone = (
+            (".removed." in (subject or ""))
+            or str(env_id).endswith(":removed")
+            or ":removed:" in str(env_id)
+        )
         # The clear event shares the ORIGINAL event's group_key so the grouper/
-        # inhibitor lets the prior event lapse naturally.
+        # inhibitor lets the prior event lapse naturally. v0.5.7-fire: strip
+        # both `:removed` (GDACS) AND `:removed:<iso_now>` (WFIGS) tails. Per
+        # Central v0.10.0 guide §wfigs_incidents, the same incident may be
+        # tombstoned multiple times over its lifecycle; each tombstone is a
+        # distinct Event but they all share the IrwinID as group_key.
         group_key = str(env_id)
         if is_tombstone:
-            group_key = re.sub(r":removed$", "", group_key)
+            group_key = re.sub(r":removed(:.*)?$", "", group_key)
 
         cat_raw = inner.get("category") or envelope.get("centralcategory") or ""
         category = map_category(cat_raw)
@@ -313,6 +340,12 @@ class CentralConsumer:
         data = dict(inner.get("data") or {})
         if is_tombstone:
             data["_central_tombstone"] = True
+            # v0.5.7-fire: stash the full env_id (with the :removed:<iso> tail)
+            # so downstream consumers can tell apart multiple tombstones for
+            # the same incident. The group_key collapses to the bare IrwinID
+            # by design (so they lapse the original together); this preserves
+            # lifecycle distinctness for accounting.
+            data["_central_tombstone_id"] = str(env_id)
 
         title = (data.get("title") or data.get("headline")
                  or cat_raw or f"{inner.get('adapter', 'central')} event")

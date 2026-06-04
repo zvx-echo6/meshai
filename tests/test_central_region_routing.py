@@ -26,16 +26,26 @@ def test_subjects_for_usgs_quake_us_id():
     assert _subjects_for("usgs_quake", "us.id") == ["central.quake.event.>.us.id"]
 
 
-def test_subjects_for_firms_us_id():
-    """FIRMS hotspots: region AFTER wildcard, hotspot domain explicit."""
-    assert _subjects_for("firms", "us.id") == ["central.fire.hotspot.>.us.id"]
+def test_subjects_for_firms_us_id_uses_tail_only_wildcard():
+    """v0.5.7-fire: FIRMS publishes `central.fire.hotspot.<satellite>.<confidence>`
+    with NO region in the subject (per Central v0.10.0 guide §firms). The
+    pre-v0.5.7-fire `central.fire.hotspot.>.us.id` was syntactically invalid
+    (`>` mid-subject) AND wouldn't have matched anything Central actually
+    publishes. Region filtering for FIRMS now happens client-side via
+    data.latitude/longitude. Subscription uses tail-only `>` (NATS-legal)."""
+    assert _subjects_for("firms", "us.id") == ["central.fire.hotspot.>"]
 
 
-def test_subjects_for_fires_us_id_uses_state_token():
-    """NIFC fires: state-only token at depth-4 for both incident + perimeter."""
+def test_subjects_for_fires_us_id_includes_tombstones():
+    """v0.5.7-fire: WFIGS subjects -- active state-token at depth-3 + the
+    removal-tombstone subjects (`central.fire.{incident,perimeter}.removed.<state>`)
+    per Central v0.10.0 guide §wfigs_incidents §wfigs_perimeters. Pre-v0.5.7-fire
+    we only subscribed to active subjects, silently dropping fall-off signals."""
     assert _subjects_for("fires", "us.id") == [
         "central.fire.incident.id.>",
         "central.fire.perimeter.id.>",
+        "central.fire.incident.removed.id",
+        "central.fire.perimeter.removed.id",
     ]
 
 
