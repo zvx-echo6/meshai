@@ -74,12 +74,17 @@ def test_subjects_for_roads511_dual_subscribes_convention_a_and_b():
 
 
 def test_subjects_for_usgs_includes_unknown_workaround():
-    """USGS hydro: subscribes to BOTH the region-tagged filter and the
-    ".unknown" filter to cover gauges whose state Central v0.9.20 can't
-    infer yet (workaround until v0.9.20.1 backfills the tag)."""
+    """v0.5.7-water: USGS NWIS hydro subscribes to BOTH the region-tagged
+    filter and the .unknown filter. Per the v0.10.0-itd-511 nwis.py
+    producer, the actual published subject is
+    `central.hydro.<param>.<agency>.<site>.<region>` where <region> is
+    either `us.<state>` (7 tokens) or `unknown` (6 tokens). The
+    pre-v0.5.7-water shape `central.hydro.>.<state>` was invalid NATS
+    (`>` mid-subject). Fixed by using three single-token `*` wildcards
+    in the parameter/agency/site slots."""
     assert _subjects_for("usgs", "us.id") == [
-        "central.hydro.>.us.id",
-        "central.hydro.>.unknown",
+        "central.hydro.*.*.*.us.id",
+        "central.hydro.*.*.*.unknown",
     ]
 
 

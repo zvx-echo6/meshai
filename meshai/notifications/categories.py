@@ -303,7 +303,27 @@ ALERT_CATEGORIES = {
         "toggle": "seismic",
     },
 
-    # Environmental - Flood
+    # Environmental - Flood / Water (Geohazards family per v0.5.2 migration)
+    # v0.5.7-water audit (test_alert_categories_water_complete enforces parity):
+    # Native: usgs.py applies NWPS flood-stage thresholds CLIENT-SIDE and emits
+    #   - stream_flood_warning  (reading at/above flood stage)
+    #   - stream_high_water     (reading at action stage)
+    # Routine gauge readings below action stage are silently dropped on the
+    # native path (no spam).
+    # Central path: every NWIS reading arrives with category="hydro.<pcode>.
+    # <agency>.<site>" at severity=0. consumer._CATEGORY_MAP maps `hydro.*` to
+    # `stream_flow` (added below in v0.5.7-water so the rule editor can target
+    # raw central readings). NOTE: meshai does NOT currently re-apply NWPS
+    # threshold logic to central-delivered readings; future work to bring
+    # the central path to parity with the native threshold-classification
+    # is queued for v0.5.8+.
+    "stream_flow": {
+        "name": "Stream Gauge Reading",
+        "description": "Raw USGS NWIS stream gauge reading (discharge, gage height, water temp) — no threshold classification. Use stream_flood_warning / stream_high_water for threshold-triggered alerts.",
+        "default_severity": "routine",
+        "example_message": "🌊 Stream Reading: Snake River nr Twin Falls — 7,420 ft³/s discharge at 2026-06-04T12:00Z (provisional).",
+        "toggle": "seismic",
+    },
     "stream_flood_warning": {
         "name": "Stream Flood Warning",
         "description": "River gauge exceeds NWS flood stage threshold",

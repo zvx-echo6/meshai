@@ -64,8 +64,18 @@ def _subjects_for(adapter: str, region: Optional[str]) -> list[str]:
 
       - region BEFORE the wildcard (nws):
             central.wx.alert.us.id.>
-      - region AFTER  the wildcard (usgs hydro only):
-            central.hydro.>.us.id      (+ ".unknown" workaround, see below)
+      - USGS NWIS hydro — three single-token wildcards + bare region tail:
+            central.hydro.*.*.*.us.id        (per-state, e.g. Idaho)
+            central.hydro.*.*.*.unknown      (gauges whose state Central
+                                              couldn't resolve; documented
+                                              workaround until backfill)
+        Per Central v0.10.0 nwis.py producer code, the actual published
+        subject is `central.hydro.<param>.<agency>.<site>.<region>` where
+        <region> is `us.<state>` (7 tokens) or `unknown` (6 tokens). The
+        doc §nwis text shows only the 4-token category-shape stem and is
+        stale w.r.t. the regional suffix. v0.5.7-water fixes the
+        pre-v0.5.7-water `central.hydro.>.<state>` shape, which was
+        invalid NATS (`>` mid-subject).
       - USGS quake — no region in subject (per Central v0.10.0 guide §usgs_quake):
             central.quake.event.<tier>
         4 tokens total. <tier> is one of {minor, light, moderate, strong,
@@ -106,8 +116,9 @@ def _subjects_for(adapter: str, region: Optional[str]) -> list[str]:
     attribute to roads511 in meshai.
 
     The .unknown workaround: v0.9.20 leaves USGS hydro events whose gauge
-    state can't be inferred on `central.hydro.>.unknown`. Subscribing to
-    both avoids losing those rows until v0.9.20.1 backfills the state tag.
+    state can't be inferred at the `central.hydro.*.*.*.unknown` subject
+    (6 tokens). Subscribing to both the per-state and the unknown filters
+    avoids losing those rows until the upstream NWIS state-tag backfill.
 
     Empty/None region returns the bare-wildcard form (v0.5.3 behaviour).
     Adapters without a Central equivalent (avalanche, ducting) return [].
@@ -131,8 +142,13 @@ def _subjects_for(adapter: str, region: Optional[str]) -> list[str]:
         # region in the subject (per guide §usgs_quake). Same situation as
         # FIRMS -- tail-only `>` is the legal form; client-side filters lat/lon.
         "usgs_quake": ["central.quake.event.>"],
-        "usgs":       [f"central.hydro.>.{region}",
-                       "central.hydro.>.unknown"],
+        # USGS NWIS hydro: 3 single-token wildcards for <param>.<agency>.<site>
+        # + bare region tail. Pre-v0.5.7-water shipped `central.hydro.>.<region>`
+        # which is invalid NATS (`>` only legal at the tail). Verified against
+        # the v0.10.0-itd-511 nwis.py producer subject_for() body which
+        # publishes `central.hydro.<param>.<agency>.<site>.<region>`.
+        "usgs":       [f"central.hydro.*.*.*.{region}",
+                       "central.hydro.*.*.*.unknown"],
         "swpc":       ["central.space.>"],
         # Convention B (bare state) — shared by traffic family (wzdx,
         # tomtom_incidents, state_511_atis). Single-token `*` matches the
