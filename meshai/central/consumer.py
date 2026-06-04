@@ -39,11 +39,12 @@ def consumer_config():
 ADAPTER_SUBJECTS: dict[str, list[str]] = {
     "nws": ["central.wx.>"],
     "fires": ["central.fire.incident.>", "central.fire.perimeter.>"],
-    "firms": ["central.fire.hotspot.>"],
+    "firms": ["central.fire.>"],
     "usgs_quake": ["central.quake.>"],
     "usgs": ["central.hydro.>"],
     "swpc": ["central.space.>"],
     "traffic": ["central.traffic.>"],
+    "roads511": ["central.traffic.>"],
 }
 
 # Bridge between Central's adapter taxonomy and meshai's family-tab source names.
@@ -59,6 +60,9 @@ CENTRAL_ADAPTER_TO_SOURCE: dict[str, str] = {
     "swpc_kindex": "swpc",
     "swpc_protons": "swpc",
     "wzdx": "traffic",
+    "tomtom_incidents": "traffic",
+    "state_511_atis": "roads511",
+    "firms": "firms",
 }
 
 # Central hierarchical category prefix -> meshai flat category.
@@ -160,20 +164,32 @@ class CentralConsumer:
         self._subs: list = []
 
     # ---- subject derivation ----
-    def subjects(self) -> list[str]:
-        """Subject filters for adapters whose source == 'central'."""
-        out: list[str] = []
+    def _subject_owned(self) -> dict:
+        """Map each Central subject filter -> set of meshai source names (adapter
+        attrs) that are feed_source=central and consume it. A shared subject
+        (central.traffic.> for both traffic and roads511) carries multiple owned
+        sources; _handle drops events whose remapped source isn't in the set."""
+        owned: dict = {}
         for attr, subjects in ADAPTER_SUBJECTS.items():
             cfg = getattr(self._env, attr, None)
             if cfg is not None and getattr(cfg, "feed_source", "native") == "central":
-                out.extend(subjects)
-        # Warn about centralized adapters that have no Central mapping.
-        for attr in ("avalanche", "ducting", "roads511"):
+                for subj in subjects:
+                    owned.setdefault(subj, set()).add(attr)
+        for attr in ("avalanche", "ducting"):
             cfg = getattr(self._env, attr, None)
             if cfg is not None and getattr(cfg, "feed_source", "native") == "central":
                 logger.warning("Adapter %r set to source=central but Central has no "
                                "matching stream; nothing will be consumed for it.", attr)
-        return out
+        return owned
+
+    def subjects(self) -> list[str]:
+        """Unique Central subject filters for adapters set to central."""
+        return sorted(self._subject_owned().keys())
+
+    def _make_cb(self, owned):
+        async def _cb(msg):
+            await self._on_message(msg, owned)
+        return _cb
 
     # ---- normalization ----
     def _normalize(self, subject: str, envelope: dict) -> Optional[Event]:
@@ -238,22 +254,32 @@ class CentralConsumer:
             **kwargs,
         )
 
-    def _handle(self, subject: str, raw: bytes) -> Optional[Event]:
-        """Normalize a raw message body and emit to the bus. Returns the Event."""
+    def _handle(self, subject: str, raw: bytes, owned=None) -> Optional[Event]:
+        """Normalize a raw message body and emit to the bus. Returns the Event.
+
+        owned: set of meshai source names this subscription may emit (sub-adapter
+        routing for shared subjects); None = no filtering.
+        """
         try:
             envelope = json.loads(raw)
         except Exception:
             logger.exception("CentralConsumer: bad JSON on %s", subject)
             return None
         event = self._normalize(subject, envelope)
-        if event is not None and self._bus is not None:
+        if event is None:
+            return None
+        if owned is not None and event.source not in owned:
+            logger.debug("CentralConsumer: dropping %s source=%s -- not owned by "
+                         "subscription %s", subject, event.source, sorted(owned))
+            return None
+        if self._bus is not None:
             self._bus.emit(event)
         return event
 
-    async def _on_message(self, msg) -> None:
+    async def _on_message(self, msg, owned=None) -> None:
         """JetStream callback: normalize + emit, then ack."""
         try:
-            self._handle(msg.subject, msg.data)
+            self._handle(msg.subject, msg.data, owned)
         except Exception:
             logger.exception("CentralConsumer: handler failed on %s",
                              getattr(msg, "subject", "?"))
@@ -267,15 +293,15 @@ class CentralConsumer:
 
     # ---- lifecycle ----
     async def start(self) -> None:
-        subjects = self.subjects()
-        if not subjects:
+        subject_owned = self._subject_owned()
+        if not subject_owned:
             logger.info("CentralConsumer started; 0 subjects subscribed -- "
                         "no adapters set to central")
             return
         if self._central is None or not getattr(self._central, "enabled", False):
-            logger.warning("CentralConsumer: %d adapter(s) want source=central but "
+            logger.warning("CentralConsumer: adapter(s) want source=central but "
                            "environmental.central.enabled is false; not subscribing: %s",
-                           len(subjects), subjects)
+                           sorted(subject_owned))
             return
 
         import nats  # lazy: no NATS dependency at boot unless actually consuming
@@ -284,13 +310,13 @@ class CentralConsumer:
             connect_timeout=getattr(self._central, "connect_timeout", 10.0),
         )
         self._js = self._nc.jetstream()
-        for subj in subjects:
+        for subj, owned in subject_owned.items():
             durable = self._central.durable + "-" + re.sub(r"[^a-z0-9]+", "_", subj.lower())
             sub = await self._js.subscribe(
-                subj, durable=durable, cb=self._on_message, config=consumer_config())
+                subj, durable=durable, cb=self._make_cb(owned), config=consumer_config())
             self._subs.append(sub)
-        logger.info("CentralConsumer started; %d subjects subscribed: %s",
-                    len(subjects), subjects)
+            logger.info("CentralConsumer subscribed %s owned-sources=%s", subj, sorted(owned))
+        logger.info("CentralConsumer started; %d subjects subscribed", len(subject_owned))
 
     async def stop(self) -> None:
         if self._nc is not None:
