@@ -44,21 +44,25 @@ class MeshRenderer(Renderer):
         return self._chunk_long_line(line)
 
     def _format_one_line(self, p: NotificationPayload) -> str:
-        """Build the headline for a payload.
+        """Return the payload message verbatim for mesh delivery.
 
-        Default format:
-          "[<EventTypeTitle>] <message>"
-        where EventTypeTitle is a short label derived from
-        p.event_type (e.g. "weather_warning" → "Weather"). If
-        p.event_type is None, omit the prefix.
+        v0.5.7-regression: previously prepended "[<Family>] " (the legacy
+        v0.5.0 debug format) to every payload. Since v0.5.2 the dispatcher
+        hands `payload.message` from compose_mesh_message(), whose output
+        ALREADY starts with the category emoji + family label (e.g.
+        "🚨 ROADS: ...", "🔥 FIRE: ..."). The renderer's wrap produced a
+        visually-broken duplicate "[Roads] 🚨 ROADS: ..." that hit the live
+        mesh during the v0.5.7 staged flip. The bug had been dormant since
+        v0.5.2 because no live broadcasts had ever fired in production
+        (safe-mode held the whole time).
 
-        Truncates the message at the limit only if the prefix
-        is short enough; otherwise lets the chunker handle it.
+        Now: pass `payload.message` through unchanged. The composer is the
+        single source of truth for mesh formatting. `_toggle_label` and the
+        `TOGGLE_LABELS` table below are kept because the digest renderer
+        still uses them (see meshai/notifications/pipeline/digest.py) for
+        the multi-line summary format -- do not remove them here.
         """
-        prefix = self._toggle_label(p.event_type)
-        if prefix:
-            return f"[{prefix}] {p.message}"
-        return p.message
+        return p.message or ""
 
     def _toggle_label(self, event_type: Optional[str]) -> Optional[str]:
         """Map an event category to a short toggle label.

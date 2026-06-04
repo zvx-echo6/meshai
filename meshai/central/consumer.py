@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Optional
 
 from meshai.notifications.events import Event, make_event
+from meshai.notifications.categories import get_category
 
 logger = logging.getLogger("meshai.central.consumer")
 
@@ -394,8 +395,25 @@ class CentralConsumer:
             # lifecycle distinctness for accounting.
             data["_central_tombstone_id"] = str(env_id)
 
+        # v0.5.7-regression: upstream Central payloads for most adapters
+        # (firms, nwis, swpc_*, wfigs_*, tomtom_incidents, ...) carry per-
+        # adapter fields but NOT a top-level `title` or `headline`. Falling
+        # back to `cat_raw` produced category-as-title broadcasts that
+        # leaked the raw Central hierarchical category onto the mesh
+        # (e.g. "incident.tomtom_incidents" instead of "Road Incident").
+        # Prefer the meshai-friendly registry name from get_category() over
+        # the raw category. cat_raw stays as the last-resort tail so
+        # genuinely-unknown categories still produce *something* readable.
+        friendly_name = None
+        try:
+            ci = get_category(category)
+            if ci and ci.get("name"):
+                friendly_name = str(ci["name"])
+        except Exception:
+            pass
         title = (data.get("title") or data.get("headline")
-                 or cat_raw or f"{inner.get('adapter', 'central')} event")
+                 or friendly_name or cat_raw
+                 or f"{inner.get('adapter', 'central')} event")
 
         kwargs = dict(
             title=str(title)[:200],

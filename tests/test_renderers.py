@@ -28,8 +28,14 @@ def test_mesh_render_short_message_single_chunk():
     assert "Test alert" in chunks[0]
 
 
-def test_mesh_render_event_type_prefix():
-    """Known event type adds toggle label prefix."""
+def test_mesh_render_passes_message_verbatim():
+    """v0.5.7-regression: MeshRenderer no longer prepends '[<Family>] '.
+    The composer (compose_mesh_message) is the single source of truth for
+    mesh formatting since v0.5.2 -- its output already starts with the
+    family emoji + label (e.g. '🚨 ROADS:'). The renderer used to wrap
+    that with '[Roads] ' producing the visually-broken duplicate
+    '[Roads] 🚨 ROADS: ...' that hit the live mesh during the v0.5.7
+    staged flip. Now the renderer is a verbatim pass-through."""
     payload = NotificationPayload(
         message="Severe storm",
         category="weather_warning",
@@ -40,11 +46,13 @@ def test_mesh_render_event_type_prefix():
     renderer = MeshRenderer()
     chunks = renderer.render(payload)
     assert len(chunks) == 1
-    assert chunks[0].startswith("[Weather]")
+    assert chunks[0] == "Severe storm", chunks[0]
+    assert not chunks[0].startswith("["), chunks[0]
 
 
 def test_mesh_render_unknown_event_type_no_prefix():
-    """Unknown event type does not add a prefix."""
+    """v0.5.7-regression: same verbatim pass-through behavior regardless of
+    whether the event_type is in the registry."""
     payload = NotificationPayload(
         message="Hello",
         category="made_up_thing",
@@ -55,6 +63,7 @@ def test_mesh_render_unknown_event_type_no_prefix():
     renderer = MeshRenderer()
     chunks = renderer.render(payload)
     assert len(chunks) == 1
+    assert chunks[0] == "Hello"
     assert not chunks[0].startswith("[")
 
 
