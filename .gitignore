@@ -33,7 +33,9 @@ wheels/
 # Virtual environments
 venv/
 ENV/
-env/
+# v0.5.5: anchor to repo root only -- bare `env/` matched meshai/env/ (the
+# adapter package directory) and forced `git add -f` workarounds in 2.14/2.16.1.
+/env/
 .venv/
 
 # IDE

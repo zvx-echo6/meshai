@@ -26,10 +26,6 @@ import logging
 
 from meshai.notifications.channels import create_channel
 from meshai.notifications.pipeline.bus import EventBus, get_bus
-from meshai.notifications.pipeline.severity_router import (
-    SeverityRouter,
-    StubDigestQueue,  # kept for Phase 2.1 backward-compat tests
-)
 from meshai.notifications.pipeline.dispatcher import Dispatcher
 from meshai.notifications.pipeline.inhibitor import Inhibitor
 from meshai.notifications.pipeline.grouper import Grouper
@@ -251,8 +247,6 @@ async def stop_pipeline(scheduler: DigestScheduler) -> None:
 
 __all__ = [
     "EventBus",
-    "SeverityRouter",
-    "StubDigestQueue",
     "Dispatcher",
     "Inhibitor",
     "Grouper",

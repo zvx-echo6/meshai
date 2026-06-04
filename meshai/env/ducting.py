@@ -453,6 +453,8 @@ class DuctingAdapter:
             "is_loaded": self._is_loaded,
             "last_error": str(self._last_error) if self._last_error else None,
             "consecutive_errors": self._consecutive_errors,
-            "event_count": 0,
+            # v0.5.5: was hardcoded 0 -- since Phase 2.13 emits real events,
+            # mirror the pattern every other env adapter already uses.
+            "event_count": len(self._events),
             "last_fetch": self._last_tick,
         }

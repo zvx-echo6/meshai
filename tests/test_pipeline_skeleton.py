@@ -3,9 +3,12 @@
 These tests verify the core routing and dispatch behavior of the
 notification pipeline without requiring real channel backends.
 
-Updated in Phase 2.4: Events now go to BOTH dispatcher and accumulator
-(no severity-based fork). SeverityRouter class kept for backward
-compatibility but not used in production wiring.
+Updated in Phase 2.4: Events go to BOTH dispatcher and accumulator
+(no severity-based fork). v0.5.5 retired the unused fork-by-severity
+module — _tee in build_pipeline does the fanout directly. The two
+tests in this file that relied on that module to drive a no-rule /
+unknown-severity scenario are covered by tests/test_v052_dispatcher.py
+(stats counters) and the Dispatcher-class tests below.
 """
 
 import asyncio
@@ -18,7 +21,6 @@ from meshai.notifications.events import Event, make_event
 from meshai.notifications.pipeline import build_pipeline_components
 from meshai.notifications.pipeline.bus import EventBus
 from meshai.notifications.pipeline.dispatcher import Dispatcher
-from meshai.notifications.pipeline.severity_router import SeverityRouter, StubDigestQueue
 
 
 # Minimal config stubs for testing
@@ -157,32 +159,6 @@ class TestTeeRouting:
         assert mock_channel.deliver.call_count == 1
 
 
-class TestNoMatchingRule:
-
-    def test_immediate_event_with_no_matching_rule_skips_silently(self):
-        """Events with no matching rules don't crash."""
-        config = ConfigStub(
-            notifications=NotificationsConfigStub(rules=[])
-        )
-        mock_factory = Mock()
-        bus = EventBus()
-        dispatcher = Dispatcher(config, mock_factory)
-        digest = StubDigestQueue()
-        router = SeverityRouter(
-            immediate_handler=dispatcher.dispatch,
-            digest_handler=digest.enqueue,
-        )
-        bus.subscribe(router.handle)
-        event = make_event(
-            source="test",
-            category="test_cat",
-            severity="immediate",
-            title="No Rule Alert",
-        )
-        bus.emit(event)
-        mock_factory.assert_not_called()
-
-
 class TestSubscriberIsolation:
 
     def test_subscriber_exception_isolation(self):
@@ -205,31 +181,3 @@ class TestSubscriberIsolation:
         second_handler.assert_called_once()
 
 
-class TestUnknownSeverity:
-
-    def test_unknown_severity_dropped_without_crash(self):
-        """Events with unknown severity are dropped gracefully."""
-        config = ConfigStub(
-            notifications=NotificationsConfigStub(rules=[])
-        )
-        mock_factory = Mock()
-        bus = EventBus()
-        dispatcher = Dispatcher(config, mock_factory)
-        digest = StubDigestQueue()
-        mock_dispatch = Mock()
-        mock_enqueue = Mock()
-        router = SeverityRouter(
-            immediate_handler=mock_dispatch,
-            digest_handler=mock_enqueue,
-        )
-        bus.subscribe(router.handle)
-        event = Event(
-            id="test123",
-            source="test",
-            category="test_cat",
-            severity="bogus",
-            title="Bogus Severity",
-        )
-        bus.emit(event)
-        mock_dispatch.assert_not_called()
-        mock_enqueue.assert_not_called()

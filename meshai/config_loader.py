@@ -594,7 +594,13 @@ def save_section(
     if target_file in ("meshtastic.yaml", "config.yaml") and isinstance(_raw_on_disk, dict):
         _raw_section = _raw_on_disk.get(section_name) or {}
     else:
-        _raw_section = _raw_on_disk if isinstance(_raw_on_disk, dict) else {}
+        # v0.5.5: list-shaped sections (mesh_sources.yaml) load as a top-level
+        # list; carry the list through so _ondisk_ref can walk it by integer
+        # index. dict|list|None covered; anything else falls back to {}.
+        if isinstance(_raw_on_disk, (dict, list)):
+            _raw_section = _raw_on_disk
+        else:
+            _raw_section = {}
 
     _secrets_path = config_dir.parent / "secrets" / ".env"
     if not _secrets_path.exists():
@@ -608,10 +614,18 @@ def save_section(
         return v if v is not None else _env_file.get(name)
 
     def _ondisk_ref(field_path: str):
+        # v0.5.5: walk dicts by key, lists by integer index so paths like
+        # `0.api_token` (mesh_sources) and `rules.0.smtp_password`
+        # (notifications) resolve to their on-disk ${VAR} ref correctly.
         node = _raw_section
         for part in field_path.split("."):
             if isinstance(node, dict) and part in node:
                 node = node[part]
+            elif isinstance(node, list):
+                try:
+                    node = node[int(part)]
+                except (ValueError, IndexError, TypeError):
+                    return None
             else:
                 return None
         return node
@@ -637,8 +651,12 @@ def save_section(
             elif isinstance(value, dict):
                 cleaned[key] = check_secrets(value, field_path)
             elif isinstance(value, list):
+                # v0.5.5: dotted-index form (`<field>.<i>.<key>`) so list-item
+                # secret paths match SECRET_FIELDS entries like
+                # `notifications.rules.*.smtp_password` — the `*` regex token
+                # matches a single dot-separated token, not a `[i]` suffix.
                 cleaned[key] = [
-                    check_secrets(item, f"{field_path}[{i}]")
+                    check_secrets(item, f"{field_path}.{i}")
                     if isinstance(item, dict) else item
                     for i, item in enumerate(value)
                 ]
@@ -648,8 +666,15 @@ def save_section(
 
     # List sections (e.g. mesh_sources) have no top-level dict to scan for
     # local fields; clean each item for secrets and write the list directly.
+    # v0.5.5: each item carries its index as the section-relative path root so
+    # `_is_secret_field("mesh_sources", "<i>.api_token")` matches the pattern
+    # `mesh_sources.*.api_token` (previously it stripped to bare `api_token`
+    # and let raw secrets through).
     if isinstance(data, list):
-        domain_data = [check_secrets(item) if isinstance(item, dict) else item for item in data]
+        domain_data = [
+            check_secrets(item, str(i)) if isinstance(item, dict) else item
+            for i, item in enumerate(data)
+        ]
         local_updates = {}
     else:
         data = check_secrets(data)
