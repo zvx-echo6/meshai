@@ -54,7 +54,10 @@ def test_no_subjects_when_all_native():
 
 
 def test_subjects_when_central():
+    # v0.5.4: assert the legacy bare-wildcard form by clearing region.
+    # Region-aware subject shapes are covered by test_central_region_routing.py.
     c, env, rec = make_consumer()
+    env.central.region = ""
     env.usgs_quake.feed_source = "central"
     assert "central.quake.>" in c.subjects()
 

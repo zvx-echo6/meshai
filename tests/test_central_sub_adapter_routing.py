@@ -17,8 +17,15 @@ def _envelope(adapter, category="x.y", eid="e1"):
 
 def _route(central, adapter, subject, category="x.y"):
     """Simulate a message arriving on the subscription that matches `subject`,
-    with that subscription's owned-sources, and return the emitted Event (or None)."""
+    with that subscription's owned-sources, and return the emitted Event (or None).
+
+    v0.5.4: this helper deliberately clears central.region so sub-adapter
+    routing is exercised against bare wildcards (its concern is the
+    owned-sources filter, not the region-aware subject shape — those are
+    tested in test_central_region_routing.py).
+    """
     env = EnvironmentalConfig()
+    env.central.region = ""
     for a in central:
         getattr(env, a).feed_source = "central"
     rec = []
@@ -71,7 +78,11 @@ def test_tomtom_incidents_remaps_to_traffic():
 
 
 def test_subject_owned_shares_traffic_subject():
+    # v0.5.4: assert the legacy bare-wildcard shape by clearing region.
+    # Region-aware shared-subject behaviour ('central.traffic.>.id' for both
+    # traffic and roads511) is covered in test_central_region_routing.py.
     env = EnvironmentalConfig()
+    env.central.region = ""
     env.traffic.feed_source = "central"
     env.roads511.feed_source = "central"
     so = CentralConsumer(env, None)._subject_owned()

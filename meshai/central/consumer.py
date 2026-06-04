@@ -33,10 +33,11 @@ def consumer_config():
     return ConsumerConfig(deliver_policy=DeliverPolicy.NEW)
 
 
-# meshai adapter (env-config attr) -> Central subject filters it consumes.
-# Adapters with no Central equivalent (avalanche, ducting, roads511) are absent;
-# setting source=central on those subscribes to nothing (logged).
-ADAPTER_SUBJECTS: dict[str, list[str]] = {
+# Bare-wildcard subjects, pre-v0.9.20. Still used when `central.region` is
+# empty (backward-compat fallback) and as the canonical adapter -> family map.
+# Adapters with no Central equivalent (avalanche, ducting) are absent; flipping
+# those to source=central subscribes to nothing (logged).
+_SUBJECTS_BARE: dict[str, list[str]] = {
     "nws": ["central.wx.>"],
     "fires": ["central.fire.incident.>", "central.fire.perimeter.>"],
     "firms": ["central.fire.>"],
@@ -44,8 +45,58 @@ ADAPTER_SUBJECTS: dict[str, list[str]] = {
     "usgs": ["central.hydro.>"],
     "swpc": ["central.space.>"],
     "traffic": ["central.traffic.>"],
-    "roads511": ["central.traffic.>"],
+    "roads511": ["central.traffic.>"],   # shared with traffic; sub-adapter routing
 }
+
+# Backwards-compat: keep ADAPTER_SUBJECTS importable for legacy readers/tests.
+ADAPTER_SUBJECTS = _SUBJECTS_BARE
+
+
+def _subjects_for(adapter: str, region: Optional[str]) -> list[str]:
+    """Build region-aware Central subject filters for an adapter (v0.5.4).
+
+    Central v0.9.20 (shipped 2026-05-28) added per-region subject suffixes so
+    consumers interested in a single region can have the firehose filtered
+    server-side instead of dragging all-US events and discarding 95% locally.
+
+    `region` is a dotted token tree, e.g. 'us.id' for Idaho. Adapters use
+    one of three suffix patterns; the v0.9.20 scheme is not uniform:
+
+      - region BEFORE the wildcard (nws):
+            central.wx.alert.us.id.>
+      - region AFTER  the wildcard (quake / firms / usgs / traffic):
+            central.quake.event.>.us.id
+            central.fire.hotspot.>.us.id
+            central.hydro.>.us.id      (+ ".unknown" workaround, see below)
+            central.traffic.>.id        (state only, no us. prefix)
+      - state-only token at a fixed depth (fires):
+            central.fire.incident.<state>.>
+            central.fire.perimeter.<state>.>
+      - region ignored (swpc) — space weather is planetary.
+
+    The .unknown workaround: v0.9.20 leaves USGS hydro events whose gauge
+    state can't be inferred on `central.hydro.>.unknown`. Subscribing to
+    both avoids losing those rows until v0.9.20.1 backfills the state tag.
+
+    Empty/None region returns the bare-wildcard form (v0.5.3 behaviour).
+    Adapters without a Central equivalent (avalanche, ducting) return [].
+    """
+    if not region:
+        return list(_SUBJECTS_BARE.get(adapter, []))
+    state = region.split(".")[-1]
+    table: dict[str, list[str]] = {
+        "nws":        [f"central.wx.alert.{region}.>"],
+        "fires":      [f"central.fire.incident.{state}.>",
+                       f"central.fire.perimeter.{state}.>"],
+        "firms":      [f"central.fire.hotspot.>.{region}"],
+        "usgs_quake": [f"central.quake.event.>.{region}"],
+        "usgs":       [f"central.hydro.>.{region}",
+                       "central.hydro.>.unknown"],
+        "swpc":       ["central.space.>"],
+        "traffic":    [f"central.traffic.>.{state}"],
+        "roads511":   [f"central.traffic.>.{state}"],   # shared with traffic
+    }
+    return list(table.get(adapter, []))
 
 # Bridge between Central's adapter taxonomy and meshai's family-tab source names.
 # Central names some adapters differently (e.g. "wfigs_incidents" vs meshai's
@@ -164,16 +215,24 @@ class CentralConsumer:
         self._subs: list = []
 
     # ---- subject derivation ----
+    def _region(self) -> str:
+        """Active Central region (v0.5.4). Empty string = pre-v0.9.20 bare wildcards."""
+        if self._central is None:
+            return ""
+        return getattr(self._central, "region", "") or ""
+
     def _subject_owned(self) -> dict:
         """Map each Central subject filter -> set of meshai source names (adapter
         attrs) that are feed_source=central and consume it. A shared subject
-        (central.traffic.> for both traffic and roads511) carries multiple owned
-        sources; _handle drops events whose remapped source isn't in the set."""
+        (central.traffic.>.id for both traffic and roads511) carries multiple
+        owned sources; _handle drops events whose remapped source isn't in the
+        set. v0.5.4: subject shapes are region-aware via _subjects_for()."""
+        region = self._region()
         owned: dict = {}
-        for attr, subjects in ADAPTER_SUBJECTS.items():
+        for attr in _SUBJECTS_BARE.keys():
             cfg = getattr(self._env, attr, None)
             if cfg is not None and getattr(cfg, "feed_source", "native") == "central":
-                for subj in subjects:
+                for subj in _subjects_for(attr, region):
                     owned.setdefault(subj, set()).add(attr)
         for attr in ("avalanche", "ducting"):
             cfg = getattr(self._env, attr, None)
@@ -304,6 +363,9 @@ class CentralConsumer:
                            sorted(subject_owned))
             return
 
+        region = self._region()
+        logger.info("CentralConsumer: connecting region=%r subjects=%s",
+                    region or "(bare wildcards)", sorted(subject_owned))
         import nats  # lazy: no NATS dependency at boot unless actually consuming
         self._nc = await nats.connect(
             self._central.url,

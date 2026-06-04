@@ -27,7 +27,7 @@ interface EnvConfig {
   traffic: { enabled: boolean; tick_seconds: number; api_key: string; corridors: { name: string; lat: number; lon: number }[]; feed_source?: FeedSource }
   roads511: { enabled: boolean; tick_seconds: number; api_key: string; base_url: string; endpoints: string[]; bbox: number[]; feed_source?: FeedSource }
   firms: { enabled: boolean; tick_seconds: number; map_key: string; source: string; bbox: number[]; day_range: number; confidence_min: string; proximity_km: number; feed_source?: FeedSource }
-  central?: { enabled: boolean; url: string; durable: string }
+  central?: { enabled: boolean; url: string; durable: string; region: string }
 }
 
 type FeedHealth = EnvStatus['feeds'][number]
@@ -406,6 +406,10 @@ export default function Environment() {
             <TextInput label="Durable" value={env.central.durable || ''}
                        onChange={(v) => up({ central: { ...env.central!, durable: v } })}
                        placeholder="meshai-v04" />
+            <TextInput label="Region" value={env.central.region || ''}
+                       onChange={(v) => up({ central: { ...env.central!, region: v } })}
+                       placeholder="us.id"
+                       helper="Central v0.9.20 region token (dotted, e.g. 'us.id'). Empty = bare wildcards (all-US firehose)." />
           </div>
         </div>
       )}
