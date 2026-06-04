@@ -20,6 +20,8 @@ exceed the budget, the primary identifier is shrunk by codepoints and
 suffixed with `…` so the byte budget always holds.
 """
 
+import re
+from html import unescape
 from typing import Optional
 
 from meshai.notifications.events import Event
@@ -129,6 +131,34 @@ def _byte_len(s: str) -> int:
     return len(s.encode("utf-8"))
 
 
+# v0.5.7-weather: NWS data.description / data.instruction arrive as raw HTML
+# (Central guide §"Surprise 3"). Adapters that reuse those fields for title /
+# summary / region currently leak literal <p>/<br>/</p> tags to LoRa. Strip
+# tags + decode entities BEFORE byte-budget truncation so the 150 B cap counts
+# real glyphs, not markup. Applied universally — safe (no-op) on plain text.
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+# <br> and block-closers become spaces so adjacent paragraphs don't fuse.
+_HTML_BREAK_RE = re.compile(r"</?(?:br|p|div|li|tr|h[1-6])\b[^>]*>", re.IGNORECASE)
+
+
+def strip_html_tags(text: str) -> str:
+    """Remove HTML tags and decode entities, collapsing whitespace.
+
+    Block-level tags (<br>, <p>, etc.) become a single space so sentences
+    from adjacent paragraphs don't fuse. All other tags are removed outright.
+    HTML entities (&amp;, &nbsp;, &mdash;, …) are decoded via html.unescape.
+    Result is whitespace-collapsed and stripped.
+    """
+    if not text:
+        return ""
+    s = _HTML_BREAK_RE.sub(" ", text)
+    s = _HTML_TAG_RE.sub("", s)
+    s = unescape(s)
+    # Collapse runs of whitespace (incl. newlines from the original markup).
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
 def _category_emoji(event: Event) -> str:
     e = _CATEGORY_EMOJI.get(event.category)
     if e:
@@ -156,11 +186,14 @@ def _category_label(event: Event) -> str:
 
 
 def _primary_identifier(event: Event) -> str:
-    """Title > summary > registry friendly name > scrubbed category."""
-    t = (event.title or "").strip()
+    """Title > summary > registry friendly name > scrubbed category.
+
+    HTML is stripped first so the byte budget counts real glyphs.
+    """
+    t = strip_html_tags((event.title or "").strip())
     if t:
         return t
-    s = (event.summary or "").strip()
+    s = strip_html_tags((event.summary or "").strip())
     if s:
         return s
     try:
@@ -179,7 +212,10 @@ def _primary_identifier(event: Event) -> str:
 
 def _region_segment(event: Event) -> Optional[str]:
     region = event.region or (event.regions[0] if event.regions else None)
-    return str(region) if region else None
+    if region is None:
+        return None
+    cleaned = strip_html_tags(str(region))
+    return cleaned or None
 
 
 def _safe(callable_):

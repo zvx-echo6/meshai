@@ -192,6 +192,11 @@ ALERT_CATEGORIES = {
     },
 
     # Environmental - Weather
+    # v0.5.7-weather audit: nws.py._derive_category() emits exactly these four
+    # category IDs (suffix dispatch on the NWS event_type: warning/watch/
+    # advisory/{anything else -> statement}). The set is in lockstep —
+    # test_alert_categories_weather_complete enforces parity if nws.py changes.
+    # If a new branch is added there, add the matching entry here too.
     "weather_warning": {
         "name": "Severe Weather Warning",
         "description": "NWS Warning affecting your mesh area — highest urgency weather alert",
