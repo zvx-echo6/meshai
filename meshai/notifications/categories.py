@@ -286,6 +286,23 @@ ALERT_CATEGORIES = {
         "toggle": "fire",
     },
 
+    # Environmental - Seismic (Geohazards family)
+    # v0.5.7-seismic audit (test_alert_categories_seismic_complete enforces parity):
+    # Native: usgs_quake.py -> earthquake_event.
+    # Central path: map_category('quake.event.<tier>') -> earthquake_event
+    # for any of the 6 tiers (minor/light/moderate/strong/major/great).
+    # The hydro entries below also live under toggle='seismic' per the v0.5.2
+    # USGS-water migration (see comment on stream_flood_warning) and are
+    # OUT OF SCOPE for v0.5.7-seismic -- they belong to the water/geohazards
+    # phase that follows. Verified-unchanged here.
+    "earthquake_event": {
+        "name": "Earthquake",
+        "description": "USGS-catalogued earthquake — magnitude, depth, and PAGER alert level surfaced from the USGS earthquake feed",
+        "default_severity": "routine",
+        "example_message": "🌐 Earthquake: M 4.2 — 23 km ESE of Stanley, ID. Depth 8 km. USGS automatic.",
+        "toggle": "seismic",
+    },
+
     # Environmental - Flood
     "stream_flood_warning": {
         "name": "Stream Flood Warning",

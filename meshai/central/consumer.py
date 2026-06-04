@@ -64,9 +64,18 @@ def _subjects_for(adapter: str, region: Optional[str]) -> list[str]:
 
       - region BEFORE the wildcard (nws):
             central.wx.alert.us.id.>
-      - region AFTER  the wildcard (quake / usgs):
-            central.quake.event.>.us.id
+      - region AFTER  the wildcard (usgs hydro only):
             central.hydro.>.us.id      (+ ".unknown" workaround, see below)
+      - USGS quake — no region in subject (per Central v0.10.0 guide §usgs_quake):
+            central.quake.event.<tier>
+        4 tokens total. <tier> is one of {minor, light, moderate, strong,
+        major, great} -- USGS magnitude bands, NOT a severity integer.
+        State filtering must happen client-side via data.latitude/longitude
+        (same situation as FIRMS, fixed in v0.5.7-fire).
+        v0.5.7-seismic restored the legal tail-only `>` here; the pre-
+        v0.5.7-seismic `central.quake.event.>.us.id` was syntactically
+        invalid AND wouldn't have matched anything Central publishes (only
+        4 tokens, no us.<state>).
       - FIRMS — no region in subject at all (per Central v0.10.0 guide):
             central.fire.hotspot.<satellite>.<confidence>
         State filtering must happen client-side via data.latitude/longitude.
@@ -118,7 +127,10 @@ def _subjects_for(adapter: str, region: Optional[str]) -> list[str]:
         # with NO region in the subject. Tail-only `>` is the only NATS-legal
         # subscription that covers all combinations; client-side filters lat/lon.
         "firms":      ["central.fire.hotspot.>"],
-        "usgs_quake": [f"central.quake.event.>.{region}"],
+        # USGS quake: Central publishes central.quake.event.<tier> with NO
+        # region in the subject (per guide §usgs_quake). Same situation as
+        # FIRMS -- tail-only `>` is the legal form; client-side filters lat/lon.
+        "usgs_quake": ["central.quake.event.>"],
         "usgs":       [f"central.hydro.>.{region}",
                        "central.hydro.>.unknown"],
         "swpc":       ["central.space.>"],
@@ -225,6 +237,15 @@ def map_severity(sev: Optional[int]) -> str:
     """Central int severity (0-4 / None) -> meshai severity string.
 
     0|1 -> routine, 2 -> priority, 3|4 -> immediate, None -> routine.
+
+    The `sev >= 3` branch is intentionally a high-side CLAMP, not an
+    equality: any out-of-range value (5+ -- e.g. a hypothetical future
+    "great quake" severity that exceeds the documented 0-4 vocabulary, or
+    a malformed upstream value) maps to "immediate" (meshai's highest
+    severity bucket). Non-int / negative / NaN inputs degrade safely to
+    "routine" via the try/except. Downstream NotificationToggle.severity_channels
+    is dict-keyed by severity STRING ({"routine","priority","immediate"})
+    not int -- so no IndexError can ever propagate from this boundary.
     """
     if sev is None:
         return "routine"
@@ -232,7 +253,7 @@ def map_severity(sev: Optional[int]) -> str:
         sev = int(sev)
     except (TypeError, ValueError):
         return "routine"
-    if sev >= 3:
+    if sev >= 3:  # 3, 4, or any 5+ great-quake / malformed value
         return "immediate"
     if sev == 2:
         return "priority"

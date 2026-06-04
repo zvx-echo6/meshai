@@ -21,9 +21,15 @@ def test_subjects_for_nws_us_id():
     assert _subjects_for("nws", "us.id") == ["central.wx.alert.us.id.>"]
 
 
-def test_subjects_for_usgs_quake_us_id():
-    """USGS quake: region AFTER wildcard."""
-    assert _subjects_for("usgs_quake", "us.id") == ["central.quake.event.>.us.id"]
+def test_subjects_for_usgs_quake_us_id_uses_tail_only_wildcard():
+    """v0.5.7-seismic: USGS quake publishes `central.quake.event.<tier>` with
+    NO region in the subject (per Central v0.10.0 guide §usgs_quake; same
+    situation as FIRMS). The pre-v0.5.7-seismic `central.quake.event.>.us.id`
+    was syntactically invalid (`>` mid-subject) AND wouldn't have matched
+    anything Central publishes (only 4 tokens, no us.<state>). Region
+    filtering for quakes now happens client-side via data.latitude/longitude.
+    Subscription uses tail-only `>` (NATS-legal)."""
+    assert _subjects_for("usgs_quake", "us.id") == ["central.quake.event.>"]
 
 
 def test_subjects_for_firms_us_id_uses_tail_only_wildcard():
