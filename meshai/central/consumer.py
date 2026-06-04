@@ -411,9 +411,35 @@ class CentralConsumer:
                 friendly_name = str(ci["name"])
         except Exception:
             pass
+
+        # v0.5.8 (first per-adapter normalizer): state_511_atis work_zone /
+        # closure / incident events get a rich one-line title synthesized by
+        # the meshai.central_normalizer module + the work_zone renderer.
+        # Failures / unmapped adapters fall through to the registry-friendly
+        # name chain below.
+        synthesized = None
+        try:
+            from meshai.central_normalizer import normalize as _norm_envelope
+            from meshai.notifications.renderers.work_zone import format_work_zone_mesh
+            n = _norm_envelope(envelope)
+            if n is not None and category in ("work_zone", "road_closure", "road_incident"):
+                synthesized = format_work_zone_mesh(n) or None
+        except Exception:
+            logger.exception("normalizer/renderer failed for adapter=%s category=%s",
+                             inner.get("adapter"), category)
+            synthesized = None
+
         title = (data.get("title") or data.get("headline")
+                 or synthesized
                  or friendly_name or cat_raw
                  or f"{inner.get('adapter', 'central')} event")
+
+        # v0.5.8 Option A: when the per-adapter normalizer produced a fully
+        # formatted mesh string, set a marker on event.data so the composer
+        # at dispatch time can pass it through verbatim (no family prefix,
+        # no region tail, no severity append).
+        if synthesized and title == synthesized:
+            data["_meshai_precomposed"] = True
 
         kwargs = dict(
             title=str(title)[:200],

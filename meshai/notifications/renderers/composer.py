@@ -299,7 +299,16 @@ def compose_mesh_message(event: Event) -> str:
 
     Single line, no newlines. Drops segments wholesale (lowest priority first)
     to fit the budget; never mid-codepoint truncation.
+
+    OPTION A bypass: if `event.data["_meshai_precomposed"]` is truthy, the
+    title is already a fully formatted mesh string from the per-adapter
+    normalizer (meshai/central_normalizer.py + the work_zone renderer).
+    Return it verbatim -- no family-label prefix, no region tail, no
+    severity word append.
     """
+    if event.data and event.data.get("_meshai_precomposed") and event.title:
+        return event.title
+
     emoji = _category_emoji(event)
     label = _category_label(event)
     head = f"{emoji} {label}:"

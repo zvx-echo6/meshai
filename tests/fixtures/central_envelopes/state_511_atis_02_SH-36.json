@@ -1,0 +1,60 @@
+{
+  "id": "ID:Construction:33202",
+  "source": "central.echo6.co",
+  "type": "central.work_zone.state_511_atis.v1",
+  "time": "2026-05-21T10:40:00+00:00",
+  "datacontenttype": "application/json",
+  "centralschemaversion": "1.0",
+  "centralcategory": "work_zone.state_511_atis",
+  "centralseverity": 1,
+  "specversion": "1.0",
+  "data": {
+    "id": "ID:Construction:33202",
+    "adapter": "state_511_atis",
+    "category": "work_zone.state_511_atis",
+    "time": "2026-05-21T10:40:00Z",
+    "expires": "2026-06-05T16:30:00Z",
+    "severity": 1,
+    "geo": {
+      "centroid": [
+        -111.622569529543,
+        42.3143070666171
+      ],
+      "bbox": null,
+      "regions": [
+        "US-ID"
+      ],
+      "primary_region": "US-ID",
+      "geometry": null
+    },
+    "data": {
+      "roadway_name": "SH-36",
+      "description": "Paving Operations on SH-36 from MM (17) to MM (18). 6/1/2026 6:00 AM to 6/5/2026 4:30 PM Mon, Tue, Wed, Thu, Fri: Active all day Width Restriction: 10ft  Activities: Pilot Car in Operation, Reduced to Single Lane, Alternating Direction of Travel, Use Caution, Warning.",
+      "event_sub_type": "pavingOperations",
+      "direction": "Unknown",
+      "location_description": "NF-441 | NF-444",
+      "county": "Franklin",
+      "state": "Idaho",
+      "start_date": "6/1/26, 6:00 AM",
+      "last_updated": "5/21/26, 10:40 AM",
+      "is_full_closure": false,
+      "layer": "Construction",
+      "state_code": "ID",
+      "latitude": 42.3143070666171,
+      "longitude": -111.622569529543,
+      "_enriched": {
+        "geocoder": {
+          "name": "Cache Nf Road 444",
+          "city": null,
+          "county": "Franklin",
+          "state": "Idaho",
+          "country": "United States",
+          "postal_code": null,
+          "timezone": "America/Boise",
+          "landclass": "Cache National Forest",
+          "elevation_m": 2035.1875
+        }
+      }
+    }
+  }
+}
