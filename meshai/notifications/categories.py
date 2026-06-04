@@ -226,7 +226,50 @@ ALERT_CATEGORIES = {
         "toggle": "weather",
     },
 
-    # Environmental - Space Weather
+    # Environmental - Space Weather / RF Propagation
+    # v0.5.7-rf audit (test_alert_categories_rf_complete enforces parity):
+    # Native: ducting.py -> rf_anomalous_propagation (super_refraction tier);
+    #         ducting.py -> rf_ducting_enhancement (duct + surface_duct tiers).
+    # Central path (via map_category): space.alert -> rf_propagation_alert
+    #         (swpc_alerts); space.kindex -> geomagnetic_storm (swpc_kindex);
+    #         space.proton_flux -> solar_radiation_storm (swpc_protons);
+    #         catchall space.* -> geomagnetic_storm.
+    # All three SWPC adapters publish severity=0 -> "routine" per guide
+    # §swpc_alerts/§swpc_kindex/§swpc_protons live samples.
+    #
+    # Legacy entries kept: hf_blackout and tropospheric_ducting have no
+    # current emitter (ducting.py was renamed to rf_ducting_enhancement,
+    # and HF-blackout-specific parsing of swpc_alerts.message is deferred
+    # to a future phase). They remain UI-selectable as forward-compatible
+    # rule targets; queued for cleanup if no emitter materializes.
+    "rf_anomalous_propagation": {
+        "name": "RF Anomalous Propagation",
+        "description": "Super-refractive atmospheric layer affecting VHF/UHF propagation — sub-standard refractive conditions, mostly affects line-of-sight links",
+        "default_severity": "routine",
+        "example_message": "📡 Anomalous Propagation: Super-refraction detected, dM/dz -45 M-units/km, ~80m thick layer. VHF/UHF links may show enhanced range.",
+        "toggle": "rf_propagation",
+    },
+    "rf_ducting_enhancement": {
+        "name": "RF Ducting Enhancement",
+        "description": "Tropospheric duct trapping VHF/UHF signals — extended range, signals propagate well beyond the normal radio horizon",
+        "default_severity": "priority",
+        "example_message": "📡 Ducting Enhancement: Surface duct detected, base 0 m, ~120 m thick. VHF/UHF extended range, expect signals well beyond horizon.",
+        "toggle": "rf_propagation",
+    },
+    "rf_propagation_alert": {
+        "name": "Space Weather Alert",
+        "description": "NOAA SWPC space weather alert/watch/warning — geomagnetic storm scales (G1-G5), radiation storms (S), radio blackouts (R), or summaries. Full operational text in event body.",
+        "default_severity": "priority",
+        "example_message": "⚠ Space Weather Alert (A20F): WATCH — Geomagnetic Storm Category G1 Predicted. Apr 25: G1 (Minor). Aurora possible at high latitudes.",
+        "toggle": "rf_propagation",
+    },
+    "solar_radiation_storm": {
+        "name": "Solar Radiation Storm",
+        "description": "GOES proton flux above S-scale threshold — S1 ≥10 pfu at ≥10 MeV; S2 ≥100; S3 ≥1000; impacts HF over polar regions and satellite operations",
+        "default_severity": "priority",
+        "example_message": "🌐 Solar Radiation Storm: GOES-19 proton flux 12.5 pfu at ≥10 MeV (S1 threshold). HF over polar regions degraded.",
+        "toggle": "rf_propagation",
+    },
     "hf_blackout": {
         "name": "HF Radio Blackout",
         "description": "R3+ solar flare degrading HF propagation on sunlit side",

@@ -44,6 +44,11 @@ _CATEGORY_EMOJI: dict[str, str] = {
     "hf_blackout": "⚠",
     "geomagnetic_storm": "🌐",
     "tropospheric_ducting": "📡",
+    # v0.5.7-rf additions:
+    "rf_anomalous_propagation": "📡",
+    "rf_ducting_enhancement": "📡",
+    "rf_propagation_alert": "⚠",
+    "solar_radiation_storm": "🌐",
     # Fire (v0.5.7-fire: fire_proximity/wildfire_proximity removed; aligned
     # to the new registry entries wildfire_hotspot + wildfire_incident).
     "wildfire_hotspot": "🔥",
@@ -105,6 +110,11 @@ _CATEGORY_LABEL: dict[str, str] = {
     "hf_blackout": "RF",
     "geomagnetic_storm": "RF",
     "tropospheric_ducting": "RF",
+    # v0.5.7-rf additions:
+    "rf_anomalous_propagation": "RF",
+    "rf_ducting_enhancement": "RF",
+    "rf_propagation_alert": "RF",
+    "solar_radiation_storm": "RF",
     "road_closure": "ROADS",
     "traffic_congestion": "ROADS",
     "avalanche_warning": "AVY",

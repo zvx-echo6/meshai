@@ -149,6 +149,16 @@ def _subjects_for(adapter: str, region: Optional[str]) -> list[str]:
         # publishes `central.hydro.<param>.<agency>.<site>.<region>`.
         "usgs":       [f"central.hydro.*.*.*.{region}",
                        "central.hydro.*.*.*.unknown"],
+        # SWPC space weather: planetary (no region). The umbrella subject
+        # central.space.> catches all three SWPC adapters per Central v0.10.0
+        # guide §swpc_alerts/§swpc_kindex/§swpc_protons:
+        #   - swpc_alerts:  central.space.alert.<product_id>
+        #   - swpc_kindex:  central.space.kindex          (fixed)
+        #   - swpc_protons: central.space.proton_flux     (fixed)
+        # All three publish severity=0 by default (verified against the
+        # live samples in the guide); map_severity(0) -> "routine", which
+        # routes through the NotificationToggle's "routine" severity_channels
+        # entry (dict is string-keyed, no IndexError risk).
         "swpc":       ["central.space.>"],
         # Convention B (bare state) — shared by traffic family (wzdx,
         # tomtom_incidents, state_511_atis). Single-token `*` matches the
