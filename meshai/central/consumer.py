@@ -64,15 +64,27 @@ def _subjects_for(adapter: str, region: Optional[str]) -> list[str]:
 
       - region BEFORE the wildcard (nws):
             central.wx.alert.us.id.>
-      - region AFTER  the wildcard (quake / firms / usgs / traffic):
+      - region AFTER  the wildcard (quake / firms / usgs):
             central.quake.event.>.us.id
             central.fire.hotspot.>.us.id
             central.hydro.>.us.id      (+ ".unknown" workaround, see below)
-            central.traffic.>.id        (state only, no us. prefix)
       - state-only token at a fixed depth (fires):
             central.fire.incident.<state>.>
             central.fire.perimeter.<state>.>
+      - traffic family — Convention B, bare state, no wildcard:
+            central.traffic.<event_type>.id           (wzdx, tomtom_incidents,
+                                                       state_511_atis)
+      - traffic family — Convention A, us.<state>:
+            central.traffic.<event_type>.us.id        (itd_511, Idaho-only)
       - region ignored (swpc) — space weather is planetary.
+
+    NATS rule: `>` is only legal at the tail. Pre-v0.5.7-traffic this file
+    shipped `central.traffic.>.{state}` for traffic+roads511, which was
+    syntactically invalid (`>` mid-subject). Fixed by switching to single-
+    token `*` wildcards for the per-event-type slot. roads511 now owns
+    BOTH the bare-state (Convention B, shared with traffic) and the
+    us.<state> (Convention A, itd_511-only) subjects so itd_511 events
+    attribute to roads511 in meshai.
 
     The .unknown workaround: v0.9.20 leaves USGS hydro events whose gauge
     state can't be inferred on `central.hydro.>.unknown`. Subscribing to
@@ -93,8 +105,16 @@ def _subjects_for(adapter: str, region: Optional[str]) -> list[str]:
         "usgs":       [f"central.hydro.>.{region}",
                        "central.hydro.>.unknown"],
         "swpc":       ["central.space.>"],
-        "traffic":    [f"central.traffic.>.{state}"],
-        "roads511":   [f"central.traffic.>.{state}"],   # shared with traffic
+        # Convention B (bare state) — shared by traffic family (wzdx,
+        # tomtom_incidents, state_511_atis). Single-token `*` matches the
+        # event_type slot; `>` was illegal here.
+        "traffic":    [f"central.traffic.*.{state}"],
+        # roads511 dual-subscribes: bare state (shared with traffic) + the
+        # us.<state> form that the new itd_511 Idaho-only adapter publishes
+        # (Convention A). Sub-adapter routing (_subject_owned) keeps the
+        # shared bare-state subject scoped to both source names.
+        "roads511":   [f"central.traffic.*.{state}",
+                       f"central.traffic.*.{region}"],
     }
     return list(table.get(adapter, []))
 
@@ -113,6 +133,11 @@ CENTRAL_ADAPTER_TO_SOURCE: dict[str, str] = {
     "wzdx": "traffic",
     "tomtom_incidents": "traffic",
     "state_511_atis": "roads511",
+    # v0.5.7-traffic: itd_511 is the new Idaho-only Central adapter
+    # (Convention A publishing). Routes to meshai's roads511 source so
+    # ALERT_CATEGORIES roads-family rules cover both 511 feeds. A future
+    # v0.6 may split them; for now collapsed for UX simplicity.
+    "itd_511": "roads511",
     "firms": "firms",
 }
 
@@ -134,6 +159,14 @@ _CATEGORY_MAP: list[tuple[str, str]] = [
     ("disaster.", "disaster_event"),
     ("traffic_flow", "traffic_flow"),
     ("traffic_cameras", "traffic_camera"),
+    # v0.5.7-traffic: preserve traffic event_type distinctions instead of
+    # flattening to traffic_congestion. Central publishes category strings
+    # like "work_zone.wzdx", "incident.tomtom_incidents", "closure" (raw
+    # from state_511_atis / itd_511). startswith() catches both the bare
+    # form and the ".<adapter>" suffixed form.
+    ("work_zone", "work_zone"),
+    ("incident", "road_incident"),
+    ("closure", "road_closure"),
     ("traffic.", "traffic_congestion"),
 ]
 

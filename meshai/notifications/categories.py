@@ -296,6 +296,11 @@ ALERT_CATEGORIES = {
     },
 
     # Environmental - Roads
+    # v0.5.7-traffic audit (test_alert_categories_roads_complete enforces parity):
+    # Native: traffic.py -> traffic_congestion; roads511.py -> road_closure.
+    # Central path (via map_category): work_zone (wzdx), road_incident
+    # (tomtom_incidents + state_511_atis/itd_511 'incident'), road_closure
+    # (state_511_atis/itd_511 'closure'), traffic_congestion (traffic. catchall).
     "road_closure": {
         "name": "Road Closure",
         "description": "Full road closure on a monitored corridor",
@@ -308,6 +313,20 @@ ALERT_CATEGORIES = {
         "description": "Traffic speed dropped below congestion threshold on a monitored corridor",
         "default_severity": "routine",
         "example_message": "🚗 Traffic Congestion: I-84 Twin Falls — 35 mph (free-flow 70 mph), 50% speed ratio",
+        "toggle": "roads",
+    },
+    "work_zone": {
+        "name": "Work Zone",
+        "description": "Active construction or maintenance work zone affecting traffic — possible lane closures, reduced speed, or detour",
+        "default_severity": "routine",
+        "example_message": "🚧 Work Zone: I-84 EB MP 168-173 — right lane closed, 55 mph zone. Expect delays.",
+        "toggle": "roads",
+    },
+    "road_incident": {
+        "name": "Road Incident",
+        "description": "Reported incident on a monitored corridor (crash, disabled vehicle, debris, hazard)",
+        "default_severity": "priority",
+        "example_message": "🚨 Road Incident: US-93 NB at MP 47 — crash blocking left lane, expect 30-min delay.",
         "toggle": "roads",
     },
 

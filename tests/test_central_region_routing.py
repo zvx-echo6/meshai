@@ -39,10 +39,22 @@ def test_subjects_for_fires_us_id_uses_state_token():
     ]
 
 
-def test_subjects_for_traffic_and_roads511_share_state_token():
-    """Traffic family: bare-state suffix (no us. prefix), shared by both adapters."""
-    assert _subjects_for("traffic",  "us.id") == ["central.traffic.>.id"]
-    assert _subjects_for("roads511", "us.id") == ["central.traffic.>.id"]
+def test_subjects_for_traffic_uses_convention_b():
+    """v0.5.7-traffic: traffic adapter -> bare-state Convention B with `*`
+    in the event_type slot. Pre-v0.5.7-traffic this was `>.{state}` which
+    is invalid NATS (`>` must be at the tail). The bare-state subject is
+    shared with roads511 (sub-adapter routing picks the right meshai source)."""
+    assert _subjects_for("traffic", "us.id") == ["central.traffic.*.id"]
+
+
+def test_subjects_for_roads511_dual_subscribes_convention_a_and_b():
+    """v0.5.7-traffic: roads511 owns BOTH the shared bare-state subject
+    (Convention B, shared with traffic) AND the us.<state> subject
+    (Convention A) where the new Idaho-only itd_511 adapter publishes."""
+    assert _subjects_for("roads511", "us.id") == [
+        "central.traffic.*.id",
+        "central.traffic.*.us.id",
+    ]
 
 
 def test_subjects_for_usgs_includes_unknown_workaround():

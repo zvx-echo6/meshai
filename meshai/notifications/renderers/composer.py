@@ -54,6 +54,8 @@ _CATEGORY_EMOJI: dict[str, str] = {
     # Roads
     "road_closure": "🚧",
     "traffic_congestion": "🚗",
+    "work_zone": "🚧",
+    "road_incident": "🚨",
     # Avalanche
     "avalanche_warning": "⛷",
     "avalanche_considerable": "⛷",

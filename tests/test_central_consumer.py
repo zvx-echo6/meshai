@@ -150,8 +150,14 @@ def test_consumer_config_uses_deliver_policy_new():
 
 
 def test_subject_domain_fallback_for_unmapped_category():
-    """D.1: an unmapped category (traffic 'work_zone.wzdx') falls back to the
-    subject domain instead of returning 'other'."""
+    """D.1: an unmapped category falls back to the subject domain instead
+    of returning 'other'.
+
+    v0.5.7-traffic note: 'work_zone.wzdx' is now MAPPED (-> 'work_zone'),
+    so we use a genuinely-unmapped category string here to exercise the
+    fallback path. The subject-domain fallback for central.traffic.* is
+    still 'traffic_congestion'.
+    """
     import json
     from meshai.central.consumer import CentralConsumer, category_from_subject
     from meshai.config import EnvironmentalConfig
@@ -161,11 +167,29 @@ def test_subject_domain_fallback_for_unmapped_category():
     bus = EventBus(); bus.subscribe(rec.append)
     c = CentralConsumer(EnvironmentalConfig(), bus)
     env = {"id": "wz1", "data": {"id": "wz1", "adapter": "wzdx",
-           "category": "work_zone.wzdx", "time": "2026-05-28T00:00:00Z", "severity": 1,
+           "category": "telematics.unknown_thing", "time": "2026-05-28T00:00:00Z", "severity": 1,
            "geo": {"centroid": [-96.2, 36.15], "primary_region": "US-OK", "regions": ["US-OK"]},
            "data": {"road": "I-44"}}}
     ev = c._handle("central.traffic.work_zone.ok", json.dumps(env).encode())
     assert ev is not None and ev.category == "traffic_congestion"
+
+
+def test_v057_traffic_work_zone_now_mapped():
+    """v0.5.7-traffic: 'work_zone.wzdx' maps to the new 'work_zone' meshai
+    category (not flattened to traffic_congestion)."""
+    import json
+    from meshai.central.consumer import CentralConsumer
+    from meshai.config import EnvironmentalConfig
+    from meshai.notifications.pipeline.bus import EventBus
+    rec = []
+    bus = EventBus(); bus.subscribe(rec.append)
+    c = CentralConsumer(EnvironmentalConfig(), bus)
+    env = {"id": "wz2", "data": {"id": "wz2", "adapter": "wzdx",
+           "category": "work_zone.wzdx", "time": "2026-05-28T00:00:00Z", "severity": 1,
+           "geo": {"centroid": [-114.0, 42.0], "primary_region": "US-ID", "regions": ["US-ID"]},
+           "data": {"road": "I-84"}}}
+    ev = c._handle("central.traffic.work_zone.id", json.dumps(env).encode())
+    assert ev is not None and ev.category == "work_zone"
 
 
 @pytest.mark.parametrize("adapter,expected", [
