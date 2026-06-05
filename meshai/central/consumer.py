@@ -498,6 +498,19 @@ class CentralConsumer:
                 if n is not None and str(n.get("_kind", "")).startswith("wfigs"):
                     from meshai.central.wfigs_handler import handle_wfigs
                     synthesized = handle_wfigs(n, envelope, subject, data=data) or None
+                # v0.5.10 nws + usgs_quake + swpc handlers. Adapter-specific
+                # filters: NWS severity gate, quake magnitude+Idaho-distance,
+                # SWPC G3+/R3+/S1+ NOAA scales. Universal freshness gate above
+                # already dropped stale envelopes per central_normalizer.
+                elif inner.get("adapter") == "nws":
+                    from meshai.central.nws_handler import handle_nws
+                    synthesized = handle_nws(envelope, subject, data=data) or None
+                elif inner.get("adapter") == "usgs_quake":
+                    from meshai.central.quake_handler import handle_quake
+                    synthesized = handle_quake(envelope, subject, data=data) or None
+                elif inner.get("adapter") in ("swpc_alerts", "swpc_kindex", "swpc_protons"):
+                    from meshai.central.swpc_handler import handle_swpc
+                    synthesized = handle_swpc(envelope, subject, data=data) or None
                 elif n is not None and category in ("work_zone", "road_closure", "road_incident"):
                     synthesized = format_work_zone_mesh(n) or None
         except Exception:

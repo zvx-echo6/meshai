@@ -948,6 +948,24 @@ def is_incident_envelope_stale(envelope: dict, now: int,
         val = d.get("start_epoch")
         if isinstance(val, (int, float)) and val > 0:
             se = int(val)
+    elif adapter == "nws":
+        # NWS CAP: prefer `sent` (issuance), fall back to `effective`.
+        se = (_parse_iso_epoch_freshness(d.get("sent"))
+              or _parse_iso_epoch_freshness(d.get("effective")))
+    elif adapter == "usgs_quake":
+        val = d.get("time_ms")
+        if isinstance(val, (int, float)) and val > 0:
+            se = int(val / 1000) if val > 1e12 else int(val)
+    elif adapter in ("swpc_alerts", "swpc_kindex", "swpc_protons"):
+        # Generic time / issued_at field.
+        for k in ("time", "issued_at", "issue_time"):
+            v = d.get(k)
+            if isinstance(v, str):
+                se = _parse_iso_epoch_freshness(v)
+                if se is not None: break
+            elif isinstance(v, (int, float)) and v > 0:
+                se = int(v / 1000) if v > 1e12 else int(v)
+                break
     else:
         return False   # adapter not in scope of this gate
 
