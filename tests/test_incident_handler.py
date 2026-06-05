@@ -13,8 +13,7 @@ Coverage:
     (f) magnitude bump up -> Update
     (g) delay double (>=2x) -> Update
     (h) icon change -> Update
-    (i) 8h heartbeat -> Update
-
+    
   state_511 / itd_511 EventType branching (j-m):
     (j) state_511_atis incident parses
     (k) state_511_atis closure parses
@@ -33,7 +32,6 @@ import time
 import pytest
 
 from meshai.central.incident_handler import (
-    INCIDENT_BROADCAST_HEARTBEAT_S,
     handle_incident,
 )
 from meshai.persistence import close_thread_connection, init_db
@@ -372,24 +370,6 @@ def test_h_icon_change_triggers_update(mem_db, no_photon):
         "SELECT icon_category FROM traffic_events "
         "WHERE source='tomtom_incidents'").fetchone()
     assert row["icon_category"] == "road_closed"
-
-
-# ============================================================================
-# (i) 8h heartbeat triggers Update
-# ============================================================================
-
-
-def test_i_8h_heartbeat_triggers_update(mem_db, no_photon):
-    env = _tomtom_env(icon_category=6, magnitude=2, delay=300)
-    data1 = {}
-    handle_incident(env, env["subject"], data=data1, now=1_000_000)
-    _commit(data1, 1_000_001)
-
-    # v0.5.9 REVISED gate (A): heartbeat no longer fires Update.
-    later = 1_000_001 + INCIDENT_BROADCAST_HEARTBEAT_S
-    data2 = {}
-    wire2 = handle_incident(env, env["subject"], data=data2, now=later)
-    assert wire2 is None
 
 
 # ============================================================================

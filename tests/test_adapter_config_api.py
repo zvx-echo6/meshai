@@ -29,14 +29,14 @@ def client():
 # ============================================================================
 
 
-def test_list_returns_all_58_keys(client):
+def test_list_returns_all_59_keys(client):
     r = client.get("/api/adapter-config")
     assert r.status_code == 200
     body = r.json()
     # 14 adapters with at least one key (itd_511 has zero -- not in the
     # grouped dict because the SQL only returns rows that exist).
     total = sum(len(v) for v in body.values())
-    assert total == 58
+    assert total == 59
 
 
 def test_list_grouped_by_adapter(client):

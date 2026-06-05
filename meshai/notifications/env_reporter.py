@@ -25,7 +25,19 @@ logger = logging.getLogger(__name__)
 
 # Length budget per block. The LLM has a finite context window; we cap each
 # block at this many characters to keep the assembled prompt sane.
-_BLOCK_MAX_CHARS = 3000
+# v0.6-tail item 2: configurable via adapter_config.pipeline.env_reporter_block_chars.
+_DEFAULT_BLOCK_MAX_CHARS = 3000
+
+
+def _block_cap() -> int:
+    """Read the per-block char cap from adapter_config; fall back to
+    the conservative 3000-char default if the row isn't seeded yet."""
+    try:
+        from meshai.adapter_config import adapter_config
+        v = adapter_config.pipeline.env_reporter_block_chars
+        return int(v) if v else _DEFAULT_BLOCK_MAX_CHARS
+    except Exception:
+        return _DEFAULT_BLOCK_MAX_CHARS
 
 
 # ============================================================================
@@ -146,7 +158,7 @@ class EnvReporter:
         if len(lines) == 1:
             # Only the header; nothing to report.
             return ""
-        return "\n".join(lines)[:_BLOCK_MAX_CHARS]
+        return "\n".join(lines)[:_block_cap()]
 
     # ---------- per-adapter detail blocks ----------------------------------
 
@@ -195,7 +207,7 @@ class EnvReporter:
                     f"{n_pixels} pixels total, {n_high} high-confidence"
                 )
 
-        return ("\n".join(lines) if lines else "")[:_BLOCK_MAX_CHARS]
+        return ("\n".join(lines) if lines else "")[:_block_cap()]
 
     def build_alerts_detail(self, *, region: Optional[str] = None,
                               limit: int = 10,
@@ -226,7 +238,7 @@ class EnvReporter:
             expires = _fmt_epoch(r["expires_at"]) if r["expires_at"] else "no expiry"
             head = (r["headline"] or "")[:90]
             lines.append(f"  - [{sev}] {kind} ({loc}): {head} -- until {expires}")
-        return "\n".join(lines)[:_BLOCK_MAX_CHARS]
+        return "\n".join(lines)[:_block_cap()]
 
     def build_quakes_detail(self, *, hours: int = 24,
                               limit: int = 10,
@@ -253,7 +265,7 @@ class EnvReporter:
             when = _fmt_epoch(r["occurred_at"]) if r["occurred_at"] else "?"
             ts = " TSUNAMI" if r["tsunami_warning"] else ""
             lines.append(f"  - {mag} {place}, {depth} depth, {when}{ts}")
-        return "\n".join(lines)[:_BLOCK_MAX_CHARS]
+        return "\n".join(lines)[:_block_cap()]
 
     def build_traffic_detail(self, *, state: Optional[str] = "ID",
                                hours: int = 2,
@@ -291,7 +303,7 @@ class EnvReporter:
                 delay = f", {int(r['delay_seconds']/60)} min delay"
             when = _fmt_epoch(r["last_seen_at"])
             lines.append(f"  - {road} {direction} ({county}): {sub}{impact}{delay}, seen {when}")
-        return "\n".join(lines)[:_BLOCK_MAX_CHARS]
+        return "\n".join(lines)[:_block_cap()]
 
     def build_gauges_detail(self, *, limit: int = 10,
                               now: Optional[int] = None) -> str:
@@ -323,7 +335,7 @@ class EnvReporter:
                      if r['flow_cfs'] is not None else "")
             name = r["gauge_name"] or r["site_id"]
             lines.append(f"  - {name}: {value} ({ts_state}){flow}")
-        return "\n".join(lines)[:_BLOCK_MAX_CHARS]
+        return "\n".join(lines)[:_block_cap()]
 
     def build_swpc_detail(self, *, hours: int = 24,
                             now: Optional[int] = None) -> str:
@@ -362,7 +374,7 @@ class EnvReporter:
                 if r["ratings_json"]:
                     lines.append(f"  Ratings: {r['ratings_json']}")
 
-        return ("\n".join(lines) if lines else "")[:_BLOCK_MAX_CHARS]
+        return ("\n".join(lines) if lines else "")[:_block_cap()]
 
     def build_drop_audit(self, *, hours: int = 1) -> str:
         """Why-was-X-dropped: event_log handled=0 grouped by source+reason
@@ -401,7 +413,7 @@ class EnvReporter:
         except Exception:
             pass
 
-        return ("\n".join(lines) if lines else "")[:_BLOCK_MAX_CHARS]
+        return ("\n".join(lines) if lines else "")[:_block_cap()]
 
     def build_all(self, *, now: Optional[int] = None) -> str:
         """Convenience: summary + every detail block. Used by router when the

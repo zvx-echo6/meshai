@@ -49,13 +49,6 @@ logger = logging.getLogger(__name__)
 # kept as a backward-compat alias for downstream imports.
 INCIDENT_FRESHNESS_MAX_S = 1800
 
-# Heartbeat retained as a constant for backward-compatible imports, but
-# the v0.5.9 REVISED handler no longer fires Update broadcasts. State
-# tracking continues to UPSERT current_* columns; the dispatcher just
-# stops getting wire strings after the first New: broadcast per
-# external_id. See WFIGS handler if you want post-first-broadcast
-# behavior (fires keep their 8h-rate-limited Update flow).
-INCIDENT_BROADCAST_HEARTBEAT_S = 8 * 60 * 60   # 28800 (unused)
 
 
 # ---- canonical sub_type vocabulary --------------------------------------

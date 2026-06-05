@@ -195,9 +195,30 @@ async def test_llm_connection(request: Request):
 # Called by the frontend after PUT /api/config/notifications so the
 # Inhibitor + Grouper + Dispatcher pick up the new enabled toggle set
 # on the next event without a container restart.
+def _refresh_toggle_filter(app) -> bool:
+    """Best-effort live refresh of the running ToggleFilter. Returns True
+    when the refresh actually fired, False if the pipeline isn t up yet
+    (typical during tests / early startup). Never raises."""
+    try:
+        bus = getattr(app.state, "bus", None)
+        config = getattr(app.state, "config", None)
+        if bus is None or config is None:
+            return False
+        components = getattr(bus, "_pipeline_components", {}) or {}
+        tf = components.get("toggle_filter")
+        if tf is None:
+            return False
+        tf.refresh(config)
+        return True
+    except Exception:
+        logger.exception("toggle_filter refresh failed")
+        return False
+
+
 @router.post("/notifications/refresh-toggles")
 async def refresh_toggles(request: Request):
-    """Re-read the live config and refresh the running ToggleFilter."""
+    """Explicit refresh endpoint (kept for backwards-compat with the
+    dashboard's manual ping path)."""
     bus = getattr(request.app.state, "bus", None)
     config = getattr(request.app.state, "config", None)
     if bus is None or config is None:
@@ -208,3 +229,24 @@ async def refresh_toggles(request: Request):
         raise HTTPException(503, "toggle_filter not on pipeline bus")
     tf.refresh(config)
     return {"ok": True}
+
+
+
+# v0.6-tail item 1: auto-refresh the ToggleFilter after any successful
+# config PUT that touches notifications. Registered from server.py at
+# startup via register_config_routes_hooks(app).
+def register_config_routes_hooks(app):
+    @app.middleware("http")
+    async def _auto_refresh_toggle_filter(request, call_next):
+        response = await call_next(request)
+        try:
+            method = request.method.upper()
+            path = request.url.path
+            if (method == "PUT"
+                    and 200 <= response.status_code < 300
+                    and ("/api/config/notifications" in path
+                         or path.rstrip("/").endswith("/api/config"))):
+                _refresh_toggle_filter(request.app)
+        except Exception:
+            logger.exception("auto-refresh middleware failed")
+        return response

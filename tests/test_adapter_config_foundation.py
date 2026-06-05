@@ -54,11 +54,11 @@ def test_v6_tables_exist(fresh_db):
     assert "adapter_meta" in tables
 
 
-def test_schema_meta_at_v11(fresh_db):
+def test_schema_meta_at_v12(fresh_db):
     v = fresh_db.execute(
         "SELECT value FROM schema_meta WHERE key='version'"
     ).fetchone()["value"]
-    assert int(v) == 11
+    assert int(v) == 12
 
 
 def test_adapter_config_type_check_constrains_vocabulary(fresh_db):
@@ -73,9 +73,9 @@ def test_adapter_config_type_check_constrains_vocabulary(fresh_db):
 # ---------- registry shape -----------------------------------------------
 
 
-def test_registry_at_58_entries():
+def test_registry_at_59_entries():
     """v0.6-3a.1 trim: 43 CONFIG-only keys (was 77 in v0.6-3a draft)."""
-    assert len(REGISTRY) == 58, (
+    assert len(REGISTRY) == 59, (
         f"REGISTRY should have 43 entries after CONFIG-vs-CODE trim; got {len(REGISTRY)}. "
         f"If a sentence template / emoji / heuristic snuck in, it belongs in CODE not config."
     )

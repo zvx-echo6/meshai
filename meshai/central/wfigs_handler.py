@@ -89,6 +89,18 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
                     severity_word=severity_word, irwin_id=irwin_id,
                     subject=subject, handled=0,
                     table_name=None, table_pk=irwin_id)
+        # v0.6-tail item 4: tombstone branch stamps fires.tombstoned_at so
+        # the ReminderScheduler stops re-broadcasting the closed fire.
+        # Only the tombstone kind closes the fire; perimeter polls don t.
+        if kind == "wfigs_tombstone" and irwin_id:
+            try:
+                conn.execute(
+                    "UPDATE fires SET tombstoned_at=COALESCE(tombstoned_at, ?) "
+                    "WHERE irwin_id=?",
+                    (now, irwin_id),
+                )
+            except Exception:
+                logger.exception("wfigs: tombstoned_at stamp failed irwin=%s", irwin_id)
         return None
 
     # ---- active incident ----

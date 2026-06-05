@@ -320,6 +320,11 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "type": "int",
         "description": "How long to hold a group_key before emitting downstream.",
     },
+    ("pipeline", "env_reporter_block_chars"): {
+        "default": 3000,
+        "type": "int",
+        "description": "Max chars per env_reporter block injected into the LLM system prompt.",
+    },
     # =================================================================
     # v0.6-phase3 reminders: per-adapter clock-driven re-broadcast config.
     # =================================================================

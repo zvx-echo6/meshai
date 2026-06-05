@@ -232,6 +232,15 @@ class ReminderScheduler:
         if not terminate_when: return False
         tokens = set(terminate_when)
         if adapter == "wfigs":
+            if "tombstone" in tokens:
+                # v0.6-tail item 4: fires.tombstoned_at populated by
+                # wfigs_handler when WFIGS marks a fire closed.
+                try:
+                    ts = row["tombstoned_at"]
+                    if ts is not None:
+                        return True
+                except (IndexError, KeyError):
+                    pass
             if "containment_100" in tokens:
                 c = row["current_contained_pct"]
                 if c is not None and int(c) >= 100:
@@ -240,8 +249,6 @@ class ReminderScheduler:
                 le = row["last_event_at"]
                 if le is not None and (now - float(le)) > 86400:
                     return True
-            # "tombstone" -- fires row has no flag; best-effort via event_log
-            # would be expensive on each tick. Skip; deliberate scope-limit.
             return False
         if adapter == "swpc":
             if "end_date_passed" in tokens:
