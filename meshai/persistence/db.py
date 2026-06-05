@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = "/data/meshai.sqlite"
 MESHAI_DB_PATH_ENV = "MESHAI_DB_PATH"
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 SCHEMA_META_TABLE = "schema_meta"
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
@@ -144,14 +144,14 @@ def init_db(path: Optional[str] = None) -> sqlite3.Connection:
 
 
 def _read_migration_files() -> list[tuple[int, str, str]]:
-    """Return [(version_int, filename, sql_text), ...] sorted ascending."""
+    """Return [(version_int, filename, sql_text), ...] sorted by numeric
+    version (NOT by filename -- v10 must follow v9, not v1)."""
     if not MIGRATIONS_DIR.is_dir():
         return []
     out: list[tuple[int, str, str]] = []
-    for p in sorted(MIGRATIONS_DIR.iterdir()):
+    for p in MIGRATIONS_DIR.iterdir():
         if not p.is_file() or p.suffix.lower() != ".sql":
             continue
-        # Filename format: v<N>.sql or v<N>_<label>.sql
         stem = p.stem
         if not stem.startswith("v"):
             continue
@@ -159,6 +159,7 @@ def _read_migration_files() -> list[tuple[int, str, str]]:
         try: n = int(n_str)
         except ValueError: continue
         out.append((n, p.name, p.read_text()))
+    out.sort(key=lambda x: x[0])   # v0.6-6: numeric sort, not alphabetical
     return out
 
 

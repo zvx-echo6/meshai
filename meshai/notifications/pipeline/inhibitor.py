@@ -43,6 +43,36 @@ class Inhibitor:
         # {inhibit_key: (rank, expires_at)}
         self._active: dict[str, tuple[int, float]] = {}
         self._logger = logging.getLogger("meshai.pipeline.inhibitor")
+        # v0.6-6: restore non-expired rows from inhibit_state on construct.
+        self._restore_from_db()
+
+    def _restore_from_db(self) -> None:
+        try:
+            from meshai.persistence import get_db
+            conn = get_db()
+            rows = conn.execute(
+                "SELECT key, rank, expires_at FROM inhibit_state "
+                "WHERE expires_at > ?",
+                (self._now(),),
+            ).fetchall()
+            for r in rows:
+                self._active[r["key"]] = (int(r["rank"]), float(r["expires_at"]))
+            if self._active:
+                self._logger.info("inhibitor: restored %d active keys", len(self._active))
+        except Exception:
+            self._logger.exception("inhibitor: restore_from_db failed; using empty")
+
+    def _persist_key(self, key: str, rank: int, expires_at: float) -> None:
+        try:
+            from meshai.persistence import get_db
+            conn = get_db()
+            conn.execute(
+                "INSERT OR REPLACE INTO inhibit_state(key, rank, expires_at, updated_at) "
+                "VALUES (?,?,?,?)",
+                (key, rank, expires_at, self._now()),
+            )
+        except Exception:
+            self._logger.exception("inhibitor: persist failed key=%s", key)
 
     def _now(self) -> float:
         # Hookable for tests
@@ -52,6 +82,15 @@ class Inhibitor:
         expired = [k for k, (_, exp) in self._active.items() if exp <= now]
         for k in expired:
             del self._active[k]
+        # v0.6-6: keep on-disk in sync; cheap single DELETE per prune cycle.
+        if expired:
+            try:
+                from meshai.persistence import get_db
+                get_db().execute(
+                    "DELETE FROM inhibit_state WHERE expires_at <= ?", (now,)
+                )
+            except Exception:
+                pass
 
     def handle(self, event: Event) -> None:
         """Process an event: either suppress it or pass it on.
@@ -78,12 +117,13 @@ class Inhibitor:
                     )
                     return
 
-        # Record / upgrade entries
+        # Record / upgrade entries + write-through to inhibit_state.
         new_expires = now + self._ttl
         for key in event.inhibit_keys:
             existing = self._active.get(key)
             if existing is None or existing[0] < event_rank:
                 self._active[key] = (event_rank, new_expires)
+                self._persist_key(key, event_rank, new_expires)
 
         # Pass through
         self._next(event)
@@ -93,5 +133,10 @@ class Inhibitor:
         return dict(self._active)
 
     def clear(self) -> None:
-        """For tests: reset state."""
+        """For tests: reset both in-memory state and the inhibit_state table."""
         self._active.clear()
+        try:
+            from meshai.persistence import get_db
+            get_db().execute("DELETE FROM inhibit_state")
+        except Exception:
+            pass

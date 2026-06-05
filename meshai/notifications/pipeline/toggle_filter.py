@@ -33,6 +33,28 @@ class ToggleFilter:
         self._enabled = enabled_toggles  # None = no-op
         self._logger = logging.getLogger("meshai.pipeline.toggle_filter")
 
+    def refresh(self, config=None) -> None:
+        """v0.6-6: rebuild the enabled set from the current config.
+
+        Wired into /api/config PUT so toggle changes take effect on the
+        next event with no container restart. If `config` is None, the
+        caller is expected to have already mutated whatever object the
+        filter was constructed from; the safer pattern is to pass the
+        live Config in explicitly.
+        """
+        if config is None:
+            # Nothing to read from; keep the current set.
+            return
+        toggles_cfg = getattr(config.notifications, "toggles", None) or {}
+        enabled = set()
+        if isinstance(toggles_cfg, dict):
+            for fam_name, tog in toggles_cfg.items():
+                if getattr(tog, "enabled", False):
+                    enabled.add(str(fam_name))
+        self._enabled = enabled if enabled else None
+        self._logger.info("ToggleFilter refreshed: enabled families=%s",
+                            sorted(self._enabled or []))
+
     def handle(self, event: Event) -> None:
         """Pass the event through, or drop it if its toggle is disabled."""
         if self._enabled is None:

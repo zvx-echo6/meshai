@@ -43,6 +43,47 @@ class Grouper:
         # {group_key: (event, hold_until_ts)}
         self._held: dict[str, tuple[Event, float]] = {}
         self._logger = logging.getLogger("meshai.pipeline.grouper")
+        self._restore_from_db()
+
+    def _restore_from_db(self) -> None:
+        try:
+            from meshai.persistence import get_db
+            import json
+            conn = get_db()
+            rows = conn.execute(
+                "SELECT group_key, event_json, hold_until_at FROM grouper_held "
+                "WHERE hold_until_at > ?",
+                (self._now(),),
+            ).fetchall()
+            for r in rows:
+                try:
+                    ev = Event.from_dict(json.loads(r["event_json"]))
+                    self._held[r["group_key"]] = (ev, float(r["hold_until_at"]))
+                except Exception:
+                    continue
+            if self._held:
+                self._logger.info("grouper: restored %d held events", len(self._held))
+        except Exception:
+            self._logger.exception("grouper: restore_from_db failed; using empty")
+
+    def _persist_held(self, group_key: str, event: "Event", hold_until: float) -> None:
+        try:
+            import json
+            from meshai.persistence import get_db
+            get_db().execute(
+                "INSERT OR REPLACE INTO grouper_held(group_key, event_json, "
+                "hold_until_at, updated_at) VALUES (?,?,?,?)",
+                (group_key, json.dumps(event.to_dict()), hold_until, self._now()),
+            )
+        except Exception:
+            self._logger.exception("grouper: persist failed key=%s", group_key)
+
+    def _delete_held(self, group_key: str) -> None:
+        try:
+            from meshai.persistence import get_db
+            get_db().execute("DELETE FROM grouper_held WHERE group_key=?", (group_key,))
+        except Exception:
+            pass
 
     def _now(self) -> float:
         return time.time()
@@ -74,6 +115,7 @@ class Grouper:
                 f"replacing prior event {prior[0].id}"
             )
         self._held[event.group_key] = (event, hold_until)
+        self._persist_held(event.group_key, event, hold_until)
 
     def tick(self) -> int:
         """Flush events whose window has expired.
@@ -86,6 +128,7 @@ class Grouper:
         ]
         for gk, _ in to_emit:
             del self._held[gk]
+            self._delete_held(gk)
         for _, ev in to_emit:
             self._next(ev)
         return len(to_emit)
@@ -96,7 +139,10 @@ class Grouper:
         Used at shutdown and by tests. Returns count emitted.
         """
         events = [ev for ev, _ in self._held.values()]
+        keys = list(self._held.keys())
         self._held.clear()
+        for k in keys:
+            self._delete_held(k)
         for ev in events:
             self._next(ev)
         return len(events)

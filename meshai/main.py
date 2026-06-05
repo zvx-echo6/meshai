@@ -389,6 +389,13 @@ class MeshAI:
             # pipeline at runtime via EnvironmentalStore(event_bus=...).
             from .notifications.pipeline import build_pipeline
             self.event_bus = build_pipeline(self.config, self.llm, self.connector)
+            # v0.6-6: expose bus to dashboard API for live refresh hooks.
+            try:
+                from meshai.dashboard.server import app as _dash_app
+                _dash_app.state.bus = self.event_bus
+                _dash_app.state.config = self.config
+            except Exception:
+                logger.debug('dashboard app.state stash skipped')
             logger.info("Notification pipeline EventBus initialized")
 
         # Environmental feeds

@@ -189,3 +189,22 @@ async def test_llm_connection(request: Request):
     except Exception as e:
         logger.error(f"LLM test error: {e}")
         return {"success": False, "error": str(e)}
+
+
+# v0.6-6 -- live ToggleFilter refresh endpoint.
+# Called by the frontend after PUT /api/config/notifications so the
+# Inhibitor + Grouper + Dispatcher pick up the new enabled toggle set
+# on the next event without a container restart.
+@router.post("/notifications/refresh-toggles")
+async def refresh_toggles(request: Request):
+    """Re-read the live config and refresh the running ToggleFilter."""
+    bus = getattr(request.app.state, "bus", None)
+    config = getattr(request.app.state, "config", None)
+    if bus is None or config is None:
+        raise HTTPException(503, "pipeline bus not yet initialized")
+    components = getattr(bus, "_pipeline_components", {}) or {}
+    tf = components.get("toggle_filter")
+    if tf is None:
+        raise HTTPException(503, "toggle_filter not on pipeline bus")
+    tf.refresh(config)
+    return {"ok": True}
