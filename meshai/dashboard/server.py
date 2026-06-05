@@ -1,4 +1,5 @@
 """FastAPI server for MeshAI dashboard."""
+from meshai.dashboard.api.adapter_config_routes import router as adapter_config_router
 
 import asyncio
 import logging
@@ -55,6 +56,7 @@ def create_app() -> FastAPI:
     from .api.notification_routes import router as notification_router
 
     app.include_router(system_router, prefix="/api")
+    app.include_router(adapter_config_router, prefix="/api")
     app.include_router(config_router, prefix="/api")
     app.include_router(mesh_router, prefix="/api")
     app.include_router(env_router, prefix="/api")

@@ -7,6 +7,7 @@ import Config from './pages/Config'
 import Alerts from './pages/Alerts'
 import Notifications from './pages/Notifications'
 import Reference from './pages/Reference'
+import AdapterConfig from './pages/AdapterConfig'
 import { ToastProvider } from './components/ToastProvider'
 
 function App() {
@@ -21,6 +22,7 @@ function App() {
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/reference" element={<Reference />} />
+          <Route path="/adapter-config" element={<AdapterConfig />} />
         </Routes>
       </Layout>
     </ToastProvider>
