@@ -28,6 +28,7 @@ inside that connection's autocommit mode.
 """
 
 from __future__ import annotations
+from meshai.adapter_config import adapter_config
 
 import logging
 import time
@@ -37,10 +38,11 @@ from meshai.persistence import get_db
 
 logger = logging.getLogger(__name__)
 
-# Broadcast cooldown per fire (8h). Without this, every poll cycle would
-# re-broadcast even when nothing changed. Spec: change-detection on acres
-# OR containment AND >=28800s since last broadcast.
-WFIGS_BROADCAST_COOLDOWN_S = 8 * 60 * 60  # 28800
+# v0.6-3b: cooldown lives in adapter_config.wfigs.cooldown_seconds
+# (default 28800). Re-read on every cooldown-check, so a GUI edit takes
+# effect on the next poll cycle. Module-level name retained as a
+# backward-compat alias for test imports.
+WFIGS_BROADCAST_COOLDOWN_S = 28800
 
 
 def _now() -> int:
@@ -166,17 +168,21 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
 
     # Forward-only change detection: more acres or higher containment counts.
     # Downward revisions and unchanged values do not warrant re-broadcast.
+    # v0.6-3b: each axis can be silenced via adapter_config toggles.
     changed_acres = (
-        acres is not None
+        bool(adapter_config.wfigs.broadcast_on_acres)
+        and acres is not None
         and (last_bcast_acres is None or acres > last_bcast_acres)
     )
     changed_contained = (
-        contained_pct is not None
+        bool(adapter_config.wfigs.broadcast_on_contained)
+        and contained_pct is not None
         and (last_bcast_contained is None or contained_pct > last_bcast_contained)
     )
+    cooldown_s = int(adapter_config.wfigs.cooldown_seconds)
     eight_hours_passed = (
         last_bcast_at is None
-        or (now - int(last_bcast_at) >= WFIGS_BROADCAST_COOLDOWN_S)
+        or (now - int(last_bcast_at) >= cooldown_s)
     )
 
     if (changed_acres or changed_contained) and eight_hours_passed:
@@ -319,7 +325,7 @@ def _location_anchor(n: dict) -> str:
     if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
         try:
             from meshai.central_normalizer import nearest_town
-            nt = nearest_town(lat, lon, max_distance_mi=100.0)
+            nt = nearest_town(lat, lon, max_distance_mi=float(adapter_config.wfigs.anchor_max_mi))
         except Exception:
             logger.exception("nearest_town failed; falling through")
             nt = None

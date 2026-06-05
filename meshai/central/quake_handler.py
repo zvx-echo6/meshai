@@ -21,6 +21,7 @@ Persistence: UPSERT into quake_events using USGS event_id. First sighting
 fires New:; revisions UPSERT but don't re-broadcast (v0.5.9 no-Update rule).
 """
 from __future__ import annotations
+from meshai.adapter_config import adapter_config
 
 import logging
 import math
@@ -32,12 +33,9 @@ from meshai.persistence import get_db
 logger = logging.getLogger(__name__)
 
 
-# Idaho centroid + radius for the M2.5 regional broadcast tier.
-_IDAHO_CENTROID_LAT = 44.36
-_IDAHO_CENTROID_LON = -114.61
-_IDAHO_RADIUS_MI = 250
-
-_PAGER_BROADCAST_LEVELS = {"orange", "red"}
+# v0.6-3b: regional gate geography, radius, magnitude floors, PAGER
+# level set all live in adapter_config.usgs_quake. Read at use site so
+# GUI edits take effect on the next envelope without restart.
 
 
 def _now() -> int: return int(time.time())
@@ -52,28 +50,37 @@ def _haversine_mi(lat1, lon1, lat2, lon2) -> float:
 
 
 def within_250mi_of_idaho(lat: float, lon: float) -> bool:
-    """Return True if (lat, lon) is within 250 mi of Idaho's centroid.
-    Public so tests can verify the boundary directly."""
+    """Return True if (lat, lon) is within the regional gate radius.
+
+    v0.6-3b: name retained for backward-compat with existing tests; the
+    centroid + radius now come from adapter_config.usgs_quake.
+    """
     if not (isinstance(lat, (int, float)) and isinstance(lon, (int, float))):
         return False
-    return _haversine_mi(lat, lon, _IDAHO_CENTROID_LAT, _IDAHO_CENTROID_LON) <= _IDAHO_RADIUS_MI
+    cen = adapter_config.usgs_quake.regional_centroid
+    radius = float(adapter_config.usgs_quake.regional_radius_mi)
+    return _haversine_mi(lat, lon, float(cen[0]), float(cen[1])) <= radius
 
 
 def _should_broadcast(mag: Optional[float], lat: Optional[float],
                        lon: Optional[float], tsunami: bool,
                        pager_alert: Optional[str]) -> bool:
     if tsunami: return True
-    if pager_alert and pager_alert.lower() in _PAGER_BROADCAST_LEVELS:
+    pager_set = {s.lower() for s in adapter_config.usgs_quake.broadcast_pager_alerts}
+    if pager_alert and pager_alert.lower() in pager_set:
         return True
     if not isinstance(mag, (int, float)): return False
-    if mag >= 3.0: return True
-    if mag >= 2.5 and within_250mi_of_idaho(lat, lon): return True
+    if mag >= float(adapter_config.usgs_quake.global_mag_floor): return True
+    if (mag >= float(adapter_config.usgs_quake.regional_mag_floor)
+            and within_250mi_of_idaho(lat, lon)): return True
     return False
 
 
 def _emoji_for(mag: Optional[float], tsunami: bool) -> str:
     if tsunami: return "🚨"
-    if isinstance(mag, (int, float)) and mag >= 5.0: return "⚠️"
+    if isinstance(mag, (int, float)) and mag >= float(
+            adapter_config.usgs_quake.escalate_mag_floor):
+        return "⚠️"
     return "🌐"
 
 

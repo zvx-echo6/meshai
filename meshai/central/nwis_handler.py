@@ -33,6 +33,7 @@ companion discharge reading). lat/lon segment is dropped when coords are
 missing (rare since curated sites have coords).
 """
 from __future__ import annotations
+from meshai.adapter_config import adapter_config
 
 import json
 import logging
@@ -52,9 +53,8 @@ from meshai.persistence import get_db
 logger = logging.getLogger(__name__)
 
 
-# Parameters we handle. 00060 = discharge (cfs), 00065 = gage height (ft).
-# 00045 = precip is excluded from this round per spec.
-_PARAMETERS_OF_INTEREST = {"00060", "00065"}
+# v0.6-3b: handled parameter codes + recede toggle live in
+# adapter_config.usgs_nwis. Default {"00060", "00065"}.
 
 # Human-readable label per threshold_state.
 _LABEL = {
@@ -115,7 +115,7 @@ def handle_nwis(envelope: dict, subject: str,
 
     # Drop unsupported parameters (precip etc.).
     pc = d.get("parameter_code")
-    if pc not in _PARAMETERS_OF_INTEREST:
+    if pc not in set(adapter_config.usgs_nwis.parameter_codes):
         _log_event(conn, now=now, source="nwis", category=category_raw,
                     severity_word=severity_word,
                     event_id_external=site_id,
@@ -201,11 +201,11 @@ def handle_nwis(envelope: dict, subject: str,
     except ValueError:
         cur_rank = 0
 
-    if cur_rank <= prior_rank:
-        # Unchanged or receding -- no broadcast.
+    if cur_rank == prior_rank:
+        # Unchanged band -- no broadcast.
         return None
-    if threshold_state == "normal":
-        # Defensive: a reading entering "normal" can't be an upward crossing.
+    if cur_rank < prior_rank and not bool(adapter_config.usgs_nwis.broadcast_on_recede):
+        # Receding without the recede toggle -- silent.
         return None
 
     wire = _render(gauge_name=site_meta["gauge_name"],

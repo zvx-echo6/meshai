@@ -17,6 +17,7 @@ import re
 import time
 from datetime import datetime
 from typing import Optional
+from meshai.adapter_config import adapter_config
 
 from meshai.notifications.events import Event, make_event
 from meshai.notifications.categories import get_category
@@ -264,16 +265,11 @@ def category_from_subject(subject: str) -> Optional[str]:
 def map_severity(sev: Optional[int]) -> str:
     """Central int severity (0-4 / None) -> meshai severity string.
 
-    0|1 -> routine, 2 -> priority, 3|4 -> immediate, None -> routine.
-
-    The `sev >= 3` branch is intentionally a high-side CLAMP, not an
-    equality: any out-of-range value (5+ -- e.g. a hypothetical future
-    "great quake" severity that exceeds the documented 0-4 vocabulary, or
-    a malformed upstream value) maps to "immediate" (meshai's highest
-    severity bucket). Non-int / negative / NaN inputs degrade safely to
-    "routine" via the try/except. Downstream NotificationToggle.severity_channels
-    is dict-keyed by severity STRING ({"routine","priority","immediate"})
-    not int -- so no IndexError can ever propagate from this boundary.
+    v0.6-3b: bucket thresholds live in
+    adapter_config.central.severity_thresholds (default
+    {routine_max: 1, priority_max: 2, immediate_min: 3}). The check order
+    is: immediate_min first (clamps 3..+inf), then priority_max
+    (catches 2), else routine.
     """
     if sev is None:
         return "routine"
@@ -281,9 +277,10 @@ def map_severity(sev: Optional[int]) -> str:
         sev = int(sev)
     except (TypeError, ValueError):
         return "routine"
-    if sev >= 3:  # 3, 4, or any 5+ great-quake / malformed value
+    thr = adapter_config.central.severity_thresholds or {}
+    if sev >= int(thr.get("immediate_min", 3)):
         return "immediate"
-    if sev == 2:
+    if sev >= int(thr.get("priority_max", 2)):
         return "priority"
     return "routine"
 

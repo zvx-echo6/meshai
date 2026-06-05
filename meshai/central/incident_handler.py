@@ -31,6 +31,7 @@ still labels itself New:.
 """
 
 from __future__ import annotations
+from meshai.adapter_config import adapter_config
 
 import logging
 import re
@@ -43,10 +44,10 @@ from meshai.persistence import get_db
 logger = logging.getLogger(__name__)
 
 
-# v0.5.9 REVISED freshness gate -- drop incidents that started more
-# than 30 min ago. Default-allow when start_time is missing so we err
-# on the side of broadcasting potentially-fresh data.
-INCIDENT_FRESHNESS_MAX_S = 30 * 60   # 1800
+# v0.6-3b: freshness gate value lives in adapter_config.incident.freshness_seconds
+# (default 1800). Read at handler call time. The module-level constant is
+# kept as a backward-compat alias for downstream imports.
+INCIDENT_FRESHNESS_MAX_S = 1800
 
 # Heartbeat retained as a constant for backward-compatible imports, but
 # the v0.5.9 REVISED handler no longer fires Update broadcasts. State
@@ -246,12 +247,15 @@ def _parse_tomtom_incident(envelope: dict, now: int) -> Optional[dict]:
     d = inner.get("data") or {}
 
     # FILTER §6: magnitude_of_delay == 0 -> drop at handler entrance.
+    # v0.6-3b: gated by adapter_config.tomtom_incidents.drop_zero_magnitude.
     magnitude = d.get("magnitude_of_delay")
-    if magnitude == 0:
+    if magnitude == 0 and bool(adapter_config.tomtom_incidents.drop_zero_magnitude):
         return None
 
     # FILTER §4: time_validity != 'present' -> drop past/future.
-    if d.get("time_validity") != "present":
+    # v0.6-3b: gated by adapter_config.tomtom_incidents.drop_non_present.
+    if (d.get("time_validity") != "present"
+            and bool(adapter_config.tomtom_incidents.drop_non_present)):
         return None
 
     external_id = _tomtom_tti(inner.get("id"))
@@ -459,8 +463,11 @@ def handle_incident(envelope: dict, subject: str,
     if adapter == "state_511_atis":
         sd = (envelope.get("data") or {}).get("data") or {}
         sgeo = (envelope.get("data") or {}).get("geo") or {}
-        if (sd.get("state_code") == "ID"
-                or sgeo.get("primary_region") == "US-ID"):
+        # v0.6-3b: state allowlist from adapter_config.state_511_atis.skipped_states.
+        skipped = {s.upper() for s in adapter_config.state_511_atis.skipped_states}
+        primary_region_state = (sgeo.get("primary_region") or "").split("-")[-1].upper()
+        if ((sd.get("state_code") or "").upper() in skipped
+                or primary_region_state in skipped):
             _log_event(conn, now=now, source="state_511_atis",
                         category=category_raw + "|skip_id",
                         severity_word=severity_word,
@@ -483,7 +490,8 @@ def handle_incident(envelope: dict, subject: str,
         # those slipped through. Spec re-read: 'skip even New: broadcast
         # if the underlying event began more than 30 min ago' implies
         # the event must have BEGUN.
-        if age_s < 0 or age_s > INCIDENT_FRESHNESS_MAX_S:
+        fresh_max = int(adapter_config.incident.freshness_seconds)
+        if age_s < 0 or age_s > fresh_max:
             logger.debug(
                 "incident freshness gate: dropping source=%s subject=%s "
                 "age=%ds (window=[0, %d])",
@@ -591,15 +599,39 @@ def handle_incident(envelope: dict, subject: str,
                                  event_log_row_id=log_id)
         return wire
 
-    # v0.5.9 REVISED gate (A): once we've successfully broadcast this
-    # external_id (last_broadcast_at IS NOT NULL), no further mesh
-    # traffic for it -- magnitude jumps, delay growth, icon flips, and
-    # heartbeats all stay in the table for state queries but do NOT
-    # synthesize a wire string. Matt's reasoning: 'should be no old
-    # broadcasts, just new' -- traffic updates aren't actionable enough
-    # to justify spamming. WFIGS keeps its 8h Update flow (operationally
-    # meaningful for fires).
-    return None
+    # v0.6-3b: post-first-broadcast Update gated by
+    # adapter_config.incident.broadcast_on_update (default False --
+    # preserves the v0.5.9 REVISED 'no Update' behavior). When True,
+    # broadcast an Update on magnitude step-up, delay doubling, or
+    # icon_category change. No heartbeat.
+    if not bool(adapter_config.incident.broadcast_on_update):
+        return None
+
+    mag_stepped_up = (
+        n["magnitude"] is not None
+        and (last_bcast_mag is None or n["magnitude"] > last_bcast_mag)
+    )
+    delay_doubled = (
+        n["delay_seconds"] is not None
+        and last_bcast_delay is not None
+        and last_bcast_delay > 0
+        and n["delay_seconds"] >= 2 * last_bcast_delay
+    )
+    icon_changed = (
+        n["icon_category"] is not None
+        and last_bcast_icon is not None
+        and n["icon_category"] != last_bcast_icon
+    )
+    if not (mag_stepped_up or delay_doubled or icon_changed):
+        return None
+
+    wire = _render(n, prefix="Update")
+    _attach_commit_handles(data, source=source, external_id=external_id,
+                             magnitude=n["magnitude"],
+                             delay_seconds=n["delay_seconds"],
+                             icon_category=n["icon_category"],
+                             event_log_row_id=log_id)
+    return wire
 
 
 # ---- commit-callback factory --------------------------------------------

@@ -31,6 +31,7 @@ import logging
 import time
 from collections import OrderedDict
 from typing import Callable, Optional
+from meshai.adapter_config import adapter_config
 
 from meshai.notifications.events import Event, make_payload_from_event
 from meshai.notifications.categories import get_toggle
@@ -154,10 +155,12 @@ class Dispatcher:
         # contract (oldest = first-evicted on overflow). On-disk retains a
         # 7-day window which may exceed the in-memory cap; the LLM still
         # sees the full window via direct SELECT.
+        # v0.6-3b: restore cap from adapter_config.
+        _restore_cap = int(adapter_config.dispatcher.dedup_lru_max)
         rows = conn.execute(
             "SELECT source, event_id FROM dispatcher_dedup "
             "ORDER BY seen_at DESC LIMIT ?",
-            (_DEDUP_LRU_MAX,),
+            (_restore_cap,),
         ).fetchall()
         for r in reversed(rows):
             self._dedup_lru[(r["source"], r["event_id"])] = True
@@ -202,8 +205,10 @@ class Dispatcher:
                 "VALUES (?,?,?,?,?)",
                 (toggle, category, region, now, now),
             )
+            # v0.6-3b: prune multiplier from adapter_config.
             if cooldown_s > 0:
-                cutoff = now - (2 * cooldown_s)
+                _mult = int(adapter_config.dispatcher.cooldown_prune_multiplier)
+                cutoff = now - (_mult * cooldown_s)
                 conn.execute(
                     "DELETE FROM dispatcher_cooldowns WHERE last_fired_at < ?",
                     (cutoff,),
@@ -225,7 +230,9 @@ class Dispatcher:
                 "source, event_id, seen_at) VALUES (?,?,?)",
                 (source, event_id, now),
             )
-            cutoff = now - _DEDUP_DB_RETENTION_S
+            # v0.6-3b: retention window from adapter_config (days * 86400).
+            retention_s = int(adapter_config.dispatcher.dedup_db_retention_days) * 86400
+            cutoff = now - retention_s
             conn.execute(
                 "DELETE FROM dispatcher_dedup WHERE seen_at < ?",
                 (cutoff,),
@@ -365,8 +372,11 @@ class Dispatcher:
             # In-memory prune: mirror the SQLite cutoff when the map grows
             # past the threshold. The SQLite prune already ran inside
             # _persist_cooldown.
-            if len(self._toggle_cooldown) > _COOLDOWN_INMEM_PRUNE_THRESHOLD:
-                cutoff = now - (2 * cooldown_s)
+            # v0.6-3b: prune size + multiplier from adapter_config.
+            _prune_size = int(adapter_config.dispatcher.cooldown_prune_size)
+            _prune_mult = int(adapter_config.dispatcher.cooldown_prune_multiplier)
+            if len(self._toggle_cooldown) > _prune_size:
+                cutoff = now - (_prune_mult * cooldown_s)
                 self._toggle_cooldown = {
                     k: t for k, t in self._toggle_cooldown.items() if t >= cutoff
                 }
@@ -384,7 +394,9 @@ class Dispatcher:
             return
         self._dedup_lru[dk] = True
         self._persist_dedup(dk, time.time())
-        while len(self._dedup_lru) > _DEDUP_LRU_MAX:
+        # v0.6-3b: read cap from adapter_config (default 10_000).
+        _lru_max = int(adapter_config.dispatcher.dedup_lru_max)
+        while len(self._dedup_lru) > _lru_max:
             self._dedup_lru.popitem(last=False)  # evict oldest
 
         regions = getattr(tog, "regions", None) or []

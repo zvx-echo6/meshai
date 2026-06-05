@@ -54,11 +54,11 @@ def test_v6_tables_exist(fresh_db):
     assert "adapter_meta" in tables
 
 
-def test_schema_meta_at_v6(fresh_db):
+def test_schema_meta_at_v7(fresh_db):
     v = fresh_db.execute(
         "SELECT value FROM schema_meta WHERE key='version'"
     ).fetchone()["value"]
-    assert int(v) == 6
+    assert int(v) == 7
 
 
 def test_adapter_config_type_check_constrains_vocabulary(fresh_db):

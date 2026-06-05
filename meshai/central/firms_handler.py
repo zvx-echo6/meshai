@@ -60,6 +60,7 @@ event_log accounting:
                   Category is suffixed with "|<reason>" for grep.
 """
 from __future__ import annotations
+from meshai.adapter_config import adapter_config
 
 import logging
 import time
@@ -72,31 +73,20 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# v0.6-1 hardcoded defaults. Commit #3 will lift these to `adapter_config`
-# rows + a /api/adapter-config/firms GUI editor. Per Matt's v0.6 Phase 1
-# refinement #3, the hardcoded values below become the GUI default values
-# so behavior does not change on first deploy.
+# v0.6-3b: all four settings now live in adapter_config.firms. Module-level
+# names retained as backward-compat aliases for test monkeypatches; the
+# handler reads via adapter_config so a GUI edit takes effect on the next
+# envelope without restart.
 # ============================================================================
 
-# Confidence rank. Anything >= floor stores. "low" = store every confidence
-# level (nominal/high/low). VIIRS-FIRMS publishes string-valued confidence;
-# MODIS would publish 0-100 ints (not in scope this round -- per investigation
-# doc §2, all 250 sampled envelopes were VIIRS).
+# VIIRS-FIRMS confidence rank table (CODE -- NOAA-defined vocabulary).
 _CONFIDENCE_RANK = {"low": 0, "nominal": 1, "high": 2}
+
+# Back-compat aliases for tests that import these names. New code should
+# read via adapter_config.firms.<key>.
 FIRMS_CONFIDENCE_FLOOR = "low"
-
-# FRP floor in MW. 0 stores every detection; setting >0 drops below-floor
-# pixels with event_log "|below_frp_floor" for accounting.
 FIRMS_FRP_FLOOR = 0.0
-
-# Optional bbox (min_lat, min_lon, max_lat, max_lon) in degrees. None = no
-# spatial filter. The Central feed already region-filters at the subject
-# level (us.id / unknown), so most ops will leave this None.
 FIRMS_BBOX_OPTIONAL: Optional[tuple[float, float, float, float]] = None
-
-# Dedup-key lat/lon rounding precision. 5 decimals = ~1.1 m, well inside
-# the 375 m VIIRS pixel. Same pixel republished via NATS reconnect collapses.
-_DEDUP_LAT_LON_DECIMALS = 5
 
 
 # ============================================================================
@@ -182,8 +172,12 @@ def handle_firms(envelope: dict, subject: str,
         frp = float(frp_raw) if frp_raw is not None else None
     except (TypeError, ValueError):
         frp = None
-    if FIRMS_FRP_FLOOR > 0:
-        if frp is None or frp < FIRMS_FRP_FLOOR:
+    import sys as _sys
+    _this = _sys.modules[__name__]
+    frp_floor = float(_this.FIRMS_FRP_FLOOR) if _this.FIRMS_FRP_FLOOR > 0 \
+        else float(adapter_config.firms.frp_floor)
+    if frp_floor > 0:
+        if frp is None or frp < frp_floor:
             _log_event(conn, now=now, source="firms",
                         category=category_raw + "|below_frp_floor",
                         severity_word=severity_word,
@@ -214,13 +208,22 @@ def handle_firms(envelope: dict, subject: str,
     except (TypeError, ValueError):
         brightness = None
 
+    # v0.6-3b: dedup_key from meters-based quantization (v7 schema).
+    dedup_distance_m = float(adapter_config.firms.dedup_distance_m)
+    if dedup_distance_m > 0:
+        step_deg = dedup_distance_m / 111_000.0
+        q_lat = round(lat / step_deg) * step_deg
+        q_lon = round(lon / step_deg) * step_deg
+        dedup_key = f"{q_lat:.7f},{q_lon:.7f}"
+    else:
+        dedup_key = f"{lat:.5f},{lon:.5f}"
     cur = conn.execute(
         "INSERT OR IGNORE INTO firms_pixels(irwin_id, lat, lon, acq_time, "
-        "frp, confidence, satellite, brightness) "
-        "VALUES (?,?,?,?,?,?,?,?)",
+        "frp, confidence, satellite, brightness, dedup_key) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
         (None, lat, lon, acq_epoch, frp,
          (str(conf) if conf is not None else None),
-         satellite, brightness),
+         satellite, brightness, dedup_key),
     )
     stored = cur.rowcount > 0
 
@@ -246,25 +249,37 @@ def handle_firms(envelope: dict, subject: str,
 
 
 def _confidence_passes(conf: Optional[str]) -> bool:
-    """Return True iff `conf` is at or above FIRMS_CONFIDENCE_FLOOR.
+    """Return True iff `conf` is at or above the configured floor.
 
-    Unknown / unparseable confidence values fail closed (drop) so the
-    accounting trail flags upstream schema drift instead of silently
-    storing under a degraded label.
+    v0.6-3b: floor read from adapter_config.firms.confidence_floor; the
+    module-level FIRMS_CONFIDENCE_FLOOR still wins when explicitly
+    monkeypatched (so existing tests stay one-line).
     """
     if conf is None:
         return False
     rank = _CONFIDENCE_RANK.get(str(conf).lower())
     if rank is None:
         return False
-    floor = _CONFIDENCE_RANK.get(FIRMS_CONFIDENCE_FLOOR, 0)
+    import sys
+    _this = sys.modules[__name__]
+    if _this.FIRMS_CONFIDENCE_FLOOR != "low":
+        floor_str = _this.FIRMS_CONFIDENCE_FLOOR
+    else:
+        floor_str = str(adapter_config.firms.confidence_floor)
+    floor = _CONFIDENCE_RANK.get(str(floor_str).lower(), 0)
     return rank >= floor
 
 
 def _in_bbox(lat: float, lon: float) -> bool:
-    if FIRMS_BBOX_OPTIONAL is None:
+    import sys
+    _this = sys.modules[__name__]
+    if _this.FIRMS_BBOX_OPTIONAL is not None:
+        bbox = _this.FIRMS_BBOX_OPTIONAL
+    else:
+        bbox = adapter_config.firms.bbox
+    if bbox is None:
         return True
-    min_lat, min_lon, max_lat, max_lon = FIRMS_BBOX_OPTIONAL
+    min_lat, min_lon, max_lat, max_lon = bbox
     return (min_lat <= lat <= max_lat) and (min_lon <= lon <= max_lon)
 
 

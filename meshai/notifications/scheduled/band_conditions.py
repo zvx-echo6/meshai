@@ -22,6 +22,7 @@ just started, the first scheduled broadcast within the grace window is
 suppressed for consistency with the event-driven adapters.
 """
 from __future__ import annotations
+from meshai.adapter_config import adapter_config
 
 import asyncio
 import json
@@ -40,9 +41,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Window for "fresh" SWPC data. If the latest swpc_kindex (or whatever we
-# need) is older than this, fall through to HamQSL.
-_SWPC_FRESHNESS_S = 6 * 3600
+# v0.6-3b: SWPC-freshness window + HamQSL endpoint live in
+# adapter_config.band_conditions.
 
 # Multi-line wire format -- emoji + headline per slot, then 4 band rows.
 # Color codes per Matt: 🟢 Good, 🟡 Fair, 🔴 Poor.
@@ -61,9 +61,7 @@ _SLOT_LABEL = {
 # convention so users coming from Ham Radio Toolbox recognise the format.
 _BAND_ORDER = ["80-40m", "30-20m", "17-15m", "12-10m"]
 
-# HamQSL endpoint. Public, no auth.
-_HAMQSL_URL = "https://www.hamqsl.com/solarxml.php"
-_HAMQSL_TIMEOUT_S = 5
+# HamQSL endpoint config lives in adapter_config.band_conditions.
 
 
 # ========================================================================
@@ -149,7 +147,7 @@ def _load_swpc_state(now: int) -> Optional[dict]:
     except Exception:
         return None
 
-    cutoff = now - _SWPC_FRESHNESS_S
+    cutoff = now - int(adapter_config.band_conditions.swpc_freshness_seconds)
 
     state = {}
 
@@ -251,8 +249,10 @@ def _fetch_hamqsl(day: bool, _http_get: Optional[Callable] = None) -> Optional[d
         def _http_get(url, timeout):
             with httpx.Client(timeout=timeout) as c:
                 return c.get(url)
+    hamqsl_url = str(adapter_config.band_conditions.hamqsl_url)
+    hamqsl_timeout = int(adapter_config.band_conditions.hamqsl_timeout_s)
     try:
-        resp = _http_get(_HAMQSL_URL, _HAMQSL_TIMEOUT_S)
+        resp = _http_get(hamqsl_url, hamqsl_timeout)
     except Exception:
         return None
     if getattr(resp, "status_code", 0) != 200:

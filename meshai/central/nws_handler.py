@@ -27,6 +27,7 @@ Emoji by event_type prefix (substring match, case-insensitive):
     default                   -> ⚠️
 """
 from __future__ import annotations
+from meshai.adapter_config import adapter_config
 
 import logging
 import re
@@ -39,11 +40,8 @@ from meshai.persistence import get_db
 logger = logging.getLogger(__name__)
 
 
-# CAP severity strings that pass the gate.
-_BROADCAST_SEVERITIES = {"Extreme", "Severe"}
-
-# Tombstone msgType values.
-_TOMBSTONE_MSGTYPES = {"Cancel", "Expire"}
+# v0.6-3b: severity gate + tombstone msgTypes live in adapter_config.nws
+# (broadcast_severities, tombstone_msgtypes). Read at handler call time.
 
 # Ordered (substring, emoji) checks; first match wins.
 _EVENT_EMOJI = [
@@ -156,7 +154,7 @@ def handle_nws(envelope: dict, subject: str,
 
     # Tombstone: msgType in {Cancel, Expire} -> log handled=0, no broadcast.
     msg_type = d.get("msgType")
-    if msg_type in _TOMBSTONE_MSGTYPES:
+    if msg_type in set(adapter_config.nws.tombstone_msgtypes):
         _log_event(conn, now=now, source="nws", category=category_raw,
                     severity_word=severity_word, event_id_external=cap_id,
                     subject=subject, handled=0,
@@ -166,10 +164,12 @@ def handle_nws(envelope: dict, subject: str,
     # Severity gate (CAP string from data.severity, fall back to category
     # heuristic for envelopes that lack the field).
     cap_sev = d.get("severity")
-    if cap_sev not in _BROADCAST_SEVERITIES:
+    if cap_sev not in set(adapter_config.nws.broadcast_severities):
         # Heuristic: category like wx.alert.severe_thunderstorm_warning ->
         # treat as Severe even when CAP severity field is missing.
-        if not (category_raw.endswith("_warning") or category_raw.endswith(".warning")):
+        # v0.6-3b: gated by adapter_config.nws.warning_suffix_promotes.
+        if (not bool(adapter_config.nws.warning_suffix_promotes)) or not (
+                category_raw.endswith("_warning") or category_raw.endswith(".warning")):
             _log_event(conn, now=now, source="nws", category=category_raw,
                         severity_word=severity_word, event_id_external=cap_id,
                         subject=subject, handled=0,

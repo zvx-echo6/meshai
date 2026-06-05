@@ -25,6 +25,7 @@ import urllib.request
 from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Optional
+from meshai.adapter_config import adapter_config
 
 logger = logging.getLogger(__name__)
 
@@ -280,6 +281,9 @@ def _is_uninformative_road(road: Optional[str]) -> bool:
 # 2026-06-04). It's the same Echo6-local Photon instance that backs Central's
 # NaviBackend reverse-geocoder. Photon takes osm_tag=place (KEY only, not
 # key:value with comma-list -- that returns 0 features -- per probe).
+# v0.6-3b: photon endpoint settings live in adapter_config.geocoder.
+# Module-level names retained as backward-compat aliases so existing
+# test imports / monkeypatches still resolve.
 PHOTON_BASE_URL = "http://100.64.0.24:2322"
 PHOTON_TIMEOUT_S = 2.0
 PHOTON_RADIUS_KM = 80     # ≈ 50 miles

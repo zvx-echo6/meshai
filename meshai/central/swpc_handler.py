@@ -20,6 +20,7 @@ Wire format (Matt's approved option C):
     ☢️ Solar radiation storm (S1) -- polar HF radio affected
 """
 from __future__ import annotations
+from meshai.adapter_config import adapter_config
 
 import json
 import logging
@@ -32,12 +33,12 @@ from meshai.persistence import get_db
 logger = logging.getLogger(__name__)
 
 
-# Kp -> G-scale mapping. Broadcast only G3 and above (Kp >= 7).
+# Kp -> G-scale mapping (NOAA-defined; CODE).
 _G_SCALE = {5: ("G1", "minor"), 6: ("G2", "moderate"), 7: ("G3", "strong"),
              8: ("G4", "severe"), 9: ("G5", "extreme")}
 
-# Flare class -> R-scale. Broadcast only R3 and above (X1+).
-_FLARE_R_THRESHOLD = "X1"   # minimum class to broadcast
+# v0.6-3b: broadcast floors live in adapter_config.swpc
+# (geomag_kp_floor, flare_class_floor, proton_pfu_floor).
 
 # Proton flux -> S-scale. >= 10 pfu @ >=10 MeV is S1.
 _S_SCALE_THRESHOLDS = [
@@ -60,35 +61,71 @@ def _coerce_float(v) -> Optional[float]:
 
 
 def _kp_g_scale(kp: float) -> Optional[tuple]:
-    """Returns (G-code, label) for Kp values that should broadcast (Kp >= 7)."""
-    k = int(kp) if kp == int(kp) else int(kp) + 1 if kp - int(kp) > 0.5 else int(kp)
-    # Be liberal -- treat Kp 7.0 and above as G3+ exactly.
+    """Map Kp -> NOAA G-scale tuple. v0.6-3b: returns None when below
+    adapter_config.swpc.geomag_kp_floor (default 7.0 = G3+). Extends down
+    to Kp=5 (G1) when the floor is lowered."""
+    floor = float(adapter_config.swpc.geomag_kp_floor)
+    if kp < floor: return None
     if kp >= 9: return _G_SCALE[9]
     if kp >= 8: return _G_SCALE[8]
     if kp >= 7: return _G_SCALE[7]
+    if kp >= 6: return _G_SCALE[6]
+    if kp >= 5: return _G_SCALE[5]
     return None
 
 
-def _flare_r_scale(flare_class: Optional[str]) -> Optional[tuple]:
-    """Parse 'X1.2', 'M5.5', 'C3.1' etc. Return (R-code, label, class_str)
-    for X1+ classes only."""
-    if not flare_class: return None
-    s = str(flare_class).strip().upper()
+_CLASS_RANK = {"A": 0, "B": 1, "C": 2, "M": 3, "X": 4}
+
+
+def _class_score(class_str: Optional[str]) -> Optional[float]:
+    """Comparable score for X-ray flare class: rank*100 + magnitude."""
+    if not class_str: return None
+    s = str(class_str).strip().upper()
     m = re.match(r"^([ABCMX])([0-9.]+)?", s)
     if not m: return None
-    cls, magnitude = m.group(1), m.group(2)
-    try: mag = float(magnitude) if magnitude else 1.0
+    cls = m.group(1)
+    try: mag = float(m.group(2)) if m.group(2) else 1.0
+    except ValueError: mag = 1.0
+    return _CLASS_RANK[cls] * 100 + min(mag, 99.9)
+
+
+def _flare_r_scale(flare_class: Optional[str]) -> Optional[tuple]:
+    """Parse 'X1.2', 'M5.5', 'C3.1' etc. Return (R-code, label, class_str).
+
+    v0.6-3b: filters to class at-or-above adapter_config.swpc.flare_class_floor
+    (default 'X1'). Default keeps prior X-only behavior. Lowered floors
+    accept M-class -> R1/R2."""
+    obs_score = _class_score(flare_class)
+    if obs_score is None: return None
+    floor_str = str(adapter_config.swpc.flare_class_floor)
+    floor_score = _class_score(floor_str)
+    if floor_score is None: floor_score = _CLASS_RANK["X"] * 100 + 1.0   # X1 default
+    if obs_score < floor_score: return None
+
+    s = str(flare_class).strip().upper()
+    m = re.match(r"^([ABCMX])([0-9.]+)?", s)
+    cls = m.group(1)
+    try: mag = float(m.group(2)) if m.group(2) else 1.0
     except ValueError: mag = 1.0
     if cls == "X":
         if mag >= 20: return ("R5", "extreme", s)
         if mag >= 10: return ("R4", "severe", s)
-        return ("R3", "strong", s)   # X1-X9.9
-    # M-class and below: skip.
+        return ("R3", "strong", s)
+    if cls == "M":
+        if mag >= 5: return ("R2", "moderate", s)
+        return ("R1", "minor", s)
+    # B/C/A: no NOAA R-code defined -- skip even if floor allowed entry.
     return None
 
 
 def _proton_s_scale(pfu: float) -> Optional[tuple]:
-    """Return (S-code, label, pfu_value) for proton flux at >= 10 pfu @ >=10 MeV."""
+    """Return (S-code, label, pfu_value) for proton flux at-or-above the
+    NOAA S-scale threshold.
+
+    v0.6-3b: gated by adapter_config.swpc.proton_pfu_floor (default 10 = S1).
+    The S-scale lookup itself is CODE."""
+    if pfu < float(adapter_config.swpc.proton_pfu_floor):
+        return None
     for thr, code, label in _S_SCALE_THRESHOLDS:
         if pfu >= thr:
             return (code, label, pfu)

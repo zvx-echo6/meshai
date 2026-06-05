@@ -23,7 +23,7 @@ class Grouper:
     def __init__(
         self,
         next_handler: Callable[[Event], None],
-        window_seconds: float = 60.0,
+        window_seconds: float | None = None,
     ):
         """Initialize.
 
@@ -31,10 +31,14 @@ class Grouper:
             next_handler: Callable that receives events when they
                 exit the grouper (either immediately if no group_key,
                 or after the window expires).
-            window_seconds: How long to hold a group_key before
-                emitting downstream (default 60 seconds).
+            window_seconds: Hold window before emission. None -> read
+                from adapter_config.pipeline.grouper_window_seconds
+                (default 60). v0.6-3b.
         """
         self._next = next_handler
+        if window_seconds is None:
+            from meshai.adapter_config import adapter_config
+            window_seconds = float(adapter_config.pipeline.grouper_window_seconds)
         self._window = window_seconds
         # {group_key: (event, hold_until_ts)}
         self._held: dict[str, tuple[Event, float]] = {}

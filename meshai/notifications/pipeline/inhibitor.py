@@ -24,16 +24,21 @@ class Inhibitor:
     def __init__(
         self,
         next_handler: Callable[[Event], None],
-        ttl_seconds: float = 1800.0,
+        ttl_seconds: float | None = None,
     ):
         """Initialize.
 
         Args:
             next_handler: Callable that receives non-suppressed events.
             ttl_seconds: How long an inhibit_key remains active after
-                the originating event (default 30 minutes).
+                the originating event. None -> read from
+                adapter_config.pipeline.inhibitor_ttl_seconds (default
+                1800). v0.6-3b: explicit value still wins for tests.
         """
         self._next = next_handler
+        if ttl_seconds is None:
+            from meshai.adapter_config import adapter_config
+            ttl_seconds = float(adapter_config.pipeline.inhibitor_ttl_seconds)
         self._ttl = ttl_seconds
         # {inhibit_key: (rank, expires_at)}
         self._active: dict[str, tuple[int, float]] = {}
