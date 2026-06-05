@@ -82,10 +82,12 @@ def seed_defaults(conn: sqlite3.Connection) -> tuple[int, int]:
     for adapter, meta in ADAPTER_META.items():
         cur = conn.execute(
             "INSERT OR IGNORE INTO adapter_meta("
-            "adapter, display_name, include_in_llm_context, description, updated_at) "
-            "VALUES (?,?,?,?,?)",
+            "adapter, display_name, include_in_llm_context, reminder_enabled, "
+            "description, updated_at) "
+            "VALUES (?,?,?,?,?,?)",
             (adapter, meta.get("display_name") or adapter,
              1 if meta.get("include_in_llm_context", True) else 0,
+             1 if meta.get("reminder_enabled", False) else 0,
              meta.get("description") or "", now),
         )
         if cur.rowcount > 0:

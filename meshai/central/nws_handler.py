@@ -223,19 +223,31 @@ def handle_nws(envelope: dict, subject: str,
         _attach_commit(data, cap_id=cap_id, event_log_row_id=log_id)
         return wire
 
-    # Already broadcast -- no Update for v0.5.10 (mirrors v0.5.9 incident rule).
+    # v0.6-phase3: dedup-window relaxation. If the CAP id was last
+    # broadcast more than `nws.duplicate_allowed_after_seconds` ago, allow
+    # the re-broadcast with an "Active:" prefix; otherwise suppress.
+    last_bcast = float(row["last_broadcast_at"])
+    window_s = int(adapter_config.nws.duplicate_allowed_after_seconds)
+    if window_s > 0 and (now - last_bcast) >= window_s:
+        wire = _render(event_type=event_type, area_desc=area_desc,
+                        geocoder_city=ge.get("city"), county=county, state=state,
+                        expires_epoch=expires_epoch, lat=lat, lon=lon, now=now,
+                        prefix="Active")
+        _attach_commit(data, cap_id=cap_id, event_log_row_id=log_id)
+        return wire
     return None
 
 
 def _render(*, event_type, area_desc, geocoder_city, county, state,
-             expires_epoch, lat, lon, now) -> str:
+             expires_epoch, lat, lon, now, prefix: str = "") -> str:
     emoji = _emoji_for_event(event_type)
     anchor = _location_anchor(area_desc, geocoder_city, county, state)
     expires_seg = _format_expires_short(expires_epoch, now=now)
     coords = ""
     if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
         coords = f", @ {lat:.3f},{lon:.3f}"
-    return f"{emoji} {event_type or 'Weather Alert'}: {anchor}, {expires_seg}{coords}"
+    prefix_seg = f"{prefix}: " if prefix else ""
+    return f"{emoji} {prefix_seg}{event_type or 'Weather Alert'}: {anchor}, {expires_seg}{coords}"
 
 
 def _category_to_event_type(category_raw: str) -> str:
@@ -254,8 +266,11 @@ def _attach_commit(data: Optional[dict], *, cap_id: str,
         try: conn = get_db()
         except Exception:
             logger.exception("nws commit: persistence unavailable"); return
-        conn.execute("UPDATE nws_alerts SET last_broadcast_at=? WHERE event_id=?",
-                      (int(committed_at), cap_id))
+        conn.execute(
+            "UPDATE nws_alerts SET last_broadcast_at=?, "
+            "first_broadcast_at=COALESCE(first_broadcast_at, ?) "
+            "WHERE event_id=?",
+            (int(committed_at), int(committed_at), cap_id))
         if event_log_row_id is not None:
             conn.execute("UPDATE event_log SET handled=1 WHERE id=?",
                           (int(event_log_row_id),))

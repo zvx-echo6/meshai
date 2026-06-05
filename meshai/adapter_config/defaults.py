@@ -320,6 +320,89 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "type": "int",
         "description": "How long to hold a group_key before emitting downstream.",
     },
+    # =================================================================
+    # v0.6-phase3 reminders: per-adapter clock-driven re-broadcast config.
+    # =================================================================
+    ("reminders_wfigs", "cadence_kind"): {
+        "default": "interval",
+        "type": "str",
+        "description": "Reminder cadence kind (interval | clock).",
+    },
+    ("reminders_wfigs", "cadence_value"): {
+        "default": 28800,                  # 8h
+        "type": "json",
+        "description": "Cadence value: int seconds for interval, list of HH:MM strings for clock.",
+    },
+    ("reminders_wfigs", "channels"): {
+        "default": ["mesh_broadcast"],
+        "type": "json",
+        "description": "Channel types for the reminder broadcast.",
+    },
+    ("reminders_wfigs", "terminate_when"): {
+        "default": ["tombstone", "containment_100", "last_event_age_24h"],
+        "type": "json",
+        "description": "Stop reminding when any of these conditions is true.",
+    },
+
+    ("reminders_swpc", "cadence_kind"): {
+        "default": "interval",
+        "type": "str",
+        "description": "Reminder cadence kind (interval | clock).",
+    },
+    ("reminders_swpc", "cadence_value"): {
+        "default": 28800,                  # 8h
+        "type": "json",
+        "description": "Cadence value: int seconds for interval, list of HH:MM strings for clock.",
+    },
+    ("reminders_swpc", "channels"): {
+        "default": ["mesh_broadcast"],
+        "type": "json",
+        "description": "Channel types for the reminder broadcast.",
+    },
+    ("reminders_swpc", "terminate_when"): {
+        "default": ["tombstone", "end_date_passed"],
+        "type": "json",
+        "description": "Stop reminding when any of these conditions is true.",
+    },
+
+    ("reminders_itd_511_work_zone", "cadence_kind"): {
+        "default": "clock",
+        "type": "str",
+        "description": "Reminder cadence kind (interval | clock).",
+    },
+    ("reminders_itd_511_work_zone", "cadence_value"): {
+        "default": ["08:00"],
+        "type": "json",
+        "description": "List of HH:MM clock slots (local timezone) when reminders fire.",
+    },
+    ("reminders_itd_511_work_zone", "channels"): {
+        "default": ["mesh_broadcast"],
+        "type": "json",
+        "description": "Channel types for the reminder broadcast.",
+    },
+    ("reminders_itd_511_work_zone", "dow_mask"): {
+        "default": [True, True, True, True, True, True, True],
+        "type": "json",
+        "description": "Day-of-week enable mask (Mon..Sun).",
+    },
+    ("reminders_itd_511_work_zone", "timezone"): {
+        "default": "America/Boise",
+        "type": "str",
+        "description": "Timezone for the clock slots.",
+    },
+    ("reminders_itd_511_work_zone", "terminate_when"): {
+        "default": ["tombstone", "end_date_passed"],
+        "type": "json",
+        "description": "Stop reminding when any of these conditions is true.",
+    },
+
+    # NWS dedup-window relaxation (separate from reminders by design).
+    ("nws", "duplicate_allowed_after_seconds"): {
+        "default": 10800,                  # 3h
+        "type": "int",
+        "description": "Allow re-broadcast of the same CAP id after this many seconds (the nws_handler relaxes its dedup gate past this point and uses an Active: prefix).",
+    },
+
 }
 
 
@@ -335,6 +418,7 @@ ADAPTER_META: dict[str, dict[str, Any]] = {
     "wfigs": {
         "display_name": "WFIGS wildfire incidents",
         "include_in_llm_context": True,
+        "reminder_enabled": True,
         "description": "NIFC-authoritative wildfire registry (named incidents, acres, containment).",
     },
     "firms": {
@@ -355,6 +439,7 @@ ADAPTER_META: dict[str, dict[str, Any]] = {
     "swpc": {
         "display_name": "SWPC space weather",
         "include_in_llm_context": True,
+        "reminder_enabled": True,
         "description": "Geomagnetic / flare / proton storm alerts (G/R/S scale).",
     },
     "usgs_nwis": {
@@ -406,6 +491,32 @@ ADAPTER_META: dict[str, dict[str, Any]] = {
         "display_name": "Notification pipeline (Inhibitor + Grouper)",
         "include_in_llm_context": True,
         "description": "TTL + window tunables for the Inhibitor and Grouper stages.",
+    },
+
+    # v0.6-phase3 reminder pseudo-adapters: each carries the per-adapter
+    # ReminderScheduler config. Their adapter_meta rows exist so the GUI
+    # surfaces them; include_in_llm_context is True so the LLM can answer
+    # "are reminders firing for fires right now?".
+    "reminders_wfigs": {
+        "display_name": "Reminders (WFIGS fires)",
+        "include_in_llm_context": True,
+        "description": "Per-fire Active: reminders. 8h interval by default.",
+    },
+    "reminders_swpc": {
+        "display_name": "Reminders (SWPC space weather)",
+        "include_in_llm_context": True,
+        "description": "Active: reminders for ongoing G-storm / R-flare / S-radiation events. 8h interval.",
+    },
+    "reminders_itd_511_work_zone": {
+        "display_name": "Reminders (ITD 511 work zones)",
+        "include_in_llm_context": True,
+        "description": "Clock-driven daily reminders for active road-works zones (default 08:00 Mountain).",
+    },
+    "itd_511_work_zone": {
+        "display_name": "ITD 511 (work zones, reminder-eligible)",
+        "include_in_llm_context": True,
+        "reminder_enabled": True,
+        "description": "Subset of itd_511 traffic_events filtered to work-zone sub_type, used as the reminder target.",
     },
 }
 

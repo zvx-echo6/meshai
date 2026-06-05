@@ -654,10 +654,11 @@ def _attach_commit_handles(data: Optional[dict], *, source: str,
             return
         conn.execute(
             "UPDATE traffic_events SET last_broadcast_at=?, "
+            "first_broadcast_at=COALESCE(first_broadcast_at, ?), "
             "last_broadcast_magnitude=?, last_broadcast_delay_seconds=?, "
             "last_broadcast_icon_category=? "
             "WHERE source=? AND external_id=?",
-            (int(committed_at), magnitude, delay_seconds, icon_category,
+            (int(committed_at), int(committed_at), magnitude, delay_seconds, icon_category,
              source, external_id),
         )
         if event_log_row_id is not None:

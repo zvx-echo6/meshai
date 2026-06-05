@@ -195,8 +195,10 @@ def _attach_commit(data: Optional[dict], *, event_id: str,
         try: conn = get_db()
         except Exception:
             logger.exception("quake commit: persistence unavailable"); return
-        conn.execute("UPDATE quake_events SET last_broadcast_at=? WHERE event_id=?",
-                      (int(committed_at), event_id))
+        conn.execute(
+            "UPDATE quake_events SET last_broadcast_at=?, "
+            "first_broadcast_at=COALESCE(first_broadcast_at, ?) WHERE event_id=?",
+            (int(committed_at), int(committed_at), event_id))
         if event_log_row_id is not None:
             conn.execute("UPDATE event_log SET handled=1 WHERE id=?",
                           (int(event_log_row_id),))

@@ -225,9 +225,10 @@ def _attach_commit_handles(data: Optional[dict], *, irwin_id: str,
                 "last_broadcast_* not updated for irwin=%s", irwin_id)
             return
         conn.execute(
-            "UPDATE fires SET last_broadcast_at=?, last_broadcast_acres=?, "
-            "last_broadcast_contained=? WHERE irwin_id=?",
-            (int(committed_at), acres, contained_pct, irwin_id),
+            "UPDATE fires SET last_broadcast_at=?, "
+            "first_broadcast_at=COALESCE(first_broadcast_at, ?), "
+            "last_broadcast_acres=?, last_broadcast_contained=? WHERE irwin_id=?",
+            (int(committed_at), int(committed_at), acres, contained_pct, irwin_id),
         )
         # Flip the matching event_log row to handled=1. A NULL row id
         # (caller forgot to thread it) is silently skipped -- the broadcast
