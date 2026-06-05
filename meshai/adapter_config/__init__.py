@@ -1,14 +1,24 @@
-"""v0.6-3a meshai/adapter_config package.
+"""v0.6-3a.1 meshai/adapter_config package.
 
 Public API:
-    from meshai.adapter_config import adapter_config, invalidate_cache, seed_defaults
+    from meshai.adapter_config import (
+        adapter_config,
+        invalidate_cache,
+        seed_defaults,
+        prune_orphans,
+    )
 
-`adapter_config` is the typed accessor singleton. `invalidate_cache()` drops
-the read-side cache (called by /api/adapter-config PUT in v0.6-3c).
-`seed_defaults(conn)` is called from `meshai.persistence.db.init_db()` after
-the migration runner finishes; it INSERT OR IGNOREs one row per registry
-entry so first-deploy behavior matches every existing handler constant
-exactly.
+`adapter_config` is the typed accessor singleton.
+`invalidate_cache()` drops the read-side cache (called by /api/adapter-config
+    PUT in v0.6-3c).
+`seed_defaults(conn)` populates adapter_config + adapter_meta from REGISTRY.
+`prune_orphans(conn)` deletes adapter_config rows whose (adapter, key) is no
+    longer in REGISTRY -- the safety net for trimming the registry between
+    deploys. Every delete is logged at INFO level so docker logs carry a
+    paper trail of which keys disappeared.
+
+Both seed and prune are called from meshai.persistence.db.init_db() and are
+idempotent.
 """
 from __future__ import annotations
 
@@ -33,6 +43,7 @@ __all__ = [
     "adapter_config",
     "invalidate_cache",
     "seed_defaults",
+    "prune_orphans",
     "REGISTRY",
     "ADAPTER_META",
     "all_adapters",
@@ -44,18 +55,16 @@ logger = logging.getLogger(__name__)
 
 
 def seed_defaults(conn: sqlite3.Connection) -> tuple[int, int]:
-    """Populate adapter_config + adapter_meta from the defaults registry.
+    """Populate adapter_config + adapter_meta from REGISTRY + ADAPTER_META.
 
-    Idempotent: INSERT OR IGNORE never overwrites a user-edited row. Run
-    after the v6 migration creates the tables; safe to re-run on every
-    init_db().
+    Idempotent: INSERT OR IGNORE never overwrites a user-edited row. Safe
+    to re-run on every init_db().
 
     Returns:
-        (config_rows_inserted, meta_rows_inserted) -- 0/0 when fully seeded.
+        (config_rows_inserted, meta_rows_inserted)
     """
     now = time.time()
 
-    # adapter_config rows.
     cfg_inserted = 0
     for (adapter, key), spec in REGISTRY.items():
         default_json = json.dumps(spec["default"])
@@ -69,7 +78,6 @@ def seed_defaults(conn: sqlite3.Connection) -> tuple[int, int]:
         if cur.rowcount > 0:
             cfg_inserted += 1
 
-    # adapter_meta rows.
     meta_inserted = 0
     for adapter, meta in ADAPTER_META.items():
         cur = conn.execute(
@@ -89,3 +97,48 @@ def seed_defaults(conn: sqlite3.Connection) -> tuple[int, int]:
             cfg_inserted, meta_inserted,
         )
     return cfg_inserted, meta_inserted
+
+
+def prune_orphans(conn: sqlite3.Connection) -> int:
+    """Delete adapter_config rows whose (adapter, key) is no longer in REGISTRY.
+
+    Each delete is logged at INFO level with the prefix
+    'adapter_config orphan removed:' so the docker log captures a paper
+    trail. First boot after a registry trim shows N log lines (one per
+    removed key); every subsequent boot shows zero.
+
+    Idempotent. adapter_meta is intentionally NOT pruned -- meta rows are
+    cheap and a previously-known adapter dropping all its config keys
+    still wants the include_in_llm_context toggle preserved (e.g. itd_511
+    after v0.6-3a.1).
+
+    Returns:
+        Count of rows deleted.
+    """
+    valid_keys = set(REGISTRY.keys())
+    existing = conn.execute(
+        "SELECT adapter, key, value_json FROM adapter_config"
+    ).fetchall()
+
+    removed = 0
+    for r in existing:
+        adapter = r["adapter"]
+        key = r["key"]
+        if (adapter, key) in valid_keys:
+            continue
+        logger.info(
+            "adapter_config orphan removed: %s.%s = %s",
+            adapter, key, r["value_json"],
+        )
+        conn.execute(
+            "DELETE FROM adapter_config WHERE adapter=? AND key=?",
+            (adapter, key),
+        )
+        removed += 1
+
+    if removed > 0:
+        # The accessor cache may hold a now-deleted key. Invalidating
+        # forces every next read to round-trip through the DB (cache
+        # miss -> DB miss -> registry fallback / AttributeError).
+        invalidate_cache()
+    return removed

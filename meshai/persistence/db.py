@@ -129,10 +129,11 @@ def init_db(path: Optional[str] = None) -> sqlite3.Connection:
     INSERT OR IGNORE so a re-run is a clean no-op."""
     conn = get_db(path)
     try:
-        from meshai.adapter_config import seed_defaults
+        from meshai.adapter_config import seed_defaults, prune_orphans
         seed_defaults(conn)
+        prune_orphans(conn)
     except Exception:
-        logger.exception("init_db: adapter_config seed_defaults failed")
+        logger.exception("init_db: adapter_config seed/prune failed")
     return conn
 
 
