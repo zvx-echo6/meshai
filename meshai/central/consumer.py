@@ -525,10 +525,28 @@ class CentralConsumer:
                              inner.get("adapter"), category)
             synthesized = None
 
-        title = (data.get("title") or data.get("headline")
-                 or synthesized
-                 or friendly_name or cat_raw
-                 or f"{inner.get('adapter', 'central')} event")
+        # v0.5.13 default-deny: per-adapter handlers gate broadcasts, not
+        # just titles. If no handler synthesized a wire string for this
+        # envelope (either because no per-adapter handler matched OR a
+        # matched handler explicitly returned None as a filter/dedup/
+        # threshold decision), return None from _normalize() -- the Event
+        # never enters the bus and the dispatcher never fires. This is
+        # the architectural fix for the v0.5.7-regression leak that came
+        # back through the v0.5.x live flip: handlers were gating titles
+        # but not broadcasts. See memory rule 19.
+        #
+        # Scheduled broadcasters (band_conditions) bypass _normalize()
+        # entirely -- they enter via Dispatcher.dispatch_scheduled_broadcast()
+        # and are unaffected by this gate.
+        if synthesized is None:
+            logger.debug(
+                "consumer: default-deny -- no handler synthesized for "
+                "adapter=%s category=%s subject=%s",
+                inner.get("adapter"), category, subject,
+            )
+            return None
+
+        title = synthesized
 
         # v0.5.8 Option A: when the per-adapter normalizer produced a fully
         # formatted mesh string, set a marker on event.data so the composer

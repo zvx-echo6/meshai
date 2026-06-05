@@ -43,6 +43,10 @@ from meshai.notifications.renderers.composer import compose_mesh_message
 from meshai.notifications.renderers.mesh import MeshRenderer
 from meshai.notifications.categories import ALERT_CATEGORIES
 
+pytestmark = pytest.mark.skip(
+    reason="v0.5.13 default-deny removed the v0.5.7-regression title fallback chain. These tests guard the OLD behavior (envelopes without a per-adapter handler still got broadcast with legacy family-prefix format). The new architecture: handler must synthesize a wire string for a broadcast to fire. This entire file is obsolete in v0.5.13.")
+
+
 
 # ---------- Envelope -> Event helper ---------------------------------------
 

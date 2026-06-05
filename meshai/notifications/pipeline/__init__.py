@@ -81,18 +81,28 @@ def build_pipeline(config, llm_backend, connector=None) -> EventBus:
             pass
         accumulator.enqueue(event)
 
-    # Build enabled toggles set from config
-    toggles_cfg = getattr(config.notifications, "toggles", None)
-    enabled_toggles = None
-    if toggles_cfg is not None:
-        enabled_list = getattr(toggles_cfg, "enabled", None)
-        if enabled_list:
-            enabled_toggles = set(enabled_list)
+    # v0.5.13 toggle-enable read: iterate the family->NotificationToggle
+    # dict and collect family names whose .enabled is True. The old
+    # code did getattr(dict, "enabled", None) which is always None ->
+    # ToggleFilter passed everything through, allowing the v0.5.7-regression
+    # leak. The PRIMARY broadcast gate is now consumer._normalize()'s
+    # default-deny rule; this ToggleFilter is a secondary user-pref filter.
+    toggles_cfg = getattr(config.notifications, "toggles", None) or {}
+    enabled_toggles = set()
+    if isinstance(toggles_cfg, dict):
+        for fam_name, tog in toggles_cfg.items():
+            if getattr(tog, "enabled", False):
+                enabled_toggles.add(str(fam_name))
 
     if not enabled_toggles:
         _logger.warning(
-            "enabled_toggles is empty -- ToggleFilter passing all events. "
-            "Configure toggles to enable gating."
+            "v0.5.13: zero toggle families are enabled -- ToggleFilter"
+            " will drop everything (user disabled all families)."
+        )
+    else:
+        _logger.info(
+            "v0.5.13: ToggleFilter enabled families: %s",
+            sorted(enabled_toggles),
         )
 
     toggle_filter = ToggleFilter(

@@ -42,6 +42,10 @@ from meshai.config import EnvironmentalConfig
 from meshai.notifications.categories import ALERT_CATEGORIES
 from meshai.notifications.pipeline.bus import EventBus
 
+pytestmark = pytest.mark.skip(
+    reason="v0.5.13 default-deny: WFIGS tombstones now correctly return None from wfigs_handler (logged to event_log handled=0, no Event). These tests asserted the legacy clear-event-emission. New behavior is covered by tests/test_wfigs_handler.py.")
+
+
 
 def _assert_legal_nats(subject: str) -> None:
     """Assert NATS multi-level wildcard `>` only appears at the tail token."""
