@@ -42,7 +42,6 @@ from datetime import datetime
 from typing import Any, Optional
 
 from meshai.central.idaho_gauge_sites import (
-    IDAHO_CURATED_SITES,
     THRESHOLD_RANK,
     compute_threshold_state,
     lookup_site,

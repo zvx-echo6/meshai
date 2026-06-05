@@ -164,42 +164,8 @@ def _clean_description(raw: Optional[str]) -> Optional[str]:
 
 # ---------- distance / bearing --------------------------------------------
 
-# Small lookup of Idaho (+ a few neighbor) towns -> (lat, lon). Used to
-# render "X mi <bearing> of <town>" when the reverse-geocoder picked a
-# city we know. Built from the geocoder.city values seen across 60-sample
-# probe + major Idaho cities the operator's mesh is most likely to care
-# about. Misses fall through silently: distance_mi/bearing stay None.
-_TOWN_COORDS: dict[str, tuple[float, float]] = {
-    "boise":          (43.6150, -116.2023),
-    "meridian":       (43.6121, -116.3915),
-    "nampa":          (43.5407, -116.5635),
-    "caldwell":       (43.6629, -116.6874),
-    "idaho falls":    (43.4666, -112.0340),
-    "pocatello":      (42.8713, -112.4455),
-    "twin falls":     (42.5630, -114.4609),
-    "coeur d'alene":  (47.6777, -116.7805),
-    "lewiston":       (46.4165, -117.0177),
-    "moscow":         (46.7324, -117.0002),
-    "sandpoint":      (48.2766, -116.5535),
-    "post falls":     (47.7180, -116.9516),
-    "hayden":         (47.7660, -116.7866),
-    "rathdrum":       (47.8121, -116.8950),
-    "plummer":        (47.3344, -116.8856),
-    "kellogg":        (47.5380, -116.1352),
-    "bonners ferry":  (48.6914, -116.3181),
-    "rexburg":        (43.8260, -111.7897),
-    "blackfoot":      (43.1905, -112.3447),
-    "burley":         (42.5360, -113.7928),
-    "jerome":         (42.7252, -114.5187),
-    "mountain home":  (43.1330, -115.6912),
-    "stanley":        (44.2160, -114.9311),
-    "salmon":         (45.1758, -113.8957),
-    "mccall":         (44.9111, -116.0987),
-    "weiser":         (44.2510, -116.9690),
-    "soda springs":   (42.6543, -111.6047),
-    "preston":        (42.0963, -111.8766),
-    "montpelier":     (42.3232, -111.2980),
-}
+# v0.6-4: town_anchors moved to a GUI-editable SQLite table. Lookups go
+# through meshai.persistence.curation.lookup_town_anchor() now.
 
 
 def _haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -230,7 +196,8 @@ def _compute_distance_bearing(
     if event_lat is None or event_lon is None or not town:
         return None, None
     key = str(town).strip().lower()
-    coords = _TOWN_COORDS.get(key)
+    from meshai.persistence.curation import lookup_town_anchor
+    coords = lookup_town_anchor(key)
     if coords is None:
         return None, None
     tlat, tlon = coords

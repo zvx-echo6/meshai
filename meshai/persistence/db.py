@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = "/data/meshai.sqlite"
 MESHAI_DB_PATH_ENV = "MESHAI_DB_PATH"
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 9
 SCHEMA_META_TABLE = "schema_meta"
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
@@ -134,6 +134,12 @@ def init_db(path: Optional[str] = None) -> sqlite3.Connection:
         prune_orphans(conn)
     except Exception:
         logger.exception("init_db: adapter_config seed/prune failed")
+    try:
+        from meshai.persistence.curation import seed_gauge_sites, seed_town_anchors
+        seed_gauge_sites(conn)
+        seed_town_anchors(conn)
+    except Exception:
+        logger.exception("init_db: curation seed failed")
     return conn
 
 

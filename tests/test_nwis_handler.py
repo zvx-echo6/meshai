@@ -1,7 +1,9 @@
 """Tests for v0.5.12 usgs_nwis handler."""
 import pytest
 
-from meshai.central.idaho_gauge_sites import IDAHO_CURATED_SITES
+# v0.6-4: IDAHO_CURATED_SITES dict moved to gauge_sites SQLite table;
+# import the seed data from the curation module as a back-compat alias.
+from meshai.persistence.curation import _GAUGE_SITES_SEED as IDAHO_CURATED_SITES
 from meshai.central.nwis_handler import handle_nwis
 from meshai.persistence import close_thread_connection, init_db
 from meshai.persistence import db as persistence_db
