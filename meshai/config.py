@@ -524,7 +524,6 @@ class NotificationRuleConfig:
 
     # Behavior
     cooldown_minutes: int = 10
-    override_quiet: bool = False
 
     # Legacy field for migration (ignored in new format)
     channel_ids: list = field(default_factory=list)
@@ -542,7 +541,6 @@ class NotificationToggle:
     regions: list = field(default_factory=list)  # [] = all regions
     # severity -> list of channel types (digest|mesh_broadcast|mesh_dm|email|webhook)
     severity_channels: dict = field(default_factory=dict)
-    quiet_hours_override: bool = True  # immediate-only quiet-hours bypass
     # v0.5.2: staleness drop + per-toggle cooldown (Matt's spam fix)
     freshness_seconds: int = 600   # drop events older than this at dispatcher entrance
     cooldown_seconds: int = 300    # per (toggle, category, region) throttle window
@@ -578,7 +576,6 @@ def _default_toggles() -> dict:
                 "priority": ["mesh_broadcast"],
                 "immediate": ["mesh_broadcast", "mesh_dm"],
             },
-            quiet_hours_override=True,
         )
         for fam in TOGGLE_FAMILIES
     }
@@ -604,9 +601,6 @@ class NotificationsConfig:
     """Notification system settings."""
 
     enabled: bool = False
-    quiet_hours_enabled: bool = True  # Master toggle for quiet hours
-    quiet_hours_start: str = "22:00"
-    quiet_hours_end: str = "06:00"
     # v0.5.8b cold-start grace: after the first event the dispatcher sees,
     # suppress mesh broadcasts for N seconds to absorb any JetStream
     # backlog. Persistence rows still get written -- only broadcasts are
@@ -725,7 +719,6 @@ def _migrate_legacy_channels(notifications, data: dict):
                 webhook_url=ch.get("url", ""),
                 webhook_headers=ch.get("headers", {}),
                 cooldown_minutes=10,
-                override_quiet=old_rule.get("override_quiet", False),
             )
             migrated_rules.append(new_rule)
 

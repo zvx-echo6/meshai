@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Save, RotateCcw, RefreshCw, Plus, Trash2, ChevronDown, ChevronRight,
   Check, X, Eye as EyeIcon, EyeOff, Send, Clock, Zap,
-  Calendar, AlertTriangle, Copy, Moon, AlertCircle, Layers,
+  Calendar, AlertTriangle, Copy, AlertCircle, Layers,
   Wifi, WifiOff, Mail, Globe, Radio, MessageSquare,
   Activity, Cloud, Flame, Car, Snowflake, Mountain, MapPin
 } from 'lucide-react'
@@ -35,7 +35,6 @@ interface NotificationRuleConfig {
   webhook_url: string
   webhook_headers: Record<string, string>
   cooldown_minutes: number
-  override_quiet: boolean
   region_scope: string[]
 }
 
@@ -45,7 +44,6 @@ interface NotificationToggle {
   min_severity: string
   regions: string[]
   severity_channels: Record<string, string[]>
-  quiet_hours_override: boolean
   broadcast_channel: number | null
   node_ids: string[]
   smtp_host: string
@@ -61,9 +59,6 @@ interface NotificationToggle {
 
 interface NotificationsConfig {
   enabled: boolean
-  quiet_hours_enabled: boolean
-  quiet_hours_start: string
-  quiet_hours_end: string
   cold_start_grace_seconds?: number
   band_conditions_enabled?: boolean
   band_conditions_schedule?: string[]
@@ -150,7 +145,6 @@ const RULE_TEMPLATES = [
       delivery_type: "mesh_broadcast",
       broadcast_channel: 0,
       cooldown_minutes: 30,
-      override_quiet: false,
       schedule_frequency: "daily" as const,
       schedule_time: "07:00",
       schedule_time_2: "",
@@ -182,7 +176,6 @@ const RULE_TEMPLATES = [
       delivery_type: "mesh_broadcast",
       broadcast_channel: 0,
       cooldown_minutes: 15,
-      override_quiet: false,
       schedule_frequency: "daily" as const,
       schedule_time: "07:00",
       schedule_time_2: "",
@@ -214,7 +207,6 @@ const RULE_TEMPLATES = [
       delivery_type: "mesh_broadcast",
       broadcast_channel: 0,
       cooldown_minutes: 60,
-      override_quiet: false,
       schedule_frequency: "daily" as const,
       schedule_time: "07:00",
       schedule_time_2: "",
@@ -246,7 +238,6 @@ const RULE_TEMPLATES = [
       delivery_type: "mesh_broadcast",
       broadcast_channel: 0,
       cooldown_minutes: 30,
-      override_quiet: false,
       schedule_frequency: "daily" as const,
       schedule_time: "07:00",
       schedule_time_2: "",
@@ -278,7 +269,6 @@ const RULE_TEMPLATES = [
       delivery_type: "mesh_broadcast",
       broadcast_channel: 0,
       cooldown_minutes: 5,
-      override_quiet: true,
       schedule_frequency: "daily" as const,
       schedule_time: "07:00",
       schedule_time_2: "",
@@ -316,7 +306,6 @@ const RULE_TEMPLATES = [
       delivery_type: "mesh_broadcast",
       broadcast_channel: 0,
       cooldown_minutes: 0,
-      override_quiet: false,
       node_ids: [] as string[],
       smtp_host: "",
       smtp_port: 587,
@@ -730,7 +719,6 @@ function NotificationRuleCard({
   ruleIndex,
   categories,
   regions,
-  quietHoursEnabled,
   onChange,
   onDelete,
   onDuplicate,
@@ -740,7 +728,6 @@ function NotificationRuleCard({
   ruleIndex: number
   categories: AlertCategory[]
   regions: RegionInfo[]
-  quietHoursEnabled: boolean
   onChange: (r: NotificationRuleConfig) => void
   onDelete: () => void
   onDuplicate: () => void
@@ -1400,18 +1387,7 @@ function NotificationRuleCard({
               min={0}
               helper="Min time between repeat sends"
               info="Prevents alert spam. Same condition won't re-trigger this rule within this window."
-            />
-            {quietHoursEnabled && (
-              <div className="flex items-end pb-1">
-                <Toggle
-                  label="Override Quiet Hours"
-                  checked={rule.override_quiet ?? false}
-                  onChange={(v) => onChange({ ...rule, override_quiet: v })}
-                  helper="Deliver during quiet hours"
-                />
-              </div>
-            )}
-          </div>
+            />          </div>
 
           {/* Rule statistics */}
           {ruleStats && (
@@ -1631,9 +1607,7 @@ function MasterToggles({ toggles, onChange }: {
                       ))}
                     </tbody>
                   </table>
-                  <ListInput label="Regions (empty = all)" value={t.regions || []} onChange={(v) => upd(key, { regions: v })} placeholder="Add region..." />
-                  <Toggle label="Quiet-hours override (immediate only)" checked={!!t.quiet_hours_override} onChange={(v) => upd(key, { quiet_hours_override: v })} />
-                  <div className="text-xs text-slate-500 pt-1">Channel config</div>
+                  <ListInput label="Regions (empty = all)" value={t.regions || []} onChange={(v) => upd(key, { regions: v })} placeholder="Add region..." />                  <div className="text-xs text-slate-500 pt-1">Channel config</div>
                   <NumberInput label="Broadcast channel" value={t.broadcast_channel ?? 0} onChange={(v) => upd(key, { broadcast_channel: v })} />
                   <ListInput label="DM node IDs" value={t.node_ids || []} onChange={(v) => upd(key, { node_ids: v })} placeholder="!nodeid" />
                   <ListInput label="Email recipients" value={t.recipients || []} onChange={(v) => upd(key, { recipients: v })} placeholder="ops@example.com" />
@@ -1764,7 +1738,6 @@ export default function Notifications() {
     webhook_url: '',
     webhook_headers: {},
     cooldown_minutes: 10,
-    override_quiet: false,
     region_scope: [],
   })
 
@@ -2082,46 +2055,7 @@ export default function Notifications() {
         />
 
         {config.enabled && (
-          <>
-            {/* Quiet Hours Section */}
-            <div className="space-y-3 p-4 bg-[#0a0e17] rounded-lg border border-[#1e2a3a]">
-              <div className="flex items-center gap-2">
-                <Moon size={14} className="text-slate-400" />
-                <label className="text-xs text-slate-500 uppercase tracking-wide">Quiet Hours</label>
-              </div>
-
-              <Toggle
-                label="Enable Quiet Hours"
-                checked={config.quiet_hours_enabled ?? true}
-                onChange={(v) => setConfig({ ...config, quiet_hours_enabled: v })}
-                helper="Suppress non-emergency alerts during sleeping hours"
-                info="When enabled, ROUTINE alerts are suppressed during quiet hours. PRIORITY and IMMEDIATE always deliver."
-              />
-
-              {config.quiet_hours_enabled && (
-                <>
-                  <div className="grid grid-cols-2 gap-4">
-                    <TimeInput
-                      label="Start Time"
-                      value={config.quiet_hours_start || '22:00'}
-                      onChange={(v) => setConfig({ ...config, quiet_hours_start: v })}
-                      helper="When quiet hours begin"
-                    />
-                    <TimeInput
-                      label="End Time"
-                      value={config.quiet_hours_end || '06:00'}
-                      onChange={(v) => setConfig({ ...config, quiet_hours_end: v })}
-                      helper="When quiet hours end"
-                    />
-                  </div>
-                  <p className="text-xs text-slate-600">
-                    Emergency alerts and rules with "Override Quiet Hours" enabled always deliver.
-                  </p>
-                </>
-              )}
-            </div>
-
-            {/* Cold-start grace -- v0.5.8b */}
+          <>            {/* Cold-start grace -- v0.5.8b */}
             <div className="space-y-3 p-4 bg-[#0a0e17] rounded-lg border border-[#1e2a3a]">
               <div className="flex items-center gap-2">
                 <label className="text-xs text-slate-500 uppercase tracking-wide">Cold-start grace</label>
@@ -2212,9 +2146,7 @@ export default function Notifications() {
                   rule={rule}
                   ruleIndex={i}
                   categories={categories}
-                  regions={regions}
-                  quietHoursEnabled={config.quiet_hours_enabled ?? true}
-                  onChange={(r) => {
+                  regions={regions}                  onChange={(r) => {
                     const newRules = [...(config.rules || [])]
                     newRules[i] = r
                     setConfig({ ...config, rules: newRules })

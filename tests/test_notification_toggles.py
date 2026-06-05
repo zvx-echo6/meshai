@@ -17,7 +17,6 @@ class RecChannel:
             "name": rule.name,
             "broadcast_channel": rule.broadcast_channel,
             "node_ids": list(rule.node_ids),
-            "override_quiet": rule.override_quiet,
         })
         return True
 
@@ -113,14 +112,6 @@ def test_digest_channel_skipped_in_live_dispatch():
     cfg = _cfg(severity_channels={"priority": ["digest", "mesh_broadcast"]})
     rec = _dispatch(cfg, _ev(severity="priority"))
     assert [r["delivery_type"] for r in rec] == ["mesh_broadcast"]  # digest not live-dispatched
-
-
-def test_quiet_hours_override_immediate_only():
-    cfg = _cfg(min_severity="routine",
-               severity_channels={"priority": ["mesh_broadcast"], "immediate": ["mesh_broadcast"]})
-    cfg.notifications.toggles["weather"].quiet_hours_override = True
-    assert _dispatch(cfg, _ev(severity="priority"))[0]["override_quiet"] is False
-    assert _dispatch(cfg, _ev(severity="immediate"))[0]["override_quiet"] is True
 
 
 def test_category_maps_to_correct_family():

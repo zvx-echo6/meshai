@@ -614,7 +614,6 @@ class Dispatcher:
             recipients=list(getattr(tog, "recipients", []) or []),
             webhook_url=getattr(tog, "webhook_url", ""),
             webhook_headers=dict(getattr(tog, "webhook_headers", {}) or {}),
-            override_quiet=bool(getattr(tog, "quiet_hours_override", False) and event.severity == "immediate"),
         )
 
     def _matching_rules(self, event: Event) -> list:

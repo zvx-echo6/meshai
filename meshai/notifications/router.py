@@ -35,9 +35,6 @@ class NotificationRouter:
         timezone: str = "America/Boise",
     ):
         self._rules: list[dict] = []
-        self._quiet_enabled = getattr(config, "quiet_hours_enabled", True)
-        self._quiet_start = getattr(config, "quiet_hours_start", "22:00")
-        self._quiet_end = getattr(config, "quiet_hours_end", "06:00")
         self._timezone = timezone
         self._recent: dict[tuple, float] = {}  # (rule_name, category, event_key) -> last_sent_time
         self._summarizer = MessageSummarizer(llm_backend) if llm_backend else None
@@ -165,11 +162,6 @@ class NotificationRouter:
             if not self._severity_meets(severity, min_severity):
                 continue
 
-            if self._quiet_enabled and self._in_quiet_hours():
-                if severity == "routine":
-                    if not rule.get("override_quiet", False):
-                        continue
-
             cooldown = rule.get("cooldown_minutes", 10) * 60
             event_id = alert.get("event_id", alert.get("message", "")[:50])
             dedup_key = (rule_name, category, event_id)
@@ -230,24 +222,6 @@ class NotificationRouter:
             return actual_idx >= required_idx
         except ValueError:
             return True
-
-    def _in_quiet_hours(self) -> bool:
-        """Check if current time is within quiet hours."""
-        if not self._quiet_enabled:
-            return False
-        try:
-            from zoneinfo import ZoneInfo
-            tz = ZoneInfo(self._timezone)
-            now = datetime.now(tz)
-            current_time = now.strftime("%H:%M")
-            start = self._quiet_start
-            end = self._quiet_end
-            if start <= end:
-                return start <= current_time <= end
-            else:
-                return current_time >= start or current_time <= end
-        except Exception:
-            return False
 
     def get_rules(self) -> list[dict]:
         """Get list of configured rules with stats."""
@@ -780,7 +754,6 @@ class NotificationRouter:
             "delivery_type": "mesh_dm",
             "node_ids": [node_id],
             "cooldown_minutes": 10,
-            "override_quiet": False,
         })
 
         return rule_name
