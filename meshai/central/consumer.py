@@ -511,6 +511,12 @@ class CentralConsumer:
                 elif inner.get("adapter") in ("swpc_alerts", "swpc_kindex", "swpc_protons"):
                     from meshai.central.swpc_handler import handle_swpc
                     synthesized = handle_swpc(envelope, subject, data=data) or None
+                # v0.5.12 nwis stream-gauge handler. Filters to the
+                # 9-site Idaho curation (idaho_gauge_sites.py); upward
+                # threshold crossings only (mirrors WFIGS forward-only).
+                elif inner.get("adapter") == "nwis":
+                    from meshai.central.nwis_handler import handle_nwis
+                    synthesized = handle_nwis(envelope, subject, data=data) or None
                 elif n is not None and category in ("work_zone", "road_closure", "road_incident"):
                     synthesized = format_work_zone_mesh(n) or None
         except Exception:
