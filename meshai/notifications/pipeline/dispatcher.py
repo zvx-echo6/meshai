@@ -12,6 +12,19 @@ v0.5.2: toggle path gains three guards at the entrance (staleness, per-toggle
 cooldown, (source,id) LRU dedup) plus the friendly mesh-broadcast composer so
 the toggle path stops emitting raw `[Family] central.category` debug strings.
 The legacy rules path is intentionally left untouched (no regression risk).
+
+v0.6-2: state persistence (audit doc finding #1). The cold-start anchor,
+the four drop counters, the per-(toggle,category,region) cooldown map,
+and the (source,event_id) dedup OrderedDict now write through to SQLite
+on every mutation. The dispatcher restores them on __init__ so they
+survive container restart. In-memory caches stay authoritative on the
+fast path; SQLite is the durability layer + the LLM's "what's been
+suppressed?" query target (commit #5: env_reporter).
+
+Cumulative-since-install counters: the four `_*_dropped` ints are NOT
+reset on boot. They carry forward from the dispatcher_state singleton
+row. A `dispatch_stats()` call returns the in-memory (=most-recent)
+values, which mirror the on-disk values exactly.
 """
 
 import logging
@@ -25,7 +38,19 @@ from meshai.notifications.renderers.composer import compose_mesh_message
 
 
 # Bounded (source, event.id) LRU set — see _dispatch_toggles Section 3.
+# Holds the in-memory fast-path cap; SQLite dispatcher_dedup retains a
+# 7-day window which can exceed this. On boot we restore the most-recent
+# _DEDUP_LRU_MAX rows into this OrderedDict.
 _DEDUP_LRU_MAX = 10_000
+
+# v0.6-2 SQLite dedup retention. Anything older than this is deleted on
+# every dispatcher_dedup insert.
+_DEDUP_DB_RETENTION_S = 7 * 86400   # 604_800
+
+# In-memory cooldown map prune threshold (entries). When the map grows past
+# this we re-apply the 2*cooldown_s cutoff so it stays bounded. The SQLite
+# prune fires on every cooldown write regardless.
+_COOLDOWN_INMEM_PRUNE_THRESHOLD = 1024
 
 
 class Dispatcher:
@@ -48,6 +73,7 @@ class Dispatcher:
         self._connector = connector
         self._logger = logging.getLogger("meshai.pipeline.dispatcher")
         # v0.5.2 — toggle-path guards (ops counters exposed via dispatch_stats()):
+        # v0.6-2: restored from dispatcher_state on __init__ via _restore_from_db.
         self._stale_dropped = 0
         self._cooldown_dropped = 0
         self._dedup_dropped = 0
@@ -60,6 +86,156 @@ class Dispatcher:
         self._toggle_cooldown: dict[tuple[str, str, str], float] = {}
         # Insertion-ordered (source, event.id) -> sentinel; evict oldest at cap.
         self._dedup_lru: "OrderedDict[tuple[str, str], bool]" = OrderedDict()
+        # v0.6-2: hydrate from SQLite. Graceful no-op if persistence is
+        # unavailable -- the dispatcher still works, just without
+        # cross-restart durability.
+        self._restore_from_db()
+
+    # ---------- v0.6-2 persistence -----------------------------------------
+
+    def _restore_from_db(self) -> None:
+        """Hydrate in-memory state from dispatcher_state + dispatcher_cooldowns
+        + dispatcher_dedup on dispatcher construction. Idempotent.
+
+        Defensive against missing tables: if the v5 migration hasn't run yet
+        (e.g. fresh DB created by a test fixture before migrations apply),
+        any sqlite OperationalError is caught and the dispatcher falls back
+        to fresh in-memory state. The fast path is unaffected."""
+        try:
+            from meshai.persistence import get_db
+            conn = get_db()
+        except Exception:
+            self._logger.exception(
+                "dispatcher: persistence unavailable on init; using fresh "
+                "in-memory state (counters reset, no cooldown/dedup carryover)"
+            )
+            return
+
+        # State singleton. Wrap in try/except so a missing dispatcher_state
+        # table (pre-v5 schema) degrades gracefully to fresh state instead
+        # of raising into the Dispatcher constructor.
+        try:
+            row = conn.execute(
+                "SELECT cold_start_anchor, stale_dropped, cooldown_dropped, "
+                "dedup_dropped, cold_start_dropped FROM dispatcher_state WHERE id=1"
+            ).fetchone()
+        except Exception:
+            self._logger.debug(
+                "dispatcher: v5 tables not present yet; using fresh state"
+            )
+            return
+        if row is not None:
+            self._first_event_at = row["cold_start_anchor"]
+            self._stale_dropped = int(row["stale_dropped"] or 0)
+            self._cooldown_dropped = int(row["cooldown_dropped"] or 0)
+            self._dedup_dropped = int(row["dedup_dropped"] or 0)
+            self._cold_start_dropped = int(row["cold_start_dropped"] or 0)
+            self._logger.info(
+                "dispatcher state restored: cold_start_anchor=%s "
+                "stale=%d cooldown=%d dedup=%d cold_start=%d",
+                self._first_event_at, self._stale_dropped,
+                self._cooldown_dropped, self._dedup_dropped,
+                self._cold_start_dropped,
+            )
+
+        # Cooldowns: every row restored verbatim (the in-memory prune
+        # threshold of 1024 will fire on the first cooldown write if the
+        # restored set is bigger, so even pathological histories self-bound).
+        for r in conn.execute(
+            "SELECT toggle, category, region, last_fired_at "
+            "FROM dispatcher_cooldowns"
+        ).fetchall():
+            self._toggle_cooldown[(r["toggle"], r["category"], r["region"])] = \
+                float(r["last_fired_at"])
+
+        # Dedup LRU: restore the most-recent _DEDUP_LRU_MAX rows in
+        # newest-first order, then re-add into the OrderedDict oldest-first
+        # so the natural insertion order matches the OrderedDict-as-LRU
+        # contract (oldest = first-evicted on overflow). On-disk retains a
+        # 7-day window which may exceed the in-memory cap; the LLM still
+        # sees the full window via direct SELECT.
+        rows = conn.execute(
+            "SELECT source, event_id FROM dispatcher_dedup "
+            "ORDER BY seen_at DESC LIMIT ?",
+            (_DEDUP_LRU_MAX,),
+        ).fetchall()
+        for r in reversed(rows):
+            self._dedup_lru[(r["source"], r["event_id"])] = True
+
+        if self._toggle_cooldown or self._dedup_lru:
+            self._logger.info(
+                "dispatcher caches restored: cooldowns=%d dedup_lru=%d",
+                len(self._toggle_cooldown), len(self._dedup_lru),
+            )
+
+    def _persist_state(self) -> None:
+        """Write the current counters + cold_start_anchor to dispatcher_state.
+        Called whenever any of those values change."""
+        try:
+            from meshai.persistence import get_db
+            conn = get_db()
+            conn.execute(
+                "UPDATE dispatcher_state SET cold_start_anchor=?, "
+                "stale_dropped=?, cooldown_dropped=?, dedup_dropped=?, "
+                "cold_start_dropped=?, updated_at=? WHERE id=1",
+                (self._first_event_at, self._stale_dropped,
+                 self._cooldown_dropped, self._dedup_dropped,
+                 self._cold_start_dropped, time.time()),
+            )
+        except Exception:
+            self._logger.exception(
+                "dispatcher: state write-through failed; in-memory still ok"
+            )
+
+    def _persist_cooldown(self, key: tuple[str, str, str],
+                            now: float, cooldown_s: int) -> None:
+        """UPSERT a single (toggle, category, region) cooldown row + prune
+        rows older than (2 * cooldown_s). Mirrors the in-memory prune
+        semantics moved off the per-1024-grow check."""
+        try:
+            from meshai.persistence import get_db
+            conn = get_db()
+            toggle, category, region = key
+            conn.execute(
+                "INSERT OR REPLACE INTO dispatcher_cooldowns("
+                "toggle, category, region, last_fired_at, updated_at) "
+                "VALUES (?,?,?,?,?)",
+                (toggle, category, region, now, now),
+            )
+            if cooldown_s > 0:
+                cutoff = now - (2 * cooldown_s)
+                conn.execute(
+                    "DELETE FROM dispatcher_cooldowns WHERE last_fired_at < ?",
+                    (cutoff,),
+                )
+        except Exception:
+            self._logger.exception(
+                "dispatcher: cooldown write-through failed for %s", key
+            )
+
+    def _persist_dedup(self, key: tuple[str, str], now: float) -> None:
+        """INSERT a single (source, event_id) dedup row + prune rows older
+        than _DEDUP_DB_RETENTION_S. Same key arriving twice updates seen_at."""
+        try:
+            from meshai.persistence import get_db
+            conn = get_db()
+            source, event_id = key
+            conn.execute(
+                "INSERT OR REPLACE INTO dispatcher_dedup("
+                "source, event_id, seen_at) VALUES (?,?,?)",
+                (source, event_id, now),
+            )
+            cutoff = now - _DEDUP_DB_RETENTION_S
+            conn.execute(
+                "DELETE FROM dispatcher_dedup WHERE seen_at < ?",
+                (cutoff,),
+            )
+        except Exception:
+            self._logger.exception(
+                "dispatcher: dedup write-through failed for %s", key
+            )
+
+    # ---------- core dispatch ----------------------------------------------
 
     async def dispatch(self, event: Event) -> None:
         """Deliver via matching rules AND enabled family toggles (parallel, v0.5)."""
@@ -68,7 +244,7 @@ class Dispatcher:
 
     async def _dispatch_rules(self, event: Event) -> None:
         """Deliver an immediate-severity event to all matching channels.
-        
+
         This method is async and awaits each channel.deliver() call.
         """
         rules = self._matching_rules(event)
@@ -109,6 +285,10 @@ class Dispatcher:
                            re-delivery during reconnect.
         Then composes a friendly mesh string instead of the prior raw
         `[Family] central.category` debug format.
+
+        v0.6-2: every mutation of the four drop counters, the cold-start
+        anchor, the cooldown map, and the dedup LRU writes through to
+        SQLite via the _persist_* helpers. Read fast-path stays in-memory.
         """
         toggles = getattr(self._config.notifications, "toggles", None)
         if not isinstance(toggles, dict) or not toggles:
@@ -131,12 +311,14 @@ class Dispatcher:
             now_anchor = time.time()
             if self._first_event_at is None:
                 self._first_event_at = now_anchor
+                self._persist_state()    # anchor armed -- durable
                 self._logger.info(
                     "cold-start grace anchor set: t0=%.3f window=%ds",
                     now_anchor, grace_s,
                 )
             if (now_anchor - self._first_event_at) < grace_s:
                 self._cold_start_dropped += 1
+                self._persist_state()
                 self._logger.info(
                     "cold-start grace: dropping broadcast source=%s category=%s "
                     "elapsed=%.1fs window=%ds",
@@ -156,6 +338,7 @@ class Dispatcher:
             age = time.time() - event.timestamp
             if age > freshness_s:
                 self._stale_dropped += 1
+                self._persist_state()
                 self._logger.debug(
                     "dispatcher: dropping stale event source=%s category=%s "
                     "age=%.0fs > freshness=%ds",
@@ -175,12 +358,14 @@ class Dispatcher:
             last_fired = self._toggle_cooldown.get(ck)
             if last_fired is not None and (now - last_fired) < cooldown_s:
                 self._cooldown_dropped += 1
+                self._persist_state()
                 return  # silent throttle — no log spam
             self._toggle_cooldown[ck] = now
-            # Lazy prune: keep map bounded at ~2x the largest cooldown by
-            # discarding entries older than 2 * cooldown_s. Cheap; runs only
-            # when the map grows past a threshold so it's not per-event work.
-            if len(self._toggle_cooldown) > 1024:
+            self._persist_cooldown(ck, now, cooldown_s)
+            # In-memory prune: mirror the SQLite cutoff when the map grows
+            # past the threshold. The SQLite prune already ran inside
+            # _persist_cooldown.
+            if len(self._toggle_cooldown) > _COOLDOWN_INMEM_PRUNE_THRESHOLD:
                 cutoff = now - (2 * cooldown_s)
                 self._toggle_cooldown = {
                     k: t for k, t in self._toggle_cooldown.items() if t >= cutoff
@@ -192,8 +377,13 @@ class Dispatcher:
             # Touch to keep recent.
             self._dedup_lru.move_to_end(dk)
             self._dedup_dropped += 1
+            self._persist_state()
+            # Refresh seen_at on disk too -- a repeat sighting is fresh
+            # evidence we're still seeing this id.
+            self._persist_dedup(dk, time.time())
             return
         self._dedup_lru[dk] = True
+        self._persist_dedup(dk, time.time())
         while len(self._dedup_lru) > _DEDUP_LRU_MAX:
             self._dedup_lru.popitem(last=False)  # evict oldest
 
@@ -241,7 +431,12 @@ class Dispatcher:
                 self._logger.exception(f"Toggle channel delivery failed for {fam}/{ch_type}")
 
     def dispatch_stats(self) -> dict:
-        """Expose v0.5.2 toggle-path guard counters for ops/health endpoints."""
+        """Expose v0.5.2 toggle-path guard counters for ops/health endpoints.
+
+        Returns the in-memory (= write-through current) values. Equivalent to
+        SELECT from dispatcher_state but avoids the DB round-trip on every
+        call. The numbers are cumulative-since-install (NOT since-boot).
+        """
         return {
             "stale_dropped": self._stale_dropped,
             "cooldown_dropped": self._cooldown_dropped,
@@ -279,8 +474,10 @@ class Dispatcher:
             now_anchor = time.time()
             if self._first_event_at is None:
                 self._first_event_at = now_anchor
+                self._persist_state()
             if (now_anchor - self._first_event_at) < grace_s:
                 self._cold_start_dropped += 1
+                self._persist_state()
                 self._logger.info(
                     "cold-start grace: dropping scheduled broadcast "
                     "(table=%s pk=%s)",

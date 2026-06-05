@@ -24,6 +24,23 @@ class RecChannel:
 
 def _dispatch(cfg, event):
     rec = []
+    # v0.6-2: wipe dedup state between calls so each _dispatch is an
+    # independent "what happens if this event arrives now?" check.
+    # The pre-v0.6-2 in-memory dedup naturally reset per Dispatcher
+    # instance; the new persisted dedup carries across instances unless
+    # we clear it here.
+    try:
+        from meshai.persistence import get_db
+        conn = get_db()
+        conn.execute("DELETE FROM dispatcher_dedup")
+        conn.execute("DELETE FROM dispatcher_cooldowns")
+        conn.execute(
+            "UPDATE dispatcher_state SET cold_start_anchor=NULL, "
+            "stale_dropped=0, cooldown_dropped=0, dedup_dropped=0, "
+            "cold_start_dropped=0 WHERE id=1"
+        )
+    except Exception:
+        pass
     d = Dispatcher(cfg, lambda rule, conn: RecChannel(rec), connector=None)
     asyncio.run(d.dispatch(event))
     return rec
