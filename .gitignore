@@ -71,3 +71,6 @@ Thumbs.db
 !.env.example
 local.yaml
 !local.yaml.example
+data/*.sqlite
+data/*.sqlite-wal
+data/*.sqlite-shm

@@ -51,6 +51,11 @@ class Dispatcher:
         self._stale_dropped = 0
         self._cooldown_dropped = 0
         self._dedup_dropped = 0
+        # v0.5.8b cold-start grace: anchor lazily on FIRST event the
+        # dispatcher sees through an enabled toggle. Grace window read
+        # from config so it can be tuned at runtime via /api/config PUT.
+        self._first_event_at: Optional[float] = None
+        self._cold_start_dropped = 0
         # (toggle.name, category, region) -> last-fire wall-clock seconds
         self._toggle_cooldown: dict[tuple[str, str, str], float] = {}
         # Insertion-ordered (source, event.id) -> sentinel; evict oldest at cap.
@@ -114,6 +119,31 @@ class Dispatcher:
         tog = toggles.get(fam)
         if tog is None or not getattr(tog, "enabled", False):
             return
+
+        # ---------- Section 0 — cold-start grace (v0.5.8b) ----------
+        # First event ever to reach an enabled toggle anchors the grace
+        # window. Any broadcast attempt inside the window is dropped, but
+        # the event still flowed through the consumer -> handler chain
+        # before us, so persistence rows have already been written. Only
+        # the broadcast is suppressed.
+        grace_s = int(getattr(self._config.notifications, "cold_start_grace_seconds", 60) or 0)
+        if grace_s > 0:
+            now_anchor = time.time()
+            if self._first_event_at is None:
+                self._first_event_at = now_anchor
+                self._logger.info(
+                    "cold-start grace anchor set: t0=%.3f window=%ds",
+                    now_anchor, grace_s,
+                )
+            if (now_anchor - self._first_event_at) < grace_s:
+                self._cold_start_dropped += 1
+                self._logger.info(
+                    "cold-start grace: dropping broadcast source=%s category=%s "
+                    "elapsed=%.1fs window=%ds",
+                    event.source, event.category,
+                    now_anchor - self._first_event_at, grace_s,
+                )
+                return
 
         # ---------- Section 1 — staleness filter ----------
         # `event.timestamp` is the upstream-published wall-clock the adapter
@@ -200,6 +230,11 @@ class Dispatcher:
                 success = await channel.deliver(payload, rule)
                 if success:
                     self._logger.info(f"Dispatched event {event.id} via toggle {fam}/{ch_type}")
+                    # v0.5.8b post-broadcast commit. Persistence-side
+                    # bookkeeping that should only happen when a delivery
+                    # actually went out: mesh_broadcasts_out audit row +
+                    # handler-supplied last_broadcast_* UPDATE callback.
+                    self._post_broadcast_commit(event, payload, rule, ch_type)
                 else:
                     self._logger.warning(f"Toggle channel delivery returned False for {fam}/{ch_type}")
             except Exception:
@@ -211,9 +246,65 @@ class Dispatcher:
             "stale_dropped": self._stale_dropped,
             "cooldown_dropped": self._cooldown_dropped,
             "dedup_dropped": self._dedup_dropped,
+            "cold_start_dropped": self._cold_start_dropped,
+            "cold_start_anchor_at": self._first_event_at,
             "cooldown_keys": len(self._toggle_cooldown),
             "dedup_lru_size": len(self._dedup_lru),
         }
+
+    def _post_broadcast_commit(self, event, payload, rule, ch_type: str) -> None:
+        """Persistence side-effects of an actually-successful broadcast.
+
+        Inserts the mesh_broadcasts_out audit row when the handler signalled
+        it wants one via `event.data["_broadcast_audit"]`, then invokes the
+        handler-supplied `_on_broadcast_committed` callback so the handler
+        can refresh its own last_broadcast_* bookkeeping. Both calls are
+        wrapped: a bookkeeping failure must NOT undo the actual broadcast
+        nor break dispatch for sibling toggles.
+        """
+        data = getattr(event, "data", None) or {}
+        if not data:
+            return
+        committed_at = time.time()
+
+        audit = data.get("_broadcast_audit")
+        if isinstance(audit, dict):
+            try:
+                from meshai.persistence import get_db
+                conn = get_db()
+                text = payload.message if payload is not None else (event.title or "")
+                bytes_sent = len(text.encode("utf-8")) if text else 0
+                if ch_type == "mesh_dm":
+                    node_ids = list(getattr(rule, "node_ids", []) or [])
+                    recipient = ",".join(map(str, node_ids)) or "dm"
+                else:
+                    recipient = "broadcast"
+                channel = getattr(rule, "broadcast_channel", None)
+                conn.execute(
+                    "INSERT INTO mesh_broadcasts_out(sent_at, recipient, channel, "
+                    "text, source_event_table, source_event_pk, bytes_sent, "
+                    "ack_received) VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        int(committed_at), recipient, channel, text,
+                        audit.get("table"), audit.get("pk"),
+                        bytes_sent, 0,
+                    ),
+                )
+            except Exception:
+                self._logger.exception(
+                    "post-broadcast: mesh_broadcasts_out insert failed "
+                    "(table=%s pk=%s)",
+                    audit.get("table"), audit.get("pk"),
+                )
+
+        cb = data.get("_on_broadcast_committed")
+        if callable(cb):
+            try:
+                cb(committed_at)
+            except Exception:
+                self._logger.exception(
+                    "post-broadcast: handler commit-callback raised"
+                )
 
     def _toggle_to_rule(self, tog, ch_type: str, event: Event):
         from meshai.config import NotificationRuleConfig

@@ -32,6 +32,7 @@ def _dispatch(cfg, event):
 def _cfg(enable="weather", **kw):
     cfg = Config()
     cfg.notifications.rules = []
+    cfg.notifications.cold_start_grace_seconds = 0  # v0.5.8b: legacy tests
     t = cfg.notifications.toggles[enable]
     t.enabled = True
     t.min_severity = kw.get("min_severity", "priority")
@@ -47,6 +48,7 @@ def _ev(severity="priority", category="weather_warning", region=None, regions=No
 
 def test_disabled_toggle_no_dispatch():
     cfg = Config(); cfg.notifications.rules = []  # weather disabled by default
+    cfg.notifications.cold_start_grace_seconds = 0
     assert _dispatch(cfg, _ev()) == []
 
 
@@ -107,6 +109,7 @@ def test_quiet_hours_override_immediate_only():
 def test_category_maps_to_correct_family():
     # seismic family toggle handles earthquake_event via get_toggle fallback
     cfg = Config(); cfg.notifications.rules = []
+    cfg.notifications.cold_start_grace_seconds = 0  # v0.5.8b: legacy test
     cfg.notifications.toggles["seismic"].enabled = True
     cfg.notifications.toggles["seismic"].severity_channels = {"priority": ["mesh_broadcast"]}
     rec = _dispatch(cfg, _ev(severity="priority", category="earthquake_event"))

@@ -58,6 +58,10 @@ def _cfg(toggle_name="weather", **kw):
     """Default config: one toggle enabled with mesh_broadcast on priority."""
     cfg = Config()
     cfg.notifications.rules = []
+    # v0.5.8b: disable the cold-start grace for these tests -- they
+    # exercise the v0.5.2 guards in isolation and expect the first
+    # event to broadcast.
+    cfg.notifications.cold_start_grace_seconds = 0
     t = cfg.notifications.toggles[toggle_name]
     t.enabled = True
     t.min_severity = kw.get("min_severity", "routine")
@@ -280,6 +284,7 @@ def test_hydro_event_maps_to_geohazards_toggle():
     toggle alone must NOT fire on them anymore."""
     cfg = Config()
     cfg.notifications.rules = []
+    cfg.notifications.cold_start_grace_seconds = 0
     # Enable BOTH weather and seismic toggles so we can prove routing.
     cfg.notifications.toggles["weather"].enabled = True
     cfg.notifications.toggles["weather"].min_severity = "routine"
@@ -308,6 +313,7 @@ def test_hydro_high_water_also_seismic():
     """Same as above for stream_high_water (the lower-severity sibling)."""
     cfg = Config()
     cfg.notifications.rules = []
+    cfg.notifications.cold_start_grace_seconds = 0
     cfg.notifications.toggles["seismic"].enabled = True
     cfg.notifications.toggles["seismic"].min_severity = "routine"
     cfg.notifications.toggles["seismic"].severity_channels = {
@@ -331,5 +337,6 @@ def test_dispatch_stats_exposes_all_counters():
     stats = d.dispatch_stats()
     assert set(stats.keys()) == {
         "stale_dropped", "cooldown_dropped", "dedup_dropped",
+        "cold_start_dropped", "cold_start_anchor_at",
         "cooldown_keys", "dedup_lru_size",
     }

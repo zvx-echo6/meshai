@@ -458,6 +458,288 @@ def _parse_state_511_atis(inner_data: dict, geo: dict) -> dict:
     }
 
 
+# ---------- wzdx federal vocabulary maps ----------------------------------
+
+# FHWA WZDx v4 + custom-feed vocabulary observed in the wild. Unknown values
+# fall through to lowercased + hyphens→spaces (see _norm_wzdx_sub_type).
+_WZDX_WORK_TYPE_MAP: dict[str, Optional[str]] = {
+    # WZDx v4 spec types_of_work.type_name enum:
+    "maintenance":               "maintenance",
+    "minor-road-defect-repair":  "minor repair",
+    "roadside-work":             "roadside work",
+    "overhead-work":             "overhead work",
+    "below-road-work":           "subsurface work",
+    "barrier-work":              "barrier work",
+    "surface-work":              "surface work",
+    "painting":                  "painting",
+    "roadway-relocation":        "roadway relocation",
+    "roadway-creation":          "new construction",
+    # Common informal values seen in upstream feeds (ID, WA):
+    "road-work":                 "road work",
+    "paving":                    "paving",
+    "bridge-construction":       "bridge construction",
+    "bridge-maintenance":        "bridge maintenance",
+    "utility-work":              "utility work",
+    "road-construction":         "road construction",
+    "construction":              "construction",
+    "emergency-repairs":         "emergency repairs",
+    # event_type values (drop the too-generic ones):
+    "work-zone":                 None,
+    "detour":                    "detour",
+}
+
+
+# vehicle_impact taxonomy (WZDx v4). Maps to mesh-friendly phrase.
+# Returns None for values the renderer should drop entirely.
+_WZDX_IMPACT_MAP: dict[str, Optional[str]] = {
+    "all-lanes-closed":     "all lanes closed",
+    "some-lanes-closed":    "lanes reduced",
+    "alternating-one-way":  "one-way alternating",
+    "unknown":              None,
+    "all-lanes-open":       None,   # informational only; nothing to do
+}
+
+
+def _norm_wzdx_sub_type(raw) -> Optional[str]:
+    if not raw: return None
+    s = str(raw).strip().lower()
+    if not s: return None
+    if s in _WZDX_WORK_TYPE_MAP:
+        return _WZDX_WORK_TYPE_MAP[s]
+    # Unknown value — keep lowercased, hyphens → spaces, single-line.
+    return re.sub(r"\s+", " ", s.replace("-", " ")).strip() or None
+
+
+# ---------- per-adapter parser: wzdx federal ------------------------------
+
+def _parse_wzdx_federal(inner_data: dict, geo: dict) -> dict:
+    """Normalize a wzdx-adapter envelope (FHWA WZDx federal spec).
+
+    Central flattens the upstream payload in practice (the FHWA-spec
+    `core_details.*` nesting is not preserved), but we defensively check
+    nested keys too so any future Central change doesn't silently regress.
+
+    sub_type uses types_of_work[0].type_name when present, else event_type,
+    each normalized via _WZDX_WORK_TYPE_MAP. impact_phrase is folded INTO
+    the sub_type slot for the renderer (so the description-slot reads e.g.
+    'lanes reduced, paving' or 'one-way alternating' or 'road work').
+    'all lanes closed' is set on impact='full_closure' so the renderer's
+    existing full-closure promotion handles it -- avoids double-printing.
+    """
+    cd = inner_data.get("core_details")
+    if not isinstance(cd, dict): cd = {}
+    def field(key):
+        v = cd.get(key)
+        if v is None or (isinstance(v, str) and not v.strip()):
+            v = inner_data.get(key)
+        return v
+
+    # --- road (raw, verbatim per Matt's spec) -----------------------------
+    road_names = field("road_names")
+    road = None
+    if isinstance(road_names, list) and road_names:
+        road = str(road_names[0]).strip() or None
+    elif isinstance(road_names, str) and road_names.strip():
+        road = road_names.strip()
+    if _is_uninformative_road(road):
+        road = None
+
+    # --- direction --------------------------------------------------------
+    direction = _norm_direction(field("direction"))
+
+    # --- sub_type (types_of_work[0] | event_type) -------------------------
+    work_type: Optional[str] = None
+    tow = field("types_of_work")
+    if isinstance(tow, list) and tow:
+        first = tow[0]
+        if isinstance(first, dict):
+            work_type = _norm_wzdx_sub_type(first.get("type_name"))
+        elif isinstance(first, str):
+            work_type = _norm_wzdx_sub_type(first)
+    if not work_type:
+        work_type = _norm_wzdx_sub_type(field("event_type"))
+
+    # --- vehicle_impact ---------------------------------------------------
+    vi_raw = (inner_data.get("vehicle_impact") or cd.get("vehicle_impact") or "")
+    impact_phrase: Optional[str] = _WZDX_IMPACT_MAP.get(str(vi_raw).strip().lower())
+    is_full_closure = (str(vi_raw).strip().lower() == "all-lanes-closed")
+
+    # Fold impact_phrase + work_type into the renderer's sub_type slot.
+    # For full-closure, exclude impact_phrase here -- the renderer prepends
+    # "all lanes closed" itself via the impact='full_closure' branch.
+    parts: list[str] = []
+    if impact_phrase and not is_full_closure:
+        parts.append(impact_phrase)
+    if work_type:
+        parts.append(work_type)
+    sub_type = ", ".join(parts) if parts else None
+    impact = "full_closure" if is_full_closure else "partial"
+
+    # --- ends_at: structured end_date ISO-8601 ---------------------------
+    ends_at: Optional[datetime] = None
+    end_date = inner_data.get("end_date") or cd.get("end_date")
+    if end_date:
+        try:
+            s = str(end_date).replace("Z", "+00:00")
+            ends_at = datetime.fromisoformat(s)
+            # Strip tzinfo so _format_end_short compares naive-to-naive.
+            if ends_at.tzinfo is not None:
+                ends_at = ends_at.astimezone().replace(tzinfo=None)
+        except Exception:
+            ends_at = None
+
+    # --- mile_start/_end: regex on description, fall back to structured --
+    desc = _clean_description(field("description"))
+    mile_start, mile_end = _parse_mile_posts(desc or "")
+    if mile_start is None:
+        ms = inner_data.get("road_mile_post_start")
+        if ms is not None:
+            try: mile_start = int(ms)
+            except (TypeError, ValueError): pass
+    if mile_end is None:
+        me = inner_data.get("road_mile_post_end")
+        if me is not None:
+            try: mile_end = int(me)
+            except (TypeError, ValueError): pass
+
+    # --- coordinates -----------------------------------------------------
+    event_lat = inner_data.get("latitude")
+    event_lon = inner_data.get("longitude")
+    if event_lat is None and geo.get("centroid"):
+        try: event_lon, event_lat = geo["centroid"][0], geo["centroid"][1]
+        except (IndexError, TypeError): pass
+
+    # --- town fallback chain (same as state_511_atis) --------------------
+    enriched = (inner_data.get("_enriched") or {}).get("geocoder") or {}
+    town = (enriched.get("city") or "").strip() or None
+    distance_mi: Optional[int] = None
+    bearing: Optional[str] = None
+    if town:
+        distance_mi, bearing = _compute_distance_bearing(event_lat, event_lon, town)
+    elif event_lat is not None:
+        nt = nearest_town(event_lat, event_lon)
+        if nt:
+            town        = nt.get("name")
+            distance_mi = nt.get("distance_mi")
+            bearing     = nt.get("bearing")
+
+    return {
+        "source":      "wzdx",
+        "road":        road,
+        "direction":   direction,
+        "mile_start":  mile_start,
+        "mile_end":    mile_end,
+        "description": desc,
+        "sub_type":    sub_type,
+        "impact":      impact,
+        "ends_at":     ends_at,
+        "town":        town,
+        "distance_mi": distance_mi,
+        "bearing":     bearing,
+    }
+
+
+
+# ---------- WFIGS incidents (wildfire+prescribed) -------------------------
+
+# IncidentName values like "IA 1", "IA 27" are auto-numbered Initial-Attack
+# placeholders that WFIGS issues before a fire gets a proper name. We pass
+# them through verbatim per Matt's call -- they at least signal "new fire
+# in <county>" even without an interesting name.
+_WFIGS_ACRES_KEYS = ("DailyAcres", "IncidentSize")
+_WFIGS_ACRES_RAW_KEYS = ("DiscoveryAcres", "FinalAcres")
+_WFIGS_CONTAINED_KEYS = ("PercentContained",)
+_WFIGS_CONTAINED_RAW_KEYS = ("PercentContained",)
+
+
+def _first_non_null(d: dict, keys) -> Any:
+    """Return d[k] for the first k in keys with a non-null value, else None."""
+    for k in keys:
+        v = d.get(k)
+        if v is not None and v != "":
+            return v
+    return None
+
+
+def _parse_wfigs_acres(inner_data: dict) -> Optional[float]:
+    """Acres fallback chain: top-level DailyAcres/IncidentSize -> raw.* -> None."""
+    val = _first_non_null(inner_data, _WFIGS_ACRES_KEYS)
+    if val is None:
+        raw = inner_data.get("raw") or {}
+        if isinstance(raw, dict):
+            val = _first_non_null(raw, _WFIGS_ACRES_RAW_KEYS)
+    if val is None:
+        return None
+    try: return float(val)
+    except (TypeError, ValueError): return None
+
+
+def _parse_wfigs_contained(inner_data: dict) -> Optional[int]:
+    """Containment fallback chain: top-level PercentContained -> raw.* -> None."""
+    val = _first_non_null(inner_data, _WFIGS_CONTAINED_KEYS)
+    if val is None:
+        raw = inner_data.get("raw") or {}
+        if isinstance(raw, dict):
+            val = _first_non_null(raw, _WFIGS_CONTAINED_RAW_KEYS)
+    if val is None:
+        return None
+    try: return int(round(float(val)))
+    except (TypeError, ValueError): return None
+
+
+def _parse_wfigs_incidents(inner_data: dict, geo: dict) -> dict:
+    """Normalize a WFIGS-incidents payload into a flat render-ready dict.
+
+    Field shapes per Central v0.10.0 guide (see /OneDrive/.../wfigs-investigation.md):
+      Top-level (incident): IrwinID, IncidentName, IncidentTypeCategory,
+        latitude, longitude, FireDiscoveryDateTime (epoch-ms), POOState,
+        POOCounty, DailyAcres, IncidentSize, PercentContained.
+      Nested raw dict (97-key): DiscoveryAcres, FinalAcres, PercentContained
+        (often the place where real values live in early season when the
+        top-level fields haven't populated yet).
+      _enriched.geocoder.landclass: optional ("Sawtooth National Forest", etc).
+
+    Returns the normalized dict. Caller layers on "_kind": "wfigs_incident".
+    """
+    geocoder = geo.get("geocoder") or {}
+    irwin_id = inner_data.get("IrwinID") or inner_data.get("irwin_id")
+    name = inner_data.get("IncidentName")
+    itype = inner_data.get("IncidentTypeCategory")
+    lat = inner_data.get("latitude")
+    lon = inner_data.get("longitude")
+    county = inner_data.get("POOCounty")
+    state = inner_data.get("POOState")
+    landclass = geocoder.get("landclass")
+
+    # FireDiscoveryDateTime is epoch-ms in WFIGS; convert to epoch-s.
+    declared_at_epoch = None
+    fdt = inner_data.get("FireDiscoveryDateTime")
+    if isinstance(fdt, (int, float)):
+        # Heuristic: anything >1e12 is ms (post-2001 in ms is ~1.4e12).
+        declared_at_epoch = int(fdt / 1000) if fdt > 1e12 else int(fdt)
+
+    acres = _parse_wfigs_acres(inner_data)
+    contained_pct = _parse_wfigs_contained(inner_data)
+
+    # Geocoder-side anchor enrichment for the renderer.
+    city = geocoder.get("city")
+
+    return {
+        "irwin_id":           irwin_id,
+        "incident_name":      name,
+        "incident_type":      itype,
+        "acres":              acres,
+        "contained_pct":      contained_pct,
+        "lat":                lat,
+        "lon":                lon,
+        "county":             county,
+        "state":              state,
+        "landclass":          landclass,
+        "geocoder_city":      city,
+        "declared_at_epoch":  declared_at_epoch,
+    }
+
+
 # ---------- public entry point --------------------------------------------
 
 def normalize(envelope: dict) -> Optional[dict]:
@@ -474,6 +756,34 @@ def normalize(envelope: dict) -> Optional[dict]:
 
     if adapter == "state_511_atis":
         return _parse_state_511_atis(inner_data, geo)
+    if adapter == "wzdx":
+        return _parse_wzdx_federal(inner_data, geo)
+
+    # v0.5.8 WFIGS dispatch -- incidents + tombstones + perimeters.
+    # The handler downstream uses _kind to route to change-detection
+    # (active incidents) or to event_log-only logging (tombstones,
+    # perimeters). Tombstones carry only irwin_id + state + county;
+    # perimeters share the IrwinID with their parent incident.
+    category_raw = inner.get("category") or ""
+    if adapter == "wfigs_incidents":
+        if category_raw.startswith("fire.incident.removed"):
+            return {
+                "_kind":    "wfigs_tombstone",
+                "irwin_id": inner_data.get("irwin_id") or inner_data.get("IrwinID"),
+                "state":    inner_data.get("state") or inner_data.get("POOState"),
+                "county":   inner_data.get("county") or inner_data.get("POOCounty"),
+            }
+        if category_raw.startswith("fire.incident"):
+            n = _parse_wfigs_incidents(inner_data, geo)
+            n["_kind"] = "wfigs_incident"
+            return n
+    if adapter == "wfigs_perimeters":
+        return {
+            "_kind":    "wfigs_perimeter",
+            "irwin_id": inner_data.get("irwin_id") or inner_data.get("IrwinID"),
+            "state":    inner_data.get("state") or inner_data.get("POOState"),
+            "county":   inner_data.get("county") or inner_data.get("POOCounty"),
+        }
 
     # Other adapters await per-adapter parsers; return None to defer.
     return None

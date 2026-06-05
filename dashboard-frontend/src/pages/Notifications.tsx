@@ -64,6 +64,7 @@ interface NotificationsConfig {
   quiet_hours_enabled: boolean
   quiet_hours_start: string
   quiet_hours_end: string
+  cold_start_grace_seconds?: number
   rules: NotificationRuleConfig[]
   toggles?: Record<string, NotificationToggle>
 }
@@ -2116,6 +2117,22 @@ export default function Notifications() {
                   </p>
                 </>
               )}
+            </div>
+
+            {/* Cold-start grace -- v0.5.8b */}
+            <div className="space-y-3 p-4 bg-[#0a0e17] rounded-lg border border-[#1e2a3a]">
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-slate-500 uppercase tracking-wide">Cold-start grace</label>
+              </div>
+              <NumberInput
+                label="Grace period (seconds)"
+                value={config.cold_start_grace_seconds ?? 60}
+                onChange={(v) => setConfig({ ...config, cold_start_grace_seconds: v })}
+                min={0}
+                max={600}
+                helper="Suppress broadcasts for this many seconds after the first event arrives"
+                info="When meshai starts seeing events for the first time, suppress mesh broadcasts for this many seconds to absorb any JetStream backlog. Persistence rows still get written; only broadcasts are suppressed."
+              />
             </div>
 
             {/* Master Toggles */}

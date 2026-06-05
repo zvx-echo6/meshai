@@ -422,7 +422,15 @@ class CentralConsumer:
             from meshai.central_normalizer import normalize as _norm_envelope
             from meshai.notifications.renderers.work_zone import format_work_zone_mesh
             n = _norm_envelope(envelope)
-            if n is not None and category in ("work_zone", "road_closure", "road_incident"):
+            # v0.5.8 wfigs_handler dispatch -- WFIGS events route through
+            # the persistence-backed change-detection handler (which also
+            # logs to event_log for tombstones + perimeters). Other adapters
+            # with a normalized dict (state_511_atis, wzdx) flow through the
+            # work_zone renderer as before.
+            if n is not None and str(n.get("_kind", "")).startswith("wfigs"):
+                from meshai.central.wfigs_handler import handle_wfigs
+                synthesized = handle_wfigs(n, envelope, subject, data=data) or None
+            elif n is not None and category in ("work_zone", "road_closure", "road_incident"):
                 synthesized = format_work_zone_mesh(n) or None
         except Exception:
             logger.exception("normalizer/renderer failed for adapter=%s category=%s",

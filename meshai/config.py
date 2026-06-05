@@ -607,6 +607,13 @@ class NotificationsConfig:
     quiet_hours_enabled: bool = True  # Master toggle for quiet hours
     quiet_hours_start: str = "22:00"
     quiet_hours_end: str = "06:00"
+    # v0.5.8b cold-start grace: after the first event the dispatcher sees,
+    # suppress mesh broadcasts for N seconds to absorb any JetStream
+    # backlog. Persistence rows still get written -- only broadcasts are
+    # suppressed. Anchor is "first-event-seen" (not container-boot) so
+    # meshai can sit idle for hours with master OFF and the grace only
+    # kicks in when adapters actually start producing.
+    cold_start_grace_seconds: int = 60
     toggles: dict = field(default_factory=_default_toggles)  # family -> NotificationToggle
     digest: DigestConfig = field(default_factory=DigestConfig)
     rules: list = field(default_factory=list)  # List of NotificationRuleConfig
