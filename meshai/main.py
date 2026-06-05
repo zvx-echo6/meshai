@@ -212,6 +212,16 @@ class MeshAI:
 
     async def _init_components(self) -> None:
         """Initialize all components."""
+        # v0.6-3a: persistence init runs FIRST so any subsequent handler
+        # or dispatcher that calls get_db() finds the v6 schema applied
+        # and adapter_config seeded. The seed (INSERT OR IGNORE) is
+        # idempotent on every restart.
+        try:
+            from meshai.persistence import init_db
+            init_db()
+        except Exception:
+            logger.exception("persistence init_db failed at startup")
+
         # Conversation history
         self.history = ConversationHistory(self.config.history)
         await self.history.initialize()

@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = "/data/meshai.sqlite"
 MESHAI_DB_PATH_ENV = "MESHAI_DB_PATH"
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 SCHEMA_META_TABLE = "schema_meta"
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
@@ -122,8 +122,18 @@ def close_thread_connection() -> None:
 
 def init_db(path: Optional[str] = None) -> sqlite3.Connection:
     """Explicit init entry point (idempotent). Equivalent to get_db()
-    semantically but documents intent at startup. Returns the connection."""
-    return get_db(path)
+    semantically but documents intent at startup. Returns the connection.
+
+    v0.6-3a: after migrations apply, seed adapter_config + adapter_meta
+    from meshai/adapter_config/defaults.py:REGISTRY. Idempotent via
+    INSERT OR IGNORE so a re-run is a clean no-op."""
+    conn = get_db(path)
+    try:
+        from meshai.adapter_config import seed_defaults
+        seed_defaults(conn)
+    except Exception:
+        logger.exception("init_db: adapter_config seed_defaults failed")
+    return conn
 
 
 def _read_migration_files() -> list[tuple[int, str, str]]:
