@@ -65,6 +65,50 @@ _MESH_KEYWORDS = {
     "repeaters", "regions", "localities", "score", "status",
 }
 
+# v0.6-5: env keywords expand the mesh-question detector so the LLM gets
+# env_reporter blocks when the user asks about fires/quakes/weather/etc.
+# Each keyword maps to a coarse subtype used by _detect_env_subtype.
+_ENV_KEYWORDS_TO_SUBTYPE: dict[str, str] = {
+    # fires
+    "fire": "fires", "fires": "fires", "wildfire": "fires",
+    "wildfires": "fires", "hotspot": "fires", "hotspots": "fires",
+    "burning": "fires", "smoke": "fires",
+    # quakes
+    "quake": "quakes", "quakes": "quakes", "earthquake": "quakes",
+    "earthquakes": "quakes", "seismic": "quakes", "tsunami": "quakes",
+    # gauges (placed BEFORE weather alerts so "flood" wins over "warning"
+    # in cases like "river flood warning")
+    "flood": "gauges", "flooding": "gauges",
+    "gauge": "gauges", "river": "gauges", "stream": "gauges",
+    # weather alerts
+    "warning": "alerts", "watch": "alerts", "advisory": "alerts",
+    "tornado": "alerts", "thunderstorm": "alerts", "blizzard": "alerts",
+    # space weather + band conditions
+    "swpc": "swpc", "geomag": "swpc", "solar": "swpc", "kp": "swpc",
+    "propagation": "swpc", "aurora": "swpc",
+    "band": "swpc", "bands": "swpc", "hf": "swpc",
+    # traffic / roads
+    "road": "traffic", "roads": "traffic", "jam": "traffic",
+    "crash": "traffic", "closure": "traffic", "511": "traffic",
+    "incident": "traffic", "incidents": "traffic",
+    # generic
+    "storm": "alerts", "weather": "alerts",
+}
+
+
+def _detect_env_subtype(message_lower: str) -> Optional[str]:
+    """Return the env subtype matched by the first env keyword in the message.
+
+    `None` when no env keyword matches. Uses set intersection on tokenized
+    words so partial-word collisions (e.g. "firearm" / "fire") don\'t fire."""
+    if not message_lower:
+        return None
+    words = set(re.findall(r"\b\w+\b", message_lower))
+    for kw, subtype in _ENV_KEYWORDS_TO_SUBTYPE.items():
+        if kw in words:
+            return subtype
+    return None
+
 # Phrases that indicate mesh questions
 _MESH_PHRASES = [
     "how's the mesh",
@@ -333,24 +377,24 @@ class MessageRouter:
         return RouteResult(RouteType.LLM, query=query)
 
     def _is_mesh_question(self, message: str) -> bool:
-        """Check if message is asking about mesh health/status.
+        """Check if message is asking about mesh health/status OR env state.
 
-        Args:
-            message: User message text
-
-        Returns:
-            True if this is a mesh-related question
+        v0.6-5: env keywords (fire/quake/flood/etc.) also trigger the
+        mesh-question path so the env_reporter blocks land in the system
+        prompt. Single detector per Matt\'s spec.
         """
         msg_lower = message.lower()
 
-        # Check for mesh phrases
+        # Mesh phrases.
         for phrase in _MESH_PHRASES:
             if phrase in msg_lower:
                 return True
 
-        # Check for mesh keywords
+        # Mesh keywords + env keywords.
         words = set(re.findall(r'\b\w+\b', msg_lower))
         if words & _MESH_KEYWORDS:
+            return True
+        if _detect_env_subtype(msg_lower) is not None:
             return True
 
         return False
@@ -358,16 +402,18 @@ class MessageRouter:
     def _detect_mesh_scope(self, message: str) -> tuple[str, Optional[str]]:
         """Detect the scope of a mesh question.
 
-        Args:
-            message: User message text
-
-        Returns:
-            Tuple of (scope_type, scope_value):
-            - ("node", "{identifier}") if asking about specific node
-            - ("region", "{region_name}") if asking about specific region
-            - ("mesh", None) for general mesh questions
+        Returns one of:
+          - ("env", subtype)  : fires/quakes/alerts/gauges/traffic/swpc
+          - ("node", id)      : specific node
+          - ("region", name)  : specific region
+          - ("mesh", None)    : general mesh question
         """
         msg_lower = message.lower()
+
+        # === ENV (v0.6-5: check first; env scope routes through env_reporter) ===
+        env_subtype = _detect_env_subtype(msg_lower)
+        if env_subtype is not None:
+            return ("env", env_subtype)
 
         # === NODE MATCHING (check first - more specific) ===
         if self.health_engine and self.health_engine.mesh_health:
@@ -692,6 +738,23 @@ class MessageRouter:
         is_followup = user_ctx["last_was_mesh"] and not is_direct_mesh_question
 
         should_inject_mesh = is_direct_mesh_question or is_followup
+
+        # v0.6-5 env_reporter: when scope is "env" OR when injecting mesh
+        # context, append the env_reporter blocks. The reporter itself gates
+        # per-adapter via adapter_meta.include_in_llm_context.
+        if should_inject_mesh and scope_type == "env":
+            try:
+                from meshai.notifications.env_reporter import env_reporter
+                env_block = env_reporter.build_all()
+                if env_block:
+                    system_prompt += "\n\n" + env_block
+                # Drop audit is useful for "why didn\'t I hear about X?" --
+                # always include the most-recent hour when env scope.
+                drop_block = env_reporter.build_drop_audit(hours=1)
+                if drop_block:
+                    system_prompt += "\n\n" + drop_block
+            except Exception:
+                logger.exception("env_reporter injection failed")
 
         if self.source_manager and self.mesh_reporter and should_inject_mesh:
             # Detect scope from current message
