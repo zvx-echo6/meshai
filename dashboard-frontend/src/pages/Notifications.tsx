@@ -65,6 +65,8 @@ interface NotificationsConfig {
   quiet_hours_start: string
   quiet_hours_end: string
   cold_start_grace_seconds?: number
+  band_conditions_enabled?: boolean
+  band_conditions_schedule?: string[]
   rules: NotificationRuleConfig[]
   toggles?: Record<string, NotificationToggle>
 }
@@ -2133,6 +2135,55 @@ export default function Notifications() {
                 helper="Suppress broadcasts for this many seconds after the first event arrives"
                 info="When meshai starts seeing events for the first time, suppress mesh broadcasts for this many seconds to absorb any JetStream backlog. Persistence rows still get written; only broadcasts are suppressed."
               />
+            </div>
+
+            {/* Band Conditions -- v0.5.11 */}
+            <div className="space-y-3 p-4 bg-[#0a0e17] rounded-lg border border-[#1e2a3a]">
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-slate-500 uppercase tracking-wide">Band Conditions (HF propagation)</label>
+              </div>
+              <Toggle
+                label="Enable scheduled band-conditions broadcasts"
+                checked={config.band_conditions_enabled ?? true}
+                onChange={(v) => setConfig({ ...config, band_conditions_enabled: v })}
+                helper="3x/day HF propagation summary (Day/Night ratings per band group)"
+                info="Source priority: (1) recent SWPC readings persisted locally; (2) HamQSL.com fallback; (3) silent skip if both fail. Persistence rows are written either way for an audit trail."
+              />
+              {(config.band_conditions_enabled ?? true) && (
+                <div className="grid grid-cols-3 gap-3">
+                  <TimeInput
+                    label="Slot 1"
+                    value={(config.band_conditions_schedule ?? ['06:00','14:00','22:00'])[0] || '06:00'}
+                    onChange={(v) => {
+                      const s = [...(config.band_conditions_schedule ?? ['06:00','14:00','22:00'])]
+                      s[0] = v
+                      setConfig({ ...config, band_conditions_schedule: s })
+                    }}
+                    helper="Morning (default 06:00 MT)"
+                  />
+                  <TimeInput
+                    label="Slot 2"
+                    value={(config.band_conditions_schedule ?? ['06:00','14:00','22:00'])[1] || '14:00'}
+                    onChange={(v) => {
+                      const s = [...(config.band_conditions_schedule ?? ['06:00','14:00','22:00'])]
+                      s[1] = v
+                      setConfig({ ...config, band_conditions_schedule: s })
+                    }}
+                    helper="Afternoon (default 14:00 MT)"
+                  />
+                  <TimeInput
+                    label="Slot 3"
+                    value={(config.band_conditions_schedule ?? ['06:00','14:00','22:00'])[2] || '22:00'}
+                    onChange={(v) => {
+                      const s = [...(config.band_conditions_schedule ?? ['06:00','14:00','22:00'])]
+                      s[2] = v
+                      setConfig({ ...config, band_conditions_schedule: s })
+                    }}
+                    helper="Night (default 22:00 MT)"
+                  />
+                </div>
+              )}
+              <p className="text-xs text-slate-600">All times are Mountain Time (America/Boise). DST handled automatically.</p>
             </div>
 
             {/* Master Toggles */}

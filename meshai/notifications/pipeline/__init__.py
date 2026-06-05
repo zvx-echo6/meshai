@@ -27,6 +27,12 @@ import logging
 from meshai.notifications.channels import create_channel
 from meshai.notifications.pipeline.bus import EventBus, get_bus
 from meshai.notifications.pipeline.dispatcher import Dispatcher
+try:
+    from meshai.notifications.scheduled.band_conditions import (
+        BandConditionsScheduler,
+    )
+except ImportError:
+    BandConditionsScheduler = None
 from meshai.notifications.pipeline.inhibitor import Inhibitor
 from meshai.notifications.pipeline.grouper import Grouper
 from meshai.notifications.pipeline.toggle_filter import ToggleFilter
@@ -194,6 +200,23 @@ async def start_pipeline(bus: EventBus, config) -> DigestScheduler:
         connector=connector,
     )
     await scheduler.start()
+    # v0.5.11 band-conditions scheduler -- spawn alongside the
+    # digest scheduler. Best-effort: failures in the scheduled
+    # broadcaster must NOT break notifications pipeline startup.
+    if BandConditionsScheduler is not None:
+        try:
+            comps = getattr(bus, "_pipeline_components", {}) or {}
+            disp = comps.get("dispatcher")
+            if disp is not None:
+                bc_sched = BandConditionsScheduler(config, disp)
+                await bc_sched.start()
+                comps["band_conditions_scheduler"] = bc_sched
+                bus._pipeline_components = comps
+        except Exception:
+            import logging as _lg
+            _lg.getLogger("meshai.pipeline").exception(
+                "band_conditions scheduler failed to start")
+
 
     # Phase 2.16.1: periodically flush the grouper so coalesced (routine/
     # priority) events are delivered within the window even when poll cadence

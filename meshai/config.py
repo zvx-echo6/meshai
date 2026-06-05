@@ -614,6 +614,13 @@ class NotificationsConfig:
     # meshai can sit idle for hours with master OFF and the grace only
     # kicks in when adapters actually start producing.
     cold_start_grace_seconds: int = 60
+    # v0.5.11 band-conditions scheduled broadcaster (3x/day HF propagation).
+    # GUI-editable per Rule 17. Empty schedule list disables; the
+    # _enabled flag is the master switch independent of the times.
+    band_conditions_enabled: bool = True
+    band_conditions_schedule: list = field(
+        default_factory=lambda: ["06:00", "14:00", "22:00"])
+    band_conditions_tz: str = "America/Boise"
     toggles: dict = field(default_factory=_default_toggles)  # family -> NotificationToggle
     digest: DigestConfig = field(default_factory=DigestConfig)
     rules: list = field(default_factory=list)  # List of NotificationRuleConfig

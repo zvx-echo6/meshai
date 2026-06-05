@@ -252,6 +252,92 @@ class Dispatcher:
             "dedup_lru_size": len(self._dedup_lru),
         }
 
+    async def dispatch_scheduled_broadcast(self, text: str, *,
+                                             source_event_table: str,
+                                             source_event_pk: str,
+                                             ) -> bool:
+        """v0.5.11 scheduled broadcast entry point.
+
+        Bypasses the normal toggle / rules / freshness-gate pipeline
+        because scheduled broadcasts are intentionally periodic and
+        already pre-composed. Cold-start grace still applies so the
+        very first scheduled broadcast after meshai starts is
+        suppressed (consistent with how event-driven adapters behave).
+
+        Channel selection: routes through the rf_propagation toggle\'s
+        broadcast_channel since band conditions IS RF-propagation info.
+        If that toggle is not configured with a channel, the broadcast
+        is dropped (with a log).
+
+        Returns True on successful mesh delivery, False on grace-drop
+        or any other suppression.
+        """
+        # Cold-start grace (mirrors _dispatch_toggles Section 0).
+        grace_s = int(getattr(self._config.notifications,
+                                "cold_start_grace_seconds", 60) or 0)
+        if grace_s > 0:
+            now_anchor = time.time()
+            if self._first_event_at is None:
+                self._first_event_at = now_anchor
+            if (now_anchor - self._first_event_at) < grace_s:
+                self._cold_start_dropped += 1
+                self._logger.info(
+                    "cold-start grace: dropping scheduled broadcast "
+                    "(table=%s pk=%s)",
+                    source_event_table, source_event_pk)
+                return False
+
+        # Route through rf_propagation toggle\'s broadcast_channel.
+        toggles = getattr(self._config.notifications, "toggles", None) or {}
+        rf = toggles.get("rf_propagation") if isinstance(toggles, dict) else None
+        if rf is None or not getattr(rf, "broadcast_channel", None):
+            self._logger.info(
+                "scheduled-broadcast: rf_propagation channel not "
+                "configured; dropping")
+            return False
+
+        # Build a synthetic Event purely to reuse _toggle_to_rule + the
+        # NotificationPayload constructor. Severity \'priority\' keeps it
+        # out of quiet-hours suppression unless explicitly overridden.
+        from meshai.notifications.events import (
+            make_event,
+            make_payload_from_event,
+        )
+        ev = make_event(
+            source="band_conditions", category="rf_propagation",
+            severity="priority", title=text,
+        )
+        ev.data["_meshai_precomposed"] = True
+        rule = self._toggle_to_rule(rf, "mesh_broadcast", ev)
+        try:
+            channel = self._channel_factory(rule, self._connector)
+            payload = make_payload_from_event(ev, message=text)
+            success = await channel.deliver(payload, rule)
+        except Exception:
+            self._logger.exception(
+                "scheduled-broadcast: delivery raised; treating as failed")
+            return False
+
+        if success:
+            # Audit row -- mirrors _post_broadcast_commit for scheduled.
+            try:
+                from meshai.persistence import get_db
+                conn = get_db()
+                bytes_sent = len(text.encode("utf-8")) if text else 0
+                conn.execute(
+                    "INSERT INTO mesh_broadcasts_out(sent_at, recipient, "
+                    "channel, text, source_event_table, source_event_pk, "
+                    "bytes_sent, ack_received) VALUES (?,?,?,?,?,?,?,?)",
+                    (int(time.time()), "broadcast",
+                     rf.broadcast_channel, text,
+                     source_event_table, str(source_event_pk),
+                     bytes_sent, 0),
+                )
+            except Exception:
+                self._logger.exception(
+                    "scheduled-broadcast: audit row insert failed")
+        return bool(success)
+
     def _post_broadcast_commit(self, event, payload, rule, ch_type: str) -> None:
         """Persistence side-effects of an actually-successful broadcast.
 
