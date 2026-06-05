@@ -7,8 +7,8 @@ return an Event with that exact title + _meshai_precomposed=True so the
 composer bypass kicks in.
 
 Covers four cases:
-  (a) envelope with NO matching handler (adapter='firms' has no handler)
-       -> _normalize returns None
+  (a) envelope with NO matching handler (adapter='avalanche' has no
+       Central adapter wired)  -> _normalize returns None
   (b) envelope hits handler, handler returns None (e.g. sub-G3 swpc,
        stale tomtom)  -> _normalize returns None
   (c) envelope hits handler, handler returns wire string
@@ -82,9 +82,10 @@ def _make_envelope(adapter, category, *, inner_id="test_001",
 
 
 def test_no_handler_match_returns_none(consumer, mem_db):
-    """FIRMS has no handler; envelope must drop at consumer._normalize."""
-    env = _make_envelope("firms", "fire.hotspot.viirs",
-                          inner_id="firms_001")
+    """Avalanche has no handler (no Central adapter). envelope must
+    drop at consumer._normalize as the default-deny baseline."""
+    env = _make_envelope("avalanche", "avalanche.forecast",
+                          inner_id="aval_001")
     out = consumer._normalize(env["subject"], env)
     assert out is None
 
@@ -193,11 +194,12 @@ def test_handler_returns_wire_event_emitted(consumer, mem_db, monkeypatch):
 
 def test_envelope_with_title_still_drops_without_handler(consumer, mem_db):
     """Regression guard: the v0.5.7-fallback path (data.title -> headline ->\
-    friendly_name -> cat_raw) is GONE in v0.5.13."""
-    env = _make_envelope("firms", "fire.hotspot.viirs",
-                          inner_id="firms_with_title",
-                          title="Wildfire Hotspot",
-                          headline="VIIRS Hotspot Detected")
+    friendly_name -> cat_raw) is GONE in v0.5.13. Uses an unhandled adapter
+    (avalanche) since v0.6-1 added the FIRMS handler."""
+    env = _make_envelope("avalanche", "avalanche.forecast",
+                          inner_id="aval_with_title",
+                          title="Avalanche Warning",
+                          headline="Backcountry advisory")
     out = consumer._normalize(env["subject"], env)
     assert out is None, (
         "v0.5.13 default-deny: data.title and data.headline must NOT rescue\n"

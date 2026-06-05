@@ -518,6 +518,16 @@ class CentralConsumer:
                 elif inner.get("adapter") == "nwis":
                     from meshai.central.nwis_handler import handle_nwis
                     synthesized = handle_nwis(envelope, subject, data=data) or None
+                # v0.6-1 firms_handler -- STORAGE-ONLY. handle_firms
+                # writes to firms_pixels (with dedup) and returns None
+                # so the default-deny clause below keeps mesh
+                # broadcasts suppressed. LLM visibility lands in
+                # commit #5 (env_reporter). Closes the v0.5.13
+                # silent-drop on central.fire.hotspot.> (audit doc
+                # finding #2).
+                elif inner.get("adapter") == "firms":
+                    from meshai.central.firms_handler import handle_firms
+                    synthesized = handle_firms(envelope, subject, data=data) or None
                 elif n is not None and category in ("work_zone", "road_closure", "road_incident"):
                     synthesized = format_work_zone_mesh(n) or None
         except Exception:
