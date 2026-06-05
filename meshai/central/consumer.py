@@ -421,17 +421,85 @@ class CentralConsumer:
         try:
             from meshai.central_normalizer import normalize as _norm_envelope
             from meshai.notifications.renderers.work_zone import format_work_zone_mesh
-            n = _norm_envelope(envelope)
-            # v0.5.8 wfigs_handler dispatch -- WFIGS events route through
-            # the persistence-backed change-detection handler (which also
-            # logs to event_log for tombstones + perimeters). Other adapters
-            # with a normalized dict (state_511_atis, wzdx) flow through the
-            # work_zone renderer as before.
-            if n is not None and str(n.get("_kind", "")).startswith("wfigs"):
-                from meshai.central.wfigs_handler import handle_wfigs
-                synthesized = handle_wfigs(n, envelope, subject, data=data) or None
-            elif n is not None and category in ("work_zone", "road_closure", "road_incident"):
-                synthesized = format_work_zone_mesh(n) or None
+            # v0.5.9 unified incident pipeline -- tomtom_incidents +
+            # state_511_atis + itd_511 for incident/closure/special_event
+            # categories all flow through meshai.central.incident_handler.
+            # state_511_atis with category=work_zone stays on the v0.5.8
+            # _parse_state_511_atis path below.
+            _adapter_v9 = inner.get("adapter") or ""
+            if (
+                _adapter_v9 in ("tomtom_incidents", "state_511_atis", "itd_511")
+                and (cat_raw.startswith("incident.")
+                      or cat_raw.startswith("closure.")
+                      or cat_raw.startswith("special_event."))
+            ):
+                from meshai.central.incident_handler import handle_incident
+                synthesized = handle_incident(envelope, subject, data=data) or None
+            else:
+                # v0.5.9 GAMMA: state_511_atis Idaho cutover via helper.
+                # Applies BEFORE normalize+dispatch so neither the work_zone
+                # renderer nor the incident_handler ever sees an ID-state_511
+                # envelope.
+                from meshai.central_normalizer import (
+                    should_skip_state_511_atis_id as _skip_s5_id,
+                )
+                # v0.5.9 GAMMA universal freshness gate -- applies to ALL
+                # incident-pipeline adapters BEFORE dispatch, so itd_511
+                # work_zone (which goes through central_normalizer +
+                # format_work_zone_mesh, NOT handle_incident) is now also
+                # gated. Per-source field paths defined in the helper.
+                from meshai.central_normalizer import (
+                    is_incident_envelope_stale as _stale_check,
+                )
+                if _stale_check(envelope, now=int(time.time())):
+                    try:
+                        from meshai.persistence import get_db as _get_db_st
+                        _conn_st = _get_db_st()
+                        _conn_st.execute(
+                            "INSERT INTO event_log(received_at, source, "
+                            "category, severity_word, event_id_external, "
+                            "nats_subject, handled, table_name, table_pk) "
+                            "VALUES (?,?,?,?,?,?,?,?,?)",
+                            (int(time.time()),
+                             inner.get("adapter") or "",
+                             cat_raw + "|freshness_drop", None,
+                             inner.get("id"),
+                             subject, 0, None, None),
+                        )
+                    except Exception:
+                        logger.exception("freshness_drop log failed")
+                    synthesized = None
+                    n = None
+                elif _skip_s5_id(envelope):
+                    try:
+                        from meshai.persistence import get_db as _get_db_skip
+                        _conn_skip = _get_db_skip()
+                        _conn_skip.execute(
+                            "INSERT INTO event_log(received_at, source, "
+                            "category, severity_word, event_id_external, "
+                            "nats_subject, handled, table_name, table_pk) "
+                            "VALUES (?,?,?,?,?,?,?,?,?)",
+                            (int(time.time()), "state_511_atis",
+                             cat_raw + "|skip_id", None,
+                             inner.get("id"),
+                             subject, 0, None, None),
+                        )
+                    except Exception:
+                        logger.exception("state_511_id_skip log failed")
+                    synthesized = None
+                    n = None  # short-circuit downstream dispatch
+                else:
+                    n = _norm_envelope(envelope)
+                # v0.5.8 wfigs_handler dispatch -- WFIGS events route through
+                # the persistence-backed change-detection handler (which also
+                # logs to event_log for tombstones + perimeters). Other adapters
+                # with a normalized dict (state_511_atis, wzdx) flow through the
+                # work_zone renderer as before.
+                if n is not None and str(n.get("_kind", "")).startswith("wfigs"):
+                    from meshai.central.wfigs_handler import handle_wfigs
+                    synthesized = handle_wfigs(n, envelope, subject, data=data) or None
+                elif n is not None and category in ("work_zone", "road_closure", "road_incident"):
+                    synthesized = format_work_zone_mesh(n) or None
         except Exception:
             logger.exception("normalizer/renderer failed for adapter=%s category=%s",
                              inner.get("adapter"), category)

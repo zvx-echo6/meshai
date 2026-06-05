@@ -673,3 +673,132 @@ def test_wzdx_sub_type_unknown_vocab_is_lowercased_with_spaces(monkeypatch):
                              "_enriched": {"geocoder": {"city": "Boise"}}}}}
     n = normalize(env)
     assert n["sub_type"] == "some custom work"   # lowercased + hyphens→spaces
+
+
+
+# ============================================================================
+# v0.5.9 GAMMA -- state_511_atis Idaho cutover
+# ============================================================================
+
+
+def _state_511_envelope(state_code="ID", primary_region="US-ID"):
+    return {
+        "subject": "central.traffic.work_zone.id",
+        "id": "ID:Construction:33333",
+        "data": {
+            "id": "ID:Construction:33333", "adapter": "state_511_atis",
+            "category": "work_zone.state_511_atis", "severity": 1,
+            "geo": {"centroid": [-116.79, 47.70],
+                     "primary_region": primary_region},
+            "data": {
+                "roadway_name": "US-95", "direction": "Both",
+                "event_sub_type": "brushControl",
+                "description": "Minor Brush control on US-95.",
+                "is_full_closure": False, "layer": "Construction",
+                "county": "Kootenai", "state": "Idaho",
+                "state_code": state_code,
+                "start_date": "6/1/26, 5:00 AM",
+                "last_updated": "5/28/26, 12:54 PM",
+                "latitude": 47.7, "longitude": -116.79,
+                "_enriched": {"geocoder": {
+                    "city": "Coeur d'Alene", "county": "Kootenai",
+                }},
+            },
+        },
+    }
+
+
+def test_gamma_should_skip_state_511_atis_id_via_state_code():
+    """Helper returns True when state_code='ID'."""
+    from meshai.central_normalizer import should_skip_state_511_atis_id
+    env = _state_511_envelope(state_code="ID")
+    assert should_skip_state_511_atis_id(env) is True
+
+
+def test_gamma_should_skip_state_511_atis_id_via_primary_region():
+    """Helper returns True when only primary_region='US-ID' is set."""
+    from meshai.central_normalizer import should_skip_state_511_atis_id
+    env = _state_511_envelope(state_code="", primary_region="US-ID")
+    assert should_skip_state_511_atis_id(env) is True
+
+
+def test_gamma_should_skip_state_511_atis_id_false_for_non_id():
+    """Helper returns False for neighbor states."""
+    from meshai.central_normalizer import should_skip_state_511_atis_id
+    env = _state_511_envelope(state_code="WA", primary_region="US-WA")
+    assert should_skip_state_511_atis_id(env) is False
+
+
+def test_gamma_state_511_non_id_still_parses():
+    """state_511_atis with state_code='WA' continues to be parsed --
+    neighbor-state coverage remains active after the Idaho cutover.
+    With the v0.5.9 GAMMA fixup, the parser is unconditionally pure;
+    this test guards against a future regression that would put the
+    skip back into normalize()."""
+    env = _state_511_envelope(state_code="WA", primary_region="US-WA")
+    n = normalize(env)
+    assert n is not None
+    assert n.get("source") == "state_511_atis"
+    assert n.get("road") == "US-95"
+
+
+def test_gamma_itd_511_work_zone_dispatch():
+    """itd_511 + category=work_zone.* routes to _parse_itd_511_work_zone."""
+    env = {
+        "subject": "central.traffic.work_zone.us.id",
+        "id": "ITD:469:99",
+        "data": {
+            "id": "ITD:469:99", "adapter": "itd_511",
+            "category": "work_zone.itd_511", "severity": 1,
+            "geo": {"centroid": [-116.79, 47.70],
+                     "primary_region": "US-ID"},
+            "data": {
+                "event_type_short": "work_zone",
+                "event_sub_type": "roadConstruction",
+                "roadway_name": "I-90", "direction": "Both",
+                "description": "Road construction on I-90.",
+                "is_full_closure": False,
+                "comment": "", "cause": "roadwork",
+                "organization": "ERS",
+                "start_epoch": 1780600000,
+                "planned_end_epoch": 1781000000,
+                "latitude": 47.7, "longitude": -116.79,
+                "_enriched": {"geocoder": {
+                    "city": "Coeur d'Alene", "county": "Kootenai",
+                }},
+            },
+        },
+    }
+    n = normalize(env)
+    assert n is not None
+    assert n.get("source") == "itd_511"
+    assert n.get("road") == "I-90"
+
+
+def test_gamma_itd_511_non_work_zone_returns_none_or_marker():
+    """itd_511 + category=incident.* should NOT go through work_zone parser."""
+    env = {
+        "subject": "central.traffic.incident.us.id",
+        "id": "ITD:469:100",
+        "data": {
+            "id": "ITD:469:100", "adapter": "itd_511",
+            "category": "incident.itd_511", "severity": 1,
+            "geo": {"primary_region": "US-ID"},
+            "data": {
+                "event_type_short": "incident",
+                "event_sub_type": "crash",
+                "roadway_name": "I-84", "direction": "East",
+                "description": "Crash on I-84.",
+                "is_full_closure": False, "comment": "",
+                "cause": "crash", "organization": "ERS",
+                "start_epoch": 1780600000,
+                "planned_end_epoch": None,
+                "latitude": 43.5, "longitude": -116.5,
+                "_enriched": {"geocoder": {"city": "Boise"}},
+            },
+        },
+    }
+    n = normalize(env)
+    # Either None or not a work_zone shape -- never a parsed work_zone.
+    if n is not None:
+        assert n.get("source") != "itd_511" or "road" not in n

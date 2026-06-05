@@ -740,6 +740,73 @@ def _parse_wfigs_incidents(inner_data: dict, geo: dict) -> dict:
     }
 
 
+
+# ---------- itd_511 work_zone parser (v0.5.9 GAMMA) ----------------------
+
+def _itd_ends_at(planned_end_epoch) -> Optional[datetime]:
+    """itd_511 stores planned_end_epoch as a Unix int (or None)."""
+    if not isinstance(planned_end_epoch, (int, float)) or planned_end_epoch <= 0:
+        return None
+    try:
+        return datetime.fromtimestamp(int(planned_end_epoch), tz=timezone.utc)
+    except (ValueError, OSError):
+        return None
+
+
+def _parse_itd_511_work_zone(inner_data: dict, geo: dict) -> dict:
+    """Normalize an itd_511 work_zone (or closure-acting-as-work-zone)
+    envelope into the work_zone renderer's flat dict shape.
+
+    Mirrors _parse_state_511_atis output: same keys, same town/distance
+    fallback chain. The renderer consumes both via format_work_zone_mesh.
+    """
+    desc_raw = inner_data.get("description") or ""
+    desc = _clean_description(desc_raw)
+    mile_start, mile_end = _parse_mile_posts(desc or "")
+
+    ends_at = _itd_ends_at(inner_data.get("planned_end_epoch"))
+    is_full = bool(inner_data.get("is_full_closure"))
+    impact = "full_closure" if is_full else "partial"
+
+    road = normalize_road_name(inner_data.get("roadway_name"))
+    if _is_uninformative_road(road):
+        road = None
+
+    event_lat = inner_data.get("latitude")
+    event_lon = inner_data.get("longitude")
+    if event_lat is None and geo.get("centroid"):
+        try: event_lon, event_lat = geo["centroid"][0], geo["centroid"][1]
+        except (IndexError, TypeError): pass
+
+    enriched = (inner_data.get("_enriched") or {}).get("geocoder") or {}
+    town = (enriched.get("city") or "").strip() or None
+    distance_mi: Optional[int] = None
+    bearing: Optional[str] = None
+    if town:
+        distance_mi, bearing = _compute_distance_bearing(event_lat, event_lon, town)
+    else:
+        nt = nearest_town(event_lat, event_lon) if event_lat is not None else None
+        if nt:
+            town        = nt.get("name")
+            distance_mi = nt.get("distance_mi")
+            bearing     = nt.get("bearing")
+
+    return {
+        "source":      "itd_511",
+        "road":        road,
+        "direction":   _norm_direction(inner_data.get("direction")),
+        "mile_start":  mile_start,
+        "mile_end":    mile_end,
+        "description": desc,
+        "sub_type":    _norm_sub_type(inner_data.get("event_sub_type")),
+        "impact":      impact,
+        "ends_at":     ends_at,
+        "town":        town,
+        "distance_mi": distance_mi,
+        "bearing":     bearing,
+    }
+
+
 # ---------- public entry point --------------------------------------------
 
 def normalize(envelope: dict) -> Optional[dict]:
@@ -755,9 +822,20 @@ def normalize(envelope: dict) -> Optional[dict]:
     geo = inner.get("geo") or {}
 
     if adapter == "state_511_atis":
+        # Parser stays pure: returns parsed dict for ALL states. The
+        # v0.5.9 GAMMA Idaho-cutover decision lives in the consumer
+        # (skip + event_log handled=0 before dispatching here). See
+        # should_skip_state_511_atis_id() below for the test-friendly
+        # helper that the consumer uses.
         return _parse_state_511_atis(inner_data, geo)
     if adapter == "wzdx":
         return _parse_wzdx_federal(inner_data, geo)
+    # v0.5.9 GAMMA: itd_511 work_zone parser (incident/closure/special_event
+    # still route through incident_handler per v0.5.9; work_zone is the
+    # only EventType that uses the work_zone renderer + Format).
+    if adapter == "itd_511":
+        if (inner.get("category") or "").startswith("work_zone."):
+            return _parse_itd_511_work_zone(inner_data, geo)
 
     # v0.5.8 WFIGS dispatch -- incidents + tombstones + perimeters.
     # The handler downstream uses _kind to route to change-detection
@@ -787,3 +865,93 @@ def normalize(envelope: dict) -> Optional[dict]:
 
     # Other adapters await per-adapter parsers; return None to defer.
     return None
+
+
+def should_skip_state_511_atis_id(envelope: dict) -> bool:
+    """v0.5.9 GAMMA decision helper: True when this envelope is a
+    state_511_atis publish for an Idaho event (state_code='ID' or
+    primary_region='US-ID').
+
+    Used by the consumer to decide 'skip + event_log handled=0' before
+    dispatching to either the work_zone renderer or the incident_handler.
+    Kept out of the parser so test_central_normalizer's existing ID
+    fixtures continue to exercise _parse_state_511_atis directly.
+    """
+    if not isinstance(envelope, dict):
+        return False
+    inner = envelope.get("data") or {}
+    if (inner.get("adapter") or "") != "state_511_atis":
+        return False
+    d = inner.get("data") or {}
+    geo = inner.get("geo") or {}
+    return (d.get("state_code") == "ID"
+            or geo.get("primary_region") == "US-ID")
+
+
+
+# ---------- v0.5.9 GAMMA universal freshness helper -----------------------
+
+
+def _parse_iso_epoch_freshness(s: Optional[str]) -> Optional[int]:
+    """Local copy of the ISO parser used by the universal freshness gate.
+    Duplicated rather than imported from incident_handler so the dependency
+    graph stays one-directional (consumer -> central_normalizer)."""
+    if not s: return None
+    try:
+        from datetime import datetime as _dt
+        return int(_dt.fromisoformat(s.replace("Z", "+00:00")).timestamp())
+    except Exception:
+        return None
+
+
+def _parse_511_date_epoch_freshness(s: Optional[str]) -> Optional[int]:
+    if not s: return None
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        return int(_dt.strptime(s, "%m/%d/%y, %I:%M %p").replace(
+            tzinfo=_tz.utc).timestamp())
+    except Exception:
+        return None
+
+
+def is_incident_envelope_stale(envelope: dict, now: int,
+                                max_age_s: int = 1800) -> bool:
+    """v0.5.9 GAMMA universal freshness gate. Returns True iff the envelope
+    should be DROPPED on freshness grounds.
+
+    Per-source start-time fields:
+        tomtom_incidents  -> inner.data.start_time (ISO-8601)
+        state_511_atis    -> inner.data.start_date ("5/28/26, 10:45 PM")
+        itd_511           -> inner.data.start_epoch (Unix int)
+        other adapters    -> None (default-allow; the gate has nothing to do)
+
+    Two-sided check: 0 <= age <= max_age_s. Negative ages reject future-
+    scheduled events (e.g. itd_511 work_zone planned to start days from
+    now); ages > max_age_s reject stale events. None / missing start time
+    defaults to ALLOW so we err on the side of broadcasting potentially-
+    fresh data with incomplete metadata.
+
+    Pure (no side effects); caller decides to log + skip when this returns
+    True.
+    """
+    if not isinstance(envelope, dict): return False
+    inner = envelope.get("data") or {}
+    adapter = inner.get("adapter") or ""
+    d = inner.get("data") or {}
+
+    se: Optional[int] = None
+    if adapter == "tomtom_incidents":
+        se = _parse_iso_epoch_freshness(d.get("start_time"))
+    elif adapter == "state_511_atis":
+        se = _parse_511_date_epoch_freshness(d.get("start_date"))
+    elif adapter == "itd_511":
+        val = d.get("start_epoch")
+        if isinstance(val, (int, float)) and val > 0:
+            se = int(val)
+    else:
+        return False   # adapter not in scope of this gate
+
+    if se is None:
+        return False   # default-allow on missing start time
+    age = now - se
+    return age < 0 or age > max_age_s
