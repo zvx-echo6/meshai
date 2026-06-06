@@ -1,6 +1,6 @@
 // v0.6-4 GaugeSites table editor.
 import { useEffect, useState, useCallback } from 'react'
-import { Loader2, Plus, Trash2, Check, X, Droplets } from 'lucide-react'
+import { Loader2, Plus, Trash2, Check, X, Droplets, Search } from 'lucide-react'
 
 interface GaugeSite {
   site_id: string
@@ -28,6 +28,8 @@ export default function GaugeSites() {
   const [editing, setEditing] = useState<string | null>(null)
   const [draft, setDraft] = useState<GaugeSite>(EMPTY_DRAFT)
   const [adding, setAdding] = useState(false)
+  // v0.6-tail-3: USGS lookup is only available when usgs.feed_source==='native'.
+  const [feedSource, setFeedSource] = useState<string>('unknown')
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -44,6 +46,13 @@ export default function GaugeSites() {
   }, [])
 
   useEffect(() => { refresh() }, [refresh])
+
+  // v0.6-tail-3: probe usgs feed_source once at mount.
+  useEffect(() => {
+    fetch('/api/config/environmental').then(r => r.json())
+      .then(env => setFeedSource(env?.usgs?.feed_source || 'unknown'))
+      .catch(() => setFeedSource('unknown'))
+  }, [])
 
   const beginEdit = (r: GaugeSite) => { setEditing(r.site_id); setDraft({ ...r }); setAdding(false) }
   const beginAdd = () => { setAdding(true); setEditing(null); setDraft({ ...EMPTY_DRAFT }) }
@@ -96,7 +105,7 @@ export default function GaugeSites() {
         ignored at envelope time. Changes propagate to the handler on the next event.
       </p>
 
-      {adding && <RowEditor draft={draft} setDraft={setDraft} onSave={save} onCancel={cancel} adding />}
+      {adding && <RowEditor draft={draft} setDraft={setDraft} onSave={save} onCancel={cancel} adding feedSource={feedSource} />}
 
       <div className="bg-slate-800/60 border border-slate-700 rounded-lg overflow-x-auto">
         <table className="w-full text-sm text-slate-200">
@@ -117,7 +126,7 @@ export default function GaugeSites() {
             {rows.map(r => editing === r.site_id ? (
               <tr key={r.site_id} className="bg-slate-900/40">
                 <td colSpan={9} className="px-3 py-2">
-                  <RowEditor draft={draft} setDraft={setDraft} onSave={save} onCancel={cancel} />
+                  <RowEditor draft={draft} setDraft={setDraft} onSave={save} onCancel={cancel} feedSource={feedSource} />
                 </td>
               </tr>
             ) : (
@@ -144,17 +153,72 @@ export default function GaugeSites() {
 }
 
 
-function RowEditor({ draft, setDraft, onSave, onCancel, adding }: {
+function RowEditor({ draft, setDraft, onSave, onCancel, adding, feedSource }: {
   draft: GaugeSite, setDraft: (g: GaugeSite) => void,
   onSave: () => void, onCancel: () => void, adding?: boolean,
+  feedSource?: string,
 }) {
   const upd = (k: keyof GaugeSite, v: unknown) => setDraft({ ...draft, [k]: v })
+
+  // v0.6-tail-3: USGS lookup helper. Only available when usgs.feed_source
+  // is 'native' -- in central-feed mode a direct upstream call would be
+  // the AND-model anti-pattern Central's v0.10.2 report flagged.
+  const [lookupBusy, setLookupBusy] = useState(false)
+  const [lookupError, setLookupError] = useState<string | null>(null)
+  const lookupDisabled = feedSource !== 'native' || !draft.site_id.trim()
+  const lookupTitle = feedSource !== 'native'
+    ? 'USGS lookup not available in central-feed mode (would be AND-model anti-pattern). Enter values manually.'
+    : !draft.site_id.trim()
+      ? 'Enter a site_id first'
+      : 'Auto-populate from USGS / NWS NWPS'
+  const onLookup = async () => {
+    if (lookupDisabled) return
+    setLookupBusy(true); setLookupError(null)
+    try {
+      const raw = draft.site_id.replace(/^USGS-/i, '')
+      const res = await fetch(`/api/env/usgs/lookup/${encodeURIComponent(raw)}`)
+      if (res.status === 404) {
+        const body = await res.json().catch(() => ({}))
+        setLookupError(body.detail || 'Lookup unavailable -- enter values manually')
+        setLookupBusy(false)
+        return
+      }
+      if (!res.ok) {
+        setLookupError(`Lookup failed (${res.status})`)
+        setLookupBusy(false)
+        return
+      }
+      const data = await res.json()
+      const next = { ...draft }
+      if (data.name && !next.gauge_name) next.gauge_name = data.name
+      if (typeof data.lat === 'number') next.lat = data.lat
+      if (typeof data.lon === 'number') next.lon = data.lon
+      if (typeof data.action_ft === 'number') next.action_ft = data.action_ft
+      if (typeof data.flood_minor_ft === 'number') next.flood_minor_ft = data.flood_minor_ft
+      if (typeof data.flood_moderate_ft === 'number') next.flood_moderate_ft = data.flood_moderate_ft
+      if (typeof data.flood_major_ft === 'number') next.flood_major_ft = data.flood_major_ft
+      setDraft(next)
+    } catch (e) {
+      setLookupError(String(e))
+    } finally {
+      setLookupBusy(false)
+    }
+  }
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-3 bg-slate-900/50 rounded">
       <label className="text-xs text-slate-400 col-span-2">
         Site ID
-        <input className="block w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono text-xs"
-          value={draft.site_id} onChange={e => upd('site_id', e.target.value)} disabled={!adding} />
+        <div className="flex items-center gap-1 mt-1">
+          <input className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono text-xs"
+            value={draft.site_id} onChange={e => upd('site_id', e.target.value)} disabled={!adding} />
+          <button type="button" onClick={onLookup} disabled={lookupDisabled || lookupBusy}
+            title={lookupTitle}
+            className="px-2 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-30 disabled:cursor-not-allowed rounded text-xs text-slate-100 flex items-center gap-1">
+            {lookupBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
+            USGS lookup
+          </button>
+        </div>
+        {lookupError && <span className="text-amber-400 text-xs mt-1 block">{lookupError}</span>}
       </label>
       <label className="text-xs text-slate-400 col-span-2">
         Gauge name

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { notifyRestartRequired } from '@/components/RestartBanner'
 import NodePicker from '@/components/NodePicker'
 import ChannelPicker from '@/components/ChannelPicker'
 import {
@@ -1851,6 +1852,8 @@ export default function Config() {
 
       if (result.restart_required) {
         setRestartRequired(true)
+        // v0.6-tail-3: surface the cross-page banner with the changed-key list.
+        notifyRestartRequired(Array.isArray(result.changed_keys) ? result.changed_keys : [])
       }
 
       setTimeout(() => setSuccess(null), 3000)

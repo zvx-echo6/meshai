@@ -15,6 +15,7 @@ import {
 import { fetchStatus, type SystemStatus } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useToast } from './ToastProvider'
+import RestartBanner from './RestartBanner'
 
 interface LayoutProps {
   children: ReactNode
@@ -179,7 +180,8 @@ export default function Layout({ children }: LayoutProps) {
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
+        <main className="flex-1 overflow-y-auto p-6"><RestartBanner />
+        {children}</main>
       </div>
     </div>
   )

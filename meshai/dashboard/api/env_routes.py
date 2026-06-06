@@ -1,6 +1,6 @@
 """Environmental data API routes."""
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
 router = APIRouter(tags=["environment"])
 
@@ -143,26 +143,43 @@ async def lookup_usgs_site(request: Request, site_id: str):
 
     Returns site name, location, and flood stage thresholds from NWS NWPS.
     Used by the config UI to auto-populate fields when adding a new gauge.
-    """
+
+    v0.6-tail-3: when usgs.feed_source != native, this endpoint returns 404
+    instead of creating a temporary USGSStreamsAdapter. The pre-tail-3
+    behavior was an AND-mode anti-pattern -- meshai was in central-feed
+    mode for usgs but the lookup helper hit USGS.gov directly anyway.
+    With this change, the lookup is only available when meshai itself
+    is the polling source. In central-feed mode the GUI must source
+    values manually or via Central."""
     env_store = getattr(request.app.state, "env_store", None)
 
     if not env_store:
-        return {"error": "Environmental feeds not enabled"}
+        raise HTTPException(
+            status_code=404,
+            detail="Environmental feeds not enabled",
+        )
 
     adapters = getattr(env_store, "_adapters", {})
     usgs_adapter = adapters.get("usgs")
 
     if not usgs_adapter:
-        # Create a temporary adapter for lookup
-        from meshai.env.usgs import USGSStreamsAdapter
-        from meshai.config import USGSConfig
-        usgs_adapter = USGSStreamsAdapter(USGSConfig())
+        # No native usgs adapter on the env_store means usgs is either
+        # disabled or running on a non-native feed_source (central). In
+        # central-feed mode meshai must NOT make direct upstream API calls;
+        # that's the AND-model anti-pattern Central's v0.10.2 report
+        # called out explicitly. Surface this to the UI as a 404 so the
+        # frontend can switch the form to manual-entry mode.
+        raise HTTPException(
+            status_code=404,
+            detail=("site lookup unavailable in central-feed mode; values "
+                     "must be entered manually or sourced from Central"),
+        )
 
     try:
         result = usgs_adapter.lookup_site(site_id)
         return result
     except Exception as e:
-        return {"error": str(e), "site_id": site_id}
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @router.get("/env/traffic")

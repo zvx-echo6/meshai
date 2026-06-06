@@ -17,13 +17,22 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["config"])
 
-# Sections that require restart when changed
+# Sections that require restart when changed.
+# v0.6-tail-3: environmental added. Per Central v0.10.2 OR-not-AND
+# verification (Spokane fix), env_store rebuild and CentralConsumer
+# subscribe both happen only at boot. A live PUT to
+# environmental.<adapter>.feed_source / enabled writes to disk but the
+# running process keeps polling the existing native adapters AND newly
+# subscribing to Central until the container restarts -- a transient
+# AND-mode that violates the architecture for as long as the user
+# delays the restart.
 RESTART_REQUIRED_SECTIONS = {
     "connection",
     "llm",
     "mesh_sources",
     "meshmonitor",
     "dashboard",
+    "environmental",
 }
 
 # Valid config section names
@@ -134,19 +143,44 @@ async def update_config_section(section: str, request: Request):
         config_dir = get_config_dir_from_path(config_path)
         save_section(section, data_to_save, config_dir)
 
-        # Determine if restart is required
-        restart_required = section in RESTART_REQUIRED_SECTIONS
+        # v0.6-tail-3: compute the dotted-key diff so the UI banner can
+        # show *which* fields require a restart, not just "something
+        # restart-y changed". This is purely advisory -- the static OR
+        # enforcement at boot remains the runtime guard.
+        try:
+            before_section = _section_to_plain(getattr(
+                request.app.state.config, section, None))
+        except Exception:
+            before_section = None
+        after_section = data_to_save
+        changed_keys = _diff_keys(before_section, after_section,
+                                    prefix=section)
 
-        # Keep the live config in sync (no disk reload needed) when no restart is required
+        restart_required = (section in RESTART_REQUIRED_SECTIONS
+                              and len(changed_keys) > 0)
+
+        # Keep the live config in sync (no disk reload needed) when no
+        # restart is required. When a restart IS required, the live
+        # config object intentionally diverges from disk until the user
+        # actually restarts -- otherwise the runtime would silently
+        # switch into the transient AND-mode this commit exists to
+        # prevent.
         if not restart_required and getattr(request.app.state, "config", None) is not None:
             try:
                 setattr(request.app.state.config, section, new_value)
             except Exception:
                 pass
 
-        logger.info(f"Config section '{section}' updated, restart_required={restart_required}")
+        logger.info(
+            "Config section %r updated, restart_required=%s changed_keys=%s",
+            section, restart_required, changed_keys,
+        )
 
-        return {"saved": True, "restart_required": restart_required}
+        return {
+            "saved": True,
+            "restart_required": restart_required,
+            "changed_keys": changed_keys,
+        }
 
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -250,3 +284,51 @@ def register_config_routes_hooks(app):
         except Exception:
             logger.exception("auto-refresh middleware failed")
         return response
+
+
+
+# ---- v0.6-tail-3 diff helpers ------------------------------------------
+
+
+def _section_to_plain(section_value):
+    """Dataclass / list / scalar -> JSON-serializable shape."""
+    if section_value is None:
+        return None
+    if isinstance(section_value, list):
+        return [
+            _dataclass_to_dict(item) if hasattr(item, "__dataclass_fields__") else item
+            for item in section_value
+        ]
+    if hasattr(section_value, "__dataclass_fields__"):
+        return _dataclass_to_dict(section_value)
+    return section_value
+
+
+def _diff_keys(before, after, *, prefix: str) -> list[str]:
+    """Recursively collect dotted-path keys where `before` and `after` differ.
+
+    Lists are compared element-wise -- structural mismatch yields a single
+    bracketless path. The function is deliberately tolerant of None /
+    missing keys so a section being added or removed produces a meaningful
+    diff instead of crashing.
+    """
+    out: list[str] = []
+
+    def walk(b, a, p: str):
+        if b == a:
+            return
+        if isinstance(b, dict) and isinstance(a, dict):
+            for k in set(b.keys()) | set(a.keys()):
+                walk(b.get(k), a.get(k), f"{p}.{k}" if p else k)
+            return
+        if isinstance(b, list) and isinstance(a, list):
+            if len(b) != len(a):
+                out.append(p)
+                return
+            for i, (bi, ai) in enumerate(zip(b, a)):
+                walk(bi, ai, f"{p}[{i}]")
+            return
+        out.append(p)
+
+    walk(before, after, prefix)
+    return sorted(out)
