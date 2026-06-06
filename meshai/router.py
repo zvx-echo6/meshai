@@ -91,18 +91,49 @@ _ENV_KEYWORDS_TO_SUBTYPE: dict[str, str] = {
     "road": "traffic", "roads": "traffic", "jam": "traffic",
     "crash": "traffic", "closure": "traffic", "511": "traffic",
     "incident": "traffic", "incidents": "traffic",
+    # v0.7-fire-4-final: "traffic"/"commute"/"highway" added so a
+    # query literally mentioning "traffic" hits the traffic subtype.
+    "traffic": "traffic", "commute": "traffic", "highway": "traffic",
     # generic
     "storm": "alerts", "weather": "alerts",
 }
 
 
-def _detect_env_subtype(message_lower: str) -> Optional[str]:
-    """Return the env subtype matched by the first env keyword in the message.
+# v0.7-fire-4-final: multi-word phrase triggers. Matched as whole-
+# phrase substrings of the message (NOT single-word membership) so
+# they carry multi-word semantics without a single word like "why"
+# or "filtered" firing false-positives in unrelated queries.
+# Drop-audit phrases unlock the env scope path so
+# env_reporter.build_drop_audit lands in the system prompt.
+_ENV_PHRASES_TO_SUBTYPE: dict[str, str] = {
+    "why didn't":       "drop_audit",
+    "why didnt":        "drop_audit",
+    "why am i not":     "drop_audit",
+    "why am i missing": "drop_audit",
+    "what was filtered":"drop_audit",
+    "drop audit":       "drop_audit",
+    "filtered out":     "drop_audit",
+}
 
-    `None` when no env keyword matches. Uses set intersection on tokenized
-    words so partial-word collisions (e.g. "firearm" / "fire") don\'t fire."""
+
+def _detect_env_subtype(message_lower: str) -> Optional[str]:
+    """Return the env subtype matched by the first env keyword/phrase
+    in the message. `None` when no env keyword matches.
+
+    v0.7-fire-4-final: phrase map is checked FIRST so multi-word
+    triggers (e.g. "why didn't I hear ...") work without their
+    constituent single words (e.g. "why" alone) firing false
+    positives. Single-word map then uses set-intersection on
+    tokenized words so partial-word collisions ("firearm" / "fire")
+    don't fire.
+    """
     if not message_lower:
         return None
+    # 1) Phrase substring match (multi-word semantics).
+    for phrase, subtype in _ENV_PHRASES_TO_SUBTYPE.items():
+        if phrase in message_lower:
+            return subtype
+    # 2) Single-word tokenized match.
     words = set(re.findall(r"\b\w+\b", message_lower))
     for kw, subtype in _ENV_KEYWORDS_TO_SUBTYPE.items():
         if kw in words:
@@ -777,6 +808,12 @@ class MessageRouter:
                 drop_block = env_reporter.build_drop_audit(hours=1)
                 if drop_block:
                     system_prompt += "\n\n" + drop_block
+                # v0.7-fire-4-final: positive-framed grounding clause.
+                # Closes Class B hallucination (LLM inventing counts
+                # / place names when an env block is empty -- e.g.
+                # "144 earthquakes worldwide" against an empty
+                # quake_events 24h window).
+                system_prompt += "\n\n" + ENV_GROUNDING_CLAUSE
             except Exception:
                 logger.exception("env_reporter injection failed")
 
@@ -949,3 +986,19 @@ class MessageRouter:
             connector=self.connector,
             history=self.history,
         )
+
+
+# v0.7-fire-4-final: positive-framed grounding clause appended to
+# the system prompt whenever env scope is detected. Frames the
+# constraint as "answer from the blocks" rather than "do not
+# hallucinate" (Matt's mitigation guidance) so the LLM doesn't
+# default to a blanket apology disclaimer every other message.
+ENV_GROUNDING_CLAUSE = (
+    "ENVIRONMENTAL CONTEXT GROUNDING:\n"
+    "Answer only from the environmental context blocks above. If a "
+    "block is empty or missing for an adapter the user asked about "
+    "(e.g. no NWS alerts in the block), say something like \"No "
+    "active <category> right now\" -- never invent specific numbers, "
+    "place names, or counts. If you do not have a relevant block for "
+    "the question, say so briefly."
+)
