@@ -61,6 +61,11 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "type": "bool",
         "description": "Re-broadcast when containment percent increases (forward-only).",
     },
+    ("wfigs", "freshness_seconds"): {
+        "default": 0,
+        "type": "int",
+        "description": "Staleness gate for wfigs events (0 = disabled). Fire events are always relevant regardless of age.",
+    },
 
     # =================================================================
     # NWS -- 3 settings (severity gate, tombstone msgTypes, suffix-promote toggle)

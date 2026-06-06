@@ -340,7 +340,11 @@ class Dispatcher:
         # inner Event.timestamp; for native adapters it's the upstream API's
         # timestamp. Receive-time is NOT used (it's meshai-side and tells us
         # nothing about how stale the underlying alert is).
-        freshness_s = int(getattr(tog, "freshness_seconds", 600) or 600)
+        # v0.6-3b: fire toggle uses wfigs adapter_config freshness (0 = disabled)
+        if fam == "fire":
+            freshness_s = int(adapter_config.wfigs.freshness_seconds)
+        else:
+            freshness_s = int(getattr(tog, "freshness_seconds", 600) or 600)
         if event.timestamp and freshness_s > 0:
             age = time.time() - event.timestamp
             if age > freshness_s:
