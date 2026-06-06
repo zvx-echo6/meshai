@@ -131,57 +131,63 @@ def test_render_digest_uses_llm_when_available():
 
 
 # ===========================================================================
-# Fuzzy fire lookup for ?status
+# Natural-language fire DMs route to the LLM (no ?status fallback)
 # ===========================================================================
 
 
-def test_status_lookup_exact_name():
-    from meshai.router import _lookup_fire_fuzzy
-    _seed_fire(irwin_id="ID-A", name="Cache Peak",
-                 lat=42.0, lon=-114.0, acres=1847)
-    f = _lookup_fire_fuzzy("Cache Peak")
-    assert f is not None
-    assert f["incident_name"] == "Cache Peak"
+def test_natural_language_fire_question_routes_to_llm():
+    """The LLM DM path is the sole interface for natural-language fire
+    questions. Pre-revised commit there was a `?status` intent that
+    rewrote the query in-router; this test confirms the rewrite is gone
+    and that a plain English question is forwarded verbatim."""
+    import asyncio
+    from meshai.router import MessageRouter, RouteType
+    from meshai.config_loader import load_config
+    from meshai.history import ConversationHistory
+    from meshai.commands.dispatcher import create_dispatcher
+
+    cfg = load_config()
+    history = ConversationHistory(cfg.history)
+
+    async def _run():
+        await history.initialize()
+        dispatcher = create_dispatcher(
+            prefix=cfg.commands.prefix,
+            disabled_commands=cfg.commands.disabled_commands,
+            custom_commands=cfg.commands.custom_commands,
+        )
+
+        class FakeConnector:
+            my_node_id = "!THIS_BOT"
+
+        class FakeMessage:
+            text = "how's the cache peak fire?"
+            sender_id = "!T"
+            sender_name = "t"
+            is_dm = True
+            channel = 0
+
+        router = MessageRouter(
+            config=cfg, connector=FakeConnector(),
+            history=history, dispatcher=dispatcher,
+            llm_backend=None,  # we only inspect the route() decision
+        )
+        result = await router.route(FakeMessage())
+        return result
+
+    result = asyncio.run(_run())
+    assert result.route_type == RouteType.LLM
+    # Critical: the query must be the verbatim user text, not a rewrite
+    # synthesized by an in-router intent helper.
+    assert result.query == "how's the cache peak fire?"
 
 
-def test_status_lookup_trims_trailing_fire_word():
-    from meshai.router import _lookup_fire_fuzzy
-    _seed_fire(irwin_id="ID-A", name="Cache Peak",
-                 lat=42.0, lon=-114.0, acres=1847)
-    f = _lookup_fire_fuzzy("cache peak fire")
-    assert f is not None
-    assert f["incident_name"] == "Cache Peak"
-
-
-def test_status_lookup_word_overlap_fallback():
-    from meshai.router import _lookup_fire_fuzzy
-    _seed_fire(irwin_id="ID-A", name="Cache Peak",
-                 lat=42.0, lon=-114.0, acres=1847)
-    f = _lookup_fire_fuzzy("how is peak doing")
-    assert f is not None
-    assert f["incident_name"] == "Cache Peak"
-
-
-def test_status_lookup_returns_none_on_no_match():
-    from meshai.router import _lookup_fire_fuzzy
-    _seed_fire(irwin_id="ID-A", name="Cache Peak",
-                 lat=42.0, lon=-114.0, acres=1847)
-    assert _lookup_fire_fuzzy("nonexistent ranger station") is None
-
-
-def test_status_query_rewrite_includes_fire_context():
-    from meshai.router import _maybe_rewrite_status_query
-    _seed_fire(irwin_id="ID-A", name="Cache Peak",
-                 lat=42.0, lon=-114.0, acres=1847, contained=23)
-    out = _maybe_rewrite_status_query("?status Cache Peak", router=None)
-    assert out is not None
-    assert "Cache Peak" in out
-    assert "1847" in out
-    # Must instruct the LLM to be terse mesh format.
-    assert "mesh" in out.lower()
-
-
-def test_status_query_rewrite_returns_none_when_not_status():
-    from meshai.router import _maybe_rewrite_status_query
-    out = _maybe_rewrite_status_query("how's the weather?", router=None)
-    assert out is None
+def test_status_helpers_removed_from_router():
+    """Hard guard against ?status helpers sneaking back in. If anyone
+    adds a structured-command path to router.py for fires, this test
+    fails and the author has to talk to Matt first."""
+    from pathlib import Path
+    src = Path("/opt/meshai/meshai/router.py").read_text()
+    assert "_maybe_rewrite_status_query" not in src
+    assert "_lookup_fire_fuzzy" not in src
+    assert "?status" not in src
