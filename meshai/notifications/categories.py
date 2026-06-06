@@ -365,6 +365,20 @@ ALERT_CATEGORIES = {
         "example_message": "🔥 Cache Peak Fire no growth in 14h",
         "toggle": "fire",
     },
+    # v0.7-fire-tracker-3: a FIRMS pixel attributed to a tracked fire
+    # is at least fires.spotting_distance_threshold_mi from that fire's
+    # previous-pass convex-hull perimeter. Spotting is the highest-
+    # actionable signal -- fire spread BEYOND the existing perimeter
+    # is what kills people during a major event -- hence immediate
+    # severity. Cooldown via fires.last_spotting_broadcast_at keeps
+    # rapid embers in the same area from spamming the mesh.
+    "wildfire_spotting": {
+        "name": "Wildfire Spotting (beyond perimeter)",
+        "description": "FIRMS pixel attributed to a tracked fire but located outside the previous-pass perimeter by at least fires.spotting_distance_threshold_mi. Indicates ember spread or new ignition forward of the main fire.",
+        "default_severity": "immediate",
+        "example_message": "🔥 Possible spotting 2.1 mi NE of Cache Peak Fire perimeter",
+        "toggle": "fire",
+    },
     "wildfire_hotspot": {
         "name": "Wildfire Hotspot",
         "description": "Satellite thermal-anomaly detection (NASA FIRMS VIIRS/MODIS pixel) — not necessarily a new ignition",

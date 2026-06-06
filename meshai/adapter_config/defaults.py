@@ -277,7 +277,7 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     },
 
     # =================================================================
-    # FIRES -- 4 settings (Phase 1 radius + Phase 2 growth/halt thresholds)
+    # FIRES -- 6 settings (Phase 1 radius + Phase 2 growth/halt + Phase 3 spotting)
     # =================================================================
     # Per-fire spread radius override lives in fires.spread_radius_mi;
     # the value below is the fallback. v0.7-fire-1 shipped 5 mi based on
@@ -318,6 +318,28 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "default": 43200,
         "type": "int",
         "description": "Minimum elapsed seconds since the most recent attributed pixel before wildfire_halted can fire.",
+    },
+    # v0.7-fire-3 -- spotting detection.
+    # spotting_distance_threshold_mi: an attributed pixel this far or
+    # more from the previous-pass perimeter (convex hull, vertex-
+    # distance approximation) fires wildfire_spotting. 1.5 mi matches
+    # the design doc Phase 3 spec ("Hotspot >=1.5 mi from perimeter").
+    # Treat as an initial-guess default -- the design doc lists this
+    # as an open question pending real spotting-fire observation data.
+    ("fires", "spotting_distance_threshold_mi"): {
+        "default": 1.5,
+        "type": "float",
+        "description": "Distance (miles) from previous-pass perimeter that fires wildfire_spotting. Tune from observed spotting events; design doc open question #6 marks this as TBD.",
+    },
+    # spotting_cooldown_seconds: per-fire latch so a burst of pixels
+    # in the same general spotting area doesn't spam the mesh. 1h is
+    # short enough that real follow-on spotting (different ember,
+    # different sector) re-fires, long enough that a single satellite
+    # pass with N nearby ember hits broadcasts at most once.
+    ("fires", "spotting_cooldown_seconds"): {
+        "default": 3600,
+        "type": "int",
+        "description": "Minimum seconds between consecutive wildfire_spotting broadcasts for the same fire; suppresses rapid-ember spam.",
     },
 
     # =================================================================

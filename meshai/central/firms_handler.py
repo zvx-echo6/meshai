@@ -1,4 +1,4 @@
-"""v0.7-fire-tracker-2 FIRMS handler -- storage + attribution + cluster + growth/halt.
+"""v0.7-fire-tracker-3 FIRMS handler -- storage + attribution + cluster + growth/halt/spotting.
 
 Pre-v0.6-1 the v0.5.13 default-deny gate at consumer._normalize() silently
 dropped every `central.fire.hotspot.>` envelope because no per-adapter handler
@@ -62,6 +62,7 @@ event_log accounting:
 from __future__ import annotations
 from meshai.adapter_config import adapter_config
 
+import json
 import logging
 import math
 import time
@@ -692,9 +693,29 @@ def _handle_pass_boundary(conn, *, irwin_id, pass_id, lat, lon,
          pass_centroid_lon, irwin_id),
     )
 
+    # v0.7-fire-tracker-3: on the boundary path, close the prior pass's
+    # perimeter (convex hull of its pixels) so this and subsequent
+    # in-pass pixels can spotting-check against it.
+    boundary = (last_pass_id != pass_id) and (last_pass_id is not None)
+    if boundary and prev is not None and not _prev_has_perimeter(conn, irwin_id, prev["pass_id"]):
+        _close_prev_perimeter(conn, irwin_id, prev["pass_id"])
+
+    # v0.7-fire-tracker-3: spotting check. Runs for every attributed
+    # pixel (not just boundary) because pixels 2..N of the new pass may
+    # also be far from the prior perimeter. Spotting has IMMEDIATE
+    # severity and preempts growth in the priority order.
+    spotting_wire = _check_spotting(
+        conn, irwin_id=irwin_id, pixel_lat=lat, pixel_lon=lon,
+        current_pass_id=pass_id,
+        incident_name=fires_row["incident_name"] or "(unnamed fire)",
+        data=data, now=now,
+    )
+    if spotting_wire is not None:
+        return spotting_wire
+
     if last_pass_id == pass_id or last_pass_id is None or prev is None:
         # No boundary (same pass), or this is the fire's first pass --
-        # nothing to compare drift against. Phase 2 silent in these cases.
+        # nothing to compare drift against.
         return None
 
     threshold = float(adapter_config.fires.growth_drift_threshold_mi)
@@ -794,3 +815,203 @@ def _direction_8(bearing_deg: float) -> str:
     """
     idx = int(((float(bearing_deg) + 22.5) % 360.0) // 45)
     return _COMPASS_8[idx]
+
+
+
+# ============================================================================
+# v0.7-fire-tracker-3: spotting detection (convex-hull perimeter + cooldown)
+# ============================================================================
+#
+# Pass close: when a boundary is detected (the first pixel of a new
+# pass arrives), the prior pass's perimeter is computed as the convex
+# hull of its fire_pixels rows and stored as GeoJSON in fire_passes.
+# Hulls with <3 distinct vertices are stored verbatim (point or line)
+# and skipped during spotting checks -- a "perimeter" needs area.
+#
+# Spotting check: every attributed pixel looks up the most recent
+# fire_passes row for this fire with a non-NULL perimeter (i.e. the
+# previous closed pass). If the pixel is outside that hull AND the
+# vertex-nearest distance is >= spotting_distance_threshold_mi AND
+# the per-fire cooldown is clear, fire wildfire_spotting and stamp
+# fires.last_spotting_broadcast_at.
+
+
+def _prev_has_perimeter(conn, irwin_id: str, prev_pass_id: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM fire_passes WHERE irwin_id=? AND pass_id=? "
+        "AND perimeter_geojson IS NOT NULL",
+        (irwin_id, prev_pass_id),
+    ).fetchone()
+    return row is not None
+
+
+def _close_prev_perimeter(conn, irwin_id: str, prev_pass_id: str) -> None:
+    """Compute the convex hull of fire_pixels for (irwin_id, prev_pass_id)
+    and write it into fire_passes.perimeter_geojson. A no-op if the pass
+    has zero pixels (defensive; should not happen)."""
+    pts = conn.execute(
+        "SELECT lat, lon FROM fire_pixels WHERE irwin_id=? AND pass_id=?",
+        (irwin_id, prev_pass_id),
+    ).fetchall()
+    coords = [(float(r["lat"]), float(r["lon"])) for r in pts]
+    if not coords:
+        return
+    hull = _convex_hull(coords)
+    geojson = _hull_to_geojson(hull)
+    conn.execute(
+        "UPDATE fire_passes SET perimeter_geojson=? "
+        "WHERE irwin_id=? AND pass_id=?",
+        (geojson, irwin_id, prev_pass_id),
+    )
+
+
+def _check_spotting(conn, *, irwin_id, pixel_lat, pixel_lon,
+                      current_pass_id, incident_name, data, now):
+    """Return spotting wire if criteria met, else None."""
+    threshold_mi = float(adapter_config.fires.spotting_distance_threshold_mi)
+    cooldown_s = int(adapter_config.fires.spotting_cooldown_seconds)
+
+    # Most recent CLOSED pass with a perimeter (i.e. not the current pass).
+    prev = conn.execute(
+        "SELECT pass_id, pass_centroid_lat, pass_centroid_lon, "
+        "perimeter_geojson FROM fire_passes "
+        "WHERE irwin_id=? AND pass_id != ? "
+        "AND perimeter_geojson IS NOT NULL "
+        "ORDER BY pass_ended_at DESC LIMIT 1",
+        (irwin_id, current_pass_id),
+    ).fetchone()
+    if prev is None:
+        return None
+
+    try:
+        poly = json.loads(prev["perimeter_geojson"])
+        ring = poly["coordinates"][0]   # GeoJSON: outer ring, (lon,lat)
+    except (KeyError, ValueError, TypeError):
+        logger.exception("spotting: malformed perimeter geojson for %s",
+                          irwin_id)
+        return None
+
+    # Need at least 3 distinct vertices for a real perimeter. Hulls
+    # with <3 vertices represent degenerate point / line passes and
+    # don't support a meaningful inside/outside test.
+    # A closed GeoJSON ring repeats its first vertex at the end, so a
+    # 3-vertex triangle has 4 entries; treat <4 as degenerate.
+    if len(ring) < 4:
+        return None
+
+    # ring is [[lon, lat], ...]; convert to [(lat, lon), ...] for our
+    # local Haversine + point-in-polygon math.
+    vertices_lat_lon = [(c[1], c[0]) for c in ring[:-1]]
+
+    inside = _point_in_polygon((pixel_lat, pixel_lon), vertices_lat_lon)
+    if inside:
+        return None
+
+    # Vertex-distance approximation: closest vertex haversine distance.
+    # Design doc accepts this -- exact edge projection is overkill at
+    # VIIRS's 375 m pixel resolution.
+    dist_mi = min(
+        _haversine_mi(pixel_lat, pixel_lon, v_lat, v_lon)
+        for v_lat, v_lon in vertices_lat_lon
+    )
+    if dist_mi < threshold_mi:
+        return None
+
+    # Cooldown gate.
+    fires_row = conn.execute(
+        "SELECT last_spotting_broadcast_at FROM fires WHERE irwin_id=?",
+        (irwin_id,),
+    ).fetchone()
+    if fires_row is not None:
+        last_ts = fires_row["last_spotting_broadcast_at"]
+        if last_ts is not None and (float(now) - float(last_ts)) < cooldown_s:
+            return None
+
+    # Direction is FROM the perimeter centroid (the previous pass's
+    # pass_centroid_lat/lon, already on the row) TO this pixel.
+    direction = _direction_8(_bearing(
+        prev["pass_centroid_lat"], prev["pass_centroid_lon"],
+        pixel_lat, pixel_lon,
+    ))
+
+    # Stamp the latch + tag data.
+    conn.execute(
+        "UPDATE fires SET last_spotting_broadcast_at=? WHERE irwin_id=?",
+        (float(now), irwin_id),
+    )
+    if isinstance(data, dict):
+        data["category"] = "wildfire_spotting"
+        data["severity"] = "immediate"
+
+    return (
+        f"🔥 Possible spotting {dist_mi:.1f} mi {direction} of "
+        f"{incident_name} perimeter"
+    )
+
+
+def _convex_hull(points):
+    """Andrew's monotone-chain convex hull. Returns the hull as a list of
+    (lat, lon) tuples in CCW order. Treats lat/lon as planar (small-area
+    approximation -- adequate for fires <10 mi diameter).
+
+    Pass through with <3 unique points: returned as-is (caller decides
+    whether the perimeter is meaningful)."""
+    pts = sorted(set(points))
+    if len(pts) <= 1:
+        return list(pts)
+
+    def cross(o, a, b):
+        return ((a[0] - o[0]) * (b[1] - o[1])
+                - (a[1] - o[1]) * (b[0] - o[0]))
+
+    lower = []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    upper = []
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return lower[:-1] + upper[:-1]
+
+
+def _hull_to_geojson(hull) -> str:
+    """Encode a list of (lat, lon) as a GeoJSON Polygon string. RFC 7946
+    requires (lon, lat) order and a closed outer ring (first == last)."""
+    if not hull:
+        return json.dumps({"type": "Polygon", "coordinates": [[]]})
+    ring = [[lon, lat] for lat, lon in hull]
+    # Close the ring per spec.
+    if ring[0] != ring[-1]:
+        ring.append(ring[0])
+    return json.dumps({"type": "Polygon", "coordinates": [ring]})
+
+
+def _point_in_polygon(point, polygon_lat_lon) -> bool:
+    """Ray-casting point-in-polygon. polygon_lat_lon is a list of
+    (lat, lon) tuples (the ring; do NOT repeat the first vertex).
+    Returns True for points strictly inside the polygon; the boundary
+    case is implementation-defined and is fine for our needs (a pixel
+    sitting exactly on a vertex isn't a spotting candidate either way).
+    """
+    n = len(polygon_lat_lon)
+    if n < 3:
+        return False
+    px_lat, px_lon = point
+    inside = False
+    j = n - 1
+    for i in range(n):
+        lat_i, lon_i = polygon_lat_lon[i]
+        lat_j, lon_j = polygon_lat_lon[j]
+        if ((lat_i > px_lat) != (lat_j > px_lat)):
+            # x = (lon_j - lon_i) * (px_lat - lat_i) / (lat_j - lat_i) + lon_i
+            try:
+                x_intersect = (lon_j - lon_i) * (px_lat - lat_i) / (lat_j - lat_i) + lon_i
+            except ZeroDivisionError:
+                x_intersect = lon_i
+            if px_lon < x_intersect:
+                inside = not inside
+        j = i
+    return inside
