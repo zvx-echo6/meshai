@@ -32,6 +32,7 @@ interface EnvConfig {
 
 // WFIGS adapter config shape
 interface WfigsConfig {
+  allowed_incident_types: string[]
   freshness_seconds: number
   cooldown_seconds: number
   broadcast_on_acres: boolean
@@ -213,6 +214,7 @@ export default function Environment() {
 
   // WFIGS/fires adapter config state
   const [wfigsConfig, setWfigsConfig] = useState<WfigsConfig>({
+    allowed_incident_types: ['WF'],
     freshness_seconds: 0,
     cooldown_seconds: 28800,
     broadcast_on_acres: true,
@@ -242,6 +244,7 @@ export default function Environment() {
           if (wfigsRes.ok) {
             const wfigsData = await wfigsRes.json()
             const cfg: WfigsConfig = {
+              allowed_incident_types: wfigsData.allowed_incident_types?.value ?? ['WF'],
               freshness_seconds: wfigsData.freshness_seconds?.value ?? 0,
               cooldown_seconds: wfigsData.cooldown_seconds?.value ?? 28800,
               broadcast_on_acres: wfigsData.broadcast_on_acres?.value ?? true,
@@ -328,6 +331,9 @@ const save = async () => {
         if (wfigsConfig.freshness_seconds !== orig.freshness_seconds) {
           await saveAdapterConfig("wfigs", "freshness_seconds", wfigsConfig.freshness_seconds)
         }
+        if (JSON.stringify(wfigsConfig.allowed_incident_types) !== JSON.stringify(orig.allowed_incident_types)) {
+          await saveAdapterConfig("wfigs", "allowed_incident_types", wfigsConfig.allowed_incident_types)
+        }
         if (wfigsConfig.cooldown_seconds !== orig.cooldown_seconds) {
           await saveAdapterConfig("wfigs", "cooldown_seconds", wfigsConfig.cooldown_seconds)
         }
@@ -407,10 +413,45 @@ const save = async () => {
           <NumberInput label="Longitude" value={env.ducting.longitude} onChange={(v) => up({ ducting: { ...env.ducting, longitude: v } })} step={0.01} />
         </div>)
       case 'fires': return (
-        <div className="grid grid-cols-2 gap-4">
-          <NumberInput label="Tick Seconds" value={env.fires.tick_seconds} onChange={(v) => up({ fires: { ...env.fires, tick_seconds: v } })} min={60} />
-          <SelectInput label="State" value={env.fires.state} onChange={(v) => up({ fires: { ...env.fires, state: v } })} options={US_STATES} />
-        </div>)
+        <div className="space-y-6">
+          {env.fires.feed_source !== 'central' && (
+            <div className="grid grid-cols-2 gap-4">
+              <NumberInput label="Tick Seconds" value={env.fires.tick_seconds} onChange={(v) => up({ fires: { ...env.fires, tick_seconds: v } })} min={60} />
+              <SelectInput label="State" value={env.fires.state} onChange={(v) => up({ fires: { ...env.fires, state: v } })} options={US_STATES} />
+            </div>
+          )}
+          <div>
+            <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">Incident Types</div>
+            <div className="flex gap-6">
+              {[['WF', 'Wildfire'], ['RX', 'Prescribed Burn'], ['OTHER', 'Other']].map(([val, label]) => (
+                <label key={val} className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={wfigsConfig.allowed_incident_types?.includes(val) ?? val === 'WF'}
+                    onChange={(e) => { const cur = wfigsConfig.allowed_incident_types ?? ['WF']; setWfigsConfig({ ...wfigsConfig, allowed_incident_types: e.target.checked ? [...cur, val] : cur.filter(t => t !== val) }) }}
+                    className="w-4 h-4 rounded accent-blue-500" />
+                  <span className="text-sm text-slate-300">{label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">Broadcast Triggers</div>
+            <div className="space-y-2">
+              <label className="flex items-center justify-between">
+                <span className="text-sm text-slate-300">Broadcast on acres increase</span>
+                <input type="checkbox" checked={wfigsConfig.broadcast_on_acres} onChange={(e) => setWfigsConfig({ ...wfigsConfig, broadcast_on_acres: e.target.checked })} className="w-4 h-4 rounded accent-blue-500" />
+              </label>
+              <label className="flex items-center justify-between">
+                <span className="text-sm text-slate-300">Broadcast on containment increase</span>
+                <input type="checkbox" checked={wfigsConfig.broadcast_on_contained} onChange={(e) => setWfigsConfig({ ...wfigsConfig, broadcast_on_contained: e.target.checked })} className="w-4 h-4 rounded accent-blue-500" />
+              </label>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <NumberInput label="Update Cooldown (hours)" value={Math.round(wfigsConfig.cooldown_seconds / 3600)} onChange={(v) => setWfigsConfig({ ...wfigsConfig, cooldown_seconds: v * 3600 })} min={0} helper="Minimum hours between updates for the same fire" />
+            <NumberInput label="Freshness Window (hours)" value={Math.round(wfigsConfig.freshness_seconds / 3600)} onChange={(v) => setWfigsConfig({ ...wfigsConfig, freshness_seconds: v * 3600 })} min={0} helper="0 = always broadcast regardless of event age" />
+          </div>
+        </div>
+      )
       case 'avalanche': return (<>
         <NumberInput label="Tick Seconds" value={env.avalanche.tick_seconds} onChange={(v) => up({ avalanche: { ...env.avalanche, tick_seconds: v } })} min={60} />
         <ListInput label="Center IDs" value={env.avalanche.center_ids} onChange={(v) => up({ avalanche: { ...env.avalanche, center_ids: v } })} helper="e.g., SNFAC" infoLink="https://avalanche.org/avalanche-centers/" />
