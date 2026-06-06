@@ -553,7 +553,7 @@ export default function Alerts() {
           <div className="text-slate-500 py-4">
             <p>No active subscriptions.</p>
             <p className="text-xs mt-2">
-              Manage subscriptions via <code className="text-blue-400">!subscribe</code> on mesh
+              Manage subscriptions via <code className="text-blue-400">!subscribe</code> on mesh. Broadcasts arrive with one of three prefixes — <strong>New:</strong> (first sight), <strong>Update:</strong> (material change), or <strong>Active:</strong> (clock-driven reminder while the event is still live). See <a href="/reference#broadcast-types" className="text-blue-400 hover:underline">Broadcast Types</a> and <a href="/reference#reminders" className="text-blue-400 hover:underline">Reminder System</a> in Reference.
             </p>
           </div>
         )}

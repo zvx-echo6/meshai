@@ -114,7 +114,7 @@ export default function RestartBanner() {
           </span>
         )}
         <span className="ml-2 text-yellow-300/80">
-          for these changes to take effect. Until then the runtime keeps its boot-time configuration.
+          for these changes to take effect. Until then the runtime keeps its boot-time configuration. Restart-required keys include anything under Config → environmental (feed_source, central URL), the LLM backend swap, and the dispatcher cold-start grace window. Other keys take effect on the next handler call.
         </span>
         {error && <div className="text-red-400 text-xs mt-1">{error}</div>}
       </div>

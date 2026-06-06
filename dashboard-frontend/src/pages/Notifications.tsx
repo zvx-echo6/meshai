@@ -2080,7 +2080,7 @@ export default function Notifications() {
                 label="Enable scheduled band-conditions broadcasts"
                 checked={config.band_conditions_enabled ?? true}
                 onChange={(v) => setConfig({ ...config, band_conditions_enabled: v })}
-                helper="3x/day HF propagation summary (Day/Night ratings per band group)"
+                helper="3x/day HF propagation summary (Day/Night ratings per band group). The daily fire digest (twice-daily LLM summary of active fires + the last 24h of growth/spotting) is configured separately under Adapter Config -> fires.digest_*. See Reference -> Fire Tracker (Fusion) and Reference -> Broadcast Types for the New/Update/Active prefix system."
                 info="Source priority: (1) recent SWPC readings persisted locally; (2) HamQSL.com fallback; (3) silent skip if both fail. Persistence rows are written either way for an audit trail."
               />
               {(config.band_conditions_enabled ?? true) && (

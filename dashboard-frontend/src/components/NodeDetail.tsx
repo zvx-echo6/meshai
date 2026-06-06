@@ -97,7 +97,13 @@ export default function NodeDetail({
       }
     })
 
-    // Sort by SNR descending
+    // SNR quality bands (also the legend behind the colored quality dots):
+  //   >12 excellent — reliable mesh hop
+  //   8-12 good
+  //   5-8 fair — works in clear conditions
+  //   3-5 marginal — will drop under load
+  //   <3 poor — intermittent
+  // Sort by SNR descending
     return neighborData.sort((a, b) => b.snr - a.snr)
   }, [node, edges, nodes])
 

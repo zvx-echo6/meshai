@@ -86,7 +86,7 @@ export default function Mesh() {
             }`}
           >
             <Network size={14} />
-            Topology
+            <span title="Force-directed graph of nodes + neighbor links. Edge weight reflects SNR; node color reflects status (green = active, amber = stale, slate = offline).">Topology</span>
           </button>
           <button
             onClick={() => setViewMode('geo')}
@@ -97,7 +97,7 @@ export default function Mesh() {
             }`}
           >
             <Map size={14} />
-            Geographic
+            <span title="Nodes plotted by lat/lon on a basemap. Nodes without a reported position are clustered at the top edge.">Geographic</span>
           </button>
         </div>
       </div>

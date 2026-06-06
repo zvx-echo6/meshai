@@ -3,7 +3,9 @@ import { useLocation } from 'react-router-dom'
 import {
   Search, Droplets, Flame, Satellite, CloudLightning, Sun,
   Radio, Mountain, Car, Construction, Activity, Bell, Terminal,
-  Code, ExternalLink
+  Code, ExternalLink,
+  Crosshair, Send, Clock, MessageSquare, Network, Sliders,
+  Database, History
 } from 'lucide-react'
 
 // Topic definitions
@@ -11,6 +13,7 @@ const TOPICS = [
   { id: 'stream-gauges', label: 'Stream Gauges', icon: Droplets },
   { id: 'wildfire', label: 'Wildfire', icon: Flame },
   { id: 'firms', label: 'Satellite Fire Detection (FIRMS)', icon: Satellite },
+  { id: 'fire-tracker', label: 'Fire Tracker (Fusion)', icon: Crosshair },
   { id: 'weather-alerts', label: 'Weather Alerts', icon: CloudLightning },
   { id: 'solar', label: 'Solar & Geomagnetic', icon: Sun },
   { id: 'ducting', label: 'Tropospheric Ducting', icon: Radio },
@@ -18,8 +21,15 @@ const TOPICS = [
   { id: 'traffic', label: 'Traffic Flow', icon: Car },
   { id: 'roads-511', label: 'Road Conditions (511)', icon: Construction },
   { id: 'mesh-health', label: 'Mesh Health', icon: Activity },
+  { id: 'broadcast-types', label: 'Broadcast Types', icon: Send },
+  { id: 'reminders', label: 'Reminder System', icon: Clock },
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'commands', label: 'Commands', icon: Terminal },
+  { id: 'llm-dm', label: 'LLM DM Queries', icon: MessageSquare },
+  { id: 'or-not-and', label: 'OR-not-AND Architecture', icon: Network },
+  { id: 'adapter-config', label: 'Adapter Config & CODE Rule', icon: Sliders },
+  { id: 'curation', label: 'Curation: Gauges & Towns', icon: Database },
+  { id: 'schema', label: 'Schema Migrations', icon: History },
   { id: 'api', label: 'API Reference', icon: Code },
 ]
 
@@ -355,6 +365,112 @@ export default function Reference() {
               <li><ExtLink href="https://firms.modaps.eosdis.nasa.gov">FIRMS Fire Map</ExtLink> — see hotspots on a map</li>
               <li><ExtLink href="https://earthdata.nasa.gov/data/tools/firms/faq">FIRMS FAQ</ExtLink> — how it works</li>
             </ul>
+          </TopicSection>
+
+          {/* Fire Tracker (v0.7 fusion: FIRMS + WFIGS + LLM digest) */}
+          <TopicSection id="fire-tracker" title="Fire Tracker (Fusion)">
+            <p>
+              FIRMS hotspots are fast but noisy; WFIGS incidents are accurate but slow.
+              The Fire Tracker fuses both feeds and a per-pixel attribution graph so a
+              single fire's name, declared acreage, real-time perimeter movement, and
+              spotting events all land as separate broadcasts on the mesh.
+            </p>
+
+            <SectionHeader>What you'll see on the mesh</SectionHeader>
+            <p>Six fire-family alert categories, in order of when they fire during an incident's lifecycle:</p>
+            <RefTable
+              headers={['Category', 'Severity', 'Trigger', 'Example broadcast']}
+              rows={[
+                [<Mono>unattributed_hotspot_cluster</Mono>, "Priority",
+                  "3+ FIRMS pixels within 1 mi over 60 min, no WFIGS match — possible new ignition before NIFC declares it",
+                  <span className="text-amber-300">🔥 Possible new fire: 3 hotspots within 1 mi @ 42.93,-114.45 (combined 78 MW)</span>],
+                [<Mono>wildfire_declared</Mono>, "Priority",
+                  "WFIGS first-sight of a new IRWIN incident — the official 'this is a fire and here is its name' record",
+                  <span className="text-amber-300">🔥 New: Cache Peak Fire (WF), 3 mi N of Almo: 250 ac, 0% contained</span>],
+                [<Mono>wildfire_growth</Mono>, "Priority",
+                  "Per-pass centroid drift >= 0.5 mi (configurable) between consecutive satellite passes — the fire's footprint moved",
+                  <span className="text-amber-300">🔥 Cache Peak Fire moving NE 1.2 mi/h, ~3 mi from Almo</span>],
+                [<Mono>wildfire_spotting</Mono>, "Immediate",
+                  "FIRMS pixel attributed to a tracked fire but >= 1.5 mi (configurable) outside its prior-pass convex-hull perimeter — ember spread",
+                  <span className="text-amber-300">🔥 Possible spotting 2.1 mi NE of Cache Peak Fire perimeter</span>],
+                [<Mono>wildfire_incident</Mono>, "Priority",
+                  "WFIGS acreage or containment increased on a fire already broadcast once (the Update path; the New path uses wildfire_declared)",
+                  <span className="text-amber-300">🔥 Update: Cache Peak Fire: 1,847 ac, 23% contained</span>],
+                [<Mono>wildfire_halted</Mono>, "Routine",
+                  "No FIRMS pixels attributed for 12+ hours (configurable) — fire stalled or out",
+                  <span className="text-amber-300">🔥 Cache Peak Fire no growth in 14h</span>],
+              ]}
+            />
+
+            <SectionHeader>Daily LLM digest</SectionHeader>
+            <p>
+              Twice a day (default 06:00 and 18:00 Mountain Time) the bot runs an LLM
+              summary across every active fire and the last 24 h of growth + spotting
+              events, then broadcasts one terse line to the mesh. Shape:{' '}
+              <span className="text-amber-300">"Fires today: Cache Peak 1,847 ac +200 NE; Twin Peaks 320 ac stable; possible new fire 15 mi from Cache Peak."</span>{' '}
+              Configure the schedule and timezone under <Mono>fires.digest_*</Mono>{' '}
+              keys on the Adapter Config page.
+            </p>
+
+            <SectionHeader>How attribution works</SectionHeader>
+            <p>
+              When a FIRMS hotspot lands, the bot walks every active fire (those not
+              yet tombstoned) and matches by Haversine distance to that fire's running
+              centroid. If the pixel is within the fire's <Mono>spread_radius_mi</Mono>{' '}
+              (default 5 mi, per-fire override available) the pixel is attributed and
+              appended to that fire's growth history. The centroid then re-computes
+              as the median of the last 24 h of attributed pixels, so single-pixel
+              outliers don't drag the perimeter around.
+            </p>
+            <p>
+              Pixels that match no fire feed the cluster detector instead: if at least{' '}
+              <Mono>cluster_min_pixels</Mono> (default 3) lie within{' '}
+              <Mono>cluster_max_radius_mi</Mono> (default 1.0) over{' '}
+              <Mono>cluster_time_window_minutes</Mono> (default 60), the bot fires a
+              single <Mono>unattributed_hotspot_cluster</Mono> broadcast and marks
+              the member pixels so a fourth arrival doesn't re-fire the same cluster.
+            </p>
+
+            <SectionHeader>How movement is computed</SectionHeader>
+            <p>
+              Each VIIRS pass groups pixels into a <Mono>pass_id</Mono> (satellite +
+              90-min bucket). When a pixel from a different bucket arrives, the prior
+              pass closes: its convex hull becomes the perimeter, its median centroid
+              becomes the comparison anchor, and the bot computes drift (Haversine to
+              the previous pass's centroid), an 8-way compass bearing, and a wall-clock
+              mi/h speed. If drift &ge; <Mono>growth_drift_threshold_mi</Mono> the{' '}
+              <Mono>wildfire_growth</Mono> broadcast fires.
+            </p>
+
+            <SectionHeader>How spotting is detected</SectionHeader>
+            <p>
+              Once a pass closes its perimeter (a GeoJSON polygon stored on the
+              fire), every subsequent attributed pixel runs a point-in-polygon test.
+              Pixels outside the polygon with a vertex distance &ge;{' '}
+              <Mono>spotting_distance_threshold_mi</Mono> (default 1.5) fire the{' '}
+              <Mono>wildfire_spotting</Mono> broadcast at <em>immediate</em> severity
+              — spread beyond the existing perimeter is the most actionable fire
+              signal we emit. A per-fire cooldown
+              (<Mono>spotting_cooldown_seconds</Mono>, default 1 h) prevents an ember
+              burst in the same area from spamming the mesh.
+            </p>
+
+            <SectionHeader>Tunable knobs (Adapter Config → fires)</SectionHeader>
+            <RefTable
+              headers={['Key', 'Default', 'What it does']}
+              rows={[
+                [<Mono>spread_radius_mi_default</Mono>, '5.0 mi', 'Attribution radius for FIRMS → fire matching. Per-fire override in the fires.spread_radius_mi column.'],
+                [<Mono>growth_drift_threshold_mi</Mono>, '0.5 mi', 'Per-pass centroid drift at or above this fires wildfire_growth.'],
+                [<Mono>halt_passes_threshold</Mono>, '2', 'Consecutive empty satellite passes before wildfire_halted (documented; the time gate below is the operational rule).'],
+                [<Mono>halt_minimum_seconds</Mono>, '43,200 (12 h)', 'Minimum elapsed seconds since the most recent attributed pixel before wildfire_halted can fire.'],
+                [<Mono>spotting_distance_threshold_mi</Mono>, '1.5 mi', 'Distance from prior-pass perimeter that fires wildfire_spotting.'],
+                [<Mono>spotting_cooldown_seconds</Mono>, '3,600 (1 h)', 'Minimum seconds between consecutive spotting broadcasts per fire.'],
+                [<Mono>digest_enabled</Mono>, 'true', 'Master toggle for the twice-daily digest.'],
+                [<Mono>digest_schedule</Mono>, '["06:00","18:00"]', 'Local-time slots for the digest.'],
+                [<Mono>digest_timezone</Mono>, 'America/Boise', 'IANA tz for digest_schedule.'],
+                [<Mono>digest_max_chars</Mono>, '200', 'Hard cap on the digest wire (the LLM is told to fit; the chunker enforces).'],
+              ]}
+            />
           </TopicSection>
 
           {/* Weather Alerts */}
@@ -914,6 +1030,78 @@ export default function Reference() {
             </p>
           </TopicSection>
 
+          {/* Broadcast Types (v0.6 schema split: New / Update / Active) */}
+          <TopicSection id="broadcast-types" title="Broadcast Types">
+            <p>
+              Every broadcast the bot sends to the mesh carries a one-word prefix that
+              tells you what kind of update it is. Three types:
+            </p>
+            <RefTable
+              headers={['Prefix', 'What it means', 'When you see it']}
+              rows={[
+                [<Mono>New:</Mono>, "The first time the bot has ever broadcast about this event",
+                  "Cache Peak Fire's WFIGS first-sight; FIRMS cluster's first 3-pixel detection; first NWS warning for a CAP id"],
+                [<Mono>Update:</Mono>, "A material change on something the bot already announced",
+                  "Cache Peak Fire's acreage grew; ITD 511 work zone's lane status changed; quake event's magnitude was revised"],
+                [<Mono>Active:</Mono>, "A clock-driven reminder that an already-announced event is still live",
+                  "Cache Peak Fire is still burning 8 hours later; an SWPC G3 storm is still in progress"],
+              ]}
+            />
+            <p>
+              The bot tracks first-broadcast time and last-broadcast time separately
+              on every event row, so a New: prefix is only emitted once even after a
+              container restart. Update: respects per-adapter cooldowns (WFIGS is 8 h
+              by default; ITD 511 is per-incident). Active: is the reminder system,
+              covered in the next section.
+            </p>
+          </TopicSection>
+
+          {/* Reminder System (v0.6-phase3, clock-driven Active: re-broadcasts) */}
+          <TopicSection id="reminders" title="Reminder System">
+            <p>
+              Some events stay live for days. A wildfire doesn't go out because
+              WFIGS stopped publishing updates; a geomagnetic storm doesn't end
+              because SWPC went quiet on the wire. The reminder system fires a
+              clock-driven{' '}
+              <Mono>Active:</Mono>-prefixed re-broadcast on a human-scale cadence so
+              an operator who came on shift after the original announcement still
+              sees the event.
+            </p>
+
+            <SectionHeader>Cadences</SectionHeader>
+            <RefTable
+              headers={['Adapter', 'Reminder cadence', 'Termination']}
+              rows={[
+                [<><Mono>wfigs</Mono> (wildfires)</>, 'Every 8 h while the fire is still active',
+                  'WFIGS publishes a tombstone (incident closed) → fires.tombstoned_at is stamped → reminder loop stops'],
+                [<><Mono>swpc</Mono> (space weather)</>, 'Every 8 h while a Kp >= floor / X-class flare / proton-storm event is ongoing',
+                  'The next SWPC envelope shows the storm has subsided'],
+                [<Mono>itd_511_work_zone</Mono>, 'Per-zone, configurable in the rule UI',
+                  'WZDx publishes the zone with end_date in the past'],
+              ]}
+            />
+
+            <SectionHeader>The tombstone</SectionHeader>
+            <p>
+              When a WFIGS update declares an incident closed, the bot stamps{' '}
+              <Mono>fires.tombstoned_at</Mono> with the close time. The reminder
+              scheduler treats <Mono>tombstoned_at IS NOT NULL</Mono> as "stop
+              broadcasting Active: for this fire," and the LLM context layer treats
+              it as "this fire is in the closed-out archive." A subsequent FIRMS
+              pixel inside that fire's spread radius does not re-open it — closure
+              is authoritative from NIFC.
+            </p>
+
+            <SectionHeader>Turning reminders off</SectionHeader>
+            <p>
+              Per-adapter on/off lives in <Mono>adapter_meta.reminder_enabled</Mono>{' '}
+              and is exposed on the Adapter Config page. The reminders themselves
+              flow through the same dispatcher gates as everything else, so they
+              still respect cooldowns, the cold-start grace window, and your
+              notification rules.
+            </p>
+          </TopicSection>
+
           {/* Notifications */}
           <TopicSection id="notifications" title="Notifications">
             <SectionHeader>How It Works</SectionHeader>
@@ -1012,7 +1200,295 @@ export default function Reference() {
 
             <SectionHeader>Conversational</SectionHeader>
             <p>
-              MeshAI isn't just commands — you can ask it questions in plain English. "How's the mesh doing?" "Is there any ducting?" "What's the fire situation?" "How's traffic on I-84?" It uses the live environmental data and mesh health data to answer.
+              Bang commands are the short, predictable interface. For anything that
+              doesn't map cleanly to a single command — "how's the mesh doing?",
+              "is there any ducting?", "why didn\'t I hear about anything today?"
+              — you can DM the bot in plain English. The LLM DM path covers the
+              same data the commands cover, plus the dispatcher drop audit, with
+              honest "no data" answers when a feed is quiet. Full catalog under{' '}
+              <a href="#llm-dm" className="text-accent hover:underline">LLM DM
+              Queries</a>.
+            </p>
+          </TopicSection>
+
+          {/* LLM DM (Natural-Language Queries) — v0.7-fire-tracker-4 7-path */}
+          <TopicSection id="llm-dm" title="LLM DM (Natural-Language Queries)">
+            <p>
+              Bang commands like <Mono>!fire</Mono> are short and predictable — the
+              right tool on a mesh-constrained interface. For anything else, you can
+              DM the bot in plain English and it will answer from the same live
+              environmental data the broadcast pipeline uses. Both paths work; pick
+              whichever fits the question.
+            </p>
+
+            <SectionHeader>What it can answer</SectionHeader>
+            <p>
+              When you DM the bot a question, the env_reporter layer assembles up to
+              seven data blocks and injects them into the LLM's system prompt. Each
+              block maps to one adapter:
+            </p>
+            <RefTable
+              headers={["Adapter block", "Example question that hits it", "What you get back"]}
+              rows={[
+                [<Mono>build_fires_detail</Mono>,
+                  '"are there any fires near me?"',
+                  "Active WFIGS-declared fires, acreage, containment, declared_at, county/state"],
+                [<Mono>build_alerts_detail</Mono>,
+                  '"any weather alerts?"',
+                  "Active NWS CAP alerts: type, severity, area, expiry"],
+                [<Mono>build_quakes_detail</Mono>,
+                  '"any earthquakes nearby?"',
+                  "USGS quakes in the last 24h: magnitude, depth, place"],
+                [<Mono>build_traffic_detail</Mono>,
+                  '"how is traffic on I-84?" / "any road closures?"',
+                  "TomTom + ITD 511 active incidents"],
+                [<Mono>build_gauges_detail</Mono>,
+                  '"what is the snake river level?"',
+                  "USGS NWIS latest readings + flood stages"],
+                [<Mono>build_swpc_detail</Mono>,
+                  '"what are the band conditions?" / "any space weather?"',
+                  "Recent SWPC events + band-conditions ratings"],
+                [<Mono>build_drop_audit</Mono>,
+                  `"why didn't I hear about anything today?"`,
+                  "Event log: what envelopes the dispatcher filtered, by adapter + category"],
+              ]}
+            />
+
+            <SectionHeader>The grounding rule</SectionHeader>
+            <p>
+              The bot is told to answer <em>only</em> from the blocks in the system
+              prompt. If a block is empty (no recent quakes, no active NWS alerts),
+              the response is honest about it: "No active weather alerts right now,"
+              not a fabricated "144 earthquakes worldwide in the past 24 hours."
+              That clamp closes the failure mode where the LLM defaulted to its
+              training data when local tables were quiet.
+            </p>
+
+            <SectionHeader>Excluding an adapter from LLM context</SectionHeader>
+            <p>
+              The <Mono>include_in_llm_context</Mono> toggle on each adapter's row
+              in Adapter Config decides whether that adapter's <Mono>build_*</Mono>{' '}
+              block lands in the system prompt. Turn an adapter off here if you
+              don't want the bot's natural-language answers to draw on it (e.g.
+              you ingest TomTom for situational awareness but don't want it cited
+              in DM answers). Broadcasts are unaffected — this toggle gates LLM
+              context only.
+            </p>
+
+            <SectionHeader>What it can't answer</SectionHeader>
+            <p>
+              The bot has no general internet access. Questions that need data the
+              env_reporter doesn't carry ("what's the weather forecast tomorrow",
+              "who's the current president") fall back to whatever the configured
+              LLM backend knows from training. The grounding clamp keeps the bot
+              from inventing local data, but it can't keep the LLM from speculating
+              about non-local topics.
+            </p>
+          </TopicSection>
+
+          {/* OR-not-AND Architecture (Central vs native, mutually exclusive) */}
+          <TopicSection id="or-not-and" title="OR-not-AND Architecture">
+            <p>
+              Every environmental adapter pulls its data from one of two places:
+            </p>
+            <ul className="list-disc list-inside ml-4 space-y-1">
+              <li>
+                <strong>Central</strong> (canonical) — Central polls the upstream
+                feed once on behalf of the whole fleet and re-publishes normalized
+                envelopes over NATS JetStream. MeshAI subscribes. One Central poll,
+                one canonical normalization, many subscribers.
+              </li>
+              <li>
+                <strong>Native</strong> — MeshAI polls the upstream feed directly.
+                Stays around for adapters Central doesn't carry yet (currently
+                Tropospheric Ducting and Avalanche Center advisories) and for
+                operators who don't run Central.
+              </li>
+            </ul>
+
+            <SectionHeader>Why mutually exclusive</SectionHeader>
+            <p>
+              An adapter is set to <strong>either</strong> Central <strong>or</strong>{' '}
+              native, never both. Running both at the same time is what the
+              codebase calls the <em>AND-mode anti-pattern</em>: two independent
+              poll loops on the same upstream feed, duplicate broadcasts, duplicate
+              cursor state, no shared dedup. The Spokane-class leak (cross-state
+              broadcasts that escaped the bbox filter in May 2026) was caused by
+              an inadvertent AND-mode on the traffic adapter; the fix made the
+              gate enforce mutual exclusion at boot and on every config save.
+            </p>
+
+            <SectionHeader>The per-adapter source toggle</SectionHeader>
+            <p>
+              Set <Mono>feed_source</Mono> on each adapter's row in Environment:
+            </p>
+            <ul className="list-disc list-inside ml-4 space-y-1">
+              <li><Mono>central</Mono> — disable the native poll loop, subscribe to the matching Central subject pattern.</li>
+              <li><Mono>native</Mono> — disable the Central subscription for this adapter, run the native poller.</li>
+            </ul>
+            <p>
+              On the GUI, adapters with <em>no Central counterpart yet</em> show
+              their Central button disabled with a "native only" tooltip. That's
+              not an AND state; the adapter is still single-source, just locked to
+              native by upstream availability.
+            </p>
+
+            <SectionHeader>Where this surfaces in tooltips</SectionHeader>
+            <p>
+              You'll see "AND-model anti-pattern" referenced in two places: the
+              USGS-lookup button on Gauge Sites (disabled when the USGS adapter is
+              on Central, because doing a one-off direct USGS poll from the GUI
+              while the runtime is on Central is precisely the AND-mode this rule
+              forbids) and the env_routes 404 response on{' '}
+              <Mono>/api/env/usgs/lookup/{'{site_id}'}</Mono> in central-feed mode.
+              Both surfaces refuse to fall back to a direct upstream call; the
+              right answer is to enter values manually or source them from Central.
+            </p>
+          </TopicSection>
+
+          {/* Adapter Config + CONFIG-vs-CODE Rule (the GUI knob hub) */}
+          <TopicSection id="adapter-config" title="Adapter Config & the CODE Rule">
+            <p>
+              The Adapter Config page is the single hub for ~50 GUI-editable knobs
+              across the 13 adapters that touch the broadcast pipeline. Changes
+              take effect on the next handler call — no container restart needed
+              for most keys.
+            </p>
+
+            <SectionHeader>The CONFIG-vs-CODE rule</SectionHeader>
+            <p>
+              Not everything tunable becomes a GUI row. The codebase splits along
+              one rule:
+            </p>
+            <ul className="list-disc list-inside ml-4 space-y-1">
+              <li><strong>CONFIG</strong> (lives on this page) — where you send (channels), how often (cadences, schedules), thresholds (magnitude floors, severity gates, distance radii, cooldown durations, freshness windows), curation data (which sites, states, codes), toggles (enabled, include_in_llm_context).</li>
+              <li><strong>CODE</strong> (stays in the handlers, not on the GUI) — sentence templates, emoji choices, mapping / translation functions (TomTom icon_map, ITD sub_type_map, Central adapter_map and category_map), rendering logic (anchor priority order, expires-buckets formatting, threshold-state labels), heuristic logic (band_conditions Kp/SFI → Good/Fair/Poor function).</li>
+            </ul>
+            <p>
+              If you find yourself wanting to add a wire-string template or an
+              emoji to the GUI, stop — that's CODE. If you want to change a
+              threshold or a curation list, the GUI is the right place.
+            </p>
+
+            <SectionHeader>Restart-required vs live</SectionHeader>
+            <p>
+              Most keys take effect on the next handler call (the env_store re-reads
+              from the database). A short list requires a container restart, because
+              they govern startup-only wiring:
+            </p>
+            <ul className="list-disc list-inside ml-4 space-y-1">
+              <li>Anything under the <Mono>environmental</Mono> section on the Config page (feed_source, central URL, etc.). The Spokane-fix gate runs at env_store boot and at CentralConsumer subscribe — both happen only at startup.</li>
+              <li>The LLM backend swap (Google → Anthropic → OpenAI).</li>
+              <li>The dispatcher cold-start grace window.</li>
+            </ul>
+            <p>
+              When you save one of those keys via the GUI, a yellow Restart-Required
+              banner surfaces at the top of the page with a "Restart now" button.
+              Until you click it, the on-disk config and the running config
+              intentionally disagree — that's the OR-not-AND gate refusing to
+              transition mid-flight.
+            </p>
+
+            <SectionHeader>The <Mono>include_in_llm_context</Mono> toggle</SectionHeader>
+            <p>
+              Each adapter's card on Adapter Config carries a per-adapter
+              "LLM context" switch. When off, that adapter's <Mono>build_*</Mono>{' '}
+              env_reporter block is skipped during system-prompt assembly. Broadcasts
+              are unaffected; this toggle is purely about what the LLM sees when
+              you DM it. See the LLM DM section above for the seven adapter blocks
+              this gates.
+            </p>
+          </TopicSection>
+
+          {/* Curation Tables: Gauge Sites + Town Anchors */}
+          <TopicSection id="curation" title="Curation: Gauge Sites & Town Anchors">
+            <p>
+              Two curation tables drive the broadcast text the bot puts on the mesh.
+              Both are CRUD UIs with per-row enable/disable; both fall through to
+              fallback chains when a row is missing or disabled.
+            </p>
+
+            <SectionHeader>Gauge Sites</SectionHeader>
+            <p>
+              Stream gauge thresholds for the USGS NWIS handler. Each row pairs a
+              USGS site_id with a human gauge name, lat/lon, and four NWS-AHPS
+              flood thresholds in feet: Action, Minor, Moderate, Major. The
+              handler compares an incoming gauge reading to those thresholds and
+              emits the right broadcast severity.
+            </p>
+            <p>
+              <strong>USGS lookup button</strong> — when you add a new row in
+              native-feed mode, the lookup queries the USGS Site Service plus NWS
+              NWPS to auto-populate name, coordinates, and flood stages. In
+              central-feed mode the button is disabled with a tooltip: a one-off
+              direct USGS poll from the GUI while the runtime is on Central is the
+              AND-mode anti-pattern the architecture forbids. Enter values
+              manually or pull them from Central.
+            </p>
+            <p>
+              <strong>Disabled rows</strong> are ignored at dispatch time. The
+              corresponding gauge still ingests into <Mono>gauge_readings</Mono>{' '}
+              (so historical queries still work), it just doesn't broadcast.
+            </p>
+
+            <SectionHeader>Town Anchors</SectionHeader>
+            <p>
+              Lookup table for the "X mi {'<'}bearing{'>'} of {'<'}town{'>'}" suffix
+              in broadcast text. When a fire or NWS alert renders, the bot walks an
+              anchor chain to figure out where to say it is:
+            </p>
+            <ol className="list-decimal list-inside ml-4 space-y-1">
+              <li>Photon nearest-town lookup (the WFIGS path uses this — produces "near Long Creek Summit Home" style anchors)</li>
+              <li>Town Anchors table (your curated list)</li>
+              <li>Landclass label (county / federal-land identifier)</li>
+              <li>County + state fallback</li>
+              <li>Bare lat/lon coords</li>
+            </ol>
+            <p>
+              Each row carries a name (lowercased on save), state, lat/lon, and an
+              enable flag. The "lowercased on save" rule keeps "Almo" / "ALMO" /
+              "almo" from being three distinct rows. Disabled rows fall through to
+              the next anchor in the chain — the broadcast text still goes out, it
+              just uses a different anchor.
+            </p>
+            <p>
+              Example broadcast text rendered from a Town Anchors row:{' '}
+              <span className="text-amber-300">"🔥 New: Cache Peak Fire (WF), 3 mi N of Almo: 250 ac, 0% contained, @ 42.118,-113.643"</span>
+            </p>
+          </TopicSection>
+
+          {/* Schema Migrations (light touch — for ops + debugging) */}
+          <TopicSection id="schema" title="Schema Migrations">
+            <p>
+              MeshAI persists state in a single SQLite database
+              (<Mono>/data/meshai.sqlite</Mono>) with WAL journaling. Schema
+              migrations live in <Mono>meshai/persistence/migrations/v*.sql</Mono>{' '}
+              and apply automatically on container start. The runner reads the
+              migrations directory, sorts by version, and applies anything past
+              the current <Mono>schema_meta.version</Mono> in order. Idempotent
+              re-runs are no-ops.
+            </p>
+
+            <SectionHeader>v0.6 + v0.7 additions</SectionHeader>
+            <RefTable
+              headers={['Migration', 'What it added']}
+              rows={[
+                [<Mono>v11</Mono>, 'first_broadcast_at + last_broadcast_at split + reminder_enabled per adapter (the schema basis for New / Update / Active)'],
+                [<Mono>v12</Mono>, 'fires.tombstoned_at (WFIGS closure stamp; terminates the reminder loop)'],
+                [<Mono>v13</Mono>, 'Fire Tracker Phase 1 — fire_pixels table + spread_radius_mi + current_centroid_lat/lon + last_hotspot_at; firms_pixels attributed_at + cluster_broadcast_at'],
+                [<Mono>v14</Mono>, 'Fire Tracker Phase 2 — fire_passes table (per-satellite-pass centroid + drift) + last_pass_id + halt_broadcast_at on fires'],
+                [<Mono>v15</Mono>, 'Fire Tracker Phase 3 — fire_passes.perimeter_geojson (convex hull) + fires.last_spotting_broadcast_at'],
+                [<Mono>v16</Mono>, 'Fire Tracker Phase 4 — fire_digest_broadcasts table (idempotent twice-daily LLM digest)'],
+              ]}
+            />
+
+            <SectionHeader>When migrations fail</SectionHeader>
+            <p>
+              A migration failure leaves the database at the prior version and
+              raises in the runner. Container logs surface the SQL error;{' '}
+              <Mono>schema_meta.version</Mono> tells you where the last
+              successful migration stopped. Re-running the container after
+              the underlying issue is fixed picks up from there.
             </p>
           </TopicSection>
 

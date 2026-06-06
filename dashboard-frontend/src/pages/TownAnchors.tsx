@@ -73,8 +73,11 @@ export default function TownAnchors() {
         </button>
       </div>
       <p className="text-xs text-slate-400 max-w-3xl">
-        Lookup table for the &quot;X mi &lt;bearing&gt; of &lt;town&gt;&quot; anchor in wire-string rendering.
-        Disabled rows fall through to the generic anchor chain.
+        Lookup table for the &quot;X mi &lt;bearing&gt; of &lt;town&gt;&quot; suffix in the bot&apos;s broadcast text.
+        When a fire or NWS alert renders, the bot walks: Photon nearest-town &rarr; this table &rarr; landclass &rarr;
+        county/state &rarr; bare coords. Disabled rows fall through to the next anchor in the chain; the
+        broadcast still goes out, it just uses a different anchor. Example: &quot;3 mi N of Almo&quot;.
+        See Reference &rarr; Curation: Gauges &amp; Towns for the full chain.
       </p>
 
       {adding && <RowEditor draft={draft} setDraft={setDraft} onSave={save} onCancel={cancel} adding />}

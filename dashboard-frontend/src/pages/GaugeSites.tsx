@@ -101,8 +101,7 @@ export default function GaugeSites() {
         </button>
       </div>
       <p className="text-xs text-slate-400 max-w-3xl">
-        NWS-AHPS stream gauge thresholds curated for the nwis_handler. Disabled rows are
-        ignored at envelope time. Changes propagate to the handler on the next event.
+        NWS-AHPS stream gauge thresholds for the USGS NWIS handler. Each row pairs a USGS site_id with a human gauge name, lat/lon, and four flood thresholds (Action / Minor / Moderate / Major, all in feet). Disabled rows still ingest into gauge_readings -- they don't broadcast. The USGS lookup button auto-populates name + coords + thresholds from USGS Site Service + NWS NWPS when this adapter is on native feed_source; Central-feed mode disables it (see Reference → OR-not-AND for why). Changes take effect on the next event.
       </p>
 
       {adding && <RowEditor draft={draft} setDraft={setDraft} onSave={save} onCancel={cancel} adding feedSource={feedSource} />}

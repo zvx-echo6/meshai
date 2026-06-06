@@ -210,13 +210,13 @@ export default function NodeTable({
                 className="px-3 py-2 text-left cursor-pointer hover:text-slate-200"
                 onClick={() => handleSort('battery_level')}
               >
-                Battery <SortIcon field="battery_level" />
+                <span title="Battery percent (4.20V = 100%, 3.60V ~ 30% warning, 3.30V ~ 3% critical). USB ⚡ = USB-powered (>100% or >4.1V); no battery management applies.">Battery</span> <SortIcon field="battery_level" />
               </th>
               <th
                 className="px-3 py-2 text-left cursor-pointer hover:text-slate-200"
                 onClick={() => handleSort('last_heard')}
               >
-                Last Heard <SortIcon field="last_heard" />
+                <span title="Status dot: green = heard in the last hour; amber = within 24h; slate = offline (past the configured threshold). See Reference → Mesh Health for thresholds by node type.">Last Heard</span> <SortIcon field="last_heard" />
               </th>
               <th
                 className="px-3 py-2 text-left cursor-pointer hover:text-slate-200"

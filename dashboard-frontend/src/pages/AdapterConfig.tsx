@@ -189,7 +189,7 @@ export default function AdapterConfig() {
       <p className="text-xs text-slate-400 max-w-3xl">
         Per-adapter tunables (thresholds, freshness windows, toggles, curation lists).
         Changes take effect on the next handler call -- no container restart needed.
-        Sentence templates, emoji, and translation maps live in code by design.
+        Sentence templates, emoji, and translation maps live in code by design — see the CODE rule under <a href="/reference#adapter-config" className="text-accent hover:underline">Adapter Config &amp; the CODE Rule</a> in Reference. The <strong>LLM context</strong> toggle on each card gates whether that adapter's data lands in the system prompt when you DM the bot; broadcasts are unaffected.
       </p>
 
       {allAdapters.map((adapter) => {

@@ -296,7 +296,7 @@ export default function Environment() {
         <NumberListInput label="Season Months" value={env.avalanche.season_months} onChange={(v) => up({ avalanche: { ...env.avalanche, season_months: v } })} helper="e.g., 12, 1, 2, 3, 4" />
       </>)
       case 'usgs': return (<>
-        <NumberInput label="Tick Seconds" value={env.usgs.tick_seconds} onChange={(v) => up({ usgs: { ...env.usgs, tick_seconds: v } })} min={900} helper="Minimum 15 min (900s)" />
+        <NumberInput label="Tick Seconds" value={env.usgs.tick_seconds} onChange={(v) => up({ usgs: { ...env.usgs, tick_seconds: v } })} min={900} helper="Minimum 15 min (900s). tick_seconds is the native-mode poll interval; ignored when this adapter is set to feed_source=central." />
         <ListInput label="Site IDs" value={env.usgs.sites} onChange={(v) => up({ usgs: { ...env.usgs, sites: v } })} helper="USGS gauge site numbers" infoLink="https://waterdata.usgs.gov/nwis" />
       </>)
       case 'usgs_quake': return (<>
@@ -409,7 +409,7 @@ export default function Environment() {
             <TextInput label="Region" value={env.central.region || ''}
                        onChange={(v) => up({ central: { ...env.central!, region: v } })}
                        placeholder="us.id"
-                       helper="Central v0.9.20 region token (dotted, e.g. 'us.id'). Empty = bare wildcards (all-US firehose)." />
+                       helper="Central v0.9.20 region token (dotted, e.g. 'us.id'). Empty = bare wildcards (all-US firehose). Each adapter is either Central or native, never both — see Reference → OR-not-AND Architecture for why." />
           </div>
         </div>
       )}

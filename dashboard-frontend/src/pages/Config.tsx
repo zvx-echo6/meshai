@@ -252,7 +252,7 @@ const SECTION_DESCRIPTIONS: Record<SectionKey, string> = {
   knowledge: 'Knowledge base for answering questions from stored documents. Connects to Qdrant vector database or local SQLite.',
   mesh_sources: 'Data sources for mesh network information. MeshAI can pull data from multiple sources simultaneously and merge them into a unified view.',
   mesh_intelligence: 'Advanced mesh analysis: health scoring, region management, and automated alerting. The intelligence engine monitors your mesh and detects problems automatically.',
-  environmental: 'Live environmental data feeds for situational awareness. Each feed polls a public or authenticated API for real-time conditions affecting your area.',
+  environmental: 'Where MeshAI gets live environmental data (weather, fires, quakes, gauges, traffic, space weather). Per-adapter knobs (API keys, regions, thresholds) live on the Environment page; the OR-not-AND architecture decision (Central vs native) is documented under Reference → OR-not-AND.',
   dashboard: "Web dashboard settings. You're looking at it right now.",
 }
 

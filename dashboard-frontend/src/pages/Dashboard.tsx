@@ -371,7 +371,7 @@ function RFPropagationCard({ swpc, ducting }: { swpc: ExtendedSWPCStatus | null;
     <div className="bg-bg-card border border-border rounded-lg p-4 flex flex-col h-full">
       <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
         <Zap size={14} />
-        RF Propagation
+        <span title="R (Radio Blackouts), S (Solar Radiation Storms), G (Geomagnetic Storms) — NOAA SWPC scales. Kp 3 = quiet baseline, Kp >= 5 = aurora visible at mid-latitudes and HF degraded. See Reference → Solar &amp; Geomagnetic.">RF Propagation</span>
       </h2>
 
       {/* Top row: SFI and Kp big values */}
@@ -509,7 +509,7 @@ function EventFeedItem({ event, isLocal }: { event: EnvEvent; isLocal?: boolean 
             {event.severity || 'info'}
           </span>
           {isLocal && (
-            <span className="px-1.5 py-0.5 rounded text-xs bg-blue-500/20 text-blue-400 border border-blue-500/30">
+            <span className="px-1.5 py-0.5 rounded text-xs bg-blue-500/20 text-blue-400 border border-blue-500/30" title="LOCAL: event coordinates fall inside the mesh's monitoring area (per the adapter's bbox config on Environment) — operators in this region are directly affected.">
               LOCAL
             </span>
           )}
