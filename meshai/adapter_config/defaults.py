@@ -277,17 +277,47 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     },
 
     # =================================================================
-    # FIRES -- 1 setting (default attribution radius for FIRMS -> fire matching)
+    # FIRES -- 4 settings (Phase 1 radius + Phase 2 growth/halt thresholds)
     # =================================================================
-    # Per-fire override lives in the fires.spread_radius_mi column; this
-    # is the global default used when that column is NULL. v0.7-fire-1
-    # ships with 5 mi based on the design doc's open question #1
-    # ("Spread radius default. Start with 5 mi per fire?"). Tune from
-    # operations once we have a week of observed attribution rates.
+    # Per-fire spread radius override lives in fires.spread_radius_mi;
+    # the value below is the fallback. v0.7-fire-1 shipped 5 mi based on
+    # design doc open question #1 ("Spread radius default. Start with
+    # 5 mi per fire?"). Tune once we have a week of observed attribution
+    # rates.
     ("fires", "spread_radius_mi_default"): {
         "default": 5.0,
         "type": "float",
         "description": "Default attribution radius for FIRMS hotspot -> fire matching, miles. Per-fire override in fires.spread_radius_mi.",
+    },
+    # v0.7-fire-2 -- growth + halt detection thresholds.
+    # growth_drift_threshold_mi: a per-pass centroid drift of at least
+    # this many miles fires wildfire_growth. 0.5 mi matches the design
+    # doc (Phase 2 spec: "Centroid drift > 0.5 mi/pass") and is roughly
+    # the noise floor of a single VIIRS pixel centroid (375 m ~ 0.23 mi).
+    ("fires", "growth_drift_threshold_mi"): {
+        "default": 0.5,
+        "type": "float",
+        "description": "Centroid drift between consecutive satellite passes (miles) that fires the wildfire_growth broadcast.",
+    },
+    # halt_passes_threshold: number of consecutive satellite passes with
+    # no new pixels before the fire is considered halted. Default 2 ~
+    # 12h in Idaho (VIIRS gives 4 passes/day). Combined with the
+    # halt_minimum_seconds time gate below; both must be met.
+    ("fires", "halt_passes_threshold"): {
+        "default": 2,
+        "type": "int",
+        "description": "Consecutive empty satellite passes before wildfire_halted (combined with the halt_minimum_seconds time gate).",
+    },
+    # halt_minimum_seconds: minimum wall-clock idle time before halt
+    # can fire. 12h handles the gap where 2 N20 + 2 N passes would have
+    # crossed the fire's location. We rely on this time gate as the
+    # operational halt rule -- pass-count enforcement would require
+    # tracking the global VIIRS schedule per satellite; the time gate
+    # subsumes that.
+    ("fires", "halt_minimum_seconds"): {
+        "default": 43200,
+        "type": "int",
+        "description": "Minimum elapsed seconds since the most recent attributed pixel before wildfire_halted can fire.",
     },
 
     # =================================================================

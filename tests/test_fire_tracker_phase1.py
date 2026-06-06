@@ -126,15 +126,21 @@ def test_centroid_recomputes_as_median_across_passes():
     _seed_fire(irwin_id="ID-TEST-002",
                  lat=42.000, lon=-113.000)
 
-    # 3 pixels within radius at distinct coords.
+    # 3 pixels within radius at distinct coords. v0.7-fire-tracker-2
+    # makes fires.current_centroid_* the latest PASS centroid (per-pass
+    # median), overriding Phase 1's 24h all-pixels median. Use acq
+    # times within a single ~90 min satellite bucket so all 3 land in
+    # ONE fire_passes row -- then the per-pass median IS the 3-pixel
+    # median and this test's intent (verify median computation, not
+    # arithmetic mean) survives the Phase 2 semantic shift.
     coords = [(42.001, -113.001), (42.002, -113.002), (42.003, -113.003)]
     for i, (la, lo) in enumerate(coords):
         env = _envelope(lat=la, lon=lo,
                         acq_date="2026-06-06",
-                        acq_time=f"{12 + i:02d}00")
+                        acq_time=f"12{i * 10:02d}")  # 12:00, 12:10, 12:20
         handle_firms(env,
                      subject="central.fire.hotspot.N20.high.us.id",
-                     data={}, now=1780728000 + i * 3600)
+                     data={}, now=1780728000 + i * 600)
 
     fire = get_db().execute(
         "SELECT current_centroid_lat, current_centroid_lon "

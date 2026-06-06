@@ -340,6 +340,31 @@ ALERT_CATEGORIES = {
         "example_message": "🔥 Possible new fire: 3 hotspots within 1 mi @ 42.93,-114.45 (combined 78 MW)",
         "toggle": "fire",
     },
+    # v0.7-fire-tracker-2: per-satellite-pass centroid drift exceeds the
+    # configured threshold. FIRMS handler computes drift on the boundary
+    # of a new pass (different satellite/time-bucket than the fire's
+    # last_pass_id). Each broadcast carries the drift direction (8-way)
+    # and the speed in mi/h derived from pass_ended_at deltas.
+    "wildfire_growth": {
+        "name": "Wildfire Growth (centroid drift)",
+        "description": "A tracked fire's per-pass centroid moved more than fires.growth_drift_threshold_mi between consecutive satellite passes. Drift direction is the 8-way compass bearing from the prior centroid to the current one.",
+        "default_severity": "priority",
+        "example_message": "🔥 Cache Peak Fire moving NE 1.2 mi/h, ~3 mi from Almo",
+        "toggle": "fire",
+    },
+    # v0.7-fire-tracker-2: a tracked fire has had no new FIRMS pixels
+    # attributed for >= fires.halt_minimum_seconds (default 12h). The
+    # halt detector runs opportunistically on every FIRMS pixel arrival
+    # (per-pixel check, cheap because tombstoned_at IS NULL is selective).
+    # Latched via fires.halt_broadcast_at so the same idle fire does not
+    # re-fire on every subsequent pixel.
+    "wildfire_halted": {
+        "name": "Wildfire Halted (no growth)",
+        "description": "No FIRMS pixels attributed to this tracked fire for at least fires.halt_minimum_seconds. Broadcast fires once per halt event; a subsequent attributed pixel re-opens eligibility.",
+        "default_severity": "routine",
+        "example_message": "🔥 Cache Peak Fire no growth in 14h",
+        "toggle": "fire",
+    },
     "wildfire_hotspot": {
         "name": "Wildfire Hotspot",
         "description": "Satellite thermal-anomaly detection (NASA FIRMS VIIRS/MODIS pixel) — not necessarily a new ignition",

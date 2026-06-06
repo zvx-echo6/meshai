@@ -1,4 +1,4 @@
-"""v0.7-fire-tracker-1 FIRMS handler -- storage + attribution + cluster broadcast.
+"""v0.7-fire-tracker-2 FIRMS handler -- storage + attribution + cluster + growth/halt.
 
 Pre-v0.6-1 the v0.5.13 default-deny gate at consumer._normalize() silently
 dropped every `central.fire.hotspot.>` envelope because no per-adapter handler
@@ -396,28 +396,44 @@ def _attribute_or_cluster(conn, *, pixel_row_id, lat, lon, acq_epoch,
         # 2+ matches resolve to nearest centroid per design doc Q2.
         attributed.sort(key=lambda t: t[1])
         chosen_irwin = attributed[0][0]
+        this_pass_id = _pass_id(satellite, acq_epoch)
         conn.execute(
             "INSERT INTO fire_pixels(irwin_id, acq_time, lat, lon, frp, "
             "satellite, pass_id, attributed_at) VALUES (?,?,?,?,?,?,?,?)",
             (chosen_irwin, float(acq_epoch), lat, lon, frp, satellite,
-             _pass_id(satellite, acq_epoch), float(now)),
+             this_pass_id, float(now)),
         )
         conn.execute(
             "UPDATE firms_pixels SET attributed_at=? WHERE id=?",
             (float(now), pixel_row_id),
         )
+        # Phase 1 24h-median centroid stays as a fallback for fires that
+        # don't yet have pass data (cold-start). The pass-boundary path
+        # below overrides it with the per-pass centroid once a pass has
+        # been observed.
         _recompute_centroid_and_stamp(
             conn, chosen_irwin, acq_epoch=acq_epoch,
         )
-        # Attribution is a silent operation -- the wire goes out on the
-        # NEXT WFIGS Update (which Phase 2 will gate on centroid drift).
-        return None
+        # v0.7-fire-tracker-2: per-pass aggregation + drift + growth.
+        wire = _handle_pass_boundary(
+            conn, irwin_id=chosen_irwin, pass_id=this_pass_id,
+            lat=lat, lon=lon, acq_epoch=acq_epoch, frp=frp,
+            data=data, now=now,
+        )
+        if wire is not None:
+            return wire
+        # No growth broadcast; opportunistically run halt detector for
+        # OTHER fires that may have gone idle.
+        return _maybe_emit_halt(conn, data=data, now=now)
 
     # 0 matches -- run cluster detection.
-    return _maybe_emit_cluster(
+    wire = _maybe_emit_cluster(
         conn, lat=lat, lon=lon, acq_epoch=acq_epoch, frp=frp,
         data=data, now=now, this_pixel_id=pixel_row_id,
     )
+    if wire is not None:
+        return wire
+    return _maybe_emit_halt(conn, data=data, now=now)
 
 
 def _recompute_centroid_and_stamp(conn, irwin_id: str, *,
@@ -554,3 +570,227 @@ def _pass_id(satellite, acq_epoch) -> str:
     except (TypeError, ValueError):
         bucket = 0
     return f"{satellite}-{bucket}"
+
+
+
+# ============================================================================
+# v0.7-fire-tracker-2: per-pass tracking + drift + growth + halt
+# ============================================================================
+#
+# _handle_pass_boundary is called from _attribute_or_cluster after the
+# Phase 1 attribution path inserts a fire_pixels row. Its job is to:
+#   (1) UPSERT the fire_passes row for (irwin_id, this_pass_id) with the
+#       running median + count + frp + started/ended_at across every
+#       fire_pixels row currently tagged with that pass_id.
+#   (2) On boundary (this_pass_id != fires.last_pass_id), walk back to
+#       the prior pass's centroid, compute Haversine drift + 8-way
+#       direction + mi/h speed, stamp those onto the current pass's row,
+#       update fires.last_pass_id / last_pass_at / current_centroid_*,
+#       and fire wildfire_growth when drift >= the configured threshold.
+#
+# _maybe_emit_halt runs on every pixel arrival as a fallback when neither
+# growth nor cluster has produced a wire. It SELECTs at most one fire
+# meeting the halt criteria, latches halt_broadcast_at, and returns the
+# wire. A subsequent attributed pixel will UPDATE fires.last_pass_at to
+# a recent value, making the fire re-eligible for halt if it goes idle
+# again (the detector filter is halt_broadcast_at IS NULL OR
+# halt_broadcast_at < last_pass_at).
+
+
+def _handle_pass_boundary(conn, *, irwin_id, pass_id, lat, lon,
+                            acq_epoch, frp, data, now):
+    """Maintain fire_passes row, detect boundary, fire growth on drift."""
+    # (1) Recompute the pass aggregate from fire_pixels.
+    pass_rows = conn.execute(
+        "SELECT lat, lon, frp, acq_time FROM fire_pixels "
+        "WHERE irwin_id=? AND pass_id=? ORDER BY acq_time",
+        (irwin_id, pass_id),
+    ).fetchall()
+    if not pass_rows:
+        # Should not happen -- the caller just inserted one. Defensive.
+        return None
+    lats = sorted(r["lat"] for r in pass_rows)
+    lons = sorted(r["lon"] for r in pass_rows)
+    n = len(lats)
+    pass_centroid_lat = lats[n // 2]
+    pass_centroid_lon = lons[n // 2]
+    total_frp = sum((r["frp"] or 0.0) for r in pass_rows)
+    pass_started_at = float(min(r["acq_time"] for r in pass_rows))
+    pass_ended_at = float(max(r["acq_time"] for r in pass_rows))
+
+    # Look up the prior fire_passes row (most recent before this pass)
+    # BEFORE we upsert the current row so the lookup doesn't find itself.
+    prev = conn.execute(
+        "SELECT pass_id, pass_centroid_lat, pass_centroid_lon, "
+        "pass_ended_at FROM fire_passes "
+        "WHERE irwin_id=? AND pass_id != ? "
+        "ORDER BY pass_ended_at DESC LIMIT 1",
+        (irwin_id, pass_id),
+    ).fetchone()
+
+    # Compute drift now if we have a prior pass; we'll write it into
+    # the upserted row.
+    drift_mi = None
+    drift_direction = None
+    drift_mi_per_hour = None
+    if prev is not None:
+        drift_mi = _haversine_mi(
+            prev["pass_centroid_lat"], prev["pass_centroid_lon"],
+            pass_centroid_lat, pass_centroid_lon,
+        )
+        drift_direction = _direction_8(_bearing(
+            prev["pass_centroid_lat"], prev["pass_centroid_lon"],
+            pass_centroid_lat, pass_centroid_lon,
+        ))
+        wall_clock_hours = (pass_ended_at - prev["pass_ended_at"]) / 3600.0
+        if wall_clock_hours > 0:
+            drift_mi_per_hour = drift_mi / wall_clock_hours
+
+    # (1b) UPSERT the current pass row.
+    conn.execute(
+        "INSERT INTO fire_passes(irwin_id, pass_id, pass_centroid_lat, "
+        "pass_centroid_lon, pixel_count, total_frp, pass_started_at, "
+        "pass_ended_at, drift_mi_from_prev, drift_direction, "
+        "drift_mi_per_hour) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(irwin_id, pass_id) DO UPDATE SET "
+        "pass_centroid_lat=excluded.pass_centroid_lat, "
+        "pass_centroid_lon=excluded.pass_centroid_lon, "
+        "pixel_count=excluded.pixel_count, "
+        "total_frp=excluded.total_frp, "
+        "pass_started_at=MIN(fire_passes.pass_started_at, "
+        "                     excluded.pass_started_at), "
+        "pass_ended_at=MAX(fire_passes.pass_ended_at, "
+        "                   excluded.pass_ended_at), "
+        "drift_mi_from_prev=COALESCE(fire_passes.drift_mi_from_prev, "
+        "                            excluded.drift_mi_from_prev), "
+        "drift_direction=COALESCE(fire_passes.drift_direction, "
+        "                         excluded.drift_direction), "
+        "drift_mi_per_hour=COALESCE(fire_passes.drift_mi_per_hour, "
+        "                           excluded.drift_mi_per_hour)",
+        (irwin_id, pass_id, pass_centroid_lat, pass_centroid_lon,
+         n, total_frp if total_frp > 0 else None,
+         pass_started_at, pass_ended_at,
+         drift_mi, drift_direction, drift_mi_per_hour),
+    )
+
+    # (2) Detect boundary: compare to fires.last_pass_id.
+    fires_row = conn.execute(
+        "SELECT incident_name, last_pass_id FROM fires WHERE irwin_id=?",
+        (irwin_id,),
+    ).fetchone()
+    if fires_row is None:
+        return None
+
+    last_pass_id = fires_row["last_pass_id"]
+    # Always update fires cursor + centroid to point at the current
+    # in-progress pass.  Subsequent pixels in the same pass become same-
+    # bucket and just refine the pass row; the cursor is already there.
+    conn.execute(
+        "UPDATE fires SET last_pass_id=?, last_pass_at=?, "
+        "current_centroid_lat=?, current_centroid_lon=? WHERE irwin_id=?",
+        (pass_id, float(acq_epoch), pass_centroid_lat,
+         pass_centroid_lon, irwin_id),
+    )
+
+    if last_pass_id == pass_id or last_pass_id is None or prev is None:
+        # No boundary (same pass), or this is the fire's first pass --
+        # nothing to compare drift against. Phase 2 silent in these cases.
+        return None
+
+    threshold = float(adapter_config.fires.growth_drift_threshold_mi)
+    if drift_mi is None or drift_mi < threshold:
+        return None
+
+    # Drift exceeded the threshold -- emit wildfire_growth.
+    if isinstance(data, dict):
+        data["category"] = "wildfire_growth"
+        data["severity"] = "priority"
+    return _render_growth_wire(
+        incident_name=fires_row["incident_name"] or "(unnamed fire)",
+        direction=drift_direction or "?",
+        speed_mph=drift_mi_per_hour or 0.0,
+        lat=pass_centroid_lat, lon=pass_centroid_lon,
+    )
+
+
+def _render_growth_wire(*, incident_name, direction, speed_mph,
+                          lat, lon):
+    """Per design doc section 4 + Phase 2 spec item 3."""
+    near_part = ""
+    try:
+        from meshai.central_normalizer import nearest_town
+        nt = nearest_town(lat, lon, max_distance_mi=100.0)
+        if nt and nt.get("name"):
+            town = nt["name"]
+            d_mi = nt.get("distance_mi")
+            if isinstance(d_mi, (int, float)):
+                near_part = f", ~{float(d_mi):.1f} mi from {town}"
+            else:
+                near_part = f" near {town}"
+    except Exception:
+        logger.exception("growth wire: nearest_town lookup failed")
+    return (
+        f"🔥 {incident_name} moving {direction} "
+        f"{speed_mph:.1f} mi/h{near_part}"
+    )
+
+
+def _maybe_emit_halt(conn, *, data, now):
+    """Find one fire matching the halt criteria, latch + broadcast.
+
+    Returns the wire string when a halt event fires; otherwise None.
+    Latching is via fires.halt_broadcast_at -- a fire that came back
+    to life (last_pass_at updated to a fresher value) becomes re-
+    eligible because we filter on `halt_broadcast_at IS NULL OR
+    halt_broadcast_at < last_pass_at`.
+    """
+    minimum_s = int(adapter_config.fires.halt_minimum_seconds)
+    cutoff = float(now) - float(minimum_s)
+    row = conn.execute(
+        "SELECT irwin_id, incident_name, last_pass_at FROM fires "
+        "WHERE tombstoned_at IS NULL "
+        "AND last_pass_at IS NOT NULL AND last_pass_at <= ? "
+        "AND (halt_broadcast_at IS NULL "
+        "     OR halt_broadcast_at < last_pass_at) "
+        "ORDER BY last_pass_at ASC LIMIT 1",
+        (cutoff,),
+    ).fetchone()
+    if row is None:
+        return None
+
+    conn.execute(
+        "UPDATE fires SET halt_broadcast_at=? WHERE irwin_id=?",
+        (float(now), row["irwin_id"]),
+    )
+    if isinstance(data, dict):
+        data["category"] = "wildfire_halted"
+        data["severity"] = "routine"
+    hours = max(0, int((float(now) - float(row["last_pass_at"])) / 3600.0))
+    name = row["incident_name"] or "(unnamed fire)"
+    return f"🔥 {name} no growth in {hours}h"
+
+
+def _bearing(lat1: float, lon1: float,
+              lat2: float, lon2: float) -> float:
+    """Initial bearing FROM point 1 TO point 2, in degrees clockwise
+    from north. Used to assign a direction to centroid drift."""
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dlon = math.radians(lon2 - lon1)
+    y = math.sin(dlon) * math.cos(phi2)
+    x = (math.cos(phi1) * math.sin(phi2)
+         - math.sin(phi1) * math.cos(phi2) * math.cos(dlon))
+    theta = math.atan2(y, x)
+    return (math.degrees(theta) + 360.0) % 360.0
+
+
+_COMPASS_8 = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+
+
+def _direction_8(bearing_deg: float) -> str:
+    """Map a 0..360 bearing to the nearest 8-way compass label.
+
+    Each sector spans 45 deg centered on a cardinal/intercardinal.
+    """
+    idx = int(((float(bearing_deg) + 22.5) % 360.0) // 45)
+    return _COMPASS_8[idx]
