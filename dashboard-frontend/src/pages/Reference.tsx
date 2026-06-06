@@ -919,7 +919,7 @@ export default function Reference() {
             <SectionHeader>How It Works</SectionHeader>
             <ol className="list-decimal list-inside ml-4 space-y-1">
               <li><strong>Something happens</strong> — a fire is detected, weather warning issued, node goes offline, etc.</li>
-              <li><strong>MeshAI checks your rules</strong> — does this event match any of your notification rules? Is it severe enough? Are we in quiet hours?</li>
+              <li><strong>MeshAI checks your rules</strong> — does this event match any of your notification rules? Is it severe enough?</li>
               <li><strong>If a rule matches</strong> — MeshAI sends the notification through whatever delivery method that rule is configured for.</li>
             </ol>
 
@@ -948,12 +948,6 @@ export default function Reference() {
             <p>
               <strong>"Warning" is the sweet spot for most rules.</strong> You get alerted when something actually needs your attention without being overwhelmed by every minor event.
             </p>
-
-            <SectionHeader>Quiet Hours</SectionHeader>
-            <p>
-              When enabled, non-emergency notifications are held during sleeping hours (default 10pm-6am). Emergency alerts and rules marked "Override Quiet Hours" always get through.
-            </p>
-            <p>You can turn quiet hours off entirely if you don't want them.</p>
 
             <SectionHeader>Webhook — The Swiss Army Knife</SectionHeader>
             <p>
