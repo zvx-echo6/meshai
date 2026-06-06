@@ -676,6 +676,8 @@ def _parse_wfigs_incidents(inner_data: dict, geo: dict) -> dict:
     irwin_id = inner_data.get("IrwinID") or inner_data.get("irwin_id")
     name = inner_data.get("IncidentName")
     itype = inner_data.get("IncidentTypeCategory")
+    if itype is not None and itype != "WF":
+        return None
     lat = inner_data.get("latitude")
     lon = inner_data.get("longitude")
     county = inner_data.get("POOCounty")

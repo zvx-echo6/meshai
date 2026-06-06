@@ -33,7 +33,7 @@ def consumer_config():
     msgs for high-volume streams like traffic_flow).
     """
     from nats.js.api import ConsumerConfig, DeliverPolicy
-    return ConsumerConfig(deliver_policy=DeliverPolicy.NEW)
+    return ConsumerConfig(deliver_policy=DeliverPolicy.LAST_PER_SUBJECT)
 
 
 # Bare-wildcard subjects, pre-v0.9.20. Still used when `central.region` is
