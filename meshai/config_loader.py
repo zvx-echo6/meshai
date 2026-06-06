@@ -160,6 +160,104 @@ def _load_yaml_with_includes(file_path: Path) -> dict:
         _loading_files.discard(file_path)
 
 
+# ---- v0.6-tail-4: !include-preserving load/dump for save_section ----------
+#
+# save_section() needs to re-read target_path off disk so it can preserve
+# secret-ref placeholders and existing keys for sections that share a file.
+# When target_path is config.yaml (the orchestrator) the file contains
+# !include directives for OTHER sections; plain yaml.safe_load can't parse
+# those and the whole save fails. We can't use _load_yaml_with_includes
+# because that would substitute the included files in, and then the
+# subsequent yaml.dump would flatten them onto disk -- losing the
+# multi-file layout permanently the first time anyone PUTs an inline
+# section like `bot`. Instead we read with a loader that returns an
+# Include() placeholder for each !include node, and dump with a dumper
+# that re-emits Include(path) as `!include path`. The round-trip is
+# byte-stable for the include directives, and the non-include sections
+# (which is everything save_section actually mutates) just round-trip as
+# plain dict/list.
+
+
+class Include:
+    """Placeholder preserving an !include directive across read/write."""
+
+    __slots__ = ("path",)
+
+    def __init__(self, path: str):
+        self.path = path
+
+    def __repr__(self) -> str:
+        return f"Include({self.path!r})"
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, Include) and self.path == other.path
+
+    def __hash__(self) -> int:
+        return hash(("Include", self.path))
+
+
+def _make_preserve_loader():
+    """SafeLoader subclass that returns Include() for !include scalars.
+
+    Unlike _make_include_loader, this does NOT recurse into the
+    referenced file -- it keeps the directive intact so a subsequent
+    dump can emit it back to disk verbatim.
+    """
+
+    class PreserveLoader(yaml.SafeLoader):
+        pass
+
+    def construct_include(loader: PreserveLoader, node: yaml.Node) -> Include:
+        return Include(loader.construct_scalar(node))
+
+    PreserveLoader.add_constructor("!include", construct_include)
+    return PreserveLoader
+
+
+def _make_preserve_dumper():
+    """SafeDumper subclass that renders Include() back as `!include path`."""
+
+    class PreserveDumper(yaml.SafeDumper):
+        pass
+
+    def represent_include(dumper: PreserveDumper, data: Include):
+        # style="" forces plain (unquoted) scalar so the output matches
+        # the prod on-disk convention `!include foo.yaml` rather than
+        # PyYAML's auto-picked `!include 'foo.yaml'`. The runtime loader
+        # parses both, but we want the round-trip to be byte-stable.
+        return dumper.represent_scalar("!include", data.path, style="")
+
+    PreserveDumper.add_representer(Include, represent_include)
+    return PreserveDumper
+
+
+def _load_yaml_preserve(file_path: Path):
+    """Read a YAML file, keeping !include nodes as Include placeholders.
+
+    Returns {} for missing files (matches the runtime loader's contract).
+    """
+    if not Path(file_path).exists():
+        return {}
+    Loader = _make_preserve_loader()
+    with open(file_path, "r") as f:
+        return yaml.load(f, Loader=Loader) or {}
+
+
+def _dump_yaml_preserve(data, file_path: Path) -> None:
+    """Write a YAML file, re-emitting Include() as `!include path`."""
+    Dumper = _make_preserve_dumper()
+    with open(file_path, "w") as f:
+        yaml.dump(
+            data,
+            f,
+            Dumper=Dumper,
+            default_flow_style=False,
+            sort_keys=False,
+            allow_unicode=True,
+        )
+
+
+
 # =============================================================================
 # ENVIRONMENT VARIABLE INTERPOLATION
 # =============================================================================
@@ -587,8 +685,10 @@ def save_section(
     _raw_on_disk = {}
     if target_path.exists():
         try:
-            with open(target_path) as _rf:
-                _raw_on_disk = yaml.safe_load(_rf) or {}
+            # v0.6-tail-4: read with Include() preservation so config.yaml
+            # (which has !include directives for sibling sections) parses
+            # without choking. Plain yaml.safe_load used to die here.
+            _raw_on_disk = _load_yaml_preserve(target_path) or {}
         except Exception:
             _raw_on_disk = {}
     if target_file in ("meshtastic.yaml", "config.yaml") and isinstance(_raw_on_disk, dict):
@@ -680,10 +780,10 @@ def save_section(
         data = check_secrets(data)
         domain_data, local_updates = _extract_local_fields(section_name, data)
 
-    # Load existing target file
+    # Load existing target file (v0.6-tail-4: preserve !include directives
+    # for inline-section saves to config.yaml; safe_load would crash).
     if target_path.exists():
-        with open(target_path, "r") as f:
-            existing = yaml.safe_load(f) or {}
+        existing = _load_yaml_preserve(target_path) or {}
     else:
         existing = {}
 
@@ -697,9 +797,10 @@ def save_section(
         # For dedicated files, the whole file IS the section
         existing = domain_data
 
-    # Write domain file
-    with open(target_path, "w") as f:
-        yaml.dump(existing, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    # Write domain file (v0.6-tail-4: preserve dumper re-emits Include()
+    # placeholders as `!include path` so multi-file layouts survive the
+    # round-trip. Plain yaml.dump would crash on Include objects.)
+    _dump_yaml_preserve(existing, target_path)
     files_written.append(str(target_path))
     _logger.info(f"Saved {section_name} to {target_path}")
 
