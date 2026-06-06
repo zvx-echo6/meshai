@@ -277,7 +277,7 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     },
 
     # =================================================================
-    # FIRES -- 6 settings (Phase 1 radius + Phase 2 growth/halt + Phase 3 spotting)
+    # FIRES -- 10 settings (P1 radius + P2 growth/halt + P3 spotting + P4 digest)
     # =================================================================
     # Per-fire spread radius override lives in fires.spread_radius_mi;
     # the value below is the fallback. v0.7-fire-1 shipped 5 mi based on
@@ -340,6 +340,34 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "default": 3600,
         "type": "int",
         "description": "Minimum seconds between consecutive wildfire_spotting broadcasts for the same fire; suppresses rapid-ember spam.",
+    },
+    # v0.7-fire-4 -- daily fire digest scheduled broadcaster.
+    # digest_enabled: master switch. Off by default for prod safety;
+    # flip via GUI once the digest wording is dialed in.
+    ("fires", "digest_enabled"): {
+        "default": True,
+        "type": "bool",
+        "description": "Whether the fire-digest scheduler broadcasts at the configured slots. Off => no broadcasts even if all other config is valid.",
+    },
+    # digest_schedule: list of HH:MM strings, local-time per digest_timezone.
+    # Mirrors band_conditions_schedule shape so operators can reason
+    # about the two side-by-side.
+    ("fires", "digest_schedule"): {
+        "default": ["06:00", "18:00"],
+        "type": "json",
+        "description": "Local-time HH:MM slots for the fire-digest broadcast (list of strings). Honor digest_timezone for wall-clock semantics.",
+    },
+    ("fires", "digest_timezone"): {
+        "default": "America/Boise",
+        "type": "str",
+        "description": "IANA tz used to interpret digest_schedule.",
+    },
+    # digest_max_chars: mesh wire cap. The LLM is told to fit under this.
+    # Reuses the response.max_length chunking if the LLM ignores the cap.
+    ("fires", "digest_max_chars"): {
+        "default": 200,
+        "type": "int",
+        "description": "Hard cap on the digest wire string length (chars). The LLM prompt asks to fit; the chunker enforces.",
     },
 
     # =================================================================

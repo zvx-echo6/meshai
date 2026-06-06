@@ -28,6 +28,7 @@ from meshai.notifications.channels import create_channel
 from meshai.notifications.pipeline.bus import EventBus, get_bus
 from meshai.notifications.pipeline.dispatcher import Dispatcher
 try:
+    from meshai.notifications.scheduled.fire_digest import FireDigestScheduler
     from meshai.notifications.scheduled.band_conditions import (
         BandConditionsScheduler,
     )
@@ -230,6 +231,22 @@ async def start_pipeline(bus: EventBus, config) -> DigestScheduler:
             import logging as _lg
             _lg.getLogger("meshai.pipeline").exception(
                 "band_conditions scheduler failed to start")
+
+    # v0.7-fire-tracker-4 FireDigestScheduler -- twice-daily fire digest.
+    if FireDigestScheduler is not None:
+        try:
+            comps = getattr(bus, "_pipeline_components", {}) or {}
+            disp = comps.get("dispatcher")
+            llm_backend = comps.get("llm_backend")
+            if disp is not None:
+                fd_sched = FireDigestScheduler(disp, llm_backend)
+                await fd_sched.start()
+                comps["fire_digest_scheduler"] = fd_sched
+                bus._pipeline_components = comps
+        except Exception:
+            import logging as _lg
+            _lg.getLogger("meshai.pipeline").exception(
+                "fire_digest scheduler failed to start")
 
     # v0.6-phase3 ReminderScheduler -- runs alongside band_conditions.
     if ReminderScheduler is not None:

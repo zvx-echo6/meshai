@@ -88,6 +88,15 @@ class MeshAI:
         # now that we are inside the running event loop.
         if self.event_bus is not None:
             from .notifications.pipeline import start_pipeline
+            # v0.7-fire-tracker-4 llm_backend hook: surface the LLM into
+            # the pipeline components dict BEFORE start_pipeline spawns the
+            # scheduled broadcasters. FireDigestScheduler reads this.
+            try:
+                comps = getattr(self.event_bus, "_pipeline_components", {}) or {}
+                comps["llm_backend"] = self.llm
+                self.event_bus._pipeline_components = comps
+            except Exception:
+                logger.exception("could not seed llm_backend into pipeline components")
             self._pipeline_scheduler = await start_pipeline(self.event_bus, self.config)
             logger.info("Notification pipeline started")
 

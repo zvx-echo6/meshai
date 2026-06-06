@@ -373,6 +373,16 @@ class MessageRouter:
         if not query:
             return RouteResult(RouteType.IGNORE)
 
+        # v0.7-fire-tracker-4: ?status <fire_name> intent.
+        # Matches the leading "?status" sigil or a bare "status <name>";
+        # falls through to the normal LLM path on no match. We do the
+        # fire lookup here but return RouteType.LLM with a synthesized
+        # query so generate_llm_response runs the normal injection +
+        # chunking path with the fire's context attached.
+        status_query = _maybe_rewrite_status_query(query, self)
+        if status_query is not None:
+            return RouteResult(RouteType.LLM, query=status_query)
+
         # Route to LLM
         return RouteResult(RouteType.LLM, query=query)
 
@@ -682,7 +692,9 @@ class MessageRouter:
                 cmd_lines.append("")
                 cmd_lines.append(
                     "CRITICAL: ONLY mention commands in the list above when asked about commands. "
-                    "If a command is not listed here, it does NOT exist. Do not invent commands."
+                    "If a command is not listed here, it does NOT exist. Do not invent commands. "
+                    "If no command list appears above, you have NO commands -- say so plainly "
+                    "instead of guessing names."
                 )
                 system_prompt += "\n".join(cmd_lines)
 
@@ -739,6 +751,26 @@ class MessageRouter:
 
         should_inject_mesh = is_direct_mesh_question or is_followup
 
+        # v0.7-fire-tracker-4: scope detection hoisted above its first
+        # use. Pre-fix, the env_reporter check below referenced scope_type
+        # while the assignment lived ~15 lines later inside the
+        # source_manager branch -- UnboundLocalError on every env query
+        # ("are there any fires?", "what's the weather?", etc.), the
+        # exception got caught in main.py and the bot went silent.
+        scope_type: str = "mesh"
+        scope_value = None
+        if should_inject_mesh:
+            scope_type, scope_value = self._detect_mesh_scope(query)
+            # For follow-ups with no detected scope, use previous scope.
+            if is_followup and scope_type == "mesh" and scope_value is None:
+                prev_scope = user_ctx.get("last_scope", ("mesh", None))
+                if prev_scope[0] != "mesh" or prev_scope[1] is not None:
+                    scope_type, scope_value = prev_scope
+                    logger.debug(
+                        f"Using previous scope for follow-up: "
+                        f"{scope_type}, {scope_value}"
+                    )
+
         # v0.6-5 env_reporter: when scope is "env" OR when injecting mesh
         # context, append the env_reporter blocks. The reporter itself gates
         # per-adapter via adapter_meta.include_in_llm_context.
@@ -757,15 +789,8 @@ class MessageRouter:
                 logger.exception("env_reporter injection failed")
 
         if self.source_manager and self.mesh_reporter and should_inject_mesh:
-            # Detect scope from current message
-            scope_type, scope_value = self._detect_mesh_scope(query)
-
-            # For follow-ups with no detected scope, use previous scope
-            if is_followup and scope_type == "mesh" and scope_value is None:
-                prev_scope = user_ctx.get("last_scope", ("mesh", None))
-                if prev_scope[0] != "mesh" or prev_scope[1] is not None:
-                    scope_type, scope_value = prev_scope
-                    logger.debug(f"Using previous scope for follow-up: {scope_type}, {scope_value}")
+            # v0.7-fire-tracker-4: scope already detected above; no
+            # second call needed.
 
             # Always include Tier 1 summary for mesh questions
             tier1 = self.mesh_reporter.build_tier1_summary()
@@ -933,3 +958,145 @@ class MessageRouter:
             history=self.history,
         )
 
+
+
+
+# ============================================================================
+# v0.7-fire-tracker-4: ?status <fire> intent helper
+# ============================================================================
+
+
+_STATUS_PREFIXES = ("?status ", "status ", "?status:", "status:")
+
+
+def _maybe_rewrite_status_query(query: str, router) -> "Optional[str]":
+    """If `query` looks like a fire status request, rewrite it with the
+    fire's persisted context inlined. Return None to let the normal LLM
+    path handle the message verbatim.
+
+    Triggers on the leading word patterns in _STATUS_PREFIXES OR an
+    interrogative referencing a known fire (e.g. "how is the X fire?").
+    """
+    q = query.strip()
+    ql = q.lower()
+    target_phrase = None
+    for prefix in _STATUS_PREFIXES:
+        if ql.startswith(prefix):
+            target_phrase = q[len(prefix):].strip()
+            break
+
+    if target_phrase is None:
+        # Heuristic for "how is <name> fire?" style without a sigil.
+        triggers = ("how is ", "tell me about ", "status of ",
+                    "what about ", "any update on ")
+        for t in triggers:
+            if ql.startswith(t):
+                target_phrase = q[len(t):].rstrip("?!. ").strip()
+                if "fire" in target_phrase.lower():
+                    break
+                target_phrase = None
+        if target_phrase is None:
+            return None
+
+    if not target_phrase:
+        return None
+
+    fire = _lookup_fire_fuzzy(target_phrase)
+    if fire is None:
+        # No match -- leave the query alone; the LLM with env_reporter
+        # injection may still answer reasonably.
+        return None
+
+    context = _build_fire_status_context(fire)
+    return (
+        f"User asked for the status of {fire['incident_name']}. "
+        f"Reply with ONE short paragraph (<= 300 chars total) for mesh "
+        f"radio operators. No markdown.\n\n"
+        f"FIRE DATA:\n{context}\n\n"
+        f"Original question: {query}"
+    )
+
+
+def _lookup_fire_fuzzy(phrase: str):
+    """Find a fire whose incident_name fuzzy-matches phrase. Returns the
+    sqlite3.Row or None.
+
+    Match priority: exact (case-insensitive) -> startswith ->
+    contains -> word-overlap. Active fires (tombstoned_at IS NULL)
+    rank above closed ones."""
+    from meshai.persistence import get_db
+    conn = get_db()
+    phrase_l = phrase.lower().strip().rstrip("?!.").rstrip()
+    # Drop trailing " fire" so "cache peak fire" matches "Cache Peak".
+    if phrase_l.endswith(" fire"):
+        phrase_l = phrase_l[:-5].strip()
+
+    candidates = conn.execute(
+        "SELECT irwin_id, incident_name, current_acres, "
+        "current_contained_pct, state, county, "
+        "tombstoned_at, last_pass_at "
+        "FROM fires "
+        "ORDER BY (tombstoned_at IS NULL) DESC, "
+        "COALESCE(current_acres, 0) DESC",
+    ).fetchall()
+    if not candidates:
+        return None
+
+    # Tier 1: exact match.
+    for c in candidates:
+        if (c["incident_name"] or "").lower() == phrase_l:
+            return c
+    # Tier 2: startswith.
+    for c in candidates:
+        if (c["incident_name"] or "").lower().startswith(phrase_l):
+            return c
+    # Tier 3: contains.
+    for c in candidates:
+        if phrase_l in (c["incident_name"] or "").lower():
+            return c
+    # Tier 4: word-overlap (>= 1 token).
+    tokens = set(phrase_l.split())
+    if tokens:
+        best = None
+        best_overlap = 0
+        for c in candidates:
+            name_tokens = set((c["incident_name"] or "").lower().split())
+            overlap = len(tokens & name_tokens)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best = c
+        if best is not None and best_overlap > 0:
+            return best
+    return None
+
+
+def _build_fire_status_context(fire) -> str:
+    """Compose the context block for the status query LLM prompt."""
+    from meshai.persistence import get_db
+    conn = get_db()
+    passes = conn.execute(
+        "SELECT pass_id, drift_mi_from_prev, drift_direction, "
+        "drift_mi_per_hour, pixel_count, pass_ended_at "
+        "FROM fire_passes WHERE irwin_id=? "
+        "ORDER BY pass_ended_at DESC LIMIT 3",
+        (fire["irwin_id"],),
+    ).fetchall()
+    lines = [
+        f"name: {fire['incident_name']}",
+        f"acres: {fire['current_acres'] or 0}",
+        f"contained: {fire['current_contained_pct'] or 0}%",
+        f"county/state: {fire['county'] or '?'}/{fire['state'] or '?'}",
+        f"closed: {bool(fire['tombstoned_at'])}",
+    ]
+    if passes:
+        lines.append("recent passes (newest first):")
+        for p in passes:
+            drift = ""
+            if (p["drift_mi_from_prev"] is not None
+                    and p["drift_direction"] is not None):
+                drift = (f", drift {p['drift_mi_from_prev']:.1f}mi "
+                          f"{p['drift_direction']}")
+            lines.append(
+                f"  - pass {p['pass_id']}: {p['pixel_count']} pixel(s)"
+                f"{drift}")
+    return "\n".join(lines)
