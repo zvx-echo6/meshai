@@ -30,6 +30,22 @@ interface EnvConfig {
   central?: { enabled: boolean; url: string; durable: string; region: string }
 }
 
+// WFIGS adapter config shape
+interface WfigsConfig {
+  freshness_seconds: number
+  cooldown_seconds: number
+  broadcast_on_acres: boolean
+  broadcast_on_contained: boolean
+}
+
+// Fires adapter config shape (digest settings)
+interface FiresConfig {
+  digest_enabled: boolean
+  digest_schedule: string[]
+  digest_timezone: string
+}
+
+
 type FeedHealth = EnvStatus['feeds'][number]
 
 // ---------------------------------------------------------------- status cards
@@ -195,6 +211,22 @@ export default function Environment() {
   const [family, setFamily] = useState('weather')
   const [adapter, setAdapter] = useState<AdapterKey | null>('nws')
 
+  // WFIGS/fires adapter config state
+  const [wfigsConfig, setWfigsConfig] = useState<WfigsConfig>({
+    freshness_seconds: 0,
+    cooldown_seconds: 28800,
+    broadcast_on_acres: true,
+    broadcast_on_contained: true,
+  })
+  const [wfigsOriginal, setWfigsOriginal] = useState<string>("")
+  const [firesConfig, setFiresConfig] = useState<FiresConfig>({
+    digest_enabled: true,
+    digest_schedule: ["06:00", "18:00"],
+    digest_timezone: "America/Boise",
+  })
+  const [firesOriginal, setFiresOriginal] = useState<string>("")
+
+
   useEffect(() => {
     document.title = 'Environment — MeshAI'
     ;(async () => {
@@ -203,6 +235,38 @@ export default function Environment() {
         const data = await res.json()
         setEnv(data)
         setOriginal(JSON.stringify(data))
+
+        // Load adapter-config for wfigs
+        try {
+          const wfigsRes = await fetch("/api/adapter-config/wfigs")
+          if (wfigsRes.ok) {
+            const wfigsData = await wfigsRes.json()
+            const cfg: WfigsConfig = {
+              freshness_seconds: wfigsData.freshness_seconds?.value ?? 0,
+              cooldown_seconds: wfigsData.cooldown_seconds?.value ?? 28800,
+              broadcast_on_acres: wfigsData.broadcast_on_acres?.value ?? true,
+              broadcast_on_contained: wfigsData.broadcast_on_contained?.value ?? true,
+            }
+            setWfigsConfig(cfg)
+            setWfigsOriginal(JSON.stringify(cfg))
+          }
+        } catch { /* adapter-config optional */ }
+
+        // Load adapter-config for fires (digest settings)
+        try {
+          const firesRes = await fetch("/api/adapter-config/fires")
+          if (firesRes.ok) {
+            const firesData = await firesRes.json()
+            const cfg: FiresConfig = {
+              digest_enabled: firesData.digest_enabled?.value ?? true,
+              digest_schedule: firesData.digest_schedule?.value ?? ["06:00", "18:00"],
+              digest_timezone: firesData.digest_timezone?.value ?? "America/Boise",
+            }
+            setFiresConfig(cfg)
+            setFiresOriginal(JSON.stringify(cfg))
+          }
+        } catch { /* adapter-config optional */ }
+
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load config')
       } finally {
@@ -223,22 +287,75 @@ export default function Environment() {
     return () => clearInterval(t)
   }, [])
 
-  const hasChanges = env !== null && JSON.stringify(env) !== original
+  const hasEnvChanges = env !== null && JSON.stringify(env) !== original
+  const hasWfigsChanges = JSON.stringify(wfigsConfig) !== wfigsOriginal
+  const hasFiresChanges = JSON.stringify(firesConfig) !== firesOriginal
+  const hasChanges = hasEnvChanges || hasWfigsChanges || hasFiresChanges
 
-  const save = async () => {
+  
+  const saveAdapterConfig = async (adapterName: string, key: string, value: unknown) => {
+    const res = await fetch(`/api/adapter-config/${adapterName}/${key}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `Failed to save ${adapterName}.${key}`)
+    }
+  }
+
+const save = async () => {
     if (!env) return
     setSaving(true); setError(null); setSuccess(null)
     try {
-      const res = await fetch('/api/config/environmental', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(env),
-      })
-      const result = await res.json()
-      if (!res.ok) throw new Error(result.detail || 'Save failed')
-      setOriginal(JSON.stringify(env))
-      setSuccess('Environmental config saved')
-      if (result.restart_required) setRestartRequired(true)
+      // Save environmental config
+      if (hasEnvChanges) {
+        const res = await fetch('/api/config/environmental', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(env),
+        })
+        const result = await res.json()
+        if (!res.ok) throw new Error(result.detail || 'Save failed')
+        setOriginal(JSON.stringify(env))
+        if (result.restart_required) setRestartRequired(true)
+      }
+
+      // Save wfigs adapter config changes
+      if (hasWfigsChanges) {
+        const orig = JSON.parse(wfigsOriginal) as WfigsConfig
+        if (wfigsConfig.freshness_seconds !== orig.freshness_seconds) {
+          await saveAdapterConfig("wfigs", "freshness_seconds", wfigsConfig.freshness_seconds)
+        }
+        if (wfigsConfig.cooldown_seconds !== orig.cooldown_seconds) {
+          await saveAdapterConfig("wfigs", "cooldown_seconds", wfigsConfig.cooldown_seconds)
+        }
+        if (wfigsConfig.broadcast_on_acres !== orig.broadcast_on_acres) {
+          await saveAdapterConfig("wfigs", "broadcast_on_acres", wfigsConfig.broadcast_on_acres)
+        }
+        if (wfigsConfig.broadcast_on_contained !== orig.broadcast_on_contained) {
+          await saveAdapterConfig("wfigs", "broadcast_on_contained", wfigsConfig.broadcast_on_contained)
+        }
+        setWfigsOriginal(JSON.stringify(wfigsConfig))
+      }
+
+      // Save fires adapter config changes (digest)
+      if (hasFiresChanges) {
+        const orig = JSON.parse(firesOriginal) as FiresConfig
+        if (firesConfig.digest_enabled !== orig.digest_enabled) {
+          await saveAdapterConfig("fires", "digest_enabled", firesConfig.digest_enabled)
+        }
+        if (JSON.stringify(firesConfig.digest_schedule) !== JSON.stringify(orig.digest_schedule)) {
+          await saveAdapterConfig("fires", "digest_schedule", firesConfig.digest_schedule)
+        }
+        if (firesConfig.digest_timezone !== orig.digest_timezone) {
+          await saveAdapterConfig("fires", "digest_timezone", firesConfig.digest_timezone)
+        }
+        setFiresOriginal(JSON.stringify(firesConfig))
+      }
+
+      setSuccess('Config saved')
       setTimeout(() => setSuccess(null), 3000)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed')
@@ -247,7 +364,11 @@ export default function Environment() {
     }
   }
 
-  const discard = () => { if (env) setEnv(JSON.parse(original)) }
+  const discard = () => {
+    if (env) setEnv(JSON.parse(original))
+    setWfigsConfig(JSON.parse(wfigsOriginal || JSON.stringify(wfigsConfig)))
+    setFiresConfig(JSON.parse(firesOriginal || JSON.stringify(firesConfig)))
+  }
   const restart = async () => {
     try { await fetch('/api/restart', { method: 'POST' }); setRestartRequired(false); setSuccess('Restart initiated') }
     catch { setError('Restart failed') }
