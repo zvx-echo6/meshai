@@ -145,6 +145,11 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
             ),
         )
         wire = _render(normalized, prefix="New")
+        # v0.7-fire-tracker-1: tag first-sight broadcasts with the new
+        # wildfire_declared category so the dispatcher rules them apart
+        # from acres/containment updates (wildfire_incident).
+        if isinstance(data, dict):
+            data["category"] = "wildfire_declared"
         _attach_commit_handles(data, irwin_id=irwin_id,
                                  acres=acres, contained_pct=contained_pct,
                                  event_log_row_id=log_id)
@@ -160,6 +165,11 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
              normalized.get("lon"), now, irwin_id),
         )
         wire = _render(normalized, prefix="New")
+        # v0.7-fire-tracker-1: case-(ii) is also first-sight as far as
+        # broadcast history goes -- the row exists because some prior
+        # handler call ran but no actual broadcast went out.
+        if isinstance(data, dict):
+            data["category"] = "wildfire_declared"
         _attach_commit_handles(data, irwin_id=irwin_id,
                                  acres=acres, contained_pct=contained_pct,
                                  event_log_row_id=log_id)

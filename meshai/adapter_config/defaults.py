@@ -277,8 +277,21 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     },
 
     # =================================================================
-    # FIRMS -- 4 settings (confidence floor + FRP floor + spatial bbox +
-    #         dedup quantization distance in METERS)
+    # FIRES -- 1 setting (default attribution radius for FIRMS -> fire matching)
+    # =================================================================
+    # Per-fire override lives in the fires.spread_radius_mi column; this
+    # is the global default used when that column is NULL. v0.7-fire-1
+    # ships with 5 mi based on the design doc's open question #1
+    # ("Spread radius default. Start with 5 mi per fire?"). Tune from
+    # operations once we have a week of observed attribution rates.
+    ("fires", "spread_radius_mi_default"): {
+        "default": 5.0,
+        "type": "float",
+        "description": "Default attribution radius for FIRMS hotspot -> fire matching, miles. Per-fire override in fires.spread_radius_mi.",
+    },
+
+    # =================================================================
+    # FIRMS -- 7 settings (storage floors + dedup + 3 v0.7 cluster knobs)
     # =================================================================
     ("firms", "confidence_floor"): {
         "default": "low",                   # firms_handler.py FIRMS_CONFIDENCE_FLOOR
@@ -305,6 +318,29 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "default": 5,
         "type": "int",
         "description": "Distance in meters within which two FIRMS pixel observations from the same satellite + acquisition time are considered duplicates.",
+    },
+
+    # ---- v0.7-fire-tracker-1 unattributed-cluster knobs ----
+    # On every FIRMS pixel that fails attribution to any known fire, the
+    # handler asks: "are there enough other unattributed pixels nearby
+    # right now to suggest a new ignition?" The three knobs below define
+    # "enough", "nearby", and "right now". Defaults match design doc
+    # open question #6 ("3 pixels within 1 mi") -- tune from ops once we
+    # have false-positive data.
+    ("firms", "cluster_min_pixels"): {
+        "default": 3,
+        "type": "int",
+        "description": "Minimum unattributed pixels within cluster_max_radius_mi over cluster_time_window_minutes to fire an unattributed_hotspot_cluster broadcast.",
+    },
+    ("firms", "cluster_max_radius_mi"): {
+        "default": 1.0,
+        "type": "float",
+        "description": "Spatial radius (miles) defining a candidate hotspot cluster.",
+    },
+    ("firms", "cluster_time_window_minutes"): {
+        "default": 60,
+        "type": "int",
+        "description": "Temporal window (minutes); unattributed pixels older than this don't count toward a new cluster.",
     },
 
     # =================================================================
@@ -425,6 +461,15 @@ ADAPTER_META: dict[str, dict[str, Any]] = {
         "include_in_llm_context": True,
         "reminder_enabled": True,
         "description": "NIFC-authoritative wildfire registry (named incidents, acres, containment).",
+    },
+    # v0.7-fire-tracker-1: "fires" is not a feed; it's the registry table
+    # populated by WFIGS first-sight + FIRMS attribution. Surfacing it as
+    # an adapter_meta family lets the GUI show "spread radius default"
+    # alongside the per-feed knobs.
+    "fires": {
+        "display_name": "Fire registry",
+        "include_in_llm_context": True,
+        "description": "Cross-feed fire registry: WFIGS declares them; FIRMS pixels grow them. spread_radius_mi_default tunes the attribution gate.",
     },
     "firms": {
         "display_name": "FIRMS satellite hotspots",

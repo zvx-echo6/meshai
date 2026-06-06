@@ -314,6 +314,32 @@ ALERT_CATEGORIES = {
         "example_message": "🛰 New Ignition: Satellite fire at 42.32°N, 114.30°W — high confidence, 47 MW FRP. Not near any known fire.",
         "toggle": "fire",
     },
+    # v0.7-fire-tracker-1: WFIGS first-sight of a declared incident. The
+    # WFIGS handler tags the data dict with this category on cases (i)
+    # and (ii) -- INSERT or row-exists-but-never-broadcast. Subsequent
+    # Update broadcasts (case iii) keep the existing wildfire_incident
+    # category so the dispatcher can rule them separately.
+    "wildfire_declared": {
+        "name": "Wildfire Declared (WFIGS first sight)",
+        "description": "WFIGS published a new IRWIN incident -- the first time meshai has seen this declared fire. Subsequent acreage/containment updates fall under wildfire_incident.",
+        "default_severity": "priority",
+        "example_message": "🔥 New: Cache Peak Fire (WF), 3 mi N of Almo: 250 ac, 0% contained, @ 42.118,-113.643",
+        "toggle": "fire",
+    },
+    # v0.7-fire-tracker-1: 3+ FIRMS pixels cluster within 1 mi over a 60
+    # min window with no WFIGS-declared fire to attribute to. This is the
+    # "possible new fire" early-warning category -- FIRMS sees the heat
+    # well before NIFC publishes the incident. Knobs in adapter_config:
+    #   firms.cluster_min_pixels (3)
+    #   firms.cluster_max_radius_mi (1.0)
+    #   firms.cluster_time_window_minutes (60)
+    "unattributed_hotspot_cluster": {
+        "name": "Unattributed Hotspot Cluster (possible new fire)",
+        "description": "3+ FIRMS satellite hotspots clustered within a small radius with no matching WFIGS incident. Possible new ignition; the cluster broadcast fires once per cluster (member pixels are marked covered so a 4th arrival does not re-trigger).",
+        "default_severity": "priority",
+        "example_message": "🔥 Possible new fire: 3 hotspots within 1 mi @ 42.93,-114.45 (combined 78 MW)",
+        "toggle": "fire",
+    },
     "wildfire_hotspot": {
         "name": "Wildfire Hotspot",
         "description": "Satellite thermal-anomaly detection (NASA FIRMS VIIRS/MODIS pixel) — not necessarily a new ignition",

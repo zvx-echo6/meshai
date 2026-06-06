@@ -1,4 +1,4 @@
-"""v0.6-1 FIRMS hotspot handler -- STORAGE ONLY (no mesh broadcasts).
+"""v0.7-fire-tracker-1 FIRMS handler -- storage + attribution + cluster broadcast.
 
 Pre-v0.6-1 the v0.5.13 default-deny gate at consumer._normalize() silently
 dropped every `central.fire.hotspot.>` envelope because no per-adapter handler
@@ -63,6 +63,7 @@ from __future__ import annotations
 from meshai.adapter_config import adapter_config
 
 import logging
+import math
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -239,8 +240,20 @@ def handle_firms(envelope: dict, subject: str,
                 table_name="firms_pixels" if stored else None,
                 table_pk=(str(cur.lastrowid) if stored else None))
 
-    # STORAGE-ONLY: never broadcast.
-    return None
+    # ---- v0.7-fire-tracker-1: attribution + cluster -------------------
+    # Dedup hits skip attribution -- the original insert already had its
+    # chance. Only newly-stored pixels run through here.
+    if not stored:
+        return None
+
+    return _attribute_or_cluster(
+        conn,
+        pixel_row_id=int(cur.lastrowid),
+        lat=lat, lon=lon,
+        acq_epoch=acq_epoch,
+        frp=frp, satellite=satellite,
+        data=data, now=now,
+    )
 
 
 # ============================================================================
@@ -319,3 +332,225 @@ def _log_event(conn, *, now, source, category, severity_word,
         (now, source, category, severity_word, event_id_external, subject,
          int(bool(handled)), table_name, table_pk),
     )
+
+
+
+# ============================================================================
+# v0.7-fire-tracker-1: attribution + unattributed-cluster detection
+# ============================================================================
+#
+# Attribution: a FIRMS pixel is matched to a fire when it lies within the
+# fire's spread radius (per-fire override or global default). The match is
+# nearest-centroid on ties. Successfully attributed pixels append to
+# fire_pixels and update fires.last_hotspot_at + fires.current_centroid_*
+# (median of last 24h of pixels for that fire).
+#
+# Cluster detection: if NO fire matches, the pixel is "unattributed". We
+# query firms_pixels for OTHER recent unattributed pixels within a small
+# radius (cluster_max_radius_mi over cluster_time_window_minutes). If the
+# count (including this pixel) reaches cluster_min_pixels AND none of
+# them has cluster_broadcast_at set, fire a single broadcast and stamp
+# cluster_broadcast_at on every member. A subsequent pixel arriving in
+# the same cluster will find the stamp and stay silent.
+
+
+def _attribute_or_cluster(conn, *, pixel_row_id, lat, lon, acq_epoch,
+                            frp, satellite, data, now):
+    """Try attribution; on miss, run cluster check. Returns wire str | None."""
+    global_default_mi = float(adapter_config.fires.spread_radius_mi_default)
+    # Conservative bbox prefilter: take the larger of the global default
+    # and 10 mi so a per-fire override beyond the default doesn't get
+    # quietly excluded. Real Haversine done after.
+    search_mi = max(global_default_mi, 10.0)
+    deg_lat = search_mi / 69.0
+    cos_lat = max(0.01, math.cos(math.radians(lat)))
+    deg_lon = search_mi / (69.0 * cos_lat)
+
+    candidates = conn.execute(
+        "SELECT irwin_id, lat AS anchor_lat, lon AS anchor_lon, "
+        "current_centroid_lat, current_centroid_lon, spread_radius_mi "
+        "FROM fires WHERE tombstoned_at IS NULL AND ("
+        "COALESCE(current_centroid_lat, lat) BETWEEN ? AND ?) AND ("
+        "COALESCE(current_centroid_lon, lon) BETWEEN ? AND ?)",
+        (lat - deg_lat, lat + deg_lat, lon - deg_lon, lon + deg_lon),
+    ).fetchall()
+
+    attributed: list[tuple[str, float]] = []
+    for row in candidates:
+        fire_lat = (row["current_centroid_lat"]
+                    if row["current_centroid_lat"] is not None
+                    else row["anchor_lat"])
+        fire_lon = (row["current_centroid_lon"]
+                    if row["current_centroid_lon"] is not None
+                    else row["anchor_lon"])
+        if fire_lat is None or fire_lon is None:
+            continue
+        r_mi = (row["spread_radius_mi"]
+                if row["spread_radius_mi"] is not None
+                else global_default_mi)
+        d_mi = _haversine_mi(lat, lon, fire_lat, fire_lon)
+        if d_mi <= r_mi:
+            attributed.append((row["irwin_id"], d_mi))
+
+    if attributed:
+        # 2+ matches resolve to nearest centroid per design doc Q2.
+        attributed.sort(key=lambda t: t[1])
+        chosen_irwin = attributed[0][0]
+        conn.execute(
+            "INSERT INTO fire_pixels(irwin_id, acq_time, lat, lon, frp, "
+            "satellite, pass_id, attributed_at) VALUES (?,?,?,?,?,?,?,?)",
+            (chosen_irwin, float(acq_epoch), lat, lon, frp, satellite,
+             _pass_id(satellite, acq_epoch), float(now)),
+        )
+        conn.execute(
+            "UPDATE firms_pixels SET attributed_at=? WHERE id=?",
+            (float(now), pixel_row_id),
+        )
+        _recompute_centroid_and_stamp(
+            conn, chosen_irwin, acq_epoch=acq_epoch,
+        )
+        # Attribution is a silent operation -- the wire goes out on the
+        # NEXT WFIGS Update (which Phase 2 will gate on centroid drift).
+        return None
+
+    # 0 matches -- run cluster detection.
+    return _maybe_emit_cluster(
+        conn, lat=lat, lon=lon, acq_epoch=acq_epoch, frp=frp,
+        data=data, now=now, this_pixel_id=pixel_row_id,
+    )
+
+
+def _recompute_centroid_and_stamp(conn, irwin_id: str, *,
+                                    acq_epoch) -> None:
+    """fires.current_centroid_* = median of last 24h of fire_pixels for
+    this fire. last_hotspot_at = this pixel's acq_time (max of last 24h
+    is the same thing on insert). Median over mean per design doc Q4
+    ("Median (more robust to outliers)")."""
+    window_start = float(acq_epoch) - 86400.0
+    pixels = conn.execute(
+        "SELECT lat, lon FROM fire_pixels WHERE irwin_id=? "
+        "AND acq_time >= ?",
+        (irwin_id, window_start),
+    ).fetchall()
+    if not pixels:
+        return
+    lats = sorted(r["lat"] for r in pixels)
+    lons = sorted(r["lon"] for r in pixels)
+    median_lat = lats[len(lats) // 2]
+    median_lon = lons[len(lons) // 2]
+    conn.execute(
+        "UPDATE fires SET current_centroid_lat=?, current_centroid_lon=?, "
+        "last_hotspot_at=? WHERE irwin_id=?",
+        (float(median_lat), float(median_lon), float(acq_epoch), irwin_id),
+    )
+
+
+def _maybe_emit_cluster(conn, *, lat, lon, acq_epoch, frp, data, now,
+                          this_pixel_id):
+    """Return wire string + set data["category"] when a cluster condition
+    fires; otherwise return None and leave data alone."""
+    min_pixels = int(adapter_config.firms.cluster_min_pixels)
+    radius_mi = float(adapter_config.firms.cluster_max_radius_mi)
+    window_s = int(adapter_config.firms.cluster_time_window_minutes) * 60
+
+    window_start = float(acq_epoch) - window_s
+    # Bbox prefilter again, this time on radius_mi (much tighter than the
+    # 10 mi attribution search).
+    deg_lat = radius_mi / 69.0
+    cos_lat = max(0.01, math.cos(math.radians(lat)))
+    deg_lon = radius_mi / (69.0 * cos_lat)
+    rows = conn.execute(
+        "SELECT id, lat, lon, frp FROM firms_pixels WHERE "
+        "attributed_at IS NULL AND cluster_broadcast_at IS NULL "
+        "AND acq_time >= ? "
+        "AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?",
+        (window_start, lat - deg_lat, lat + deg_lat,
+         lon - deg_lon, lon + deg_lon),
+    ).fetchall()
+
+    # Filter to exact Haversine radius. The query above is a bbox; the
+    # corners are slightly farther than radius_mi from the center.
+    members: list[dict] = []
+    total_frp = 0.0
+    sum_lat = 0.0
+    sum_lon = 0.0
+    for r in rows:
+        d_mi = _haversine_mi(lat, lon, r["lat"], r["lon"])
+        if d_mi > radius_mi:
+            continue
+        members.append({"id": r["id"], "lat": r["lat"], "lon": r["lon"]})
+        sum_lat += r["lat"]; sum_lon += r["lon"]
+        if r["frp"] is not None:
+            total_frp += float(r["frp"])
+
+    if len(members) < min_pixels:
+        return None
+
+    centroid_lat = sum_lat / len(members)
+    centroid_lon = sum_lon / len(members)
+
+    # Stamp cluster_broadcast_at on every member so a future pixel
+    # arriving in the same cluster does not re-fire the broadcast.
+    member_ids = [int(m["id"]) for m in members]
+    placeholders = ",".join("?" * len(member_ids))
+    conn.execute(
+        f"UPDATE firms_pixels SET cluster_broadcast_at=? "
+        f"WHERE id IN ({placeholders})",
+        (float(now), *member_ids),
+    )
+
+    # Override the FIRMS source category so the dispatcher routes this
+    # broadcast under unattributed_hotspot_cluster (priority, fire toggle).
+    if isinstance(data, dict):
+        data["category"] = "unattributed_hotspot_cluster"
+        # Set severity to priority so downstream rules see the right tier.
+        data["severity"] = "priority"
+
+    return _render_cluster_wire(
+        n=len(members), radius_mi=radius_mi,
+        centroid_lat=centroid_lat, centroid_lon=centroid_lon,
+        total_frp=total_frp,
+    )
+
+
+def _render_cluster_wire(*, n, radius_mi, centroid_lat, centroid_lon,
+                           total_frp):
+    """Wire string per design doc section 4 + user item 6."""
+    # Drop the decimal on radius when it's an integer mile for terse output.
+    radius_str = (f"{int(radius_mi)}" if float(radius_mi).is_integer()
+                  else f"{radius_mi:.1f}")
+    frp_str = ""
+    if total_frp > 0:
+        frp_str = f" (combined {int(round(total_frp))} MW)"
+    return (
+        f"🔥 Possible new fire: {n} hotspots within {radius_str} mi "
+        f"@ {centroid_lat:.3f},{centroid_lon:.3f}{frp_str}"
+    )
+
+
+def _haversine_mi(lat1: float, lon1: float,
+                    lat2: float, lon2: float) -> float:
+    """Great-circle distance in statute miles."""
+    R_MI = 3958.7613
+    p1 = math.radians(lat1); p2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+    a = (math.sin(dphi / 2.0) ** 2
+         + math.cos(p1) * math.cos(p2) * math.sin(dlam / 2.0) ** 2)
+    return 2.0 * R_MI * math.asin(min(1.0, math.sqrt(a)))
+
+
+def _pass_id(satellite, acq_epoch) -> str:
+    """Coarse satellite-pass bucket: <satellite>-<acq_epoch // 5400s>.
+
+    VIIRS makes ~4 passes/day in Idaho (one every ~6h), so a 90-minute
+    bucket groups pixels from the same overpass without straddling
+    boundaries. Phase 2's per-pass centroid logic will use this column.
+    """
+    if not satellite:
+        satellite = "?"
+    try:
+        bucket = int(acq_epoch) // 5400
+    except (TypeError, ValueError):
+        bucket = 0
+    return f"{satellite}-{bucket}"
