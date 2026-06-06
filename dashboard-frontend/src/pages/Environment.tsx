@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import {
-  Cloud, Flame, Radio, Car, Mountain, Satellite, Activity,
+  Cloud, Flame, Radio, Car, Mountain, Satellite, Activity, Server,
   Save, RotateCcw, RefreshCw, AlertCircle, AlertTriangle, Info,
 } from 'lucide-react'
 import {
@@ -189,6 +189,7 @@ const META: Record<AdapterKey, AdapterMeta> = {
 }
 
 const FAMILIES: { key: string; label: string; icon: typeof Cloud; adapters: AdapterKey[] }[] = [
+  { key: 'central', label: 'Central', icon: Server, adapters: [] },
   { key: 'weather', label: 'Weather', icon: Cloud, adapters: ['nws'] },
   { key: 'fire', label: 'Fire', icon: Flame, adapters: ['fires', 'firms'] },
   { key: 'rf', label: 'RF Propagation', icon: Radio, adapters: ['swpc', 'ducting'] },
@@ -550,31 +551,6 @@ const save = async () => {
         </div>
       )}
 
-      {/* Central Connection (v0.5) -- NATS source for adapters set to central */}
-      {env.central && (
-        <div className="border border-[#1e2a3a] rounded-lg p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <span className="text-sm font-medium text-slate-300">Central Connection</span>
-              <p className="text-xs text-slate-600">NATS JetStream source for any adapter set to "central"</p>
-            </div>
-            <Toggle label="" checked={!!env.central.enabled}
-                    onChange={(v) => up({ central: { ...env.central!, enabled: v } })} />
-          </div>
-          <div className={env.central.enabled ? 'space-y-3' : 'space-y-3 opacity-40 pointer-events-none select-none'}>
-            <TextInput label="URL" value={env.central.url || ''}
-                       onChange={(v) => up({ central: { ...env.central!, url: v } })}
-                       placeholder="nats://central.echo6.mesh:4222" />
-            <TextInput label="Durable" value={env.central.durable || ''}
-                       onChange={(v) => up({ central: { ...env.central!, durable: v } })}
-                       placeholder="meshai-v04" />
-            <TextInput label="Region" value={env.central.region || ''}
-                       onChange={(v) => up({ central: { ...env.central!, region: v } })}
-                       placeholder="us.id"
-                       helper="Central v0.9.20 region token (dotted, e.g. 'us.id'). Empty = bare wildcards (all-US firehose). Each adapter is either Central or native, never both — see Reference → OR-not-AND Architecture for why." />
-          </div>
-        </div>
-      )}
 
       {/* Family tabs */}
       <div className="flex gap-1 border-b border-border overflow-x-auto">
@@ -585,6 +561,33 @@ const save = async () => {
           </button>
         ))}
       </div>
+
+      {/* Central Connection tab */}
+      {family === 'central' && env.central && (
+        <div className="border border-[#1e2a3a] rounded-lg p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-sm font-medium text-slate-300">Central Connection</span>
+              <p className="text-xs text-slate-600">NATS JetStream source for any adapter set to "central"</p>
+            </div>
+            <Toggle label="" checked={!!env.central.enabled}
+                    onChange={(v) => up({ central: { ...env.central!, enabled: v } })} />
+          </div>
+          <div className={env.central.enabled ? "space-y-3" : "space-y-3 opacity-40 pointer-events-none select-none"}>
+            <TextInput label="URL" value={env.central.url || ""}
+                       onChange={(v) => up({ central: { ...env.central!, url: v } })}
+                       placeholder="nats://central.echo6.mesh:4222" />
+            <TextInput label="Durable" value={env.central.durable || ""}
+                       onChange={(v) => up({ central: { ...env.central!, durable: v } })}
+                       placeholder="meshai-v04" />
+            <TextInput label="Region" value={env.central.region || ""}
+                       onChange={(v) => up({ central: { ...env.central!, region: v } })}
+                       placeholder="us.id"
+                       helper="Central v0.9.20 region token (dotted, e.g. 'us.id'). Empty = bare wildcards (all-US firehose). Each adapter is either Central or native, never both — see Reference → OR-not-AND Architecture for why." />
+          </div>
+        </div>
+      )}
+
 
       {/* Tracking placeholder */}
       {family === 'tracking' && (
