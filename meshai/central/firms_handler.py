@@ -466,6 +466,7 @@ def _maybe_emit_cluster(conn, *, lat, lon, acq_epoch, frp, data, now,
                           this_pixel_id):
     """Return wire string + set data["category"] when a cluster condition
     fires; otherwise return None and leave data alone."""
+    return None
     min_pixels = int(adapter_config.firms.cluster_min_pixels)
     radius_mi = float(adapter_config.firms.cluster_max_radius_mi)
     window_s = int(adapter_config.firms.cluster_time_window_minutes) * 60
@@ -722,16 +723,24 @@ def _handle_pass_boundary(conn, *, irwin_id, pass_id, lat, lon,
     if drift_mi is None or drift_mi < threshold:
         return None
 
-    # Drift exceeded the threshold -- emit wildfire_growth.
+    # Drift exceeded the threshold -- emit wildfire_growth via WFIGS renderer.
+    fire = conn.execute(
+        "SELECT incident_name, current_acres, current_contained_pct, "
+        "declared_at, lat, lon "
+        "FROM fires WHERE irwin_id=?", (irwin_id,)
+    ).fetchone()
+    if fire is None:
+        return None
+
+    from meshai.central.wfigs_handler import _render
+    movement = {"direction": drift_direction, "speed_mph": drift_mi_per_hour or 0.0}
+    normalized = dict(fire)
+    normalized["irwin_id"] = irwin_id
     if isinstance(data, dict):
         data["category"] = "wildfire_growth"
-        data["severity"] = "priority"
-    return _render_growth_wire(
-        incident_name=fires_row["incident_name"] or "(unnamed fire)",
-        direction=drift_direction or "?",
-        speed_mph=drift_mi_per_hour or 0.0,
-        lat=pass_centroid_lat, lon=pass_centroid_lon,
-    )
+        data["_severity_override"] = "immediate"
+        data["_cooldown_suffix"] = irwin_id
+    return _render(normalized, prefix="Update", movement=movement)
 
 
 def _render_growth_wire(*, incident_name, direction, speed_mph,
@@ -765,6 +774,7 @@ def _maybe_emit_halt(conn, *, data, now):
     eligible because we filter on `halt_broadcast_at IS NULL OR
     halt_broadcast_at < last_pass_at`.
     """
+    return None
     minimum_s = int(adapter_config.fires.halt_minimum_seconds)
     cutoff = float(now) - float(minimum_s)
     row = conn.execute(
@@ -868,6 +878,7 @@ def _close_prev_perimeter(conn, irwin_id: str, prev_pass_id: str) -> None:
 def _check_spotting(conn, *, irwin_id, pixel_lat, pixel_lon,
                       current_pass_id, incident_name, data, now):
     """Return spotting wire if criteria met, else None."""
+    return None
     threshold_mi = float(adapter_config.fires.spotting_distance_threshold_mi)
     cooldown_s = int(adapter_config.fires.spotting_cooldown_seconds)
 
