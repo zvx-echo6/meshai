@@ -826,6 +826,8 @@ def normalize(envelope: dict) -> Optional[dict]:
             }
         if category_raw.startswith("fire.incident"):
             n = _parse_wfigs_incidents(inner_data, geo)
+            if n is None:
+                return None
             n["_kind"] = "wfigs_incident"
             return n
     if adapter == "wfigs_perimeters":
