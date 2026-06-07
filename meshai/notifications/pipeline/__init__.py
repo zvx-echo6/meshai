@@ -239,7 +239,7 @@ async def start_pipeline(bus: EventBus, config) -> DigestScheduler:
             disp = comps.get("dispatcher")
             llm_backend = comps.get("llm_backend")
             if disp is not None:
-                fd_sched = FireDigestScheduler(disp, llm_backend)
+                fd_sched = FireDigestScheduler(disp)
                 await fd_sched.start()
                 comps["fire_digest_scheduler"] = fd_sched
                 bus._pipeline_components = comps
