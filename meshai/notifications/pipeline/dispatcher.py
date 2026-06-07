@@ -360,10 +360,14 @@ class Dispatcher:
         # ---------- Section 2 — per-toggle cooldown ----------
         cooldown_s = int(getattr(tog, "cooldown_seconds", 300) or 0)
         if cooldown_s > 0:
+            suffix = (event.data or {}).get("_cooldown_suffix", "")
+            region_key = event.region or "*"
+            if suffix:
+                region_key = f"{region_key}|{suffix}"
             ck = (
                 getattr(tog, "name", "") or fam,
                 event.category,
-                event.region or "*",
+                region_key,
             )
             now = time.time()
             last_fired = self._toggle_cooldown.get(ck)

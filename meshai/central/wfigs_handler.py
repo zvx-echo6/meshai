@@ -274,6 +274,7 @@ def _attach_commit_handles(data: Optional[dict], *, irwin_id: str,
 
     data["_on_broadcast_committed"] = _on_commit
     data["_broadcast_audit"] = {"table": "fires", "pk": irwin_id}
+    data["_cooldown_suffix"] = irwin_id
 
 
 # ---------- helpers -------------------------------------------------------
