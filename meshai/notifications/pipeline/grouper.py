@@ -70,10 +70,14 @@ class Grouper:
         try:
             import json
             from meshai.persistence import get_db
+            d = event.to_dict()
+            d["data"] = {k: v for k, v in d.get("data", {}).items()
+                         if not callable(v) and not k.startswith("_on_")}
+            event_json = json.dumps(d)
             get_db().execute(
                 "INSERT OR REPLACE INTO grouper_held(group_key, event_json, "
                 "hold_until_at, updated_at) VALUES (?,?,?,?)",
-                (group_key, json.dumps(event.to_dict()), hold_until, self._now()),
+                (group_key, event_json, hold_until, self._now()),
             )
         except Exception:
             self._logger.exception("grouper: persist failed key=%s", group_key)
