@@ -257,7 +257,7 @@ PHOTON_RADIUS_KM = 80     # ≈ 50 miles
 PHOTON_LIMIT = 10
 # OSM place classes we accept as "town". Suburb included for metro coverage;
 # locality is rare but valid for tiny rural places.
-_TOWN_OSM_VALUES = frozenset({"city", "town", "village", "hamlet", "suburb", "locality"})
+_TOWN_OSM_VALUES = frozenset({"city", "town", "village"})
 
 
 # Process-lifetime LRU cache keyed by H3 cell (resolution 7 ≈ 5km hexagons).
