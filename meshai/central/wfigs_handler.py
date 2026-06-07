@@ -214,7 +214,9 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
     )
 
     if (changed_acres or changed_contained) and eight_hours_passed:
-        wire = _render(normalized, prefix="Update")
+        wire = _render(normalized, prefix="Update",
+                        last_bcast_acres=last_bcast_acres,
+                        last_bcast_contained=last_bcast_contained)
         # v0.6-3c: severity override for fire updates
         if isinstance(data, dict):
             data["_severity_override"] = "immediate" if (acres and acres > 1000) or contained_pct == 0 else "priority"
@@ -318,32 +320,76 @@ def _log_event_returning_id(conn, *, now, source, category, severity_word,
 # ---------- renderer ------------------------------------------------------
 
 
-def _render(n: dict, *, prefix: str = "") -> str:
-    """MEDIUM-style mesh wire string. See spec in module docstring."""
+def _render(n: dict, *, prefix: str = "",
+            last_bcast_acres=None, last_bcast_contained=None,
+            movement=None) -> str:
+    """MEDIUM-style mesh wire string with delta/bold logic for updates."""
+    import datetime as _dt
+
     name = n.get("incident_name") or "(unnamed)"
-    itype = n.get("incident_type") or "incident"
-    lat = n.get("lat")
-    lon = n.get("lon")
-
-    anchor = _location_anchor(n)
     acres = n.get("acres")
-    contained = n.get("contained_pct")
+    contained_pct = n.get("contained_pct")
+    cause = n.get("fire_cause")
+    unique_fire_id = n.get("unique_fire_id")
+    declared_at_epoch = n.get("declared_at_epoch")
+    anchor = _location_anchor(n)
 
-    acres_str = "N/A" if acres is None else f"{int(acres):,} ac"
-    contained_str = (
-        "containment unknown" if contained is None
-        else f"{int(contained)}% contained"
-    )
+    lines: list[str] = []
 
-    prefix_str = f"{prefix}: " if prefix else ""
-    head = f"🔥 {prefix_str}{name} ({itype}), {anchor}"
-    body = f"{acres_str}, {contained_str}"
+    # Line 1: header
+    lines.append(f"🔥 {name} \u2014 {prefix}")
 
-    coords = ""
-    if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
-        coords = f", @ {lat:.3f},{lon:.3f}"
+    # Line 2: size / contained with delta + bold
+    acres_str = f"{int(acres):,} ac" if acres is not None else "size unknown"
+    delta_str = ""
+    if prefix == "Update" and last_bcast_acres is not None and acres is not None and acres > last_bcast_acres:
+        delta_str = f" (+{int(acres - last_bcast_acres):,})"
+    contained_str = f"{int(contained_pct)}% contained" if contained_pct is not None else "containment unknown"
 
-    return f"{head}: {body}{coords}"
+    acres_changed = (prefix == "Update" and last_bcast_acres is not None
+                     and acres is not None and acres > last_bcast_acres)
+    contained_changed = (prefix == "Update" and last_bcast_contained is not None
+                         and contained_pct is not None and contained_pct > last_bcast_contained)
+
+    if acres_changed and contained_changed:
+        size_line = f"**{acres_str}{delta_str} | {contained_str}**"
+    elif acres_changed:
+        size_line = f"**{acres_str}{delta_str}** | {contained_str}"
+    elif contained_changed:
+        size_line = f"{acres_str} | **{contained_str}**"
+    else:
+        size_line = f"{acres_str} | {contained_str}"
+    lines.append(size_line)
+
+    # Line 3: movement or plain anchor
+    if (isinstance(movement, dict)
+            and movement.get("direction") and movement.get("speed_mph") is not None):
+        lines.append(f"**Moving {movement['direction']} {movement['speed_mph']:.1f} mi/h | Near: {anchor}**")
+    else:
+        lines.append(f"Near: {anchor}")
+
+    # Line 4: cause / discovered
+    cause_part = cause if cause else None
+    disc_part = None
+    if declared_at_epoch is not None:
+        try:
+            dt = _dt.datetime.fromtimestamp(declared_at_epoch,
+                                            tz=_dt.timezone(_dt.timedelta(hours=-6)))
+            disc_part = dt.strftime("%b %d %-I:%M %p")
+        except Exception:
+            pass
+    if cause_part and disc_part:
+        lines.append(f"Cause: {cause_part} | Discovered: {disc_part}")
+    elif cause_part:
+        lines.append(f"Cause: {cause_part}")
+    elif disc_part:
+        lines.append(f"Discovered: {disc_part}")
+
+    # Line 5: unique fire ID
+    if unique_fire_id:
+        lines.append(f"ID: {unique_fire_id}")
+
+    return "\n".join(lines)
 
 
 def _location_anchor(n: dict) -> str:

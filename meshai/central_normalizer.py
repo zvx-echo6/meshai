@@ -696,6 +696,7 @@ def _parse_wfigs_incidents(inner_data: dict, geo: dict) -> dict:
 
     # Geocoder-side anchor enrichment for the renderer.
     city = geocoder.get("city")
+    raw = inner_data.get("raw") or {}
 
     return {
         "irwin_id":           irwin_id,
@@ -710,6 +711,10 @@ def _parse_wfigs_incidents(inner_data: dict, geo: dict) -> dict:
         "landclass":          landclass,
         "geocoder_city":      city,
         "declared_at_epoch":  declared_at_epoch,
+        "fire_cause":         raw.get("FireCause"),
+        "agency":             raw.get("POOJurisdictionalAgency"),
+        "personnel":          raw.get("TotalIncidentPersonnel"),
+        "unique_fire_id":     raw.get("UniqueFireIdentifier"),
     }
 
 
