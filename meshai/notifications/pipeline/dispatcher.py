@@ -358,7 +358,12 @@ class Dispatcher:
                 return
 
         # ---------- Section 2 — per-toggle cooldown ----------
-        cooldown_s = int(getattr(tog, "cooldown_seconds", 300) or 0)
+        # Immediate-severity events bypass cooldown entirely — they are
+        # already rate-controlled by source handler change detection.
+        if getattr(event, "severity", None) == "immediate":
+            cooldown_s = 0
+        else:
+            cooldown_s = int(getattr(tog, "cooldown_seconds", 300) or 0)
         if cooldown_s > 0:
             suffix = (event.data or {}).get("_cooldown_suffix", "")
             region_key = event.region or "*"
