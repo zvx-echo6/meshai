@@ -364,9 +364,9 @@ def _render(n: dict, *, prefix: str = "",
     # Line 3: movement or plain anchor
     if (isinstance(movement, dict)
             and movement.get("direction") and movement.get("speed_mph") is not None):
-        lines.append(f"**Moving {movement['direction']} {movement['speed_mph']:.1f} mi/h | Near: {anchor}**")
+        lines.append(f"**Moving {movement['direction']} {movement['speed_mph']:.1f} mi/h | {anchor}**")
     else:
-        lines.append(f"Near: {anchor}")
+        lines.append(f"{anchor}")
 
     # Line 4: cause / discovered
     cause_part = cause if cause else None
@@ -420,8 +420,8 @@ def _location_anchor(n: dict) -> str:
                 bearing = _bearing_compass(lat, lon, best["lat"], best["lon"])
                 d_int = int(round(best_d))
                 if d_int < 1:
-                    return f"near {best['name']}"
-                return f"{d_int} mi {bearing} of {best['name']}"
+                    return f"near {best['name'].title()}"
+                return f"{d_int} mi {bearing} of {best['name'].title()}"
         except Exception:
             logger.exception("town_anchors lookup failed; falling back to Photon")
 
@@ -437,9 +437,9 @@ def _location_anchor(n: dict) -> str:
             bearing = nt.get("bearing")
             if isinstance(d, (int, float)):
                 if d < 1:
-                    return f"near {town}"
-                return f"{int(round(d))} mi {bearing or ''} of {town}".strip()
-            return f"near {town}"
+                    return f"near {town.title()}"
+                return f"{int(round(d))} mi {bearing or ''} of {town.title()}".strip()
+            return f"near {town.title()}"
 
     landclass = n.get("landclass")
     if landclass:
