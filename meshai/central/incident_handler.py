@@ -156,6 +156,39 @@ _SUB_TYPE_PHRASE = {
     "parade":           "parade",
 }
 
+# Display name per canonical sub_type (Title Case for multi-line render).
+_SUB_TYPE_DISPLAY = {
+    "accident":         "Crash",
+    "jam":              "Stationary Traffic",
+    "road_closed":      "Road Closed",
+    "closure":          "Closure",
+    "road_works":       "Road Works",
+    "lane_closed":      "Lane Reduction",
+    "ramp_closed":      "Ramp Closed",
+    "debris":           "Debris on Roadway",
+    "vehicle_on_fire":  "Vehicle Fire",
+    "disabled_vehicle": "Disabled Vehicle",
+    "ice":              "Icy Conditions",
+    "fog":              "Fog",
+    "flooding":         "Flooding",
+    "wind":             "High Winds",
+    "broken_down":      "Broken-Down Vehicle",
+    "danger":           "Dangerous Conditions",
+    "rain":             "Heavy Rain",
+    "incident":         "Road Incident",
+    "special_event":    "Special Event",
+    "parade":           "Parade",
+}
+
+# Direction short-form -> long-form for multi-line render.
+_DIRECTION_LONG = {
+    "North": "Northbound", "N": "Northbound", "NB": "Northbound",
+    "South": "Southbound", "S": "Southbound", "SB": "Southbound",
+    "East":  "Eastbound",  "E": "Eastbound",  "EB": "Eastbound",
+    "West":  "Westbound",  "W": "Westbound",  "WB": "Westbound",
+    "Both":  "Both Directions",
+}
+
 
 # ---- helpers -------------------------------------------------------------
 
@@ -290,6 +323,7 @@ def _parse_tomtom_incident(envelope: dict, now: int) -> Optional[dict]:
         "end_at":          _parse_iso_epoch(d.get("end_time")),
         "geocoder_city":   ge.get("city"),
         "landclass":       ge.get("landclass"),
+        "mile_marker":     None,
     }
 
 
@@ -346,6 +380,10 @@ def _parse_state_511_incident(envelope: dict, category_raw: str, now: int) -> Op
         "end_at":         None,
         "geocoder_city":  ge.get("city"),
         "landclass":      ge.get("landclass"),
+        "lanes_affected": d.get("lanes_affected"),
+        "cause":          d.get("cause"),
+        "description":    d.get("description"),
+        "mile_marker":    (d.get("_enrichment") or {}).get("mile_marker", {}).get("value"),
     }
 
 
@@ -401,6 +439,10 @@ def _parse_itd_511_incident(envelope: dict, category_raw: str, now: int) -> Opti
         "end_at":         d.get("planned_end_epoch"),
         "geocoder_city":  ge.get("city"),
         "landclass":      ge.get("landclass"),
+        "lanes_affected": d.get("lanes_affected"),
+        "cause":          d.get("cause"),
+        "description":    d.get("description"),
+        "mile_marker":    (d.get("_enrichment") or {}).get("mile_marker", {}).get("value"),
     }
 
 
@@ -702,42 +744,63 @@ def _log_event_returning_id(conn, *, now, source, category, severity_word,
 
 
 def _render(n: dict, *, prefix: str = "") -> str:
-    """MEDIUM-style wire string. Pattern:
+    """Multi-line wire string.
 
-        {emoji} {prefix}: {road} near {anchor}: {phrase}{impact}{delay}{coords}
-
-    `delay` segment is OMITTED when delay_minutes is None (Matt's §3).
-    `coords` segment is omitted when lat/lon are None (state_511 closures
-    sometimes lack coords).
+    Line 1: {emoji} {prefix}: {display} — Near {city}, {state}
+    Line 2: {road} {direction_long} | MP {mile_marker}
+    Line 3: {lanes_affected} | {delay} min delay
+    Line 4: Cause: {cause}
     """
     sub_type = n.get("sub_type") or "incident"
     emoji = _SUB_TYPE_EMOJI.get(sub_type, "⚠️")
-    phrase = _SUB_TYPE_PHRASE.get(sub_type, "incident")
+    display = _SUB_TYPE_DISPLAY.get(sub_type, "Road Incident")
 
-    road = n.get("road") or "road"
+    # Line 1: emoji + display + city/county
+    anchor = n.get("geocoder_city") or n.get("county")
+    state = n.get("state") or ""
+    if anchor:
+        anchor_part = f"Near {anchor}, {state}".rstrip(", ")
+        if not n.get("geocoder_city") and n.get("county"):
+            anchor_part = f"Near {anchor} Co, {state}".rstrip(", ")
+    else:
+        anchor_part = state or ""
+    prefix_part = f"{prefix}: " if prefix else ""
+    line1 = f"{emoji} {prefix_part}{display} — {anchor_part}".rstrip(" —")
+
+    # Line 2: road + direction + mile_marker
+    road = n.get("road")
     direction = n.get("direction")
-    if direction and direction != "both" and direction not in str(road):
-        road_label = f"{road} {direction}"
-    else:
-        road_label = road
+    dir_long = _DIRECTION_LONG.get(direction, direction) if direction else None
+    mile = n.get("mile_marker")
+    parts = []
+    if road and dir_long:
+        parts.append(f"{road} {dir_long}")
+    elif road:
+        parts.append(road)
+    if mile is not None:
+        parts.append(f"MP {mile}")
+    line2 = " | ".join(parts) if parts else ""
 
-    anchor = _location_anchor(n)
+    # Line 3: lanes_affected (omit if empty/No Data)
+    lanes = n.get("lanes_affected")
+    line3 = lanes if lanes and lanes.strip().lower() not in ("no data", "") else ""
 
+    # Line 4: cause (omit if Incident which is the default)
+    cause = n.get("cause")
+    line4 = f"Cause: {cause}" if cause and cause != "Incident" else ""
+
+    # Optional delay line for tomtom-enriched events
     delay_minutes = n.get("delay_minutes")
-    delay_seg = f", {delay_minutes} min delay" if delay_minutes else ""
+    delay_line = f"{delay_minutes} min delay" if delay_minutes else ""
 
-    impact = n.get("impact")
-    impact_seg = f", {impact}" if impact else ""
+    # Combine line 3 and delay if both present, else keep them separate
+    if line3 and delay_line:
+        line3 = f"{line3} | {delay_line}"
+    elif delay_line and not line3:
+        line3 = delay_line
 
-    lat = n.get("lat")
-    lon = n.get("lon")
-    if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
-        coords = f", @ {lat:.3f},{lon:.3f}"
-    else:
-        coords = ""
-
-    prefix_str = f"{prefix}: " if prefix else ""
-    return f"{emoji} {prefix_str}{road_label} near {anchor}: {phrase}{impact_seg}{delay_seg}{coords}"
+    lines = [l for l in (line1, line2, line3, line4) if l]
+    return "\n".join(lines)
 
 
 def _location_anchor(n: dict) -> str:
