@@ -584,10 +584,12 @@ class CentralConsumer:
         source = CENTRAL_ADAPTER_TO_SOURCE.get(raw_adapter, raw_adapter)
         if source != raw_adapter:
             logger.debug("Central adapter %r -> meshai source %r", raw_adapter, source)
+        # v0.6-3c: use handler severity override if present
+        sev_override = data.get("_severity_override") if isinstance(data, dict) else None
         return make_event(
             source=source,
             category=category,
-            severity=map_severity(inner.get("severity")),
+            severity=sev_override or map_severity(inner.get("severity")),
             **kwargs,
         )
 

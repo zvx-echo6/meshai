@@ -150,6 +150,9 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
         # from acres/containment updates (wildfire_incident).
         if isinstance(data, dict):
             data["category"] = "wildfire_declared"
+        # v0.6-3c: severity override for fire broadcasts
+        if isinstance(data, dict):
+            data["_severity_override"] = "immediate" if (acres and acres > 1000) or contained_pct == 0 else "priority"
         _attach_commit_handles(data, irwin_id=irwin_id,
                                  acres=acres, contained_pct=contained_pct,
                                  event_log_row_id=log_id)
@@ -170,6 +173,9 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
         # handler call ran but no actual broadcast went out.
         if isinstance(data, dict):
             data["category"] = "wildfire_declared"
+        # v0.6-3c: severity override for fire broadcasts
+        if isinstance(data, dict):
+            data["_severity_override"] = "immediate" if (acres and acres > 1000) or contained_pct == 0 else "priority"
         _attach_commit_handles(data, irwin_id=irwin_id,
                                  acres=acres, contained_pct=contained_pct,
                                  event_log_row_id=log_id)
@@ -209,6 +215,9 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
 
     if (changed_acres or changed_contained) and eight_hours_passed:
         wire = _render(normalized, prefix="Update")
+        # v0.6-3c: severity override for fire updates
+        if isinstance(data, dict):
+            data["_severity_override"] = "immediate" if (acres and acres > 1000) or contained_pct == 0 else "priority"
         _attach_commit_handles(data, irwin_id=irwin_id,
                                  acres=acres, contained_pct=contained_pct,
                                  event_log_row_id=log_id)
