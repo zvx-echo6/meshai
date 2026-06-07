@@ -401,6 +401,30 @@ def _location_anchor(n: dict) -> str:
     lat = n.get("lat")
     lon = n.get("lon")
     if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+        # Try curated town_anchors first
+        try:
+            from meshai.persistence import get_db
+            from meshai.central_normalizer import _haversine_miles as _haversine_mi
+            from meshai.central_normalizer import _bearing_compass
+            rows = get_db().execute(
+                "SELECT name, lat, lon FROM town_anchors WHERE lat IS NOT NULL AND lon IS NOT NULL"
+            ).fetchall()
+            best = None
+            best_d = float("inf")
+            for row in rows:
+                d = _haversine_mi(lat, lon, row["lat"], row["lon"])
+                if d < best_d:
+                    best_d = d
+                    best = row
+            if best and best_d <= float(adapter_config.wfigs.anchor_max_mi):
+                bearing = _bearing_compass(lat, lon, best["lat"], best["lon"])
+                d_int = int(round(best_d))
+                if d_int < 1:
+                    return f"near {best['name']}"
+                return f"{d_int} mi {bearing} of {best['name']}"
+        except Exception:
+            logger.exception("town_anchors lookup failed; falling back to Photon")
+
         try:
             from meshai.central_normalizer import nearest_town
             nt = nearest_town(lat, lon, max_distance_mi=float(adapter_config.wfigs.anchor_max_mi))

@@ -618,7 +618,7 @@ def _parse_wzdx_federal(inner_data: dict, geo: dict) -> dict:
 # them through verbatim per Matt's call -- they at least signal "new fire
 # in <county>" even without an interesting name.
 _WFIGS_ACRES_KEYS = ("DailyAcres", "IncidentSize")
-_WFIGS_ACRES_RAW_KEYS = ("DiscoveryAcres", "FinalAcres")
+_WFIGS_ACRES_RAW_KEYS = ("IncidentSize", "DiscoveryAcres", "FinalAcres")
 _WFIGS_CONTAINED_KEYS = ("PercentContained",)
 _WFIGS_CONTAINED_RAW_KEYS = ("PercentContained",)
 
