@@ -272,10 +272,10 @@ def _parse_tomtom_incident(envelope: dict, now: int) -> Optional[dict]:
     inner = envelope.get("data") or {}
     d = inner.get("data") or {}
 
-    # FILTER §6: magnitude_of_delay == 0 -> drop at handler entrance.
-    # v0.6-3b: gated by adapter_config.tomtom_incidents.drop_zero_magnitude.
+    # Drop events below configured minimum magnitude.
     magnitude = d.get("magnitude_of_delay")
-    if magnitude == 0 and bool(adapter_config.tomtom_incidents.drop_zero_magnitude):
+    min_mag = int(adapter_config.tomtom_incidents.min_magnitude or 4)
+    if magnitude is not None and magnitude < min_mag:
         return None
 
     # FILTER §4: time_validity != 'present' -> drop past/future.

@@ -180,6 +180,11 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "type": "bool",
         "description": "Drop envelopes whose time_validity != 'present'.",
     },
+    ("tomtom_incidents", "min_magnitude"): {
+        "default": 4,
+        "type": "int",
+        "description": "Minimum TomTom magnitude_of_delay to broadcast (1=minor, 2=moderate, 3=major, 4=severe). Anything below this is silently dropped.",
+    },
 
     # =================================================================
     # STATE_511_ATIS -- 1 setting (states to skip in favor of itd_511)
