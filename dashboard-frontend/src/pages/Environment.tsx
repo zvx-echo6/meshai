@@ -46,6 +46,13 @@ interface FiresConfig {
   digest_timezone: string
 }
 
+// ITD 511 adapter config shape
+interface Roads511Config {
+  min_severity: string
+  enabled_categories: string[]
+  enabled_sub_types: string[]
+}
+
 // TomTom adapter config shape
 interface TomtomConfig {
   min_magnitude: number
@@ -241,6 +248,12 @@ export default function Environment() {
     drop_zero_magnitude: true,
   })
   const [tomtomOriginal, setTomtomOriginal] = useState<string>("")
+  const [roads511Config, setRoads511Config] = useState<Roads511Config>({
+    min_severity: "None",
+    enabled_categories: ["incident", "closure"],
+    enabled_sub_types: ["accident", "road_closed", "closure", "lane_closed", "vehicle_on_fire", "flooding", "debris"],
+  })
+  const [roads511Original, setRoads511Original] = useState<string>("")
 
 
   useEffect(() => {
@@ -299,6 +312,21 @@ export default function Environment() {
           }
         } catch { /* adapter-config optional */ }
 
+        // Load adapter-config for itd_511
+        try {
+          const r511Res = await fetch("/api/adapter-config/itd_511")
+          if (r511Res.ok) {
+            const r511Data = await r511Res.json()
+            const cfg: Roads511Config = {
+              min_severity: r511Data.min_severity?.value ?? "None",
+              enabled_categories: r511Data.enabled_categories?.value ?? ["incident", "closure"],
+              enabled_sub_types: r511Data.enabled_sub_types?.value ?? ["accident", "road_closed", "closure", "lane_closed", "vehicle_on_fire", "flooding", "debris"],
+            }
+            setRoads511Config(cfg)
+            setRoads511Original(JSON.stringify(cfg))
+          }
+        } catch { /* adapter-config optional */ }
+
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load config')
       } finally {
@@ -323,7 +351,8 @@ export default function Environment() {
   const hasWfigsChanges = JSON.stringify(wfigsConfig) !== wfigsOriginal
   const hasFiresChanges = JSON.stringify(firesConfig) !== firesOriginal
   const hasTomtomChanges = JSON.stringify(tomtomConfig) !== tomtomOriginal
-  const hasChanges = hasEnvChanges || hasWfigsChanges || hasFiresChanges || hasTomtomChanges
+  const hasRoads511Changes = JSON.stringify(roads511Config) !== roads511Original
+  const hasChanges = hasEnvChanges || hasWfigsChanges || hasFiresChanges || hasTomtomChanges || hasRoads511Changes
 
   
   const saveAdapterConfig = async (adapterName: string, key: string, value: unknown) => {
@@ -406,6 +435,21 @@ const save = async () => {
         setTomtomOriginal(JSON.stringify(tomtomConfig))
       }
 
+      // Save itd_511 adapter config changes
+      if (hasRoads511Changes) {
+        const orig = JSON.parse(roads511Original) as Roads511Config
+        if (roads511Config.min_severity !== orig.min_severity) {
+          await saveAdapterConfig("itd_511", "min_severity", roads511Config.min_severity)
+        }
+        if (JSON.stringify(roads511Config.enabled_categories) !== JSON.stringify(orig.enabled_categories)) {
+          await saveAdapterConfig("itd_511", "enabled_categories", roads511Config.enabled_categories)
+        }
+        if (JSON.stringify(roads511Config.enabled_sub_types) !== JSON.stringify(orig.enabled_sub_types)) {
+          await saveAdapterConfig("itd_511", "enabled_sub_types", roads511Config.enabled_sub_types)
+        }
+        setRoads511Original(JSON.stringify(roads511Config))
+      }
+
       setSuccess('Config saved')
       setTimeout(() => setSuccess(null), 3000)
     } catch (e) {
@@ -420,6 +464,7 @@ const save = async () => {
     setWfigsConfig(JSON.parse(wfigsOriginal || JSON.stringify(wfigsConfig)))
     setFiresConfig(JSON.parse(firesOriginal || JSON.stringify(firesConfig)))
     setTomtomConfig(JSON.parse(tomtomOriginal || JSON.stringify(tomtomConfig)))
+    setRoads511Config(JSON.parse(roads511Original || JSON.stringify(roads511Config)))
   }
   const restart = async () => {
     try { await fetch('/api/restart', { method: 'POST' }); setRestartRequired(false); setSuccess('Restart initiated') }
@@ -570,6 +615,50 @@ const save = async () => {
           {(['West', 'South', 'East', 'North'] as const).map((lbl, i) => (
             <NumberInput key={lbl} label={lbl} value={env.roads511.bbox?.[i] ?? 0} onChange={(v) => { const b = [...(env.roads511.bbox || [0, 0, 0, 0])]; b[i] = v; up({ roads511: { ...env.roads511, bbox: b } }) }} step={0.01} />
           ))}
+        </div>
+        <div className="border-t border-slate-700/50 pt-4 mt-4">
+          <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">Broadcast Filters</div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Minimum Severity</label>
+              <select
+                value={roads511Config.min_severity}
+                onChange={(e) => setRoads511Config({...roads511Config, min_severity: e.target.value})}
+                className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm"
+              >
+                <option value="None">None (all)</option>
+                <option value="Minor">Minor+</option>
+                <option value="Major">Major only</option>
+              </select>
+              <p className="text-xs text-slate-500 mt-1">Drop ITD 511 events below this severity</p>
+            </div>
+          </div>
+          <div className="mt-4">
+            <div className="text-xs text-slate-400 mb-2">Categories</div>
+            <div className="flex gap-6">
+              {([['incident', 'Incident'], ['closure', 'Closure'], ['special_event', 'Special Event']] as const).map(([val, label]) => (
+                <label key={val} className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={roads511Config.enabled_categories.includes(val)}
+                    onChange={(e) => { const cur = roads511Config.enabled_categories; setRoads511Config({...roads511Config, enabled_categories: e.target.checked ? [...cur, val] : cur.filter(c => c !== val)}) }}
+                    className="w-4 h-4 rounded accent-blue-500" />
+                  <span className="text-sm text-slate-300">{label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="mt-4">
+            <div className="text-xs text-slate-400 mb-2">Sub-types</div>
+            <div className="grid grid-cols-2 gap-2">
+              {([['accident', 'Crash'], ['road_closed', 'Road Closed'], ['lane_closed', 'Lane Closure'], ['vehicle_on_fire', 'Vehicle Fire'], ['flooding', 'Flooding'], ['debris', 'Debris'], ['road_works', 'Road Works'], ['disabled_vehicle', 'Disabled Vehicle']] as const).map(([val, label]) => (
+                <label key={val} className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={roads511Config.enabled_sub_types.includes(val)}
+                    onChange={(e) => { const cur = roads511Config.enabled_sub_types; setRoads511Config({...roads511Config, enabled_sub_types: e.target.checked ? [...cur, val] : cur.filter(s => s !== val)}) }}
+                    className="w-4 h-4 rounded accent-blue-500" />
+                  <span className="text-sm text-slate-300">{label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
         </div>
       </>)
       case 'firms': return (<>

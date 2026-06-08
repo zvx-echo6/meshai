@@ -398,6 +398,18 @@ def _parse_itd_511_incident(envelope: dict, category_raw: str, now: int) -> Opti
     elif category_raw.startswith("special_event."): kind = "special_event"
     else:                                            return None
 
+    # Severity filter
+    min_sev = str(adapter_config.itd_511.min_severity or "None")
+    sev_order = {"None": 0, "Minor": 1, "Major": 2}
+    event_sev = d.get("itd_severity") or "None"
+    if sev_order.get(event_sev, 0) < sev_order.get(min_sev, 0):
+        return None
+
+    # Category filter
+    enabled_cats = adapter_config.itd_511.enabled_categories or []
+    if enabled_cats and kind not in enabled_cats:
+        return None
+
     external_id = inner.get("id")
     if not external_id:
         return None
@@ -413,6 +425,11 @@ def _parse_itd_511_incident(envelope: dict, category_raw: str, now: int) -> Opti
             "work_zone":     "road_works",
             "special_event": "special_event",
         }.get((d.get("event_type_short") or "").lower(), "incident")
+
+    # Sub-type filter (applied after sub_type is resolved)
+    enabled_subs = adapter_config.itd_511.enabled_sub_types or []
+    if enabled_subs and sub_type not in enabled_subs:
+        return None
 
     ge = (d.get("_enriched") or {}).get("geocoder") or {}
 

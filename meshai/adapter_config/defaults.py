@@ -196,8 +196,23 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     },
 
     # =================================================================
-    # ITD_511 -- 0 settings (its maps/emoji/phrases are CODE, not config)
+    # ITD_511 -- 3 settings (severity gate, category filter, sub-type filter)
     # =================================================================
+    ("itd_511", "min_severity"): {
+        "default": "None",
+        "type": "str",
+        "description": "Minimum itd_511 severity to broadcast. Options: None, Minor, Major. Events below this are dropped.",
+    },
+    ("itd_511", "enabled_categories"): {
+        "default": ["incident", "closure"],
+        "type": "json",
+        "description": "Which event categories to broadcast: incident, closure, special_event.",
+    },
+    ("itd_511", "enabled_sub_types"): {
+        "default": ["accident", "road_closed", "closure", "lane_closed", "vehicle_on_fire", "flooding", "debris"],
+        "type": "json",
+        "description": "Which sub_types to broadcast. Empty list = all.",
+    },
 
     # =================================================================
     # CENTRAL consumer -- 1 setting (severity-int bucket boundaries)
