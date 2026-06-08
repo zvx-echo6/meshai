@@ -319,8 +319,9 @@ def _render(*, event_type, area_desc, geocoder_city, county, state,
     nws_hl = (params.get("NWSheadline") or [""])[0].strip()
     if nws_hl:
         nws_hl = nws_hl.title()
-        if len(nws_hl) > 80:
-            nws_hl = nws_hl[:77] + "..."
+        if len(nws_hl.encode("utf-8")) > 80:
+            while len(nws_hl.encode("utf-8")) > 80:
+                nws_hl = nws_hl.rsplit(" ", 1)[0]
         line2 = nws_hl
     else:
         area_first = (area_desc or "").split(";")[0].strip()
