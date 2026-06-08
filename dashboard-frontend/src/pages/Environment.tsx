@@ -46,6 +46,13 @@ interface FiresConfig {
   digest_timezone: string
 }
 
+// TomTom adapter config shape
+interface TomtomConfig {
+  min_magnitude: number
+  drop_non_present: boolean
+  drop_zero_magnitude: boolean
+}
+
 
 type FeedHealth = EnvStatus['feeds'][number]
 
@@ -228,6 +235,12 @@ export default function Environment() {
     digest_timezone: "America/Boise",
   })
   const [firesOriginal, setFiresOriginal] = useState<string>("")
+  const [tomtomConfig, setTomtomConfig] = useState<TomtomConfig>({
+    min_magnitude: 4,
+    drop_non_present: true,
+    drop_zero_magnitude: true,
+  })
+  const [tomtomOriginal, setTomtomOriginal] = useState<string>("")
 
 
   useEffect(() => {
@@ -271,6 +284,21 @@ export default function Environment() {
           }
         } catch { /* adapter-config optional */ }
 
+        // Load adapter-config for tomtom_incidents
+        try {
+          const ttRes = await fetch("/api/adapter-config/tomtom_incidents")
+          if (ttRes.ok) {
+            const ttData = await ttRes.json()
+            const cfg: TomtomConfig = {
+              min_magnitude: ttData.min_magnitude?.value ?? 4,
+              drop_non_present: ttData.drop_non_present?.value ?? true,
+              drop_zero_magnitude: ttData.drop_zero_magnitude?.value ?? true,
+            }
+            setTomtomConfig(cfg)
+            setTomtomOriginal(JSON.stringify(cfg))
+          }
+        } catch { /* adapter-config optional */ }
+
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load config')
       } finally {
@@ -294,7 +322,8 @@ export default function Environment() {
   const hasEnvChanges = env !== null && JSON.stringify(env) !== original
   const hasWfigsChanges = JSON.stringify(wfigsConfig) !== wfigsOriginal
   const hasFiresChanges = JSON.stringify(firesConfig) !== firesOriginal
-  const hasChanges = hasEnvChanges || hasWfigsChanges || hasFiresChanges
+  const hasTomtomChanges = JSON.stringify(tomtomConfig) !== tomtomOriginal
+  const hasChanges = hasEnvChanges || hasWfigsChanges || hasFiresChanges || hasTomtomChanges
 
   
   const saveAdapterConfig = async (adapterName: string, key: string, value: unknown) => {
@@ -362,6 +391,21 @@ const save = async () => {
         setFiresOriginal(JSON.stringify(firesConfig))
       }
 
+      // Save tomtom adapter config changes
+      if (hasTomtomChanges) {
+        const orig = JSON.parse(tomtomOriginal) as TomtomConfig
+        if (tomtomConfig.min_magnitude !== orig.min_magnitude) {
+          await saveAdapterConfig("tomtom_incidents", "min_magnitude", tomtomConfig.min_magnitude)
+        }
+        if (tomtomConfig.drop_non_present !== orig.drop_non_present) {
+          await saveAdapterConfig("tomtom_incidents", "drop_non_present", tomtomConfig.drop_non_present)
+        }
+        if (tomtomConfig.drop_zero_magnitude !== orig.drop_zero_magnitude) {
+          await saveAdapterConfig("tomtom_incidents", "drop_zero_magnitude", tomtomConfig.drop_zero_magnitude)
+        }
+        setTomtomOriginal(JSON.stringify(tomtomConfig))
+      }
+
       setSuccess('Config saved')
       setTimeout(() => setSuccess(null), 3000)
     } catch (e) {
@@ -375,6 +419,7 @@ const save = async () => {
     if (env) setEnv(JSON.parse(original))
     setWfigsConfig(JSON.parse(wfigsOriginal || JSON.stringify(wfigsConfig)))
     setFiresConfig(JSON.parse(firesOriginal || JSON.stringify(firesConfig)))
+    setTomtomConfig(JSON.parse(tomtomOriginal || JSON.stringify(tomtomConfig)))
   }
   const restart = async () => {
     try { await fetch('/api/restart', { method: 'POST' }); setRestartRequired(false); setSuccess('Restart initiated') }
@@ -486,6 +531,35 @@ const save = async () => {
           </div>
         ))}
         <button onClick={() => up({ traffic: { ...env.traffic, corridors: [...(env.traffic.corridors || []), { name: '', lat: 0, lon: 0 }] } })} className="text-xs text-accent hover:underline">+ Add Corridor</button>
+        <div className="border-t border-slate-700/50 pt-4 mt-4">
+          <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">Broadcast Filters</div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Minimum Magnitude</label>
+              <select
+                value={tomtomConfig.min_magnitude}
+                onChange={(e) => setTomtomConfig({...tomtomConfig, min_magnitude: parseInt(e.target.value)})}
+                className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm"
+              >
+                <option value={1}>1 — Minor (all)</option>
+                <option value={2}>2 — Moderate (yellow+)</option>
+                <option value={3}>3 — Major (orange+)</option>
+                <option value={4}>4 — Severe (red only)</option>
+              </select>
+              <p className="text-xs text-slate-500 mt-1">Drop TomTom incidents below this severity level</p>
+            </div>
+          </div>
+          <div className="mt-3 space-y-2">
+            <label className="flex items-center justify-between">
+              <span className="text-sm text-slate-300">Drop non-present time validity</span>
+              <input type="checkbox" checked={tomtomConfig.drop_non_present} onChange={(e) => setTomtomConfig({...tomtomConfig, drop_non_present: e.target.checked})} className="w-4 h-4 rounded accent-blue-500" />
+            </label>
+            <label className="flex items-center justify-between">
+              <span className="text-sm text-slate-300">Drop zero-magnitude events</span>
+              <input type="checkbox" checked={tomtomConfig.drop_zero_magnitude} onChange={(e) => setTomtomConfig({...tomtomConfig, drop_zero_magnitude: e.target.checked})} className="w-4 h-4 rounded accent-blue-500" />
+            </label>
+          </div>
+        </div>
       </>)
       case 'roads511': return (<>
         <TextInput label="Base URL" value={env.roads511.base_url} onChange={(v) => up({ roads511: { ...env.roads511, base_url: v } })} placeholder="https://511.yourstate.gov/api/v2" />
