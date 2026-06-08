@@ -73,20 +73,6 @@ _SAME_EMOJI = {
     "MAW": "🌊", "ADR": "⚠️",
 }
 
-_SAME_INSTRUCTION = {
-    "TOR": "Seek shelter immediately.",
-    "SVR": "Move indoors now.",
-    "FFW": "Turn around, don't drown.",
-    "FLW": "Move to higher ground.",
-    "WSW": "Avoid travel if possible.",
-    "BZW": "Avoid travel.",
-    "EWW": "Secure outdoor objects.",
-    "HWW": "Secure outdoor objects.",
-    "FRW": "Evacuate if ordered.",
-    "SMW": "Move indoors now.",
-    "MAW": "Move away from water.",
-}
-
 _NWS_OFFICE_SHORT = {
     "KBOI": "Boise", "KPIH": "Pocatello", "KMSO": "Missoula",
     "KOTX": "Spokane", "KSLC": "Salt Lake City", "KMFR": "Medford",
@@ -340,13 +326,7 @@ def _render(*, event_type, area_desc, geocoder_city, county, state,
     expires_seg = _format_expires_short(expires_epoch, now=now) if expires_epoch else ""
     line5 = f"Expires: {expires_seg}" if expires_seg else ""
 
-    # Line 6: instruction — prefer short SAME-keyed text, fall back to CAP field
-    instruction = _SAME_INSTRUCTION.get(same_code) or (d.get("instruction") or "").strip()
-    if len(instruction.encode("utf-8")) > 40:
-        instruction = instruction[:37] + "..."
-    line6 = instruction
-
-    lines = [l for l in (line1, line2, line3, line4, line5, line6) if l]
+    lines = [l for l in (line1, line2, line3, line4, line5) if l]
     return "\n".join(lines)
 
 
