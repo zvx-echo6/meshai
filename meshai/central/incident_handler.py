@@ -385,7 +385,7 @@ def _parse_state_511_incident(envelope: dict, category_raw: str, now: int) -> Op
         "cause":          d.get("cause"),
         "description":    d.get("description"),
         "comment":        d.get("comment"),
-        "mile_marker":    (d.get("_enrichment") or {}).get("mile_marker", {}).get("value"),
+        "mile_marker":    (d.get("_enriched") or {}).get("mile_marker", {}).get("value"),
     }
 
 
@@ -462,7 +462,7 @@ def _parse_itd_511_incident(envelope: dict, category_raw: str, now: int) -> Opti
         "cause":          d.get("cause"),
         "description":    d.get("description"),
         "comment":        d.get("comment"),
-        "mile_marker":    (d.get("_enrichment") or {}).get("mile_marker", {}).get("value"),
+        "mile_marker":    (d.get("_enriched") or {}).get("mile_marker", {}).get("value"),
     }
 
 
