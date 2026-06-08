@@ -317,7 +317,10 @@ def _render(*, event_type, area_desc, geocoder_city, county, state,
     # Line 2: NWSheadline (title-cased, 80 chars) or fallback
     nws_hl = (params.get("NWSheadline") or [""])[0].strip()
     if nws_hl:
-        nws_hl = nws_hl.title()
+        # Sentence-case: capitalize first char, lowercase rest, re-uppercase TZ abbrevs
+        nws_hl = nws_hl[0].upper() + nws_hl[1:].lower() if nws_hl else ""
+        nws_hl = re.sub(r'\b(mdt|mst|pdt|pst|cdt|cst|edt|est|utc)\b',
+                        lambda m: m.group().upper(), nws_hl, flags=re.IGNORECASE)
         if len(nws_hl.encode("utf-8")) > 80:
             while len(nws_hl.encode("utf-8")) > 80:
                 nws_hl = nws_hl.rsplit(" ", 1)[0]
