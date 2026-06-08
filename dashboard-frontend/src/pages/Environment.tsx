@@ -54,6 +54,11 @@ interface Roads511Config {
 }
 
 // TomTom adapter config shape
+interface NwsConfig {
+  broadcast_severities: string[]
+  duplicate_allowed_after_seconds: number
+}
+
 interface TomtomConfig {
   min_magnitude: number
   drop_non_present: boolean
@@ -254,6 +259,11 @@ export default function Environment() {
     enabled_sub_types: ["accident", "road_closed", "closure", "lane_closed", "vehicle_on_fire", "flooding", "debris"],
   })
   const [roads511Original, setRoads511Original] = useState<string>("")
+  const [nwsConfig, setNwsConfig] = useState<NwsConfig>({
+    broadcast_severities: ["Extreme", "Severe"],
+    duplicate_allowed_after_seconds: 3600,
+  })
+  const [nwsOriginal, setNwsOriginal] = useState<string>("")
 
 
   useEffect(() => {
@@ -327,6 +337,20 @@ export default function Environment() {
           }
         } catch { /* adapter-config optional */ }
 
+        // Load adapter-config for nws
+        try {
+          const nwsRes = await fetch("/api/adapter-config/nws")
+          if (nwsRes.ok) {
+            const nwsData = await nwsRes.json()
+            const cfg: NwsConfig = {
+              broadcast_severities: nwsData.broadcast_severities?.value ?? ["Extreme", "Severe"],
+              duplicate_allowed_after_seconds: nwsData.duplicate_allowed_after_seconds?.value ?? 3600,
+            }
+            setNwsConfig(cfg)
+            setNwsOriginal(JSON.stringify(cfg))
+          }
+        } catch { /* adapter-config optional */ }
+
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load config')
       } finally {
@@ -352,7 +376,8 @@ export default function Environment() {
   const hasFiresChanges = JSON.stringify(firesConfig) !== firesOriginal
   const hasTomtomChanges = JSON.stringify(tomtomConfig) !== tomtomOriginal
   const hasRoads511Changes = JSON.stringify(roads511Config) !== roads511Original
-  const hasChanges = hasEnvChanges || hasWfigsChanges || hasFiresChanges || hasTomtomChanges || hasRoads511Changes
+  const hasNwsChanges = JSON.stringify(nwsConfig) !== nwsOriginal
+  const hasChanges = hasEnvChanges || hasWfigsChanges || hasFiresChanges || hasTomtomChanges || hasRoads511Changes || hasNwsChanges
 
   
   const saveAdapterConfig = async (adapterName: string, key: string, value: unknown) => {
@@ -450,6 +475,18 @@ const save = async () => {
         setRoads511Original(JSON.stringify(roads511Config))
       }
 
+      // Save nws adapter config changes
+      if (hasNwsChanges) {
+        const orig = JSON.parse(nwsOriginal) as NwsConfig
+        if (JSON.stringify(nwsConfig.broadcast_severities) !== JSON.stringify(orig.broadcast_severities)) {
+          await saveAdapterConfig("nws", "broadcast_severities", nwsConfig.broadcast_severities)
+        }
+        if (nwsConfig.duplicate_allowed_after_seconds !== orig.duplicate_allowed_after_seconds) {
+          await saveAdapterConfig("nws", "duplicate_allowed_after_seconds", nwsConfig.duplicate_allowed_after_seconds)
+        }
+        setNwsOriginal(JSON.stringify(nwsConfig))
+      }
+
       setSuccess('Config saved')
       setTimeout(() => setSuccess(null), 3000)
     } catch (e) {
@@ -465,6 +502,7 @@ const save = async () => {
     setFiresConfig(JSON.parse(firesOriginal || JSON.stringify(firesConfig)))
     setTomtomConfig(JSON.parse(tomtomOriginal || JSON.stringify(tomtomConfig)))
     setRoads511Config(JSON.parse(roads511Original || JSON.stringify(roads511Config)))
+    setNwsConfig(JSON.parse(nwsOriginal || JSON.stringify(nwsConfig)))
   }
   const restart = async () => {
     try { await fetch('/api/restart', { method: 'POST' }); setRestartRequired(false); setSuccess('Restart initiated') }
@@ -490,11 +528,39 @@ const save = async () => {
     switch (key) {
       case 'nws': return (<>
         <ListInput label="NWS Zones" value={env.nws_zones} onChange={(v) => up({ nws_zones: v })} helper="Zone IDs like IDZ016, IDZ030" infoLink="https://www.weather.gov/pimar/PubZone" />
-        <TextInput label="User Agent" value={env.nws.user_agent} onChange={(v) => up({ nws: { ...env.nws, user_agent: v } })} placeholder="(MeshAI, you@email.com)" helper="Format: (app_name, contact_email)" />
-        <div className="grid grid-cols-2 gap-4">
-          <NumberInput label="Tick Seconds" value={env.nws.tick_seconds} onChange={(v) => up({ nws: { ...env.nws, tick_seconds: v } })} min={30} />
-          <SelectInput label="Min Severity" value={env.nws.severity_min} onChange={(v) => up({ nws: { ...env.nws, severity_min: v } })} options={[{ value: 'minor', label: 'Minor' }, { value: 'moderate', label: 'Moderate' }, { value: 'severe', label: 'Severe' }, { value: 'extreme', label: 'Extreme' }]} />
-        </div>
+        {env.nws.feed_source !== 'central' && (
+          <>
+            <TextInput label="User Agent" value={env.nws.user_agent} onChange={(v) => up({ nws: { ...env.nws, user_agent: v } })} placeholder="(MeshAI, you@email.com)" helper="Format: (app_name, contact_email)" />
+            <div className="grid grid-cols-2 gap-4">
+              <NumberInput label="Tick Seconds" value={env.nws.tick_seconds} onChange={(v) => up({ nws: { ...env.nws, tick_seconds: v } })} min={30} />
+              <SelectInput label="Min Severity" value={env.nws.severity_min} onChange={(v) => up({ nws: { ...env.nws, severity_min: v } })} options={[{ value: 'minor', label: 'Minor' }, { value: 'moderate', label: 'Moderate' }, { value: 'severe', label: 'Severe' }, { value: 'extreme', label: 'Extreme' }]} />
+            </div>
+          </>
+        )}
+        {env.nws.feed_source === 'central' && (
+          <div className="border-t border-slate-700/50 pt-4 mt-4">
+            <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">Broadcast Filters</div>
+            <div className="mb-3">
+              <div className="text-xs text-slate-400 mb-2">Severities to broadcast</div>
+              <div className="flex gap-6">
+                {['Extreme', 'Severe', 'Moderate', 'Minor'].map((sev) => (
+                  <label key={sev} className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={nwsConfig.broadcast_severities.includes(sev)}
+                      onChange={(e) => {
+                        const cur = nwsConfig.broadcast_severities
+                        setNwsConfig({ ...nwsConfig, broadcast_severities: e.target.checked ? [...cur, sev] : cur.filter(s => s !== sev) })
+                      }}
+                      className="w-4 h-4 rounded accent-blue-500" />
+                    <span className="text-sm text-slate-300">{sev}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <NumberInput label="Re-broadcast Cooldown (seconds)" value={nwsConfig.duplicate_allowed_after_seconds}
+              onChange={(v) => setNwsConfig({ ...nwsConfig, duplicate_allowed_after_seconds: v })}
+              min={0} helper="Minimum seconds before the same alert ID can be re-broadcast" />
+          </div>
+        )}
       </>)
       case 'swpc': return <div className="text-xs text-slate-500">No additional settings.</div>
       case 'ducting': return (
