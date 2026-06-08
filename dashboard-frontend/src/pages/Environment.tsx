@@ -193,7 +193,7 @@ function AdapterPanel({ title, subtitle, enabled, onEnabled, feedSource, onFeedS
 }
 
 // ---------------------------------------------------------------- families
-type AdapterKey = 'nws' | 'fires' | 'firms' | 'swpc' | 'ducting' | 'traffic' | 'roads511' | 'usgs_quake' | 'usgs' | 'avalanche'
+type AdapterKey = 'nws' | 'fires' | 'firms' | 'swpc' | 'ducting' | 'traffic' | 'roads511' | 'wzdx' | 'usgs_quake' | 'usgs' | 'avalanche'
 
 interface AdapterMeta { label: string; subtitle: string; health: string; hasCentral: boolean; nativeOnly: boolean; hasKey: boolean }
 
@@ -205,6 +205,7 @@ const META: Record<AdapterKey, AdapterMeta> = {
   ducting: { label: 'Tropospheric Ducting', subtitle: 'VHF/UHF extended-range conditions', health: 'ducting', hasCentral: false, nativeOnly: true, hasKey: true },
   traffic: { label: 'TomTom Traffic', subtitle: 'Traffic flow on monitored corridors', health: 'traffic', hasCentral: true, nativeOnly: false, hasKey: true },
   roads511: { label: '511 Road Conditions', subtitle: 'State DOT road events and closures', health: 'roads511', hasCentral: true, nativeOnly: false, hasKey: false },
+  wzdx: { label: 'WZDx Work Zones', subtitle: 'Planned road work and construction events from ITD', health: 'roads511', hasCentral: true, nativeOnly: false, hasKey: true },
   usgs_quake: { label: 'USGS Earthquakes', subtitle: 'Seismic events from the USGS feed', health: 'usgs_quake', hasCentral: true, nativeOnly: false, hasKey: true },
   usgs: { label: 'USGS Stream Gauges', subtitle: 'River and stream water levels', health: 'usgs', hasCentral: true, nativeOnly: false, hasKey: true },
   avalanche: { label: 'Avalanche Advisories', subtitle: 'Backcountry avalanche danger ratings', health: 'avalanche', hasCentral: false, nativeOnly: true, hasKey: true },
@@ -215,7 +216,7 @@ const FAMILIES: { key: string; label: string; icon: typeof Cloud; adapters: Adap
   { key: 'weather', label: 'Weather', icon: Cloud, adapters: ['nws'] },
   { key: 'fire', label: 'Fire', icon: Flame, adapters: ['fires', 'firms'] },
   { key: 'rf', label: 'RF Propagation', icon: Radio, adapters: ['swpc', 'ducting'] },
-  { key: 'roads', label: 'Roads', icon: Car, adapters: ['traffic', 'roads511'] },
+  { key: 'roads', label: 'Roads', icon: Car, adapters: ['traffic', 'roads511', 'wzdx'] },
   { key: 'geohazards', label: 'Geohazards', icon: Mountain, adapters: ['usgs_quake', 'usgs', 'avalanche'] },
   { key: 'tracking', label: 'Tracking', icon: Satellite, adapters: [] },
   { key: 'mesh', label: 'Mesh Health', icon: Activity, adapters: [] },
@@ -744,16 +745,15 @@ const save = async () => {
             </div>
           </div>
         </div>
-        <div className="border-t border-slate-700/50 pt-4 mt-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-xs font-medium text-slate-400 uppercase tracking-wider">Work Zones</div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <span className="text-sm text-slate-300">Enable</span>
-              <input type="checkbox" checked={roads511Config.work_zone_enabled}
-                onChange={(e) => setRoads511Config({...roads511Config, work_zone_enabled: e.target.checked})}
-                className="w-4 h-4 rounded accent-blue-500" />
-            </label>
-          </div>
+      </>)
+      case 'wzdx': return (<>
+        <div className="space-y-4">
+          <label className="flex items-center justify-between">
+            <span className="text-sm text-slate-300">Enable Work Zone Broadcasts</span>
+            <input type="checkbox" checked={roads511Config.work_zone_enabled}
+              onChange={(e) => setRoads511Config({...roads511Config, work_zone_enabled: e.target.checked})}
+              className="w-4 h-4 rounded accent-blue-500" />
+          </label>
           {roads511Config.work_zone_enabled && (
             <div className="space-y-3">
               <div>
@@ -917,10 +917,10 @@ const save = async () => {
           <AdapterPanel
             title={META[activeAdapter].label}
             subtitle={META[activeAdapter].subtitle}
-            enabled={a[activeAdapter]?.enabled ?? false}
-            onEnabled={(v) => setAdapterField(activeAdapter, { enabled: v })}
-            feedSource={(a[activeAdapter]?.feed_source ?? 'native')}
-            onFeedSource={(v) => setAdapterField(activeAdapter, { feed_source: v })}
+            enabled={activeAdapter === 'wzdx' ? (a['roads511']?.enabled ?? false) : (a[activeAdapter]?.enabled ?? false)}
+            onEnabled={(v) => setAdapterField(activeAdapter === 'wzdx' ? 'roads511' : activeAdapter, { enabled: v })}
+            feedSource={activeAdapter === 'wzdx' ? (a['roads511']?.feed_source ?? 'native') : (a[activeAdapter]?.feed_source ?? 'native')}
+            onFeedSource={(v) => setAdapterField(activeAdapter === 'wzdx' ? 'roads511' : activeAdapter, { feed_source: v })}
             hasCentral={META[activeAdapter].hasCentral}
             nativeOnly={META[activeAdapter].nativeOnly}
             hasKey={META[activeAdapter].hasKey}
