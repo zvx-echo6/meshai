@@ -32,6 +32,7 @@ from meshai.adapter_config import adapter_config
 import logging
 import re
 import time
+import zoneinfo
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -314,16 +315,25 @@ def _render(*, event_type, area_desc, geocoder_city, county, state,
     # Line 1: emoji + event type (no office)
     line1 = f"{emoji} {prefix_seg}{event_type or 'Weather Alert'}"
 
-    # Line 2: NWSheadline (raw, truncated to 80 bytes at word boundary) or fallback
-    nws_hl = (params.get("NWSheadline") or [""])[0].strip()
-    if nws_hl:
-        if len(nws_hl.encode("utf-8")) > 80:
-            while len(nws_hl.encode("utf-8")) > 80:
-                nws_hl = nws_hl.rsplit(" ", 1)[0]
-        line2 = nws_hl
+    # Line 2: "Until {time} {tz} — {area}"
+    tz = zoneinfo.ZoneInfo("America/Boise")
+    if expires_epoch:
+        exp_local = datetime.fromtimestamp(expires_epoch, tz=tz)
+        exp_str = exp_local.strftime("%-I:%M %p %Z")
+        time_seg = f"Until {exp_str}"
     else:
-        area_first = (area_desc or "").split(";")[0].strip()
-        line2 = f"{event_type or 'Weather Alert'} for {area_first}" if area_first else ""
+        time_seg = ""
+    area = (area_desc or "").split(";")[0].strip()
+    if len(area) > 50:
+        area = area[:50].rsplit(" ", 1)[0]
+    if time_seg and area:
+        line2 = f"{time_seg} — {area}"
+    elif time_seg:
+        line2 = time_seg
+    elif area:
+        line2 = area
+    else:
+        line2 = ""
 
     # Line 3: hazard + certainty/threat (SAME-code branched)
     certainty = (d.get("certainty") or "").strip()
