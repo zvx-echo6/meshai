@@ -324,6 +324,7 @@ def _parse_tomtom_incident(envelope: dict, now: int) -> Optional[dict]:
         "geocoder_city":   ge.get("city"),
         "landclass":       ge.get("landclass"),
         "mile_marker":     None,
+        "length":          d.get("length"),
     }
 
 
@@ -749,8 +750,8 @@ def _render(n: dict) -> str:
     """Multi-line wire string.
 
     Line 1: {emoji} {display} — Near {city}, {state}
-    Line 2: {road} {direction_long} | MP {mile_marker}
-    Line 3: {lanes_affected} | {delay} min delay
+    Line 2: {road} {direction_long} | MP {mile_marker} OR {from} → {to}
+    Line 3: {lanes_affected} | {delay} min delay | {length}
     Line 3b: {comment} (additional context, if non-duplicate and <=140 chars)
     Line 4: Cause: {cause}
     """
@@ -769,16 +770,22 @@ def _render(n: dict) -> str:
         anchor_part = state or ""
     line1 = f"{emoji} {display} — {anchor_part}".rstrip(" —")
 
-    # Line 2: road + direction + mile_marker
+    # Line 2: road + direction + mile_marker OR from/to segment (TomTom case)
     road = n.get("road")
     direction = n.get("direction")
     dir_long = _DIRECTION_LONG.get(direction, direction) if direction else None
     mile = n.get("mile_marker")
+    from_loc = n.get("from_loc")
+    to_loc = n.get("to_loc")
     parts = []
     if road and dir_long:
         parts.append(f"{road} {dir_long}")
     elif road:
         parts.append(road)
+    elif from_loc and to_loc:
+        parts.append(f"{from_loc} → {to_loc}")
+    elif from_loc:
+        parts.append(from_loc)
     if mile is not None:
         parts.append(f"MP {mile}")
     line2 = " | ".join(parts) if parts else ""
@@ -791,15 +798,25 @@ def _render(n: dict) -> str:
     cause = n.get("cause")
     line4 = f"Cause: {cause}" if cause and cause != "Incident" else ""
 
+    # Length (meters from TomTom) formatted as human-readable
+    length_m = n.get("length")
+    length_str = ""
+    if isinstance(length_m, (int, float)) and length_m > 0:
+        if length_m >= 1609:
+            length_str = f"{length_m / 1609:.1f} mi"
+        else:
+            length_str = f"{int(length_m)}m"
+
     # Optional delay line for tomtom-enriched events
     delay_minutes = n.get("delay_minutes")
     delay_line = f"{delay_minutes} min delay" if delay_minutes else ""
 
-    # Combine line 3 and delay if both present, else keep them separate
-    if line3 and delay_line:
-        line3 = f"{line3} | {delay_line}"
-    elif delay_line and not line3:
-        line3 = delay_line
+    # Combine length, delay, and lanes on line 3
+    extras = [x for x in (delay_line, length_str) if x]
+    if line3 and extras:
+        line3 = f"{line3} | " + " | ".join(extras)
+    elif extras:
+        line3 = " | ".join(extras)
 
     # Line 3b: comment field, if it contains additional context not already in line 3
     comment = n.get("comment")
