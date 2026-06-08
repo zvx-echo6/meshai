@@ -117,13 +117,12 @@ def _parse_motion(params: dict) -> tuple:
     m = re.search(r"(\d+)DEG\.+(\d+)KT", raw)
     if not m:
         return None, None
-    deg = int(m.group(1))
+    deg = float(m.group(1))
     knots = int(m.group(2))
     mph = round(knots * 1.15)
-    # Convert bearing (direction storm is coming FROM) to heading (direction moving TOWARD)
-    heading = (deg + 180) % 360
+    # Bearing is the direction the storm is moving TOWARD
     dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
-    compass = dirs[round(heading / 45) % 8]
+    compass = dirs[int((deg + 22.5) / 45) % 8]
     return compass, mph
 
 
@@ -340,7 +339,7 @@ def _render(*, event_type, area_desc, geocoder_city, county, state,
         wind = (params.get("maxWindGust") or [""])[0]
         hail = (params.get("maxHailSize") or [""])[0]
         bits = []
-        if wind and wind not in ("0 MPH", ""): bits.append(f"{wind} winds")
+        if wind and wind not in ("0 MPH", ""): bits.append(f"{wind.lower()} winds")
         if hail and hail not in ("0.00", "0", ""): bits.append(f"{hail} in hail")
         hazard = ", ".join(bits)
         confirm = "Radar confirmed" if certainty == "Observed" else "Radar indicated"
@@ -375,7 +374,7 @@ def _render(*, event_type, area_desc, geocoder_city, county, state,
     # Line 4: motion + locations
     compass, speed_mph = _parse_motion(params)
     motion = f"Moving {compass} {speed_mph} mph" if compass and speed_mph else ""
-    locations = desc.get("locations") or ""
+    locations = (desc.get("locations") or "").rstrip("., ")
     if len(locations) > 40:
         locations = locations[:37] + "..."
     if motion and locations:
