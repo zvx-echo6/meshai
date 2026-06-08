@@ -51,6 +51,9 @@ interface Roads511Config {
   min_severity: string
   enabled_categories: string[]
   enabled_sub_types: string[]
+  work_zone_enabled: boolean
+  work_zone_min_severity: string
+  work_zone_sub_types: string[]
 }
 
 // TomTom adapter config shape
@@ -257,6 +260,9 @@ export default function Environment() {
     min_severity: "None",
     enabled_categories: ["incident", "closure"],
     enabled_sub_types: ["accident", "road_closed", "closure", "lane_closed", "vehicle_on_fire", "flooding", "debris"],
+    work_zone_enabled: false,
+    work_zone_min_severity: "Minor",
+    work_zone_sub_types: ["road_works", "lane_closed", "road_closed"],
   })
   const [roads511Original, setRoads511Original] = useState<string>("")
   const [nwsConfig, setNwsConfig] = useState<NwsConfig>({
@@ -331,6 +337,9 @@ export default function Environment() {
               min_severity: r511Data.min_severity?.value ?? "None",
               enabled_categories: r511Data.enabled_categories?.value ?? ["incident", "closure"],
               enabled_sub_types: r511Data.enabled_sub_types?.value ?? ["accident", "road_closed", "closure", "lane_closed", "vehicle_on_fire", "flooding", "debris"],
+              work_zone_enabled: r511Data.work_zone_enabled?.value ?? false,
+              work_zone_min_severity: r511Data.work_zone_min_severity?.value ?? "Minor",
+              work_zone_sub_types: r511Data.work_zone_sub_types?.value ?? ["road_works", "lane_closed", "road_closed"],
             }
             setRoads511Config(cfg)
             setRoads511Original(JSON.stringify(cfg))
@@ -471,6 +480,15 @@ const save = async () => {
         }
         if (JSON.stringify(roads511Config.enabled_sub_types) !== JSON.stringify(orig.enabled_sub_types)) {
           await saveAdapterConfig("itd_511", "enabled_sub_types", roads511Config.enabled_sub_types)
+        }
+        if (roads511Config.work_zone_enabled !== orig.work_zone_enabled) {
+          await saveAdapterConfig("itd_511", "work_zone_enabled", roads511Config.work_zone_enabled)
+        }
+        if (roads511Config.work_zone_min_severity !== orig.work_zone_min_severity) {
+          await saveAdapterConfig("itd_511", "work_zone_min_severity", roads511Config.work_zone_min_severity)
+        }
+        if (JSON.stringify(roads511Config.work_zone_sub_types) !== JSON.stringify(orig.work_zone_sub_types)) {
+          await saveAdapterConfig("itd_511", "work_zone_sub_types", roads511Config.work_zone_sub_types)
         }
         setRoads511Original(JSON.stringify(roads511Config))
       }
@@ -725,6 +743,46 @@ const save = async () => {
               ))}
             </div>
           </div>
+        </div>
+        <div className="border-t border-slate-700/50 pt-4 mt-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-xs font-medium text-slate-400 uppercase tracking-wider">Work Zones</div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <span className="text-sm text-slate-300">Enable</span>
+              <input type="checkbox" checked={roads511Config.work_zone_enabled}
+                onChange={(e) => setRoads511Config({...roads511Config, work_zone_enabled: e.target.checked})}
+                className="w-4 h-4 rounded accent-blue-500" />
+            </label>
+          </div>
+          {roads511Config.work_zone_enabled && (
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Min Severity</label>
+                <select
+                  value={roads511Config.work_zone_min_severity}
+                  onChange={(e) => setRoads511Config({...roads511Config, work_zone_min_severity: e.target.value})}
+                  className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm"
+                >
+                  <option value="None">None (all)</option>
+                  <option value="Minor">Minor+</option>
+                  <option value="Major">Major only</option>
+                </select>
+              </div>
+              <div>
+                <div className="text-xs text-slate-400 mb-2">Sub-types</div>
+                <div className="flex gap-6">
+                  {([['road_works', 'Road Works'], ['lane_closed', 'Lane Closure'], ['road_closed', 'Road Closed']] as const).map(([val, label]) => (
+                    <label key={val} className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={roads511Config.work_zone_sub_types.includes(val)}
+                        onChange={(e) => { const cur = roads511Config.work_zone_sub_types; setRoads511Config({...roads511Config, work_zone_sub_types: e.target.checked ? [...cur, val] : cur.filter(s => s !== val)}) }}
+                        className="w-4 h-4 rounded accent-blue-500" />
+                      <span className="text-sm text-slate-300">{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </>)
       case 'firms': return (<>

@@ -399,21 +399,9 @@ def _parse_itd_511_incident(envelope: dict, category_raw: str, now: int) -> Opti
     elif category_raw.startswith("work_zone."):     kind = "work_zone"
     else:                                            return None
 
-    # Drop work_zone envelopes -- silently suppressed
-    if kind == "work_zone":
-        return None
-
-    # Severity filter
-    min_sev = str(adapter_config.itd_511.min_severity or "None")
+    # Resolve severity + sub_type early (needed by work_zone gate below)
     sev_order = {"None": 0, "Minor": 1, "Major": 2}
     event_sev = d.get("itd_severity") or "None"
-    if sev_order.get(event_sev, 0) < sev_order.get(min_sev, 0):
-        return None
-
-    # Category filter
-    enabled_cats = adapter_config.itd_511.enabled_categories or []
-    if enabled_cats and kind not in enabled_cats:
-        return None
 
     external_id = inner.get("id")
     if not external_id:
@@ -430,6 +418,30 @@ def _parse_itd_511_incident(envelope: dict, category_raw: str, now: int) -> Opti
             "work_zone":     "road_works",
             "special_event": "special_event",
         }.get((d.get("event_type_short") or "").lower(), "incident")
+
+    # Work zone gate -- configurable via adapter_config
+    if kind == "work_zone":
+        if not adapter_config.itd_511.work_zone_enabled:
+            return None
+        # Apply severity filter
+        wz_min_sev = str(adapter_config.itd_511.work_zone_min_severity or "Minor")
+        if sev_order.get(event_sev, 0) < sev_order.get(wz_min_sev, 0):
+            return None
+        # Apply sub-type filter
+        wz_subs = adapter_config.itd_511.work_zone_sub_types or []
+        if wz_subs and sub_type not in wz_subs:
+            return None
+
+    # Severity filter (non-work-zone)
+    if kind != "work_zone":
+        min_sev = str(adapter_config.itd_511.min_severity or "None")
+        if sev_order.get(event_sev, 0) < sev_order.get(min_sev, 0):
+            return None
+
+    # Category filter
+    enabled_cats = adapter_config.itd_511.enabled_categories or []
+    if enabled_cats and kind not in enabled_cats:
+        return None
 
     # Sub-type filter (applied after sub_type is resolved)
     enabled_subs = adapter_config.itd_511.enabled_sub_types or []

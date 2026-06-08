@@ -196,7 +196,7 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     },
 
     # =================================================================
-    # ITD_511 -- 3 settings (severity gate, category filter, sub-type filter)
+    # ITD_511 -- 6 settings (severity gate, category filter, sub-type filter, work zone)
     # =================================================================
     ("itd_511", "min_severity"): {
         "default": "None",
@@ -212,6 +212,21 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "default": ["accident", "road_closed", "closure", "lane_closed", "vehicle_on_fire", "flooding", "debris"],
         "type": "json",
         "description": "Which sub_types to broadcast. Empty list = all.",
+    },
+    ("itd_511", "work_zone_enabled"): {
+        "default": False,
+        "type": "bool",
+        "description": "Broadcast work zone events (road construction, lane closures). Off by default.",
+    },
+    ("itd_511", "work_zone_min_severity"): {
+        "default": "Minor",
+        "type": "str",
+        "description": "Minimum severity to broadcast work zones: None, Minor, Major.",
+    },
+    ("itd_511", "work_zone_sub_types"): {
+        "default": ["road_works", "lane_closed", "road_closed"],
+        "type": "json",
+        "description": "Work zone sub-types to broadcast. Empty = all.",
     },
 
     # =================================================================
