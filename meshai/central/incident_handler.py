@@ -182,11 +182,11 @@ _SUB_TYPE_DISPLAY = {
 
 # Direction short-form -> long-form for multi-line render.
 _DIRECTION_LONG = {
-    "North": "Northbound", "N": "Northbound", "NB": "Northbound",
-    "South": "Southbound", "S": "Southbound", "SB": "Southbound",
-    "East":  "Eastbound",  "E": "Eastbound",  "EB": "Eastbound",
-    "West":  "Westbound",  "W": "Westbound",  "WB": "Westbound",
-    "Both":  "Both Directions",
+    "North": "Northbound", "N": "Northbound", "NB": "Northbound", "north": "Northbound", "nb": "Northbound",
+    "South": "Southbound", "S": "Southbound", "SB": "Southbound", "south": "Southbound", "sb": "Southbound",
+    "East":  "Eastbound",  "E": "Eastbound",  "EB": "Eastbound",  "east":  "Eastbound",  "eb": "Eastbound",
+    "West":  "Westbound",  "W": "Westbound",  "WB": "Westbound",  "west":  "Westbound",  "wb": "Westbound",
+    "Both":  "Both Directions", "both": "Both Directions",
 }
 
 
