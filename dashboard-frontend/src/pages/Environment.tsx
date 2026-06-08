@@ -26,6 +26,7 @@ interface EnvConfig {
   usgs_quake: { enabled: boolean; tick_seconds: number; feed_url: string; min_magnitude: number; bbox: number[]; region: string; feed_source?: FeedSource }
   traffic: { enabled: boolean; tick_seconds: number; api_key: string; corridors: { name: string; lat: number; lon: number }[]; feed_source?: FeedSource }
   roads511: { enabled: boolean; tick_seconds: number; api_key: string; base_url: string; endpoints: string[]; bbox: number[]; feed_source?: FeedSource }
+  wzdx: { enabled: boolean; tick_seconds: number; api_key: string; base_url: string; endpoints: string[]; bbox: number[]; feed_source?: FeedSource }
   firms: { enabled: boolean; tick_seconds: number; map_key: string; source: string; bbox: number[]; day_range: number; confidence_min: string; proximity_km: number; feed_source?: FeedSource }
   central?: { enabled: boolean; url: string; durable: string; region: string }
 }
@@ -51,12 +52,16 @@ interface Roads511Config {
   min_severity: string
   enabled_categories: string[]
   enabled_sub_types: string[]
-  work_zone_enabled: boolean
-  work_zone_min_severity: string
-  work_zone_sub_types: string[]
 }
 
-// TomTom adapter config shape
+// WZDx adapter config shape
+interface WzdxConfig {
+  broadcast: boolean
+  min_severity: string
+  sub_types: string[]
+}
+
+// NWS adapter config shape
 interface NwsConfig {
   broadcast_severities: string[]
   duplicate_allowed_after_seconds: number
@@ -261,11 +266,14 @@ export default function Environment() {
     min_severity: "None",
     enabled_categories: ["incident", "closure"],
     enabled_sub_types: ["accident", "road_closed", "closure", "lane_closed", "vehicle_on_fire", "flooding", "debris"],
-    work_zone_enabled: false,
-    work_zone_min_severity: "Minor",
-    work_zone_sub_types: ["road_works", "lane_closed", "road_closed"],
   })
   const [roads511Original, setRoads511Original] = useState<string>("")
+  const [wzdxConfig, setWzdxConfig] = useState<WzdxConfig>({
+    broadcast: false,
+    min_severity: "Minor",
+    sub_types: ["road_works", "lane_closed", "road_closed"],
+  })
+  const [wzdxOriginal, setWzdxOriginal] = useState<string>("")
   const [nwsConfig, setNwsConfig] = useState<NwsConfig>({
     broadcast_severities: ["Extreme", "Severe"],
     duplicate_allowed_after_seconds: 3600,
@@ -338,12 +346,24 @@ export default function Environment() {
               min_severity: r511Data.min_severity?.value ?? "None",
               enabled_categories: r511Data.enabled_categories?.value ?? ["incident", "closure"],
               enabled_sub_types: r511Data.enabled_sub_types?.value ?? ["accident", "road_closed", "closure", "lane_closed", "vehicle_on_fire", "flooding", "debris"],
-              work_zone_enabled: r511Data.work_zone_enabled?.value ?? false,
-              work_zone_min_severity: r511Data.work_zone_min_severity?.value ?? "Minor",
-              work_zone_sub_types: r511Data.work_zone_sub_types?.value ?? ["road_works", "lane_closed", "road_closed"],
             }
             setRoads511Config(cfg)
             setRoads511Original(JSON.stringify(cfg))
+          }
+        } catch { /* adapter-config optional */ }
+
+        // Load adapter-config for wzdx
+        try {
+          const wzdxRes = await fetch("/api/adapter-config/wzdx")
+          if (wzdxRes.ok) {
+            const wzdxData = await wzdxRes.json()
+            const cfg: WzdxConfig = {
+              broadcast: wzdxData.broadcast?.value ?? false,
+              min_severity: wzdxData.min_severity?.value ?? "Minor",
+              sub_types: wzdxData.sub_types?.value ?? ["road_works", "lane_closed", "road_closed"],
+            }
+            setWzdxConfig(cfg)
+            setWzdxOriginal(JSON.stringify(cfg))
           }
         } catch { /* adapter-config optional */ }
 
@@ -386,8 +406,9 @@ export default function Environment() {
   const hasFiresChanges = JSON.stringify(firesConfig) !== firesOriginal
   const hasTomtomChanges = JSON.stringify(tomtomConfig) !== tomtomOriginal
   const hasRoads511Changes = JSON.stringify(roads511Config) !== roads511Original
+  const hasWzdxChanges = JSON.stringify(wzdxConfig) !== wzdxOriginal
   const hasNwsChanges = JSON.stringify(nwsConfig) !== nwsOriginal
-  const hasChanges = hasEnvChanges || hasWfigsChanges || hasFiresChanges || hasTomtomChanges || hasRoads511Changes || hasNwsChanges
+  const hasChanges = hasEnvChanges || hasWfigsChanges || hasFiresChanges || hasTomtomChanges || hasRoads511Changes || hasWzdxChanges || hasNwsChanges
 
   
   const saveAdapterConfig = async (adapterName: string, key: string, value: unknown) => {
@@ -482,16 +503,22 @@ const save = async () => {
         if (JSON.stringify(roads511Config.enabled_sub_types) !== JSON.stringify(orig.enabled_sub_types)) {
           await saveAdapterConfig("itd_511", "enabled_sub_types", roads511Config.enabled_sub_types)
         }
-        if (roads511Config.work_zone_enabled !== orig.work_zone_enabled) {
-          await saveAdapterConfig("itd_511", "work_zone_enabled", roads511Config.work_zone_enabled)
-        }
-        if (roads511Config.work_zone_min_severity !== orig.work_zone_min_severity) {
-          await saveAdapterConfig("itd_511", "work_zone_min_severity", roads511Config.work_zone_min_severity)
-        }
-        if (JSON.stringify(roads511Config.work_zone_sub_types) !== JSON.stringify(orig.work_zone_sub_types)) {
-          await saveAdapterConfig("itd_511", "work_zone_sub_types", roads511Config.work_zone_sub_types)
-        }
         setRoads511Original(JSON.stringify(roads511Config))
+      }
+
+      // Save wzdx adapter config changes
+      if (hasWzdxChanges) {
+        const orig = JSON.parse(wzdxOriginal) as WzdxConfig
+        if (wzdxConfig.broadcast !== orig.broadcast) {
+          await saveAdapterConfig("wzdx", "broadcast", wzdxConfig.broadcast)
+        }
+        if (wzdxConfig.min_severity !== orig.min_severity) {
+          await saveAdapterConfig("wzdx", "min_severity", wzdxConfig.min_severity)
+        }
+        if (JSON.stringify(wzdxConfig.sub_types) !== JSON.stringify(orig.sub_types)) {
+          await saveAdapterConfig("wzdx", "sub_types", wzdxConfig.sub_types)
+        }
+        setWzdxOriginal(JSON.stringify(wzdxConfig))
       }
 
       // Save nws adapter config changes
@@ -521,6 +548,7 @@ const save = async () => {
     setFiresConfig(JSON.parse(firesOriginal || JSON.stringify(firesConfig)))
     setTomtomConfig(JSON.parse(tomtomOriginal || JSON.stringify(tomtomConfig)))
     setRoads511Config(JSON.parse(roads511Original || JSON.stringify(roads511Config)))
+    setWzdxConfig(JSON.parse(wzdxOriginal || JSON.stringify(wzdxConfig)))
     setNwsConfig(JSON.parse(nwsOriginal || JSON.stringify(nwsConfig)))
   }
   const restart = async () => {
@@ -747,20 +775,35 @@ const save = async () => {
         </div>
       </>)
       case 'wzdx': return (<>
-        <div className="space-y-4">
+        {env.wzdx?.feed_source !== 'central' && (
+          <>
+            <TextInput label="Base URL" value={env.wzdx?.base_url ?? ''} onChange={(v) => up({ wzdx: { ...env.wzdx!, base_url: v } })} placeholder="https://511.yourstate.gov/api/v2" />
+            <TextInput label="API Key" value={env.wzdx?.api_key ?? ''} onChange={(v) => up({ wzdx: { ...env.wzdx!, api_key: v } })} type="password" helper="Leave empty if not required" />
+            <NumberInput label="Tick Seconds" value={env.wzdx?.tick_seconds ?? 300} onChange={(v) => up({ wzdx: { ...env.wzdx!, tick_seconds: v } })} min={60} />
+            <ListInput label="Endpoints" value={env.wzdx?.endpoints ?? ['/get/event']} onChange={(v) => up({ wzdx: { ...env.wzdx!, endpoints: v } })} helper="e.g., /get/event" />
+            <div className="grid grid-cols-4 gap-2">
+              {(['West', 'South', 'East', 'North'] as const).map((lbl, i) => (
+                <NumberInput key={lbl} label={lbl} value={env.wzdx?.bbox?.[i] ?? 0} onChange={(v) => { const b = [...(env.wzdx?.bbox || [0, 0, 0, 0])]; b[i] = v; up({ wzdx: { ...env.wzdx!, bbox: b } }) }} step={0.01} />
+              ))}
+            </div>
+            <div className="text-xs text-slate-500">Bounding box [W,S,E,N] geographic filter</div>
+          </>
+        )}
+        <div className="border-t border-slate-700/50 pt-4 mt-4">
+          <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">Broadcast Settings</div>
           <label className="flex items-center justify-between">
-            <span className="text-sm text-slate-300">Enable Work Zone Broadcasts</span>
-            <input type="checkbox" checked={roads511Config.work_zone_enabled}
-              onChange={(e) => setRoads511Config({...roads511Config, work_zone_enabled: e.target.checked})}
+            <span className="text-sm text-slate-300">Broadcast work zone events</span>
+            <input type="checkbox" checked={wzdxConfig.broadcast}
+              onChange={(e) => setWzdxConfig({...wzdxConfig, broadcast: e.target.checked})}
               className="w-4 h-4 rounded accent-blue-500" />
           </label>
-          {roads511Config.work_zone_enabled && (
-            <div className="space-y-3">
+          {wzdxConfig.broadcast ? (
+            <div className="space-y-3 mt-3">
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Min Severity</label>
                 <select
-                  value={roads511Config.work_zone_min_severity}
-                  onChange={(e) => setRoads511Config({...roads511Config, work_zone_min_severity: e.target.value})}
+                  value={wzdxConfig.min_severity}
+                  onChange={(e) => setWzdxConfig({...wzdxConfig, min_severity: e.target.value})}
                   className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm"
                 >
                   <option value="None">None (all)</option>
@@ -773,8 +816,8 @@ const save = async () => {
                 <div className="flex gap-6">
                   {([['road_works', 'Road Works'], ['lane_closed', 'Lane Closure'], ['road_closed', 'Road Closed']] as const).map(([val, label]) => (
                     <label key={val} className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={roads511Config.work_zone_sub_types.includes(val)}
-                        onChange={(e) => { const cur = roads511Config.work_zone_sub_types; setRoads511Config({...roads511Config, work_zone_sub_types: e.target.checked ? [...cur, val] : cur.filter(s => s !== val)}) }}
+                      <input type="checkbox" checked={wzdxConfig.sub_types.includes(val)}
+                        onChange={(e) => { const cur = wzdxConfig.sub_types; setWzdxConfig({...wzdxConfig, sub_types: e.target.checked ? [...cur, val] : cur.filter(s => s !== val)}) }}
                         className="w-4 h-4 rounded accent-blue-500" />
                       <span className="text-sm text-slate-300">{label}</span>
                     </label>
@@ -782,6 +825,8 @@ const save = async () => {
                 </div>
               </div>
             </div>
+          ) : (
+            <p className="text-xs text-slate-500 mt-2">Work zone events stored for LLM context only {'\u2014'} no mesh broadcasts.</p>
           )}
         </div>
       </>)
@@ -917,10 +962,10 @@ const save = async () => {
           <AdapterPanel
             title={META[activeAdapter].label}
             subtitle={META[activeAdapter].subtitle}
-            enabled={activeAdapter === 'wzdx' ? (a['roads511']?.enabled ?? false) : (a[activeAdapter]?.enabled ?? false)}
-            onEnabled={(v) => setAdapterField(activeAdapter === 'wzdx' ? 'roads511' : activeAdapter, { enabled: v })}
-            feedSource={activeAdapter === 'wzdx' ? (a['roads511']?.feed_source ?? 'native') : (a[activeAdapter]?.feed_source ?? 'native')}
-            onFeedSource={(v) => setAdapterField(activeAdapter === 'wzdx' ? 'roads511' : activeAdapter, { feed_source: v })}
+            enabled={a[activeAdapter]?.enabled ?? false}
+            onEnabled={(v) => setAdapterField(activeAdapter, { enabled: v })}
+            feedSource={a[activeAdapter]?.feed_source ?? 'native'}
+            onFeedSource={(v) => setAdapterField(activeAdapter, { feed_source: v })}
             hasCentral={META[activeAdapter].hasCentral}
             nativeOnly={META[activeAdapter].nativeOnly}
             hasKey={META[activeAdapter].hasKey}

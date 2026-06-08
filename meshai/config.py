@@ -425,6 +425,18 @@ class Roads511Config(_SourcedFeed):
 
 
 @dataclass
+class WZDxConfig(_SourcedFeed):
+    """WZDx work zone data feed settings."""
+
+    enabled: bool = False
+    tick_seconds: int = 300
+    api_key: str = ""  # Supports ${ENV_VAR}
+    base_url: str = ""  # e.g. "https://511.idaho.gov/api/v2"
+    endpoints: list = field(default_factory=lambda: ["/get/event"])
+    bbox: list = field(default_factory=list)  # [west, south, east, north]
+
+
+@dataclass
 class FIRMSConfig(_SourcedFeed):
     """NASA FIRMS satellite fire hotspot settings."""
 
@@ -471,6 +483,7 @@ class EnvironmentalConfig:
     usgs_quake: USGSQuakeConfig = field(default_factory=USGSQuakeConfig)
     traffic: TomTomConfig = field(default_factory=TomTomConfig)
     roads511: Roads511Config = field(default_factory=Roads511Config)
+    wzdx: WZDxConfig = field(default_factory=WZDxConfig)
     firms: FIRMSConfig = field(default_factory=FIRMSConfig)
     central: CentralConsumerConfig = field(default_factory=CentralConsumerConfig)
 
@@ -803,6 +816,8 @@ def _dict_to_dataclass(cls, data: dict):
             kwargs[key] = _dict_to_dataclass(TomTomConfig, value)
         elif key == "roads511" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(Roads511Config, value)
+        elif key == "wzdx" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(WZDxConfig, value)
         elif key == "firms" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(FIRMSConfig, value)
         elif key == "dashboard" and isinstance(value, dict):

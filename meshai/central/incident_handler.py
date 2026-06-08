@@ -419,16 +419,16 @@ def _parse_itd_511_incident(envelope: dict, category_raw: str, now: int) -> Opti
             "special_event": "special_event",
         }.get((d.get("event_type_short") or "").lower(), "incident")
 
-    # Work zone gate -- configurable via adapter_config
+    # Work zone gate -- configurable via adapter_config.wzdx
     if kind == "work_zone":
-        if not adapter_config.itd_511.work_zone_enabled:
+        if not adapter_config.wzdx.broadcast:
             return None
         # Apply severity filter
-        wz_min_sev = str(adapter_config.itd_511.work_zone_min_severity or "Minor")
+        wz_min_sev = str(adapter_config.wzdx.min_severity or "Minor")
         if sev_order.get(event_sev, 0) < sev_order.get(wz_min_sev, 0):
             return None
         # Apply sub-type filter
-        wz_subs = adapter_config.itd_511.work_zone_sub_types or []
+        wz_subs = adapter_config.wzdx.sub_types or []
         if wz_subs and sub_type not in wz_subs:
             return None
 

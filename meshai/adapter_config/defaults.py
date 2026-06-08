@@ -196,7 +196,7 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     },
 
     # =================================================================
-    # ITD_511 -- 6 settings (severity gate, category filter, sub-type filter, work zone)
+    # ITD_511 -- 3 settings (severity gate, category filter, sub-type filter)
     # =================================================================
     ("itd_511", "min_severity"): {
         "default": "None",
@@ -213,17 +213,20 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "type": "json",
         "description": "Which sub_types to broadcast. Empty list = all.",
     },
-    ("itd_511", "work_zone_enabled"): {
+    # =================================================================
+    # WZDX -- 3 settings (broadcast gate, severity gate, sub-type filter)
+    # =================================================================
+    ("wzdx", "broadcast"): {
         "default": False,
         "type": "bool",
         "description": "Broadcast work zone events (road construction, lane closures). Off by default.",
     },
-    ("itd_511", "work_zone_min_severity"): {
+    ("wzdx", "min_severity"): {
         "default": "Minor",
         "type": "str",
         "description": "Minimum severity to broadcast work zones: None, Minor, Major.",
     },
-    ("itd_511", "work_zone_sub_types"): {
+    ("wzdx", "sub_types"): {
         "default": ["road_works", "lane_closed", "road_closed"],
         "type": "json",
         "description": "Work zone sub-types to broadcast. Empty = all.",
@@ -631,6 +634,11 @@ ADAPTER_META: dict[str, dict[str, Any]] = {
         "display_name": "ITD 511 (Idaho)",
         "include_in_llm_context": True,
         "description": "Idaho Transportation Department incident/closure/work-zone feed.",
+    },
+    "wzdx": {
+        "display_name": "WZDx work zones",
+        "include_in_llm_context": True,
+        "description": "Work zone broadcast gate and sub-type/severity filters.",
     },
     "band_conditions": {
         "display_name": "Band conditions (HF propagation)",
