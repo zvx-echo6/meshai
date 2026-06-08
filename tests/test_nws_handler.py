@@ -194,8 +194,9 @@ def test_commit_callback_updates_last_broadcast(mem_db):
     assert el["handled"] == 1
 
 
-def test_wire_includes_coords_and_expires(mem_db):
+def test_wire_includes_event_area_and_expires(mem_db):
     env = _nws_env(severity_str="Severe", lat=42.500, lon=-114.460)
     wire = handle_nws(env, env["subject"], data={}, now=1_000_000)
-    assert "@ 42.500,-114.460" in wire
+    assert "Severe Thunderstorm Warning" in wire
+    assert "Twin Falls County" in wire
     assert "until" in wire.lower()

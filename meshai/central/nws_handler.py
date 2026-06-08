@@ -66,6 +66,46 @@ _EVENT_EMOJI = [
 ]
 
 
+_SAME_EMOJI = {
+    "TOR": "🌪️", "SVR": "⛈️", "FFW": "🌊", "FLW": "🌊",
+    "WSW": "❄️", "BZW": "❄️", "WCY": "❄️", "EWW": "💨",
+    "HWW": "💨", "FRW": "🔥", "SPS": "🌬️", "SMW": "⛈️",
+    "MAW": "🌊", "ADR": "⚠️",
+}
+
+_NWS_OFFICE_SHORT = {
+    "KBOI": "Boise", "KPIH": "Pocatello", "KMSO": "Missoula",
+    "KOTX": "Spokane", "KSLC": "Salt Lake City", "KMFR": "Medford",
+    "KPDT": "Pendleton", "KSEW": "Seattle",
+}
+
+
+def _nws_office(params: dict) -> str:
+    try:
+        wmo = (params.get("WMOidentifier") or [""])[0]
+        code = wmo.split()[1]
+        return _NWS_OFFICE_SHORT.get(code, code[1:])
+    except Exception:
+        return ""
+
+
+def _parse_nws_description(description: str) -> dict:
+    result = {}
+    patterns = {
+        "hazard":         r"HAZARD\.\.\.(.*?)(?=\n\n|\nSOURCE|\nIMPACT|\nLocations|$)",
+        "impact":         r"IMPACT\.\.\.(.*?)(?=\n\n|\nLocations|$)",
+        "tornado":        r"TORNADO\.\.\.(.*?)(?=\n\n|\n[A-Z]+\.\.\.|$)",
+        "tornado_threat": r"TORNADO DAMAGE THREAT\.\.\.(.*?)(?=\n\n|\n[A-Z]+\.\.\.|$)",
+    }
+    for key, pattern in patterns.items():
+        m = re.search(pattern, description or "", re.DOTALL | re.IGNORECASE)
+        if m:
+            text = m.group(1).replace("\n", " ").strip()
+            if text:
+                result[key] = text[:80]
+    return result
+
+
 def _now() -> int: return int(time.time())
 
 
@@ -211,7 +251,8 @@ def handle_nws(envelope: dict, subject: str,
         )
         wire = _render(event_type=event_type, area_desc=area_desc,
                         geocoder_city=ge.get("city"), county=county, state=state,
-                        expires_epoch=expires_epoch, lat=lat, lon=lon, now=now)
+                        expires_epoch=expires_epoch, lat=lat, lon=lon, now=now,
+                        d=d)
         _attach_commit(data, cap_id=cap_id, event_log_row_id=log_id)
         return wire
 
@@ -219,7 +260,8 @@ def handle_nws(envelope: dict, subject: str,
         # Cold-start race: row exists but broadcast was previously dropped.
         wire = _render(event_type=event_type, area_desc=area_desc,
                         geocoder_city=ge.get("city"), county=county, state=state,
-                        expires_epoch=expires_epoch, lat=lat, lon=lon, now=now)
+                        expires_epoch=expires_epoch, lat=lat, lon=lon, now=now,
+                        d=d)
         _attach_commit(data, cap_id=cap_id, event_log_row_id=log_id)
         return wire
 
@@ -232,22 +274,66 @@ def handle_nws(envelope: dict, subject: str,
         wire = _render(event_type=event_type, area_desc=area_desc,
                         geocoder_city=ge.get("city"), county=county, state=state,
                         expires_epoch=expires_epoch, lat=lat, lon=lon, now=now,
-                        prefix="Active")
+                        prefix="Active", d=d)
         _attach_commit(data, cap_id=cap_id, event_log_row_id=log_id)
         return wire
     return None
 
 
 def _render(*, event_type, area_desc, geocoder_city, county, state,
-             expires_epoch, lat, lon, now, prefix: str = "") -> str:
-    emoji = _emoji_for_event(event_type)
-    anchor = _location_anchor(area_desc, geocoder_city, county, state)
-    expires_seg = _format_expires_short(expires_epoch, now=now)
-    coords = ""
-    if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
-        coords = f", @ {lat:.3f},{lon:.3f}"
+             expires_epoch, lat, lon, now, prefix: str = "", d: dict = None) -> str:
+    d = d or {}
+    params = d.get("parameters") or {}
+
+    # Emoji: prefer SAME event code, fall back to event_type substring match
+    same_code = ((d.get("eventCode") or {}).get("SAME") or [""])[0]
+    emoji = _SAME_EMOJI.get(same_code) or _emoji_for_event(event_type)
+
+    # Office
+    office = _nws_office(params)
+    office_seg = f" — NWS {office}" if office else ""
     prefix_seg = f"{prefix}: " if prefix else ""
-    return f"{emoji} {prefix_seg}{event_type or 'Weather Alert'}: {anchor}, {expires_seg}{coords}"
+
+    # Line 1
+    line1 = f"{emoji} {prefix_seg}{event_type or 'Weather Alert'}{office_seg}"
+
+    # Line 2: first areaDesc segment only, max 60 chars
+    area = area_desc or county or ""
+    area = area.split(";")[0].strip()
+    if len(area) > 60:
+        area = area[:57] + "..."
+    line2 = area
+
+    # Parse description
+    desc = _parse_nws_description(d.get("description") or "")
+
+    # Line 3: hazard
+    hazard = desc.get("tornado") or desc.get("hazard") or ""
+    if not hazard:
+        wind = (params.get("maxWindGust") or [""])[0]
+        hail = (params.get("maxHailSize") or [""])[0]
+        bits = []
+        if wind and wind not in ("0 MPH", ""): bits.append(f"{wind} winds")
+        if hail and hail not in ("0.00", "0", ""): bits.append(f"{hail} in hail")
+        hazard = ". ".join(bits)
+    line3 = hazard
+
+    # Line 4: impact
+    impact = desc.get("impact") or ""
+    line4 = impact
+
+    # Line 5: expires
+    expires_seg = _format_expires_short(expires_epoch, now=now) if expires_epoch else ""
+    line5 = f"Expires: {expires_seg}" if expires_seg else ""
+
+    # Line 6: instruction (max 80 chars)
+    instruction = (d.get("instruction") or "").strip()
+    if len(instruction) > 80:
+        instruction = instruction[:77] + "..."
+    line6 = instruction
+
+    lines = [l for l in (line1, line2, line3, line4, line5, line6) if l]
+    return "\n".join(lines)
 
 
 def _category_to_event_type(category_raw: str) -> str:
