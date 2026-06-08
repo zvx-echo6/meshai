@@ -383,6 +383,7 @@ def _parse_state_511_incident(envelope: dict, category_raw: str, now: int) -> Op
         "lanes_affected": d.get("lanes_affected"),
         "cause":          d.get("cause"),
         "description":    d.get("description"),
+        "comment":        d.get("comment"),
         "mile_marker":    (d.get("_enrichment") or {}).get("mile_marker", {}).get("value"),
     }
 
@@ -442,6 +443,7 @@ def _parse_itd_511_incident(envelope: dict, category_raw: str, now: int) -> Opti
         "lanes_affected": d.get("lanes_affected"),
         "cause":          d.get("cause"),
         "description":    d.get("description"),
+        "comment":        d.get("comment"),
         "mile_marker":    (d.get("_enrichment") or {}).get("mile_marker", {}).get("value"),
     }
 
@@ -597,7 +599,7 @@ def handle_incident(envelope: dict, subject: str,
              n["magnitude"], n["delay_seconds"], n["icon_category"],
              None, None, None),
         )
-        wire = _render(n, prefix="New")
+        wire = _render(n)
         _attach_commit_handles(data, source=source, external_id=external_id,
                                  magnitude=n["magnitude"],
                                  delay_seconds=n["delay_seconds"],
@@ -626,7 +628,7 @@ def handle_incident(envelope: dict, subject: str,
     # dropped the broadcast (grace, cooldown, etc.). last_broadcast_at is
     # still NULL -> the next successful broadcast still labels itself New:.
     if last_bcast_at is None:
-        wire = _render(n, prefix="New")
+        wire = _render(n)
         _attach_commit_handles(data, source=source, external_id=external_id,
                                  magnitude=n["magnitude"],
                                  delay_seconds=n["delay_seconds"],
@@ -660,7 +662,7 @@ def handle_incident(envelope: dict, subject: str,
     if not (mag_stepped_up or delay_doubled or icon_changed):
         return None
 
-    wire = _render(n, prefix="Update")
+    wire = _render(n)
     _attach_commit_handles(data, source=source, external_id=external_id,
                              magnitude=n["magnitude"],
                              delay_seconds=n["delay_seconds"],
@@ -743,12 +745,13 @@ def _log_event_returning_id(conn, *, now, source, category, severity_word,
 # ---- renderer ------------------------------------------------------------
 
 
-def _render(n: dict, *, prefix: str = "") -> str:
+def _render(n: dict) -> str:
     """Multi-line wire string.
 
-    Line 1: {emoji} {prefix}: {display} — Near {city}, {state}
+    Line 1: {emoji} {display} — Near {city}, {state}
     Line 2: {road} {direction_long} | MP {mile_marker}
     Line 3: {lanes_affected} | {delay} min delay
+    Line 3b: {comment} (additional context, if non-duplicate and <=140 chars)
     Line 4: Cause: {cause}
     """
     sub_type = n.get("sub_type") or "incident"
@@ -764,8 +767,7 @@ def _render(n: dict, *, prefix: str = "") -> str:
             anchor_part = f"Near {anchor} Co, {state}".rstrip(", ")
     else:
         anchor_part = state or ""
-    prefix_part = f"{prefix}: " if prefix else ""
-    line1 = f"{emoji} {prefix_part}{display} — {anchor_part}".rstrip(" —")
+    line1 = f"{emoji} {display} — {anchor_part}".rstrip(" —")
 
     # Line 2: road + direction + mile_marker
     road = n.get("road")
@@ -799,7 +801,17 @@ def _render(n: dict, *, prefix: str = "") -> str:
     elif delay_line and not line3:
         line3 = delay_line
 
-    lines = [l for l in (line1, line2, line3, line4) if l]
+    # Line 3b: comment field, if it contains additional context not already in line 3
+    comment = n.get("comment")
+    line3b = ""
+    if comment and comment.strip():
+        # Skip if comment is just a duplicate of lanes_affected or description
+        comment_normalized = comment.strip().lower()
+        lanes_normalized = (lanes or "").strip().lower()
+        if comment_normalized != lanes_normalized and len(comment) <= 140:
+            line3b = comment.strip()
+
+    lines = [l for l in (line1, line2, line3, line3b, line4) if l]
     return "\n".join(lines)
 
 
