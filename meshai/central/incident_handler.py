@@ -396,7 +396,12 @@ def _parse_itd_511_incident(envelope: dict, category_raw: str, now: int) -> Opti
     if category_raw.startswith("incident."):        kind = "incident"
     elif category_raw.startswith("closure."):        kind = "closure"
     elif category_raw.startswith("special_event."): kind = "special_event"
+    elif category_raw.startswith("work_zone."):     kind = "work_zone"
     else:                                            return None
+
+    # Drop work_zone envelopes -- silently suppressed
+    if kind == "work_zone":
+        return None
 
     # Severity filter
     min_sev = str(adapter_config.itd_511.min_severity or "None")

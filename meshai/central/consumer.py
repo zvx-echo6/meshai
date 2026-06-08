@@ -526,7 +526,7 @@ class CentralConsumer:
                     from meshai.central.firms_handler import handle_firms
                     synthesized = handle_firms(envelope, subject, data=data) or None
                 elif n is not None and category in ("work_zone", "road_closure", "road_incident"):
-                    synthesized = format_work_zone_mesh(n) or None
+                    return None  # silently drop work zone envelopes
         except Exception:
             logger.exception("normalizer/renderer failed for adapter=%s category=%s",
                              inner.get("adapter"), category)
