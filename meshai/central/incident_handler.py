@@ -303,7 +303,7 @@ def _parse_tomtom_incident(envelope: dict, now: int) -> Optional[dict]:
         "source":          "tomtom_incidents",
         "external_id":     external_id,
         "category_kind":   "incident",
-        "road":            _tomtom_road_label(d) or (d.get("from") or "road"),
+        "road":            _tomtom_road_label(d),
         "direction":       _tomtom_direction_from_description(d.get("description")),
         "mile_start":      None,
         "mile_end":        None,
