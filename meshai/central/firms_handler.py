@@ -877,7 +877,6 @@ def _close_prev_perimeter(conn, irwin_id: str, prev_pass_id: str) -> None:
 def _check_spotting(conn, *, irwin_id, pixel_lat, pixel_lon,
                       current_pass_id, incident_name, data, now):
     """Return spotting wire if criteria met, else None."""
-    return None
     threshold_mi = float(adapter_config.fires.spotting_distance_threshold_mi)
     cooldown_s = int(adapter_config.fires.spotting_cooldown_seconds)
 
