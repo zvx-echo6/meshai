@@ -31,6 +31,22 @@ Where {label} is:
 flow_cfs segment is dropped when parameter_code is 00065 only (no
 companion discharge reading). lat/lon segment is dropped when coords are
 missing (rare since curated sites have coords).
+
+Operational status (2026-06-08):
+  PARKED — Idaho USGS sites return discharge only (parameter_code=00060).
+  Gage height (00065) is not present in any retained CENTRAL_HYDRO envelope
+  (confirmed: 113-envelope JetStream replay, 0 stage readings). Without
+  00065, compute_threshold_state() always returns "normal", the
+  upward-crossing check never fires, and this handler broadcasts nothing.
+
+  The threshold/flood-stage machinery and IDAHO_CURATED_SITES thresholds
+  are correct and should be preserved. The adapter will become active if/when
+  USGS sites serving Idaho gage height data are added to the curated list.
+
+  Enrichment idea (parked same date): if NWS issues a flood warning (FFW/FLW)
+  and a NWIS gauge in the same county is above action stage, annotating the
+  NWS wire with the gauge reading was considered. Blocked by the same 00065
+  data gap — revisit if stage data becomes available.
 """
 from __future__ import annotations
 from meshai.adapter_config import adapter_config
