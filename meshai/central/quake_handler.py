@@ -6,8 +6,10 @@ Broadcast gate (any of these triggers):
     (c) tsunami_warning at any magnitude
     (d) PAGER alert level in {orange, red}
 
-Wire format:
-    {emoji} Magnitude {mag:.1f} earthquake {place_string}, {depth}km depth, @ {lat:.3f},{lon:.3f}
+Wire format (multi-line, matches Fire/Roads style):
+    Line 1: {emoji} {prefix} M{mag:.1f} — {place_string}
+    Line 2: Depth: {depth} km · @ {lat:.3f}, {lon:.3f}
+    Line 3: 🚨 TSUNAMI WARNING — only when tsunami flag is set
 
 Emoji:
     Routine          -> 🌐
@@ -159,32 +161,40 @@ def handle_quake(envelope: dict, subject: str,
              1 if tsunami else 0, now, None),
         )
         wire = _render(mag=mag, place=place, depth_km=depth_km, lat=lat, lon=lon,
-                        tsunami=tsunami)
+                        tsunami=tsunami, is_update=False)
         _attach_commit(data, event_id=event_id, event_log_row_id=log_id)
         return wire
 
     if row["last_broadcast_at"] is None:
         wire = _render(mag=mag, place=place, depth_km=depth_km, lat=lat, lon=lon,
-                        tsunami=tsunami)
+                        tsunami=tsunami, is_update=False)
         _attach_commit(data, event_id=event_id, event_log_row_id=log_id)
         return wire
 
     return None
 
 
-def _render(*, mag, place, depth_km, lat, lon, tsunami) -> str:
+def _render(*, mag, place, depth_km, lat, lon, tsunami, is_update=False) -> str:
     emoji = _emoji_for(mag, tsunami)
     mag_str = f"{mag:.1f}" if isinstance(mag, (int, float)) else "?"
-    place_str = place if place else "(location unknown)"
+    place_str = place if place else "unknown location"
+    prefix = "Update:" if is_update else "New:"
+
+    # Line 1: prefix + magnitude + place
+    line1 = f"{emoji} {prefix} M{mag_str} \u2014 {place_str}"
+
+    # Line 2: depth + coords
+    parts = []
     if isinstance(depth_km, (int, float)):
-        depth_seg = f", {int(round(depth_km))}km depth"
-    else:
-        depth_seg = ""
-    coords = ""
+        parts.append(f"Depth: {int(round(depth_km))} km")
     if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
-        coords = f", @ {lat:.3f},{lon:.3f}"
-    tsunami_seg = " -- TSUNAMI WARNING" if tsunami else ""
-    return f"{emoji} Magnitude {mag_str} earthquake {place_str}{depth_seg}{coords}{tsunami_seg}"
+        parts.append(f"@ {lat:.3f}, {lon:.3f}")
+    line2 = " \u00b7 ".join(parts) if parts else None
+
+    # Line 3: tsunami warning (only when present)
+    line3 = "\U0001f6a8 TSUNAMI WARNING" if tsunami else None
+
+    return "\n".join(l for l in [line1, line2, line3] if l)
 
 
 def _attach_commit(data: Optional[dict], *, event_id: str,

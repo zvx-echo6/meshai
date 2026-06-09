@@ -23,7 +23,7 @@ interface EnvConfig {
   fires: { enabled: boolean; tick_seconds: number; state: string; feed_source?: FeedSource }
   avalanche: { enabled: boolean; tick_seconds: number; center_ids: string[]; season_months: number[]; feed_source?: FeedSource }
   usgs: { enabled: boolean; tick_seconds: number; sites: string[]; feed_source?: FeedSource }
-  usgs_quake: { enabled: boolean; tick_seconds: number; feed_url: string; min_magnitude: number; bbox: number[]; region: string; feed_source?: FeedSource }
+  usgs_quake: { enabled: boolean; tick_seconds: number; feed_url: string; global_mag_floor: number; regional_mag_floor: number; regional_radius_mi: number; escalate_mag_floor: number; broadcast_pager_alerts: string[]; region: string; feed_source?: FeedSource }
   traffic: { enabled: boolean; tick_seconds: number; api_key: string; corridors: { name: string; lat: number; lon: number }[]; feed_source?: FeedSource }
   roads511: { enabled: boolean; tick_seconds: number; api_key: string; base_url: string; endpoints: string[]; bbox: number[]; feed_source?: FeedSource }
   wzdx: { enabled: boolean; tick_seconds: number; api_key: string; base_url: string; endpoints: string[]; bbox: number[]; feed_source?: FeedSource }
@@ -665,17 +665,63 @@ const save = async () => {
         <NumberInput label="Tick Seconds" value={env.usgs.tick_seconds} onChange={(v) => up({ usgs: { ...env.usgs, tick_seconds: v } })} min={900} helper="Minimum 15 min (900s). tick_seconds is the native-mode poll interval; ignored when this adapter is set to feed_source=central." />
         <ListInput label="Site IDs" value={env.usgs.sites} onChange={(v) => up({ usgs: { ...env.usgs, sites: v } })} helper="USGS gauge site numbers" infoLink="https://waterdata.usgs.gov/nwis" />
       </>)
-      case 'usgs_quake': return (<>
-        <NumberInput label="Tick Seconds" value={env.usgs_quake.tick_seconds} onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, tick_seconds: v } })} min={60} />
-        <NumberInput label="Min Magnitude" value={env.usgs_quake.min_magnitude} onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, min_magnitude: v } })} step={0.1} min={0} />
-        <TextInput label="Region Tag" value={env.usgs_quake.region} onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, region: v } })} />
-        <div className="grid grid-cols-4 gap-2">
-          {(['West', 'South', 'East', 'North'] as const).map((lbl, i) => (
-            <NumberInput key={lbl} label={lbl} value={env.usgs_quake.bbox?.[i] ?? 0} onChange={(v) => { const b = [...(env.usgs_quake.bbox || [0, 0, 0, 0])]; b[i] = v; up({ usgs_quake: { ...env.usgs_quake, bbox: b } }) }} step={0.01} />
-          ))}
+      case 'usgs_quake': return (
+        <div className="space-y-6">
+          {env.usgs_quake.feed_source !== 'central' && (
+            <div className="grid grid-cols-2 gap-4">
+              <NumberInput label="Tick Seconds" value={env.usgs_quake.tick_seconds}
+                onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, tick_seconds: v } })}
+                min={60} />
+              <TextInput label="Region Tag" value={env.usgs_quake.region}
+                onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, region: v } })} />
+            </div>
+          )}
+          <div>
+            <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">
+              Magnitude Thresholds
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <NumberInput label="Global Floor" value={env.usgs_quake.global_mag_floor}
+                onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, global_mag_floor: v } })}
+                step={0.1} min={0} helper="Broadcast anywhere at or above this magnitude" />
+              <NumberInput label="Regional Floor" value={env.usgs_quake.regional_mag_floor}
+                onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, regional_mag_floor: v } })}
+                step={0.1} min={0} helper="Reduced floor within regional radius" />
+              <NumberInput label="Regional Radius (mi)" value={env.usgs_quake.regional_radius_mi}
+                onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, regional_radius_mi: v } })}
+                min={50} helper="Radius around region centroid for reduced floor" />
+              <NumberInput label="Escalation Floor" value={env.usgs_quake.escalate_mag_floor}
+                onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, escalate_mag_floor: v } })}
+                step={0.1} min={0} helper="Magnitude at which broadcast uses warning emoji" />
+            </div>
+          </div>
+          <div>
+            <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">
+              PAGER Alert Levels
+            </div>
+            <div className="text-xs text-slate-500 mb-2">
+              Broadcast at any magnitude when USGS PAGER alert reaches these levels
+            </div>
+            <div className="flex gap-6">
+              {(['green','yellow','orange','red'] as const).map((level) => (
+                <label key={level} className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox"
+                    checked={env.usgs_quake.broadcast_pager_alerts.includes(level)}
+                    onChange={(e) => {
+                      const cur = env.usgs_quake.broadcast_pager_alerts
+                      up({ usgs_quake: { ...env.usgs_quake,
+                        broadcast_pager_alerts: e.target.checked
+                          ? [...cur, level]
+                          : cur.filter((l) => l !== level) }})
+                    }}
+                    className="w-4 h-4 rounded accent-blue-500" />
+                  <span className="text-sm text-slate-300 capitalize">{level}</span>
+                </label>
+              ))}
+            </div>
+          </div>
         </div>
-        <div className="text-xs text-slate-500">Bounding box [W,S,E,N] geographic filter</div>
-      </>)
+      )
       case 'traffic': return (<>
         <TextInput label="API Key" value={env.traffic.api_key} onChange={(v) => up({ traffic: { ...env.traffic, api_key: v } })} type="password" helper="developer.tomtom.com" />
         <NumberInput label="Tick Seconds" value={env.traffic.tick_seconds} onChange={(v) => up({ traffic: { ...env.traffic, tick_seconds: v } })} min={60} />
