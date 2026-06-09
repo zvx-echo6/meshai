@@ -116,6 +116,40 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
                 )
             except Exception:
                 logger.exception("wfigs: tombstoned_at stamp failed irwin=%s", irwin_id)
+
+        # All-clear broadcast: only fires that previously made it to mesh
+        # get a closure message. Silent for fires that were never broadcast.
+        if kind == "wfigs_tombstone" and irwin_id:
+            fire_row = conn.execute(
+                "SELECT incident_name, current_acres, current_contained_pct, "
+                "last_broadcast_at, county, state, lat, lon "
+                "FROM fires WHERE irwin_id = ?", (irwin_id,)
+            ).fetchone()
+            if fire_row is not None and fire_row["last_broadcast_at"] is not None:
+                name = fire_row["incident_name"] or "(unnamed fire)"
+                # Build line 2 parts
+                parts = []
+                if fire_row["current_acres"] is not None:
+                    parts.append(f"{int(fire_row['current_acres']):,} ac")
+                if fire_row["current_contained_pct"] is not None:
+                    parts.append(f"{int(fire_row['current_contained_pct'])}% contained")
+                # Location via _location_anchor with a minimal normalized dict
+                loc_dict = {
+                    "lat": fire_row["lat"], "lon": fire_row["lon"],
+                    "county": fire_row["county"], "state": fire_row["state"],
+                }
+                anchor = _location_anchor(loc_dict)
+                if anchor and anchor != "(location unknown)":
+                    parts.append(anchor)
+                lines = [f"✅ {name} — contained & closed"]
+                if parts:
+                    lines.append(" | ".join(parts))
+                wire = "\n".join(lines)
+                if isinstance(data, dict):
+                    data["category"] = "wildfire_closed"
+                    data["_severity_override"] = "routine"
+                return wire
+
         return None
 
     # ---- active incident ----

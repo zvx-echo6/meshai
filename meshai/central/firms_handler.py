@@ -774,7 +774,6 @@ def _maybe_emit_halt(conn, *, data, now):
     eligible because we filter on `halt_broadcast_at IS NULL OR
     halt_broadcast_at < last_pass_at`.
     """
-    return None
     minimum_s = int(adapter_config.fires.halt_minimum_seconds)
     cutoff = float(now) - float(minimum_s)
     row = conn.execute(
