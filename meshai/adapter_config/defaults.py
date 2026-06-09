@@ -487,6 +487,11 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     # =================================================================
     # v0.6-phase3 reminders: per-adapter clock-driven re-broadcast config.
     # =================================================================
+    ("reminders_wfigs", "enabled"): {
+        "default": False,
+        "type": "bool",
+        "description": "Enable Active: reminder broadcasts for ongoing fires. Disabled by default — use the digest instead.",
+    },
     ("reminders_wfigs", "cadence_kind"): {
         "default": "interval",
         "type": "str",

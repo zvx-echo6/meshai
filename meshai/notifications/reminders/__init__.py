@@ -117,6 +117,16 @@ class ReminderScheduler:
 
     async def _tick_adapter(self, adapter: str) -> int:
         """Look up the reminder config + query the adapter's table."""
+        # Per-adapter kill switch: adapter_config reminders_<name>.enabled
+        try:
+            from meshai.adapter_config import adapter_config
+            ac_adapter = f"reminders_{adapter}"
+            enabled = _safe_get(adapter_config, ac_adapter, "enabled")
+            if enabled is not None and not enabled:
+                return 0
+        except Exception:
+            pass
+
         cfg = _ReminderConfig.load(adapter)
         if cfg is None:
             return 0
