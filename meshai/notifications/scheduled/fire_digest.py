@@ -82,46 +82,45 @@ async def render_digest(*, now: Optional[int] = None) -> tuple[str, str]:
     now = now if now is not None else int(time.time())
     conn = get_db()
 
-    fires = conn.execute(
-        "SELECT incident_name, current_acres, current_contained_pct, "
-        "lat, lon, county, state "
-        "FROM fires "
-        "WHERE tombstoned_at IS NULL "
-        "ORDER BY COALESCE(current_acres, 0) DESC LIMIT 20",
+    rows = conn.execute(
+        "SELECT incident_name, current_acres, current_contained_pct, county, state "
+        "FROM fires WHERE tombstoned_at IS NULL "
+        "AND (current_contained_pct IS NULL OR current_contained_pct < 100) "
+        "AND last_event_at > strftime('%s', 'now', '-7 days') "
+        "ORDER BY current_acres DESC NULLS LAST LIMIT 20"
     ).fetchall()
 
-    if not fires:
+    if not rows:
         return "", "no_fires"
 
-    n = len(fires)
-    lines: list[str] = []
-    lines.append(f"\U0001f525 Fire Digest \u2014 {n} active wildfire(s) in Idaho")
+    n = len(rows)
+    header = f"\U0001f525 Fire Digest \u2014 {n} active wildfire(s) in Idaho"
 
-    for f in fires[:5]:
-        name = f["incident_name"] or "(unnamed)"
-        acres = f["current_acres"]
-        contained = f["current_contained_pct"]
+    fire_lines: list[str] = []
+    for row in rows:
+        name = row["incident_name"] or "(unnamed)"
+        anchor = f"{row['county']} Co" if row["county"] else row["state"] or ""
+        contained = f"{int(row['current_contained_pct'])}% cont" if row["current_contained_pct"] is not None else "uncontained"
+        acres = f"{int(row['current_acres']):,} ac" if row["current_acres"] else "size unknown"
+        fire_lines.append(f"{name}: {acres}, {contained}, {anchor}")
 
-        acres_str = f"{int(acres):,} ac" if acres and acres > 0 else "size unknown"
-        contained_str = (f"{int(contained)}% contained"
-                         if contained is not None else "containment unknown")
+    # 220-byte budget: greedily fit lines
+    shown: list[str] = []
+    for line in fire_lines:
+        remaining = n - len(shown) - 1
+        overflow = f"\n+ {remaining} more" if remaining > 0 else ""
+        candidate = "\n".join([header] + shown + [line]) + overflow
+        if len(candidate.encode("utf-8")) <= 220:
+            shown.append(line)
+        else:
+            break
+    remaining = n - len(shown)
+    lines = [header] + shown
+    if remaining > 0:
+        lines.append(f"+ {remaining} more")
+    wire = "\n".join(lines)
 
-        anchor = _get_anchor(f["lat"], f["lon"])
-        if not anchor:
-            county = f["county"]
-            state = f["state"]
-            if county and state:
-                anchor = f"{county} Co {state}"
-
-        parts = [f"{name}: {acres_str}, {contained_str}"]
-        if anchor:
-            parts[0] += f", {anchor}"
-        lines.append(parts[0])
-
-    if n > 5:
-        lines.append(f"+ {n - 5} more")
-
-    return "\n".join(lines), "deterministic"
+    return wire, "deterministic"
 
 
 # ===========================================================================
