@@ -54,6 +54,16 @@ _S_SCALE_THRESHOLDS = [
 ]
 
 
+def _trunc(s: str, limit: int = 120) -> str:
+    """Truncate *s* at the last word boundary at or before *limit* chars."""
+    if len(s) <= limit:
+        return s
+    cut = s[:limit].rsplit(" ", 1)[0]
+    if not cut:
+        cut = s[:limit]
+    return cut + "…"
+
+
 def _now() -> int: return int(time.time())
 
 
@@ -300,7 +310,7 @@ def handle_swpc(envelope: dict, subject: str,
     # Extract optional detail and time tag for multi-line render.
     _detail = d.get("message") or d.get("description") or ""
     if isinstance(_detail, str):
-        _detail = _detail.strip()[:120]
+        _detail = _trunc(_detail.strip())
     else:
         _detail = ""
     _time_tag = ""
@@ -335,19 +345,19 @@ def _render(event_kind, scale_code, label, scalar_str,
 
     if event_kind == "geomag":
         line1 = f"🧲 {prefix} {scale_code} Geomagnetic Storm — {scalar_str}"
-        line2 = detail[:120] if detail else "HF degraded, aurora possible"
+        line2 = _trunc(detail) if detail else "HF degraded, aurora possible"
         line3 = f"SWPC · {time_tag}" if time_tag else "SWPC"
     elif event_kind == "flare":
         line1 = f"☀️ {prefix} {scalar_str} Solar Flare — {scale_code}"
-        line2 = detail[:120] if detail else "HF radio fading, GPS may glitch"
+        line2 = _trunc(detail) if detail else "HF radio fading, GPS may glitch"
         line3 = f"SWPC · {time_tag}" if time_tag else "SWPC"
     elif event_kind == "proton":
         line1 = f"☢️ {prefix} {scale_code} Radiation Storm — {scalar_str}"
-        line2 = detail[:120] if detail else "Polar HF radio affected"
+        line2 = _trunc(detail) if detail else "Polar HF radio affected"
         line3 = f"SWPC · {time_tag}" if time_tag else "SWPC"
     else:
         line1 = f"⚠️ {prefix} Space Weather Event — {scale_code or '?'}"
-        line2 = detail[:120] if detail else None
+        line2 = _trunc(detail) if detail else None
         line3 = f"SWPC · {time_tag}" if time_tag else "SWPC"
 
     return "\n".join(l for l in [line1, line2, line3] if l)
