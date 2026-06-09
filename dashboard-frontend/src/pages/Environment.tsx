@@ -67,6 +67,11 @@ interface NwsConfig {
   duplicate_allowed_after_seconds: number
 }
 
+// Avalanche adapter config shape
+interface AvalancheConfig {
+  min_danger_level: number
+}
+
 interface TomtomConfig {
   min_magnitude: number
   drop_non_present: boolean
@@ -279,6 +284,10 @@ export default function Environment() {
     duplicate_allowed_after_seconds: 3600,
   })
   const [nwsOriginal, setNwsOriginal] = useState<string>("")
+  const [avalancheConfig, setAvalancheConfig] = useState<AvalancheConfig>({
+    min_danger_level: 3,
+  })
+  const [avalancheOriginal, setAvalancheOriginal] = useState<string>("")
 
 
   useEffect(() => {
@@ -381,6 +390,19 @@ export default function Environment() {
           }
         } catch { /* adapter-config optional */ }
 
+        // Load adapter-config for avalanche
+        try {
+          const avyRes = await fetch("/api/adapter-config/avalanche")
+          if (avyRes.ok) {
+            const avyData = await avyRes.json()
+            const cfg: AvalancheConfig = {
+              min_danger_level: avyData.min_danger_level?.value ?? 3,
+            }
+            setAvalancheConfig(cfg)
+            setAvalancheOriginal(JSON.stringify(cfg))
+          }
+        } catch { /* adapter-config optional */ }
+
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load config')
       } finally {
@@ -408,7 +430,8 @@ export default function Environment() {
   const hasRoads511Changes = JSON.stringify(roads511Config) !== roads511Original
   const hasWzdxChanges = JSON.stringify(wzdxConfig) !== wzdxOriginal
   const hasNwsChanges = JSON.stringify(nwsConfig) !== nwsOriginal
-  const hasChanges = hasEnvChanges || hasWfigsChanges || hasFiresChanges || hasTomtomChanges || hasRoads511Changes || hasWzdxChanges || hasNwsChanges
+  const hasAvalancheChanges = JSON.stringify(avalancheConfig) !== avalancheOriginal
+  const hasChanges = hasEnvChanges || hasWfigsChanges || hasFiresChanges || hasTomtomChanges || hasRoads511Changes || hasWzdxChanges || hasNwsChanges || hasAvalancheChanges
 
   
   const saveAdapterConfig = async (adapterName: string, key: string, value: unknown) => {
@@ -533,6 +556,15 @@ const save = async () => {
         setNwsOriginal(JSON.stringify(nwsConfig))
       }
 
+      // Save avalanche adapter config changes
+      if (hasAvalancheChanges) {
+        const orig = JSON.parse(avalancheOriginal) as AvalancheConfig
+        if (avalancheConfig.min_danger_level !== orig.min_danger_level) {
+          await saveAdapterConfig("avalanche", "min_danger_level", avalancheConfig.min_danger_level)
+        }
+        setAvalancheOriginal(JSON.stringify(avalancheConfig))
+      }
+
       setSuccess('Config saved')
       setTimeout(() => setSuccess(null), 3000)
     } catch (e) {
@@ -550,6 +582,7 @@ const save = async () => {
     setRoads511Config(JSON.parse(roads511Original || JSON.stringify(roads511Config)))
     setWzdxConfig(JSON.parse(wzdxOriginal || JSON.stringify(wzdxConfig)))
     setNwsConfig(JSON.parse(nwsOriginal || JSON.stringify(nwsConfig)))
+    setAvalancheConfig(JSON.parse(avalancheOriginal || JSON.stringify(avalancheConfig)))
   }
   const restart = async () => {
     try { await fetch('/api/restart', { method: 'POST' }); setRestartRequired(false); setSuccess('Restart initiated') }
@@ -656,11 +689,38 @@ const save = async () => {
           </div>
         </div>
       )
-      case 'avalanche': return (<>
-        <NumberInput label="Tick Seconds" value={env.avalanche.tick_seconds} onChange={(v) => up({ avalanche: { ...env.avalanche, tick_seconds: v } })} min={60} />
-        <ListInput label="Center IDs" value={env.avalanche.center_ids} onChange={(v) => up({ avalanche: { ...env.avalanche, center_ids: v } })} helper="e.g., SNFAC" infoLink="https://avalanche.org/avalanche-centers/" />
-        <NumberListInput label="Season Months" value={env.avalanche.season_months} onChange={(v) => up({ avalanche: { ...env.avalanche, season_months: v } })} helper="e.g., 12, 1, 2, 3, 4" />
-      </>)
+      case 'avalanche': return (
+        <div className="space-y-6">
+          {env.avalanche.feed_source !== 'central' && (
+            <div className="grid grid-cols-2 gap-4">
+              <NumberInput label="Tick Seconds" value={env.avalanche.tick_seconds}
+                onChange={(v) => up({ avalanche: { ...env.avalanche, tick_seconds: v } })}
+                min={60} />
+              <NumberListInput label="Season Months" value={env.avalanche.season_months}
+                onChange={(v) => up({ avalanche: { ...env.avalanche, season_months: v } })}
+                helper="e.g., 12, 1, 2, 3, 4" />
+            </div>
+          )}
+          <ListInput label="Center IDs" value={env.avalanche.center_ids}
+            onChange={(v) => up({ avalanche: { ...env.avalanche, center_ids: v } })}
+            helper="e.g., SNFAC" infoLink="https://avalanche.org/avalanche-centers/" />
+          <div>
+            <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">
+              Broadcast Settings
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <SelectInput label="Min Danger Level" value={String(avalancheConfig.min_danger_level)}
+                onChange={(v) => setAvalancheConfig({ ...avalancheConfig, min_danger_level: Number(v) })}
+                options={[
+                  { value: "3", label: "3 — Considerable" },
+                  { value: "4", label: "4 — High" },
+                  { value: "5", label: "5 — Extreme" },
+                ]}
+                helper="Minimum avalanche danger level to broadcast" />
+            </div>
+          </div>
+        </div>
+      )
       case 'usgs': return (<>
         <NumberInput label="Tick Seconds" value={env.usgs.tick_seconds} onChange={(v) => up({ usgs: { ...env.usgs, tick_seconds: v } })} min={900} helper="Minimum 15 min (900s). tick_seconds is the native-mode poll interval; ignored when this adapter is set to feed_source=central." />
         <ListInput label="Site IDs" value={env.usgs.sites} onChange={(v) => up({ usgs: { ...env.usgs, sites: v } })} helper="USGS gauge site numbers" infoLink="https://waterdata.usgs.gov/nwis" />

@@ -567,6 +567,15 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "description": "Allow re-broadcast of the same CAP id after this many seconds (the nws_handler relaxes its dedup gate past this point and uses an Active: prefix).",
     },
 
+    # =================================================================
+    # AVALANCHE -- 1 setting (min danger level broadcast floor)
+    # =================================================================
+    ("avalanche", "min_danger_level"): {
+        "default": 3,
+        "type": "int",
+        "description": "Minimum danger level to broadcast (3=Considerable, 4=High, 5=Extreme).",
+    },
+
 }
 
 

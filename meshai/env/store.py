@@ -115,6 +115,20 @@ class EnvironmentalStore:
                 self._events[key] = evt
                 if is_new and self._event_bus and hasattr(adapter, "to_event"):
                     self._emit_event(adapter, evt)
+        elif name == "avalanche":
+            # Avalanche: re-emit on danger_level rise (Update:) not just new events.
+            for evt in adapter.get_events():
+                key = (evt["source"], evt["event_id"])
+                prior = self._events.get(key)
+                is_new = prior is None
+                prior_level = prior.get("danger_level", -1) if prior else -1
+                level_rose = (not is_new) and (evt.get("danger_level", -1) > prior_level)
+
+                if (is_new or level_rose) and self._event_bus and hasattr(adapter, "to_event"):
+                    evt["_is_update"] = level_rose   # signal to to_event()
+                    self._emit_event(adapter, evt)
+
+                self._events[key] = evt   # always update stored state
         else:
             for evt in adapter.get_events():
                 key = (evt["source"], evt["event_id"])

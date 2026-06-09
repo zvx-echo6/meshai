@@ -237,6 +237,14 @@ class AvalancheAdapter:
         NOT emitted (returns None). High/Extreme (4-5) -> avalanche_warning;
         Considerable (3) -> avalanche_watch.
 
+        Multi-line wire format (matching Fire/Roads/Quake style):
+            Line 1: emoji prefix zone — danger_name (level)
+            Line 2: travel_advice (truncated, only if present)
+            Line 3: center_id · valid today
+
+        The _is_update flag is set by EnvironmentalStore when danger_level
+        rises for an existing zone; New: for first sighting, Update: for rise.
+
         Args:
             evt: Internal event dict from get_events()
 
@@ -245,6 +253,8 @@ class AvalancheAdapter:
             is missing its centroid or event_id, or the danger is not elevated.
         """
         try:
+            from meshai.adapter_config import adapter_config
+
             lat = evt.get("lat")
             lon = evt.get("lon")
             if lat is None or lon is None:
@@ -258,6 +268,11 @@ class AvalancheAdapter:
             if danger_level is None:
                 return None
 
+            # Min danger level floor from adapter_config
+            min_level = int(adapter_config.avalanche.min_danger_level)
+            if danger_level < min_level:
+                return None
+
             # Category from danger level: High/Extreme (4-5) is a warning,
             # Considerable (3) is a watch, anything below is not actionable.
             if danger_level >= 4:
@@ -265,20 +280,30 @@ class AvalancheAdapter:
             elif danger_level == 3:
                 category = "avalanche_watch"
             else:
-                return None  # Low/Moderate/No-Rating -- do not emit
+                return None  # Below min_level but still < 3 -- do not emit
 
             severity = evt.get("severity", "routine")
-            title = evt.get("headline") or evt.get("zone_name") or "Avalanche Advisory"
 
-            # Summary: headline plus the danger name and travel advice.
-            summary_parts = [title]
-            danger_name = evt.get("danger_name")
-            if danger_name:
-                summary_parts.append(f"Danger: {danger_name}")
-            travel = evt.get("travel_advice")
-            if travel:
-                summary_parts.append(str(travel))
-            summary = " | ".join(summary_parts)[:300]
+            # New/Update prefix from store's danger-level-rise detection
+            is_update = bool(evt.get("_is_update", False))
+            prefix = "Update:" if is_update else "New:"
+
+            # Line 1: emoji + prefix + zone + danger level
+            emoji = "\u26f7"
+            level_name = evt.get("danger_name", "Unknown")
+            zone = evt.get("zone_name", "Unknown Zone")
+            line1 = f"{emoji} {prefix} {zone} \u2014 {level_name} ({danger_level})"
+
+            # Line 2: travel advice (truncated to 120 chars, only if present)
+            travel = evt.get("travel_advice", "")
+            line2 = travel[:120] if travel else None
+
+            # Line 3: center ID + valid date
+            center_id = evt.get("center_id", "")
+            line3 = f"{center_id} \u00b7 valid today" if center_id else "valid today"
+
+            summary = "\n".join(l for l in [line1, line2, line3] if l)
+            title = line1  # first line only for title
 
             # event_id is already the stable "avy_{center}_{zone}" key. Re-polls
             # of the same zone coalesce on this group_key; using it as the sole
