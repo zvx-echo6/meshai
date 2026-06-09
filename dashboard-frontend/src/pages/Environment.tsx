@@ -218,7 +218,7 @@ const META: Record<AdapterKey, AdapterMeta> = {
   wzdx: { label: 'WZDx Work Zones', subtitle: 'Planned road work and construction events from ITD', health: 'roads511', hasCentral: true, nativeOnly: false, hasKey: true },
   usgs_quake: { label: 'USGS Earthquakes', subtitle: 'Seismic events from the USGS feed', health: 'usgs_quake', hasCentral: true, nativeOnly: false, hasKey: true },
   usgs: { label: 'USGS Stream Gauges', subtitle: 'River and stream water levels', health: 'usgs', hasCentral: true, nativeOnly: false, hasKey: true },
-  avalanche: { label: 'Avalanche Advisories', subtitle: 'Backcountry avalanche danger ratings', health: 'avalanche', hasCentral: false, nativeOnly: true, hasKey: true },
+  avalanche: { label: 'Avalanche Advisories', subtitle: 'Backcountry avalanche danger ratings', health: 'avalanche', hasCentral: true, nativeOnly: false, hasKey: true },
 }
 
 const FAMILIES: { key: string; label: string; icon: typeof Cloud; adapters: AdapterKey[] }[] = [
