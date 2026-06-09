@@ -49,6 +49,7 @@ _SUBJECTS_BARE: dict[str, list[str]] = {
     "swpc": ["central.space.>"],
     "traffic": ["central.traffic.>"],
     "roads511": ["central.traffic.>"],   # shared with traffic; sub-adapter routing
+    "avalanche": ["central.avy.advisory.>"],
 }
 
 # Backwards-compat: keep ADAPTER_SUBJECTS importable for legacy readers/tests.
@@ -173,6 +174,14 @@ def _subjects_for(adapter: str, region: Optional[str]) -> list[str]:
         # shared bare-state subject scoped to both source names.
         "roads511":   [f"central.traffic.*.{state}",
                        f"central.traffic.*.{region}"],
+        # Avalanche (avalanche_org): Central publishes on CENTRAL_AVY stream.
+        # Active advisories: central.avy.advisory.us.<state>
+        # Tombstones (v0.10.11+): central.avy.advisory.removed.us.<state>
+        # Wide filter covers both in one consumer. Client-side: gate on
+        # danger_level from data.data, not centralseverity (higher=more severe
+        # on Central's scale, inverse of what the handler uses).
+        # Off-season: June–Sep, CENTRAL_AVY will be empty — expected, not broken.
+        "avalanche":  [f"central.avy.advisory.>"],
     }
     return list(table.get(adapter, []))
 
@@ -196,6 +205,7 @@ CENTRAL_ADAPTER_TO_SOURCE: dict[str, str] = {
     # ALERT_CATEGORIES roads-family rules cover both 511 feeds. A future
     # v0.6 may split them; for now collapsed for UX simplicity.
     "itd_511": "roads511",
+    "avalanche_org": "avalanche",
     "firms": "firms",
 }
 
@@ -515,6 +525,9 @@ class CentralConsumer:
                 elif inner.get("adapter") == "nwis":
                     from meshai.central.nwis_handler import handle_nwis
                     synthesized = handle_nwis(envelope, subject, data=data) or None
+                elif inner.get("adapter") == "avalanche_org":
+                    from meshai.central.avy_handler import handle_avy
+                    synthesized = handle_avy(envelope, subject, data=data) or None
                 # v0.6-1 firms_handler -- STORAGE-ONLY. handle_firms
                 # writes to firms_pixels (with dedup) and returns None
                 # so the default-deny clause below keeps mesh
