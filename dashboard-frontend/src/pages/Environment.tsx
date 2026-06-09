@@ -72,6 +72,13 @@ interface AvalancheConfig {
   min_danger_level: number
 }
 
+// SWPC adapter config shape
+interface SwpcConfig {
+  geomag_kp_floor: number
+  flare_class_floor: string
+  proton_pfu_floor: number
+}
+
 interface TomtomConfig {
   min_magnitude: number
   drop_non_present: boolean
@@ -288,6 +295,12 @@ export default function Environment() {
     min_danger_level: 3,
   })
   const [avalancheOriginal, setAvalancheOriginal] = useState<string>("")
+  const [swpcConfig, setSwpcConfig] = useState<SwpcConfig>({
+    geomag_kp_floor: 7.0,
+    flare_class_floor: "X1",
+    proton_pfu_floor: 10.0,
+  })
+  const [swpcOriginal, setSwpcOriginal] = useState<string>("")
 
 
   useEffect(() => {
@@ -403,6 +416,21 @@ export default function Environment() {
           }
         } catch { /* adapter-config optional */ }
 
+        // Load adapter-config for swpc
+        try {
+          const swpcRes = await fetch("/api/adapter-config/swpc")
+          if (swpcRes.ok) {
+            const swpcData = await swpcRes.json()
+            const cfg: SwpcConfig = {
+              geomag_kp_floor: swpcData.geomag_kp_floor?.value ?? 7.0,
+              flare_class_floor: swpcData.flare_class_floor?.value ?? "X1",
+              proton_pfu_floor: swpcData.proton_pfu_floor?.value ?? 10.0,
+            }
+            setSwpcConfig(cfg)
+            setSwpcOriginal(JSON.stringify(cfg))
+          }
+        } catch { /* adapter-config optional */ }
+
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load config')
       } finally {
@@ -431,7 +459,8 @@ export default function Environment() {
   const hasWzdxChanges = JSON.stringify(wzdxConfig) !== wzdxOriginal
   const hasNwsChanges = JSON.stringify(nwsConfig) !== nwsOriginal
   const hasAvalancheChanges = JSON.stringify(avalancheConfig) !== avalancheOriginal
-  const hasChanges = hasEnvChanges || hasWfigsChanges || hasFiresChanges || hasTomtomChanges || hasRoads511Changes || hasWzdxChanges || hasNwsChanges || hasAvalancheChanges
+  const hasSwpcChanges = JSON.stringify(swpcConfig) !== swpcOriginal
+  const hasChanges = hasEnvChanges || hasWfigsChanges || hasFiresChanges || hasTomtomChanges || hasRoads511Changes || hasWzdxChanges || hasNwsChanges || hasAvalancheChanges || hasSwpcChanges
 
   
   const saveAdapterConfig = async (adapterName: string, key: string, value: unknown) => {
@@ -565,6 +594,21 @@ const save = async () => {
         setAvalancheOriginal(JSON.stringify(avalancheConfig))
       }
 
+      // Save swpc adapter config changes
+      if (hasSwpcChanges) {
+        const orig = JSON.parse(swpcOriginal) as SwpcConfig
+        if (swpcConfig.geomag_kp_floor !== orig.geomag_kp_floor) {
+          await saveAdapterConfig("swpc", "geomag_kp_floor", swpcConfig.geomag_kp_floor)
+        }
+        if (swpcConfig.flare_class_floor !== orig.flare_class_floor) {
+          await saveAdapterConfig("swpc", "flare_class_floor", swpcConfig.flare_class_floor)
+        }
+        if (swpcConfig.proton_pfu_floor !== orig.proton_pfu_floor) {
+          await saveAdapterConfig("swpc", "proton_pfu_floor", swpcConfig.proton_pfu_floor)
+        }
+        setSwpcOriginal(JSON.stringify(swpcConfig))
+      }
+
       setSuccess('Config saved')
       setTimeout(() => setSuccess(null), 3000)
     } catch (e) {
@@ -583,6 +627,7 @@ const save = async () => {
     setWzdxConfig(JSON.parse(wzdxOriginal || JSON.stringify(wzdxConfig)))
     setNwsConfig(JSON.parse(nwsOriginal || JSON.stringify(nwsConfig)))
     setAvalancheConfig(JSON.parse(avalancheOriginal || JSON.stringify(avalancheConfig)))
+    setSwpcConfig(JSON.parse(swpcOriginal || JSON.stringify(swpcConfig)))
   }
   const restart = async () => {
     try { await fetch('/api/restart', { method: 'POST' }); setRestartRequired(false); setSuccess('Restart initiated') }
@@ -642,7 +687,45 @@ const save = async () => {
           </div>
         )}
       </>)
-      case 'swpc': return <div className="text-xs text-slate-500">No additional settings.</div>
+      case 'swpc': return (
+        <div className="space-y-6">
+          <div>
+            <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">
+              Broadcast Thresholds
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <SelectInput label="Geomag Kp Floor" value={String(swpcConfig.geomag_kp_floor)}
+                onChange={(v) => setSwpcConfig({ ...swpcConfig, geomag_kp_floor: Number(v) })}
+                options={[
+                  { value: "5", label: "5 — G1 Minor" },
+                  { value: "6", label: "6 — G2 Moderate" },
+                  { value: "7", label: "7 — G3 Strong" },
+                  { value: "8", label: "8 — G4 Severe" },
+                  { value: "9", label: "9 — G5 Extreme" },
+                ]}
+                helper="Kp at or above this triggers geomag broadcast" />
+              <SelectInput label="Flare Class Floor" value={swpcConfig.flare_class_floor}
+                onChange={(v) => setSwpcConfig({ ...swpcConfig, flare_class_floor: v })}
+                options={[
+                  { value: "M1", label: "M1 — R1 Minor" },
+                  { value: "M5", label: "M5 — R2 Moderate" },
+                  { value: "X1", label: "X1 — R3 Strong" },
+                  { value: "X10", label: "X10 — R4 Severe" },
+                ]}
+                helper="X-ray flare class floor for broadcast" />
+              <SelectInput label="Proton pfu Floor" value={String(swpcConfig.proton_pfu_floor)}
+                onChange={(v) => setSwpcConfig({ ...swpcConfig, proton_pfu_floor: Number(v) })}
+                options={[
+                  { value: "10", label: "10 — S1 Minor" },
+                  { value: "100", label: "100 — S2 Moderate" },
+                  { value: "1000", label: "1000 — S3 Strong" },
+                  { value: "10000", label: "10000 — S4 Severe" },
+                ]}
+                helper="Proton flux (pfu) at ≥10 MeV for broadcast" />
+            </div>
+          </div>
+        </div>
+      )
       case 'ducting': return (
         <div className="grid grid-cols-3 gap-4">
           <NumberInput label="Tick Seconds" value={env.ducting.tick_seconds} onChange={(v) => up({ ducting: { ...env.ducting, tick_seconds: v } })} min={60} />

@@ -14,10 +14,14 @@ Three Central sub-adapters all route here:
     swpc_alerts   -> parse alert payload (flare class, geomag, proton scale)
     swpc_protons  -> check >=10 MeV proton flux threshold
 
-Wire format (Matt's approved option C):
-    🌌 Strong geomagnetic storm (G3/Kp7) -- HF degraded, aurora possible
-    🔆 Major solar flare (R3/X1.2) -- HF radio fading ~30 min, GPS may glitch
-    ☢️ Solar radiation storm (S1) -- polar HF radio affected
+Wire format (multi-line, matches Fire/Quake/Avalanche style):
+    Line 1: {emoji} New: {scale} {type} — {key fact}
+    Line 2: supporting detail (impact summary / message, truncated 120 chars)
+    Line 3: SWPC · {time tag}
+
+    Geomag:   🧲 New: G3 Geomagnetic Storm — Kp7
+    Flare:    ☀️ New: X1.2 Solar Flare — R3
+    Proton:   ☢️ New: S1 Radiation Storm — 10 pfu
 """
 from __future__ import annotations
 from meshai.adapter_config import adapter_config
@@ -293,33 +297,60 @@ def handle_swpc(envelope: dict, subject: str,
         "SELECT last_broadcast_at FROM swpc_events WHERE event_id=?",
         (event_id,)).fetchone()
 
+    # Extract optional detail and time tag for multi-line render.
+    _detail = d.get("message") or d.get("description") or ""
+    if isinstance(_detail, str):
+        _detail = _detail.strip()[:120]
+    else:
+        _detail = ""
+    _time_tag = ""
+    _t_raw = d.get("time") or d.get("issued_at") or d.get("issue_time") or ""
+    if isinstance(_t_raw, str) and _t_raw:
+        _time_tag = _t_raw[:16].replace("T", " ")
+
     if row is None:
         _upsert_swpc(conn, event_id=event_id, adapter=adapter,
                       payload_json=payload_json, occurred_at=occurred_at or now,
                       first_seen_at=now, set_last_broadcast=False)
-        wire = _render(event_kind, scale_code, label, scalar_str)
+        wire = _render(event_kind, scale_code, label, scalar_str,
+                       is_update=False, detail=_detail, time_tag=_time_tag)
         _attach_commit(data, event_id=event_id, event_log_row_id=log_id)
         return wire
 
     if row["last_broadcast_at"] is None:
-        wire = _render(event_kind, scale_code, label, scalar_str)
+        wire = _render(event_kind, scale_code, label, scalar_str,
+                       is_update=False, detail=_detail, time_tag=_time_tag)
         _attach_commit(data, event_id=event_id, event_log_row_id=log_id)
         return wire
 
+    # Already broadcast — return None (no Update re-broadcast for SWPC;
+    # space weather events are point-in-time, not evolving like fires).
     return None
 
 
-def _render(event_kind, scale_code, label, scalar_str) -> str:
+def _render(event_kind, scale_code, label, scalar_str,
+            *, is_update: bool = False, detail: str = "",
+            time_tag: str = "") -> str:
+    prefix = "Update:" if is_update else "New:"
+
     if event_kind == "geomag":
-        return (f"🌌 {label.title()} geomagnetic storm ({scale_code}/{scalar_str}) "
-                f"-- HF degraded, aurora possible")
-    if event_kind == "flare":
-        return (f"🔆 Major solar flare ({scale_code}/{scalar_str}) "
-                f"-- HF radio fading ~30 min, GPS may glitch")
-    if event_kind == "proton":
-        return (f"☢️ Solar radiation storm ({scale_code}/{scalar_str}) "
-                f"-- polar HF radio affected")
-    return f"⚠️ Space weather event ({scale_code or '?'})"
+        line1 = f"🧲 {prefix} {scale_code} Geomagnetic Storm — {scalar_str}"
+        line2 = detail[:120] if detail else "HF degraded, aurora possible"
+        line3 = f"SWPC · {time_tag}" if time_tag else "SWPC"
+    elif event_kind == "flare":
+        line1 = f"☀️ {prefix} {scalar_str} Solar Flare — {scale_code}"
+        line2 = detail[:120] if detail else "HF radio fading, GPS may glitch"
+        line3 = f"SWPC · {time_tag}" if time_tag else "SWPC"
+    elif event_kind == "proton":
+        line1 = f"☢️ {prefix} {scale_code} Radiation Storm — {scalar_str}"
+        line2 = detail[:120] if detail else "Polar HF radio affected"
+        line3 = f"SWPC · {time_tag}" if time_tag else "SWPC"
+    else:
+        line1 = f"⚠️ {prefix} Space Weather Event — {scale_code or '?'}"
+        line2 = detail[:120] if detail else None
+        line3 = f"SWPC · {time_tag}" if time_tag else "SWPC"
+
+    return "\n".join(l for l in [line1, line2, line3] if l)
 
 
 def _upsert_swpc(conn, *, event_id, adapter, payload_json, occurred_at,
