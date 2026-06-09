@@ -8,6 +8,21 @@ Wire format: multi-line, _meshai_precomposed=True (bypasses composer
 whitespace-collapse). Same pattern as nws_handler / quake_handler.
 
 Severity gate: uses danger_level (0-5) from data.data directly.
+
+TODO (verify before Central swap, October+):
+    Confirm data.data.danger_level uses the NAADS 5-point scale:
+      1=Low, 2=Moderate, 3=Considerable, 4=High, 5=Extreme
+    The native path uses this scale and min_danger_level=3 means
+    "Considerable and above" — correct for southern Idaho touring.
+    Central's centralseverity uses a COMPRESSED scale (2=Considerable,
+    3=High, 4=Extreme). If Central's danger_level follows centralseverity
+    rather than NAADS, min_danger_level=3 silently becomes "High and above"
+    at flip time, dropping every Considerable advisory.
+    CHECK: read data.data.danger_level from a live CENTRAL_AVY envelope
+    for a zone known to be rated Considerable. If the value is 2 (not 3),
+    either remap min_danger_level=2 at flip time OR normalize inside
+    handle_avy() before the gate comparison.
+    Do not flip feed_source="central" without confirming this first.
 Do NOT use centralseverity as a gate — Central's scale is higher=more
 severe (4=Extreme, 3=High, 2=Considerable), which is the inverse of
 meshai's broadcast priority convention. Gate on danger_level only.
