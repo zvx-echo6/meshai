@@ -45,6 +45,21 @@ logger = logging.getLogger(__name__)
 WFIGS_BROADCAST_COOLDOWN_S = 28800
 
 
+_last_cleanup = 0
+
+
+def _cleanup_stale_fires(conn) -> None:
+    global _last_cleanup
+    now = int(time.time())
+    if now - _last_cleanup < 3600:
+        return
+    _last_cleanup = now
+    cutoff_stale = now - (7 * 24 * 3600)
+    cutoff_tomb = now - (30 * 24 * 3600)
+    conn.execute("DELETE FROM fires WHERE last_event_at < ? AND tombstoned_at IS NULL", (cutoff_stale,))
+    conn.execute("DELETE FROM fires WHERE tombstoned_at IS NOT NULL AND tombstoned_at < ?", (cutoff_tomb,))
+
+
 def _now() -> int:
     return int(time.time())
 
@@ -225,6 +240,7 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
                                  event_log_row_id=log_id)
         return wire
 
+    _cleanup_stale_fires(conn)
     return None
 
 
