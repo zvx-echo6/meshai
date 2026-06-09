@@ -766,9 +766,9 @@ const save = async () => {
               {(['green','yellow','orange','red'] as const).map((level) => (
                 <label key={level} className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox"
-                    checked={env.usgs_quake.broadcast_pager_alerts.includes(level)}
+                    checked={(env.usgs_quake.broadcast_pager_alerts ?? []).includes(level)}
                     onChange={(e) => {
-                      const cur = env.usgs_quake.broadcast_pager_alerts
+                      const cur = env.usgs_quake.broadcast_pager_alerts ?? []
                       up({ usgs_quake: { ...env.usgs_quake,
                         broadcast_pager_alerts: e.target.checked
                           ? [...cur, level]
