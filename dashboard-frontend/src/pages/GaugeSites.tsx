@@ -106,7 +106,7 @@ export default function GaugeSites() {
 
       {adding && <RowEditor draft={draft} setDraft={setDraft} onSave={save} onCancel={cancel} adding feedSource={feedSource} />}
 
-      <div className="bg-slate-800/60 border border-slate-700 overflow-x-auto">
+      <div className="bg-bg-card border border-border overflow-x-auto">
         <table className="w-full text-sm text-slate-200">
           <thead className="bg-[#161616] border-b border-border">
             <tr>
@@ -121,7 +121,7 @@ export default function GaugeSites() {
               <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666]"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-700/60">
+          <tbody className="divide-y divide-border">
             {rows.map(r => editing === r.site_id ? (
               <tr key={r.site_id} className="bg-bg-card border-b border-border hover:bg-bg-hover">
                 <td colSpan={9} className="px-3 py-2">
@@ -129,7 +129,7 @@ export default function GaugeSites() {
                 </td>
               </tr>
             ) : (
-              <tr key={r.site_id} className="hover:bg-slate-800/50">
+              <tr key={r.site_id} className="hover:bg-bg-hover">
                 <td className="px-3 py-2 font-mono text-xs">{r.site_id}</td>
                 <td className="px-3 py-2">{r.gauge_name}</td>
                 <td className="px-3 py-2 text-right text-xs">{r.lat.toFixed(3)},{r.lon.toFixed(3)}</td>
@@ -204,15 +204,15 @@ function RowEditor({ draft, setDraft, onSave, onCancel, adding, feedSource }: {
     }
   }
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-3 bg-[#1a1a1a] rounded">
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-3 bg-[#1a1a1a]">
       <label className="text-xs text-slate-400 col-span-2">
         Site ID
         <div className="flex items-center gap-1 mt-1">
-          <input className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono text-xs"
+          <input className="flex-1 bg-bg border border-border px-2 py-1 text-slate-100 font-mono text-xs"
             value={draft.site_id} onChange={e => upd('site_id', e.target.value)} disabled={!adding} />
           <button type="button" onClick={onLookup} disabled={lookupDisabled || lookupBusy}
             title={lookupTitle}
-            className="px-2 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-30 disabled:cursor-not-allowed rounded text-xs text-slate-100 flex items-center gap-1">
+            className="px-2 py-1 bg-bg-hover hover:bg-[#333] disabled:opacity-30 disabled:cursor-not-allowed text-xs text-slate-100 flex items-center gap-1">
             {lookupBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
             USGS lookup
           </button>
@@ -221,31 +221,31 @@ function RowEditor({ draft, setDraft, onSave, onCancel, adding, feedSource }: {
       </label>
       <label className="text-xs text-slate-400 col-span-2">
         Gauge name
-        <input className="block w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-100"
+        <input className="block w-full mt-1 bg-bg border border-border px-2 py-1 text-slate-100"
           value={draft.gauge_name} onChange={e => upd('gauge_name', e.target.value)} />
       </label>
       <label className="text-xs text-slate-400">Lat
-        <input type="number" step="any" className="block w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-100"
+        <input type="number" step="any" className="block w-full mt-1 bg-bg border border-border px-2 py-1 text-slate-100"
           value={draft.lat} onChange={e => upd('lat', parseFloat(e.target.value))} />
       </label>
       <label className="text-xs text-slate-400">Lon
-        <input type="number" step="any" className="block w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-100"
+        <input type="number" step="any" className="block w-full mt-1 bg-bg border border-border px-2 py-1 text-slate-100"
           value={draft.lon} onChange={e => upd('lon', parseFloat(e.target.value))} />
       </label>
       <label className="text-xs text-slate-400">Action ft
-        <input type="number" step="any" className="block w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-100"
+        <input type="number" step="any" className="block w-full mt-1 bg-bg border border-border px-2 py-1 text-slate-100"
           value={draft.action_ft ?? ''} onChange={e => upd('action_ft', e.target.value === '' ? null : parseFloat(e.target.value))} />
       </label>
       <label className="text-xs text-slate-400">Minor flood ft
-        <input type="number" step="any" className="block w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-100"
+        <input type="number" step="any" className="block w-full mt-1 bg-bg border border-border px-2 py-1 text-slate-100"
           value={draft.flood_minor_ft ?? ''} onChange={e => upd('flood_minor_ft', e.target.value === '' ? null : parseFloat(e.target.value))} />
       </label>
       <label className="text-xs text-slate-400">Moderate flood ft
-        <input type="number" step="any" className="block w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-100"
+        <input type="number" step="any" className="block w-full mt-1 bg-bg border border-border px-2 py-1 text-slate-100"
           value={draft.flood_moderate_ft ?? ''} onChange={e => upd('flood_moderate_ft', e.target.value === '' ? null : parseFloat(e.target.value))} />
       </label>
       <label className="text-xs text-slate-400">Major flood ft
-        <input type="number" step="any" className="block w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-100"
+        <input type="number" step="any" className="block w-full mt-1 bg-bg border border-border px-2 py-1 text-slate-100"
           value={draft.flood_major_ft ?? ''} onChange={e => upd('flood_major_ft', e.target.value === '' ? null : parseFloat(e.target.value))} />
       </label>
       <label className="text-xs text-slate-300 col-span-2 flex items-center gap-2 mt-2">
@@ -253,7 +253,7 @@ function RowEditor({ draft, setDraft, onSave, onCancel, adding, feedSource }: {
         Enabled
       </label>
       <div className="col-span-2 flex items-center justify-end gap-2 mt-2">
-        <button onClick={onCancel} className="px-3 py-1 text-slate-300 hover:bg-slate-700 rounded text-sm">Cancel</button>
+        <button onClick={onCancel} className="px-3 py-1 text-slate-300 hover:bg-bg-hover text-sm">Cancel</button>
         <button onClick={onSave} className="px-3 py-1 bg-[#f59e0b] hover:bg-[#d97706] text-black font-sans font-medium text-sm">Save</button>
       </div>
     </div>
