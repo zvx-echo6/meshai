@@ -179,18 +179,21 @@ export interface GradientEntry {
   gradient: number
 }
 
-export interface SWPCStatus {
+export interface BandConditionsStatus {
   enabled: boolean
-  kp_current?: number
-  kp_timestamp?: string
-  sfi?: number
-  r_scale?: number
-  s_scale?: number
-  g_scale?: number
-  active_warnings?: string[]
-  kp_history?: KpHistoryEntry[]
-  sfi_history?: SfiHistoryEntry[]
+  ratings?: {
+    "80-40m"?: string
+    "30-20m"?: string
+    "17-15m"?: string
+    "12-10m"?: string
+  }
+  slot_label?: string
+  sent_at?: number
+  source?: string
 }
+
+// Kept for backward compat references
+export type SWPCStatus = BandConditionsStatus
 
 export interface DuctingStatus {
   enabled: boolean
@@ -307,8 +310,8 @@ export async function fetchRFPropagation(): Promise<RFPropagation> {
   return fetchJson<RFPropagation>('/api/env/propagation')
 }
 
-export async function fetchSWPC(): Promise<SWPCStatus> {
-  return fetchJson<SWPCStatus>('/api/env/swpc')
+export async function fetchSWPC(): Promise<BandConditionsStatus> {
+  return fetchJson<BandConditionsStatus>('/api/env/swpc')
 }
 
 export async function fetchDucting(): Promise<DuctingStatus> {
