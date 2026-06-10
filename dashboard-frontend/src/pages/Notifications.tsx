@@ -929,7 +929,7 @@ function NotificationRuleCard({
             title={rule.enabled ? 'Enabled' : 'Disabled'}
           />
           {rule.trigger_type === 'schedule' ? (
-            <Clock size={14} className="text-sky-400 flex-shrink-0" />
+            <Clock size={14} className="text-[#f59e0b] flex-shrink-0" />
           ) : (
             <Zap size={14} className="text-yellow-400 flex-shrink-0" />
           )}
@@ -976,7 +976,7 @@ function NotificationRuleCard({
           <button
             onClick={(e) => { e.stopPropagation(); handleTest() }}
             disabled={testing || !rule.name}
-            className="p-1.5 text-sky-400 hover:text-sky-300 hover:bg-sky-400/10 rounded disabled:opacity-50"
+            className="p-1.5 text-[#f59e0b] hover:text-[#d97706] hover:bg-[#f59e0b]/10 rounded disabled:opacity-50"
             title="Test rule"
           >
             <Send size={14} />

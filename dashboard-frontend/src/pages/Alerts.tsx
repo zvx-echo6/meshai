@@ -76,10 +76,10 @@ function getSeverityStyles(severity: string) {
     case 'routine':
     default:
       return {
-        bg: 'bg-sky-400/10',
-        border: 'border-sky-400',
-        badge: 'bg-sky-400/20 text-sky-400',
-        iconColor: 'text-sky-400',
+        bg: 'bg-[#f59e0b]/10',
+        border: 'border-[#f59e0b]',
+        badge: 'bg-[#f59e0b]/20 text-[#f59e0b]',
+        iconColor: 'text-[#f59e0b]',
       }
   }
 }
@@ -207,7 +207,7 @@ function AlertHistoryTable({
         <select
           value={typeFilter}
           onChange={(e) => onTypeFilterChange(e.target.value)}
-          className="bg-bg border border-border rounded px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-sky-400"
+          className="bg-bg border border-border rounded px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-[#f59e0b]"
         >
           {alertTypes.map((t) => (
             <option key={t} value={t}>
@@ -218,7 +218,7 @@ function AlertHistoryTable({
         <select
           value={severityFilter}
           onChange={(e) => onSeverityFilterChange(e.target.value)}
-          className="bg-bg border border-border rounded px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-sky-400"
+          className="bg-bg border border-border rounded px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-[#f59e0b]"
         >
           {severities.map((s) => (
             <option key={s} value={s}>
@@ -354,8 +354,8 @@ function SubscriptionCard({ subscription, nodes }: { subscription: Subscription;
   return (
     <div className="p-4 bg-bg-hover border border-border">
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 bg-sky-400/10 flex items-center justify-center">
-          <Icon size={18} className="text-sky-400" />
+        <div className="w-10 h-10 bg-[#f59e0b]/10 flex items-center justify-center">
+          <Icon size={18} className="text-[#f59e0b]" />
         </div>
         <div className="flex-1">
           <div className="text-sm text-slate-200 font-medium">
@@ -553,7 +553,7 @@ export default function Alerts() {
           <div className="text-slate-500 py-4">
             <p>No active subscriptions.</p>
             <p className="text-xs mt-2">
-              Manage subscriptions via <code className="text-sky-400">!subscribe</code> on mesh. Broadcasts arrive with one of three prefixes — <strong>New:</strong> (first sight), <strong>Update:</strong> (material change), or <strong>Active:</strong> (clock-driven reminder while the event is still live). See <a href="/reference#broadcast-types" className="text-sky-400 hover:underline">Broadcast Types</a> and <a href="/reference#reminders" className="text-sky-400 hover:underline">Reminder System</a> in Reference.
+              Manage subscriptions via <code className="text-[#f59e0b]">!subscribe</code> on mesh. Broadcasts arrive with one of three prefixes — <strong>New:</strong> (first sight), <strong>Update:</strong> (material change), or <strong>Active:</strong> (clock-driven reminder while the event is still live). See <a href="/reference#broadcast-types" className="text-[#f59e0b] hover:underline">Broadcast Types</a> and <a href="/reference#reminders" className="text-[#f59e0b] hover:underline">Reminder System</a> in Reference.
             </p>
           </div>
         )}

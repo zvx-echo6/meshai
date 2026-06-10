@@ -96,7 +96,7 @@ export default function GaugeSites() {
         <h1 className="text-xl font-semibold text-slate-100">Gauge Sites</h1>
         <span className="text-xs text-slate-500 ml-2">{rows.length} sites</span>
         <button onClick={beginAdd}
-          className="ml-auto flex items-center gap-1 px-3 py-1 bg-cyan-700 hover:bg-cyan-600 rounded text-white text-sm">
+          className="ml-auto flex items-center gap-1 px-3 py-1 bg-[#f59e0b] hover:bg-[#d97706] text-black font-sans font-medium text-sm">
           <Plus className="w-4 h-4" /> Add site
         </button>
       </div>
@@ -108,22 +108,22 @@ export default function GaugeSites() {
 
       <div className="bg-slate-800/60 border border-slate-700 overflow-x-auto">
         <table className="w-full text-sm text-slate-200">
-          <thead className="bg-slate-900 text-xs text-slate-400 uppercase">
+          <thead className="bg-[#161616] border-b border-border">
             <tr>
-              <th className="px-3 py-2 text-left">Site ID</th>
-              <th className="px-3 py-2 text-left">Name</th>
-              <th className="px-3 py-2 text-right">Lat,Lon</th>
-              <th className="px-3 py-2 text-right">Action</th>
-              <th className="px-3 py-2 text-right">Minor</th>
-              <th className="px-3 py-2 text-right">Moderate</th>
-              <th className="px-3 py-2 text-right">Major</th>
-              <th className="px-3 py-2 text-center">On</th>
-              <th className="px-3 py-2"></th>
+              <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-left">Site ID</th>
+              <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-left">Name</th>
+              <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-right">Lat,Lon</th>
+              <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-right">Action</th>
+              <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-right">Minor</th>
+              <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-right">Moderate</th>
+              <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-right">Major</th>
+              <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-center">On</th>
+              <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666]"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-700/60">
             {rows.map(r => editing === r.site_id ? (
-              <tr key={r.site_id} className="bg-slate-900/40">
+              <tr key={r.site_id} className="bg-bg-card border-b border-border hover:bg-bg-hover">
                 <td colSpan={9} className="px-3 py-2">
                   <RowEditor draft={draft} setDraft={setDraft} onSave={save} onCancel={cancel} feedSource={feedSource} />
                 </td>
@@ -204,7 +204,7 @@ function RowEditor({ draft, setDraft, onSave, onCancel, adding, feedSource }: {
     }
   }
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-3 bg-slate-900/50 rounded">
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-3 bg-[#1a1a1a] rounded">
       <label className="text-xs text-slate-400 col-span-2">
         Site ID
         <div className="flex items-center gap-1 mt-1">
@@ -254,7 +254,7 @@ function RowEditor({ draft, setDraft, onSave, onCancel, adding, feedSource }: {
       </label>
       <div className="col-span-2 flex items-center justify-end gap-2 mt-2">
         <button onClick={onCancel} className="px-3 py-1 text-slate-300 hover:bg-slate-700 rounded text-sm">Cancel</button>
-        <button onClick={onSave} className="px-3 py-1 bg-cyan-700 hover:bg-cyan-600 text-white rounded text-sm">Save</button>
+        <button onClick={onSave} className="px-3 py-1 bg-[#f59e0b] hover:bg-[#d97706] text-black font-sans font-medium text-sm">Save</button>
       </div>
     </div>
   )
