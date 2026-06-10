@@ -148,7 +148,7 @@ export default function NodeTable({
   }
 
   return (
-    <div className="bg-bg-card border border-border rounded-lg overflow-hidden">
+    <div className="bg-bg-card border border-border overflow-hidden">
       {/* Filter bar */}
       <div className="p-3 border-b border-border flex items-center gap-3">
         {/* Search */}
@@ -254,7 +254,7 @@ export default function NodeTable({
                     <span
                       className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${
                         isInfra
-                          ? 'bg-cyan-500/20 text-cyan-400'
+                          ? 'bg-cyan-500/20 text-accent'
                           : 'bg-slate-500/20 text-slate-400'
                       }`}
                     >

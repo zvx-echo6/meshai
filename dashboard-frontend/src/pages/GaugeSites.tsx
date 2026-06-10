@@ -92,7 +92,7 @@ export default function GaugeSites() {
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-center gap-2">
-        <Droplets className="w-5 h-5 text-cyan-400" />
+        <Droplets className="w-5 h-5 text-accent" />
         <h1 className="text-xl font-semibold text-slate-100">Gauge Sites</h1>
         <span className="text-xs text-slate-500 ml-2">{rows.length} sites</span>
         <button onClick={beginAdd}
@@ -106,7 +106,7 @@ export default function GaugeSites() {
 
       {adding && <RowEditor draft={draft} setDraft={setDraft} onSave={save} onCancel={cancel} adding feedSource={feedSource} />}
 
-      <div className="bg-slate-800/60 border border-slate-700 rounded-lg overflow-x-auto">
+      <div className="bg-slate-800/60 border border-slate-700 overflow-x-auto">
         <table className="w-full text-sm text-slate-200">
           <thead className="bg-slate-900 text-xs text-slate-400 uppercase">
             <tr>
@@ -139,7 +139,7 @@ export default function GaugeSites() {
                 <td className="px-3 py-2 text-right">{r.flood_major_ft ?? '-'}</td>
                 <td className="px-3 py-2 text-center">{r.enabled ? <Check className="w-4 h-4 text-emerald-400 inline" /> : <X className="w-4 h-4 text-slate-500 inline" />}</td>
                 <td className="px-3 py-2 text-right">
-                  <button onClick={() => beginEdit(r)} className="text-cyan-400 hover:text-cyan-300 text-xs mr-3">Edit</button>
+                  <button onClick={() => beginEdit(r)} className="text-accent hover:text-accent text-xs mr-3">Edit</button>
                   <button onClick={() => remove(r.site_id)} className="text-red-400 hover:text-red-300"><Trash2 className="w-4 h-4 inline" /></button>
                 </td>
               </tr>
@@ -249,7 +249,7 @@ function RowEditor({ draft, setDraft, onSave, onCancel, adding, feedSource }: {
           value={draft.flood_major_ft ?? ''} onChange={e => upd('flood_major_ft', e.target.value === '' ? null : parseFloat(e.target.value))} />
       </label>
       <label className="text-xs text-slate-300 col-span-2 flex items-center gap-2 mt-2">
-        <input type="checkbox" checked={draft.enabled} onChange={e => upd('enabled', e.target.checked)} className="accent-cyan-500" />
+        <input type="checkbox" checked={draft.enabled} onChange={e => upd('enabled', e.target.checked)} className="accent-[#f59e0b]" />
         Enabled
       </label>
       <div className="col-span-2 flex items-center justify-end gap-2 mt-2">

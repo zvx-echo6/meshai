@@ -349,7 +349,7 @@ function InfoButton({ info }: { info: string }) {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-6 z-50 w-72 p-3 bg-[#1a2332] border border-[#2a3a4a] rounded-lg shadow-xl text-xs text-slate-300 leading-relaxed">
+          <div className="absolute left-0 top-6 z-50 w-72 p-3 bg-[#1a2332] border border-[#2a3a4a] shadow-xl text-xs text-slate-300 leading-relaxed">
             {info}
           </div>
         </>
@@ -584,7 +584,7 @@ function SeveritySelector({ value, onChange }: {
         {isOpen && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-            <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-[#0a0e17] border border-[#1e2a3a] rounded-lg shadow-xl overflow-hidden">
+            <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-[#0a0e17] border border-[#1e2a3a] shadow-xl overflow-hidden">
               {SEVERITY_OPTIONS.map((opt) => (
                 <button
                   key={opt.value}
@@ -915,7 +915,7 @@ function NotificationRuleCard({
   }
 
   return (
-    <div className={`border rounded-lg overflow-hidden ${rule.enabled ? 'border-[#1e2a3a]' : 'border-slate-700 opacity-60'}`}>
+    <div className={`border overflow-hidden ${rule.enabled ? 'border-[#1e2a3a]' : 'border-slate-700 opacity-60'}`}>
       {/* Header */}
       <div
         className="flex items-center justify-between p-3 bg-[#0a0e17] cursor-pointer"
@@ -929,7 +929,7 @@ function NotificationRuleCard({
             title={rule.enabled ? 'Enabled' : 'Disabled'}
           />
           {rule.trigger_type === 'schedule' ? (
-            <Clock size={14} className="text-blue-400 flex-shrink-0" />
+            <Clock size={14} className="text-sky-400 flex-shrink-0" />
           ) : (
             <Zap size={14} className="text-yellow-400 flex-shrink-0" />
           )}
@@ -976,7 +976,7 @@ function NotificationRuleCard({
           <button
             onClick={(e) => { e.stopPropagation(); handleTest() }}
             disabled={testing || !rule.name}
-            className="p-1.5 text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 rounded disabled:opacity-50"
+            className="p-1.5 text-sky-400 hover:text-sky-300 hover:bg-sky-400/10 rounded disabled:opacity-50"
             title="Test rule"
           >
             <Send size={14} />
@@ -1034,7 +1034,7 @@ function NotificationRuleCard({
               <button
                 type="button"
                 onClick={() => onChange({ ...rule, trigger_type: 'condition' })}
-                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border transition-colors ${
+                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 border transition-colors ${
                   rule.trigger_type !== 'schedule'
                     ? 'bg-accent/10 border-accent text-accent'
                     : 'bg-[#0a0e17] border-[#1e2a3a] text-slate-400 hover:text-slate-200'
@@ -1046,7 +1046,7 @@ function NotificationRuleCard({
               <button
                 type="button"
                 onClick={() => onChange({ ...rule, trigger_type: 'schedule' })}
-                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border transition-colors ${
+                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 border transition-colors ${
                   rule.trigger_type === 'schedule'
                     ? 'bg-accent/10 border-accent text-accent'
                     : 'bg-[#0a0e17] border-[#1e2a3a] text-slate-400 hover:text-slate-200'
@@ -1065,7 +1065,7 @@ function NotificationRuleCard({
 
           {/* WHEN section - Condition trigger */}
           {rule.trigger_type !== 'schedule' && (
-            <div className="space-y-4 p-4 bg-[#0a0e17] rounded-lg border border-[#1e2a3a]">
+            <div className="space-y-4 p-4 bg-[#0a0e17] border border-[#1e2a3a]">
               <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
                 <AlertTriangle size={14} />
                 WHEN (Condition)
@@ -1106,7 +1106,7 @@ function NotificationRuleCard({
 
           {/* WHEN section - Schedule trigger */}
           {rule.trigger_type === 'schedule' && (
-            <div className="space-y-4 p-4 bg-[#0a0e17] rounded-lg border border-[#1e2a3a]">
+            <div className="space-y-4 p-4 bg-[#0a0e17] border border-[#1e2a3a]">
               <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
                 <Calendar size={14} />
                 WHEN (Schedule)
@@ -1197,7 +1197,7 @@ function NotificationRuleCard({
           )}
 
           {/* REGIONS section — scope rule to specific regions; empty = all regions */}
-          <div className="space-y-2 p-4 bg-[#0a0e17] rounded-lg border border-[#1e2a3a]">
+          <div className="space-y-2 p-4 bg-[#0a0e17] border border-[#1e2a3a]">
             <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
               <MapPin size={14} />
               REGIONS
@@ -1235,7 +1235,7 @@ function NotificationRuleCard({
           </div>
 
           {/* SEND VIA section */}
-          <div className="space-y-4 p-4 bg-[#0a0e17] rounded-lg border border-[#1e2a3a]">
+          <div className="space-y-4 p-4 bg-[#0a0e17] border border-[#1e2a3a]">
             <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
               <Send size={14} />
               SEND VIA
@@ -1262,7 +1262,7 @@ function NotificationRuleCard({
 
             {/* No delivery warning */}
             {!rule.delivery_type && (
-              <div className="flex items-start gap-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+              <div className="flex items-start gap-2 p-3 bg-amber-500/10 border border-amber-500/20">
                 <AlertCircle size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
                 <div className="text-sm text-amber-300">
                   Rule will log matches but not deliver until a delivery method is configured.
@@ -1402,7 +1402,7 @@ function NotificationRuleCard({
           {rule.trigger_type !== 'schedule' && (
             <div className="space-y-2">
               <label className="text-xs text-slate-500 uppercase tracking-wide">Example Message</label>
-              <div className="p-3 bg-[#1e2a3a]/50 rounded-lg border border-[#1e2a3a]">
+              <div className="p-3 bg-[#1e2a3a]/50 border border-[#1e2a3a]">
                 <p className="text-sm text-slate-300 font-mono">{getExampleMessage()}</p>
               </div>
               <p className="text-xs text-slate-600">This is an example of what this rule would send.</p>
@@ -1532,7 +1532,7 @@ function GroupedCategoryPicker({
   }
 
   return (
-    <div className="max-h-96 overflow-y-auto border border-[#1e2a3a] rounded-lg p-2 space-y-2">
+    <div className="max-h-96 overflow-y-auto border border-[#1e2a3a] p-2 space-y-2">
       {TOGGLE_FAMILY_META.map(f => renderGroup(f.key, f.label, f.Icon, byFamily.get(f.key) || []))}
       {renderGroup('other', 'Other', null, other)}
     </div>
@@ -1561,7 +1561,7 @@ function MasterToggles({ toggles, onChange }: {
           const chanCount = Object.values(t.severity_channels || {}).reduce((n, arr) => n + ((arr as string[])?.length || 0), 0)
           const regionCount = (t.regions || []).length
           return (
-            <div key={key} className="border border-[#1e2a3a] rounded-lg p-3">
+            <div key={key} className="border border-[#1e2a3a] p-3">
               <div className="flex items-center justify-between">
                 <button type="button" onClick={() => setExpanded(isOpen ? null : key)}
                         className="flex items-center gap-2 text-sm text-slate-200">
@@ -1826,7 +1826,7 @@ export default function Notifications() {
       {/* Test Dialog */}
       {testDialog.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-[#1a2332] border border-[#2a3a4a] rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[85vh] overflow-auto">
+          <div className="bg-[#1a2332] border border-[#2a3a4a] shadow-xl max-w-2xl w-full mx-4 max-h-[85vh] overflow-auto">
             <div className="p-4 border-b border-[#2a3a4a] flex items-center justify-between sticky top-0 bg-[#1a2332]">
               <h3 className="text-lg font-semibold">Test Notification Rule</h3>
               <button onClick={closeTestDialog} className="text-slate-500 hover:text-slate-300">
@@ -2033,19 +2033,19 @@ export default function Notifications() {
 
       {/* Status messages */}
       {error && (
-        <div className="p-3 rounded-lg text-sm bg-red-500/10 text-red-400 border border-red-500/20">
+        <div className="p-3 text-sm bg-red-500/10 text-red-400 border border-red-500/20">
           {error}
         </div>
       )}
       {success && (
-        <div className="p-3 rounded-lg text-sm bg-green-500/10 text-green-400 border border-green-500/20">
+        <div className="p-3 text-sm bg-green-500/10 text-green-400 border border-green-500/20">
           <Check size={14} className="inline mr-2" />
           {success}
         </div>
       )}
 
       {/* Main content */}
-      <div className="bg-bg-card border border-border rounded-lg p-6 space-y-6">
+      <div className="bg-bg-card border border-border p-6 space-y-6">
         <Toggle
           label="Enable Notifications"
           checked={config.enabled}
@@ -2056,7 +2056,7 @@ export default function Notifications() {
 
         {config.enabled && (
           <>            {/* Cold-start grace -- v0.5.8b */}
-            <div className="space-y-3 p-4 bg-[#0a0e17] rounded-lg border border-[#1e2a3a]">
+            <div className="space-y-3 p-4 bg-[#0a0e17] border border-[#1e2a3a]">
               <div className="flex items-center gap-2">
                 <label className="text-xs text-slate-500 uppercase tracking-wide">Cold-start grace</label>
               </div>
@@ -2072,7 +2072,7 @@ export default function Notifications() {
             </div>
 
             {/* Band Conditions -- v0.5.11 */}
-            <div className="space-y-3 p-4 bg-[#0a0e17] rounded-lg border border-[#1e2a3a]">
+            <div className="space-y-3 p-4 bg-[#0a0e17] border border-[#1e2a3a]">
               <div className="flex items-center gap-2">
                 <label className="text-xs text-slate-500 uppercase tracking-wide">Band Conditions (HF propagation)</label>
               </div>
@@ -2164,21 +2164,21 @@ export default function Notifications() {
               <div className="flex gap-2">
                 <button
                   onClick={addRule}
-                  className="flex-1 py-3 border border-dashed border-[#1e2a3a] rounded-lg text-slate-500 hover:text-slate-300 hover:border-accent flex items-center justify-center gap-2 transition-colors"
+                  className="flex-1 py-3 border border-dashed border-[#1e2a3a] text-slate-500 hover:text-slate-300 hover:border-accent flex items-center justify-center gap-2 transition-colors"
                 >
                   <Plus size={16} /> Add Rule
                 </button>
                 <div className="relative">
                   <button
                     onClick={() => setShowTemplates(!showTemplates)}
-                    className="py-3 px-4 border border-dashed border-[#1e2a3a] rounded-lg text-slate-500 hover:text-slate-300 hover:border-accent flex items-center gap-2 transition-colors"
+                    className="py-3 px-4 border border-dashed border-[#1e2a3a] text-slate-500 hover:text-slate-300 hover:border-accent flex items-center gap-2 transition-colors"
                   >
                     <Layers size={16} /> Add from Template
                   </button>
                   {showTemplates && (
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setShowTemplates(false)} />
-                      <div className="absolute right-0 top-full mt-2 z-50 w-80 bg-[#1a2332] border border-[#2a3a4a] rounded-lg shadow-xl overflow-hidden">
+                      <div className="absolute right-0 top-full mt-2 z-50 w-80 bg-[#1a2332] border border-[#2a3a4a] shadow-xl overflow-hidden">
                         <div className="p-2 border-b border-[#2a3a4a] text-xs text-slate-500 uppercase">Rule Templates</div>
                         {RULE_TEMPLATES.map((t) => (
                           <button

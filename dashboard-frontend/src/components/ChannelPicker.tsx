@@ -131,7 +131,7 @@ export default function ChannelPicker(props: ChannelPickerProps) {
   return (
     <div className="space-y-1">
       <label className="block text-xs text-slate-500 uppercase tracking-wide">{label}</label>
-      <div className="border border-[#1e2a3a] rounded-lg p-2 space-y-1">
+      <div className="border border-[#1e2a3a] p-2 space-y-1">
         {enabledChannels.map((ch) => (
           <label
             key={ch.index}
