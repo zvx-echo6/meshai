@@ -820,6 +820,8 @@ def _dict_to_dataclass(cls, data: dict):
             kwargs[key] = _dict_to_dataclass(WZDxConfig, value)
         elif key == "firms" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(FIRMSConfig, value)
+        elif key == "environmental" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(EnvironmentalConfig, value)
         elif key == "dashboard" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(DashboardConfig, value)
         elif key == "toggles" and isinstance(value, dict):
