@@ -6,46 +6,30 @@
 @tailwind utilities;
 
 body {
-  background: #0a0e17;
+  background: #111111;
   margin: 0;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Custom scrollbar — sharp, no radius */
+/* Custom scrollbar — sharp */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0a0e17;
+  background: #111111;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2d3a4d;
+  background: #1e1e1e;
   border-radius: 0;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3b4a5d;
-}
-
-/* Scanline texture on cards */
-.bg-bg-card {
-  background-image: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(255,255,255,0.008) 2px,
-    rgba(255,255,255,0.008) 3px
-  );
-}
-
-/* Amber glow utility */
-.amber-glow {
-  box-shadow: 0 0 12px rgba(245,158,11,0.25);
+  background: #2a2a2a;
 }
 
 /* Data values use JetBrains Mono */
