@@ -237,6 +237,110 @@ function BandConditionsCard({ bandConditions }: { bandConditions: BandConditions
   )
 }
 
+// Hepburn Tropospheric Forecast Card
+const TROPO_REGIONS: { code: string; label: string }[] = [
+  { code: 'wam', label: 'Western North America' },
+  { code: 'eam', label: 'Eastern North America' },
+  { code: 'enp', label: 'Eastern North Pacific' },
+  { code: 'esp', label: 'Eastern South Pacific' },
+  { code: 'gca', label: 'Gulf-Caribbean' },
+  { code: 'nsa', label: 'Northern South America' },
+  { code: 'csa', label: 'Central South America' },
+  { code: 'sat', label: 'South Atlantic' },
+  { code: 'nat', label: 'North Atlantic' },
+  { code: 'ena', label: 'Eastern North Atlantic' },
+  { code: 'nwe', label: 'Northwestern Europe' },
+  { code: 'eur', label: 'Europe' },
+  { code: 'eeu', label: 'Eastern Europe' },
+  { code: 'saf', label: 'South Africa' },
+  { code: 'mde', label: 'Middle East' },
+  { code: 'nca', label: 'North Central Asia' },
+  { code: 'ind', label: 'Indian Ocean' },
+  { code: 'sea', label: 'Southeast Asia' },
+  { code: 'fea', label: 'Far East' },
+  { code: 'esi', label: 'Eastern Siberia' },
+  { code: 'anz', label: 'Australia & New Zealand' },
+  { code: 'oce', label: 'Oceania' },
+  { code: 'wnp', label: 'Western North Pacific' },
+]
+
+function HepburnTropoCard() {
+  const [region, setRegion] = useState('wam')
+  const [imgError, setImgError] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  // Load persisted region from adapter_config on mount
+  useEffect(() => {
+    fetch('/api/adapter-config/dashboard/tropo_region')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.value && typeof d.value === 'string') {
+          setRegion(d.value)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  const handleRegionChange = (newRegion: string) => {
+    setRegion(newRegion)
+    setImgError(false)
+    setSaving(true)
+    fetch('/api/adapter-config/dashboard/tropo_region', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: newRegion }),
+    })
+      .catch(() => {})
+      .finally(() => setSaving(false))
+  }
+
+  const cacheBust = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+  const imgUrl = `https://www.dxinfocentre.com/tr_map/fcst/${region}006.png?v${cacheBust}`
+  const regionLabel = TROPO_REGIONS.find(r => r.code === region)?.label || region
+
+  return (
+    <div className="bg-bg-card border border-border rounded-lg p-4 flex flex-col">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-medium text-slate-400 flex items-center gap-2">
+          <Radio size={14} />
+          Tropo Forecast (Hepburn)
+        </h2>
+        <div className="flex items-center gap-2">
+          {saving && <span className="text-xs text-slate-500">saving...</span>}
+          <select
+            value={region}
+            onChange={e => handleRegionChange(e.target.value)}
+            className="text-xs bg-bg-hover border border-border rounded px-2 py-1 text-slate-300 focus:outline-none focus:border-slate-500"
+          >
+            {TROPO_REGIONS.map(r => (
+              <option key={r.code} value={r.code}>{r.label}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="text-xs text-slate-500 mb-2">{regionLabel} — 6-day forecast</div>
+
+      {imgError ? (
+        <div className="flex items-center justify-center h-48 text-slate-500 text-sm">
+          Failed to load forecast image
+        </div>
+      ) : (
+        <img
+          src={imgUrl}
+          alt={`Hepburn tropo forecast — ${regionLabel}`}
+          className="w-full rounded border border-border"
+          onError={() => setImgError(true)}
+        />
+      )}
+
+      <div className="text-xs text-slate-600 mt-2">
+        Source: <a href="https://www.dxinfocentre.com/tropo.html" target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-slate-300">dxinfocentre.com</a>
+      </div>
+    </div>
+  )
+}
+
 // Source icon mapping
 const SOURCE_ICONS: Record<string, { icon: typeof Cloud; color: string; label: string }> = {
   nws: { icon: Cloud, color: 'text-blue-400', label: 'NWS' },
@@ -590,6 +694,11 @@ export default function Dashboard() {
 
         {/* Live Event Feed */}
         <LiveEventFeed events={envEvents} envStatus={envStatus} />
+      </div>
+
+      {/* Bottom row: Tropo Forecast */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <HepburnTropoCard />
       </div>
     </div>
   )
