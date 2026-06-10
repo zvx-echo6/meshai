@@ -76,10 +76,10 @@ function getSeverityStyles(severity: string) {
     case 'routine':
     default:
       return {
-        bg: 'bg-blue-500/10',
-        border: 'border-blue-500',
-        badge: 'bg-blue-500/20 text-blue-400',
-        iconColor: 'text-blue-500',
+        bg: 'bg-sky-400/10',
+        border: 'border-sky-400',
+        badge: 'bg-sky-400/20 text-sky-400',
+        iconColor: 'text-sky-400',
       }
   }
 }
@@ -129,7 +129,7 @@ function ActiveAlertCard({
   const Icon = getAlertIcon(alert.type)
 
   return (
-    <div className={`p-4 rounded-lg ${styles.bg} border-l-4 ${styles.border}`}>
+    <div className={`p-4 ${styles.bg} border-l-4 ${styles.border}`}>
       <div className="flex items-start gap-3">
         <Icon size={20} className={styles.iconColor} />
         <div className="flex-1 min-w-0">
@@ -197,7 +197,7 @@ function AlertHistoryTable({
   const severities = ["all", "immediate", "priority", "routine"]
 
   return (
-    <div className="bg-bg-card border border-border rounded-lg">
+    <div className="bg-bg-card border border-border">
       {/* Filters */}
       <div className="p-4 border-b border-border flex items-center gap-4">
         <div className="flex items-center gap-2">
@@ -207,7 +207,7 @@ function AlertHistoryTable({
         <select
           value={typeFilter}
           onChange={(e) => onTypeFilterChange(e.target.value)}
-          className="bg-bg border border-border rounded px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+          className="bg-bg border border-border rounded px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-sky-400"
         >
           {alertTypes.map((t) => (
             <option key={t} value={t}>
@@ -218,7 +218,7 @@ function AlertHistoryTable({
         <select
           value={severityFilter}
           onChange={(e) => onSeverityFilterChange(e.target.value)}
-          className="bg-bg border border-border rounded px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+          className="bg-bg border border-border rounded px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-sky-400"
         >
           {severities.map((s) => (
             <option key={s} value={s}>
@@ -352,10 +352,10 @@ function SubscriptionCard({ subscription, nodes }: { subscription: Subscription;
   const Icon = getTypeIcon()
 
   return (
-    <div className="p-4 rounded-lg bg-bg-hover border border-border">
+    <div className="p-4 bg-bg-hover border border-border">
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
-          <Icon size={18} className="text-blue-400" />
+        <div className="w-10 h-10 bg-sky-400/10 flex items-center justify-center">
+          <Icon size={18} className="text-sky-400" />
         </div>
         <div className="flex-1">
           <div className="text-sm text-slate-200 font-medium">
@@ -490,7 +490,7 @@ export default function Alerts() {
   return (
     <div className="space-y-6">
       {/* Active Alerts */}
-      <div className="bg-bg-card border border-border rounded-lg p-6">
+      <div className="bg-bg-card border border-border p-6">
         <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
           <AlertTriangle size={14} />
           Active Alerts ({visibleAlerts.length})
@@ -538,7 +538,7 @@ export default function Alerts() {
       </div>
 
       {/* Subscriptions */}
-      <div className="bg-bg-card border border-border rounded-lg p-6">
+      <div className="bg-bg-card border border-border p-6">
         <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
           <Users size={14} />
           Mesh Subscriptions ({subscriptions.length})
@@ -553,7 +553,7 @@ export default function Alerts() {
           <div className="text-slate-500 py-4">
             <p>No active subscriptions.</p>
             <p className="text-xs mt-2">
-              Manage subscriptions via <code className="text-blue-400">!subscribe</code> on mesh. Broadcasts arrive with one of three prefixes — <strong>New:</strong> (first sight), <strong>Update:</strong> (material change), or <strong>Active:</strong> (clock-driven reminder while the event is still live). See <a href="/reference#broadcast-types" className="text-blue-400 hover:underline">Broadcast Types</a> and <a href="/reference#reminders" className="text-blue-400 hover:underline">Reminder System</a> in Reference.
+              Manage subscriptions via <code className="text-sky-400">!subscribe</code> on mesh. Broadcasts arrive with one of three prefixes — <strong>New:</strong> (first sight), <strong>Update:</strong> (material change), or <strong>Active:</strong> (clock-driven reminder while the event is still live). See <a href="/reference#broadcast-types" className="text-sky-400 hover:underline">Broadcast Types</a> and <a href="/reference#reminders" className="text-sky-400 hover:underline">Reminder System</a> in Reference.
             </p>
           </div>
         )}

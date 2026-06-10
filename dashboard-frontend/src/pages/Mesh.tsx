@@ -76,7 +76,7 @@ export default function Mesh() {
         </div>
 
         {/* View toggle */}
-        <div className="flex items-center bg-bg-card border border-border rounded-lg p-1">
+        <div className="flex items-center bg-bg-card border border-border p-1">
           <button
             onClick={() => setViewMode('topo')}
             className={`flex items-center gap-2 px-3 py-1.5 rounded text-sm transition-colors ${

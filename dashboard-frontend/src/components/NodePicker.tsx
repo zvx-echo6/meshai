@@ -175,7 +175,7 @@ export default function NodePicker({
         {isOpen && !loading && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-            <div className="absolute left-0 right-0 top-full mt-1 z-50 max-h-64 overflow-y-auto bg-[#0a0e17] border border-[#1e2a3a] rounded-lg shadow-xl">
+            <div className="absolute left-0 right-0 top-full mt-1 z-50 max-h-64 overflow-y-auto bg-[#0a0e17] border border-[#1e2a3a] shadow-xl">
               {filteredNodes.length === 0 ? (
                 <div className="p-3 text-sm text-slate-500 text-center">
                   No nodes found

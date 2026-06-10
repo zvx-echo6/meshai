@@ -150,7 +150,7 @@ export default function NodeDetail({
       <div className="p-4 border-b border-border grid grid-cols-2 gap-3">
         <div>
           <div className="text-xs text-slate-500 mb-0.5">Role</div>
-          <div className={`text-sm font-medium ${isInfra ? 'text-cyan-400' : 'text-slate-300'}`}>
+          <div className={`text-sm font-medium ${isInfra ? 'text-accent' : 'text-slate-300'}`}>
             {node.role}
           </div>
         </div>
@@ -187,7 +187,7 @@ export default function NodeDetail({
             href={`https://www.google.com/maps?q=${node.latitude},${node.longitude}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300"
+            className="flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300"
           >
             <ExternalLink size={10} />
             Google Maps
@@ -196,7 +196,7 @@ export default function NodeDetail({
             href={`https://www.openstreetmap.org/?mlat=${node.latitude}&mlon=${node.longitude}&zoom=14`}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300"
+            className="flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300"
           >
             <ExternalLink size={10} />
             OSM

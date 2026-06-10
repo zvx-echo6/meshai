@@ -97,7 +97,7 @@ export default function Layout({ children }: LayoutProps) {
           <div className="flex items-center gap-3">
             <div className="w-[3px] h-8 bg-accent flex-shrink-0" />
             <div>
-              <div className="font-sans font-bold text-white text-lg">MeshAI</div>
+              <div className="font-sans font-bold text-white text-[15px] leading-tight tracking-tight">MeshAI</div>
               <div className="text-xs font-mono text-[#333]">
                 v{status?.version || '...'}
               </div>

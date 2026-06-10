@@ -242,7 +242,7 @@ export default function TopologyGraph({
   }, [option])
 
   return (
-    <div className="relative bg-bg-card rounded-lg border border-border overflow-hidden">
+    <div className="relative bg-bg-card border border-border overflow-hidden">
       <ReactECharts
         ref={chartRef}
         option={option}
@@ -302,11 +302,11 @@ export default function TopologyGraph({
         <div className="text-xs text-slate-400 font-medium mb-2">Node Type</div>
         <div className="space-y-2">
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-blue-500" />
+            <div className="w-3 h-3 rounded-full bg-sky-400" />
             <span className="text-xs text-slate-500">Infrastructure</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-gray-900 border-2 border-blue-500" />
+            <div className="w-3 h-3 rounded-full bg-gray-900 border-2 border-sky-400" />
             <span className="text-xs text-slate-500">Client</span>
           </div>
         </div>

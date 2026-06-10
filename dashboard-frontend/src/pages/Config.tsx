@@ -340,7 +340,7 @@ function InfoButton({ info, link, linkText = 'Learn more' }: { info: string; lin
         ?
       </button>
       {open && (
-        <div className="absolute left-0 top-6 z-50 w-72 p-3 bg-[#1a2332] border border-[#2a3a4a] rounded-lg shadow-xl text-xs text-slate-300 leading-relaxed">
+        <div className="absolute left-0 top-6 z-50 w-72 p-3 bg-[#1a2332] border border-[#2a3a4a] shadow-xl text-xs text-slate-300 leading-relaxed">
           <button
             type="button"
             onClick={() => setOpen(false)}
@@ -628,7 +628,7 @@ function AlertRuleToggle({ label, description, checked, onChange, threshold, onT
   thresholdSuffix?: string
 }) {
   return (
-    <div className="border border-[#1e2a3a] rounded-lg p-3 space-y-2">
+    <div className="border border-[#1e2a3a] p-3 space-y-2">
       <div className="flex items-center justify-between">
         <div className="flex-1">
           <span className="text-sm text-slate-300">{label}</span>
@@ -1299,7 +1299,7 @@ function MeshSourceCard({ source, onChange, onDelete }: {
   }
 
   return (
-    <div className="border border-[#1e2a3a] rounded-lg overflow-hidden">
+    <div className="border border-[#1e2a3a] overflow-hidden">
       <div
         className="flex items-center justify-between p-3 bg-[#0a0e17] cursor-pointer"
         onClick={() => setExpanded(!expanded)}
@@ -1402,7 +1402,7 @@ function MeshSourcesSection({ data, onChange }: { data: MeshSourceConfig[]; onCh
       ))}
       <button
         onClick={addSource}
-        className="w-full py-2 border border-dashed border-[#1e2a3a] rounded-lg text-slate-500 hover:text-slate-300 hover:border-accent flex items-center justify-center gap-2 transition-colors"
+        className="w-full py-2 border border-dashed border-[#1e2a3a] text-slate-500 hover:text-slate-300 hover:border-accent flex items-center justify-center gap-2 transition-colors"
       >
         <Plus size={16} /> Add Source
       </button>
@@ -1498,7 +1498,7 @@ function MeshIntelligenceSection({ data, onChange }: { data: MeshIntelligenceCon
               <InfoButton info="Regions group mesh nodes by geographic area. Each region has an anchor point (lat/lon) and nodes within the region radius are automatically assigned. Regions enable localized reports, alerts, and health scoring." />
             </label>
             {data.regions.map((region, i) => (
-              <div key={i} className="border border-[#1e2a3a] rounded-lg overflow-hidden">
+              <div key={i} className="border border-[#1e2a3a] overflow-hidden">
                 <div
                   className="flex items-center justify-between p-3 bg-[#0a0e17] cursor-pointer"
                   onClick={() => setExpandedRegion(expandedRegion === i ? null : i)}
@@ -1580,7 +1580,7 @@ function MeshIntelligenceSection({ data, onChange }: { data: MeshIntelligenceCon
                 onChange({ ...data, regions: [...data.regions, newRegion] })
                 setExpandedRegion(data.regions.length)
               }}
-              className="w-full py-2 border border-dashed border-[#1e2a3a] rounded-lg text-slate-500 hover:text-slate-300 hover:border-accent flex items-center justify-center gap-2 transition-colors"
+              className="w-full py-2 border border-dashed border-[#1e2a3a] text-slate-500 hover:text-slate-300 hover:border-accent flex items-center justify-center gap-2 transition-colors"
             >
               <Plus size={16} /> Add Region
             </button>
@@ -1974,7 +1974,7 @@ export default function Config() {
         </div>
 
         {restartRequired && (
-          <div className="flex items-center justify-between p-3 mb-4 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+          <div className="flex items-center justify-between p-3 mb-4 bg-amber-500/10 border border-amber-500/30">
             <div className="flex items-center gap-2 text-amber-400">
               <AlertTriangle size={16} />
               <span className="text-sm">Restart required for changes to take effect</span>
@@ -1989,21 +1989,21 @@ export default function Config() {
         )}
 
         {error && (
-          <div className="flex items-center gap-2 p-3 mb-4 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400">
+          <div className="flex items-center gap-2 p-3 mb-4 bg-red-500/10 border border-red-500/30 text-red-400">
             <X size={16} />
             <span className="text-sm">{error}</span>
           </div>
         )}
 
         {success && (
-          <div className="flex items-center gap-2 p-3 mb-4 bg-green-500/10 border border-green-500/30 rounded-lg text-green-400">
+          <div className="flex items-center gap-2 p-3 mb-4 bg-green-500/10 border border-green-500/30 text-green-400">
             <Check size={16} />
             <span className="text-sm">{success}</span>
           </div>
         )}
 
         <div className="flex-1 overflow-y-auto pr-2">
-          <div className="bg-bg-card border border-border rounded-lg p-6">
+          <div className="bg-bg-card border border-border p-6">
             {renderSection()}
           </div>
         </div>

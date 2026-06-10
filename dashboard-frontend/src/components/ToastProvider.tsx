@@ -42,10 +42,10 @@ function getSeverityStyles(severity: string) {
       }
     default:
       return {
-        bg: 'bg-blue-500/10',
-        border: 'border-blue-500',
+        bg: 'bg-sky-400/10',
+        border: 'border-sky-400',
         icon: Info,
-        iconColor: 'text-blue-500',
+        iconColor: 'text-sky-400',
       }
   }
 }
@@ -70,7 +70,7 @@ function ToastItem({
 
   return (
     <div
-      className={`${styles.bg} border ${styles.border} rounded-lg shadow-lg overflow-hidden animate-slide-in cursor-pointer`}
+      className={`${styles.bg} border ${styles.border} shadow-lg overflow-hidden animate-slide-in cursor-pointer`}
       onClick={onNavigate}
       role="alert"
     >

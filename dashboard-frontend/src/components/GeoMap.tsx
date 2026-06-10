@@ -181,7 +181,7 @@ export default function GeoMap({
   }, [selectedNodeId, edges])
 
   return (
-    <div className="relative bg-bg-card rounded-lg border border-border overflow-hidden">
+    <div className="relative bg-bg-card border border-border overflow-hidden">
       <MapContainer
         center={defaultCenter}
         zoom={7}
