@@ -159,16 +159,16 @@ function StatCard({ icon: Icon, label, value, subvalue }: { icon: typeof Radio; 
 function BandConditionsCard({ bandConditions }: { bandConditions: BandConditionsStatus | null }) {
   const getRatingEmoji = (rating?: string) => {
     switch (rating) {
-      case 'Good': return '\ud83d\udfe2'  // green circle
-      case 'Fair': return '\ud83d\udfe1'  // yellow circle
-      case 'Poor': return '\ud83d\udd34'  // red circle
-      default: return '\u2014'
+      case 'Good': return '🟢'  // green circle
+      case 'Fair': return '🟡'  // yellow circle
+      case 'Poor': return '🔴'  // red circle
+      default: return '—'
     }
   }
 
   const getSlotEmoji = (label?: string) => {
     if (!label) return ''
-    return label.includes('Night') ? '\ud83c\udf19' : '\u2600\ufe0f'
+    return label.includes('Night') ? '🌙' : '☀️'
   }
 
   if (!bandConditions?.enabled || !bandConditions?.ratings) {
@@ -204,7 +204,7 @@ function BandConditionsCard({ bandConditions }: { bandConditions: BandConditions
 
       {/* Band conditions header */}
       <div className="text-xs text-slate-500 mb-3 flex items-center gap-1">
-        <span>\ud83d\udce1</span> Band Conditions:
+        📡 Band Conditions:
       </div>
 
       {/* Band rows */}
@@ -215,7 +215,7 @@ function BandConditionsCard({ bandConditions }: { bandConditions: BandConditions
             <div key={band} className="flex items-center justify-between px-2 py-1.5 rounded bg-bg-hover">
               <span className="text-sm font-mono text-slate-300">{band}</span>
               <span className="text-sm">
-                {getRatingEmoji(rating)} <span className="text-slate-300 ml-1">{rating || '\u2014'}</span>
+                {getRatingEmoji(rating)} <span className="text-slate-300 ml-1">{rating || '—'}</span>
               </span>
             </div>
           )
@@ -433,7 +433,7 @@ function EventFeedItem({ event, isLocal }: { event: EnvEvent; isLocal?: boolean 
 }
 
 // Live Event Feed Card
-function LiveEventFeed({ events, envStatus }: { events: EnvEvent[]; envStatus: EnvStatus | null }) {
+function LiveEventFeed({ events, envStatus, embedded }: { events: EnvEvent[]; envStatus: EnvStatus | null; embedded?: boolean }) {
   // Severity order for sorting
   const severityOrder: Record<string, number> = { immediate: 0, priority: 1, routine: 2 }
 
@@ -473,13 +473,8 @@ function LiveEventFeed({ events, envStatus }: { events: EnvEvent[]; envStatus: E
     return { total, active, errors, secAgo }
   }, [envStatus])
 
-  return (
-    <div className="bg-bg-card border border-border rounded-lg p-4 flex flex-col h-full">
-      <h2 className="text-sm font-medium text-slate-400 mb-3 flex items-center gap-2">
-        <Activity size={14} />
-        Live Event Feed
-      </h2>
-
+  const content = (
+    <>
       {sortedEvents.length > 0 ? (
         <div className="flex-1 overflow-y-auto max-h-80 pr-1 -mr-1">
           {sortedEvents.map((event, i) => (
@@ -510,6 +505,18 @@ function LiveEventFeed({ events, envStatus }: { events: EnvEvent[]; envStatus: E
           )}
         </div>
       )}
+    </>
+  )
+
+  if (embedded) return <div className="flex flex-col h-full">{content}</div>
+
+  return (
+    <div className="bg-bg-card border border-border rounded-lg p-4 flex flex-col h-full">
+      <h2 className="text-sm font-medium text-slate-400 mb-3 flex items-center gap-2">
+        <Activity size={14} />
+        Live Event Feed
+      </h2>
+      {content}
     </div>
   )
 }
@@ -521,6 +528,7 @@ export default function Dashboard() {
   const [envStatus, setEnvStatus] = useState<EnvStatus | null>(null)
   const [envEvents, setEnvEvents] = useState<EnvEvent[]>([])
   const [bandConditions, setBandConditions] = useState<BandConditionsStatus | null>(null)
+  const [alertTab, setAlertTab] = useState<'alerts' | 'feed'>('alerts')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -610,57 +618,85 @@ export default function Dashboard() {
 
         {/* Alerts + Stats */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Active Alerts */}
+          {/* Active Alerts / Event Feed — tabbed */}
           <div className="bg-bg-card border border-border rounded-lg p-6">
-            <h2 className="text-sm font-medium text-slate-400 mb-4">Active Alerts</h2>
-            {alerts.length > 0 ? (
-              <div className="space-y-3 max-h-48 overflow-y-auto">
-                {alerts.map((alert, i) => (
-                  <AlertItem key={i} alert={alert} />
-                ))}
-              </div>
-            ) : (() => {
-              const highSeverityEnv = envEvents
-                .filter(e => e.severity === 'immediate' || e.severity === 'priority')
-                .sort((a, b) => {
-                  const ord: Record<string, number> = { immediate: 0, priority: 1 }
-                  const diff = (ord[a.severity] ?? 2) - (ord[b.severity] ?? 2)
-                  if (diff !== 0) return diff
-                  return (b.fetched_at || 0) - (a.fetched_at || 0)
-                })
-                .slice(0, 5)
-              if (highSeverityEnv.length > 0) {
-                return (
+            <div className="flex items-center gap-1 mb-4">
+              <button
+                onClick={() => setAlertTab('alerts')}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                  alertTab === 'alerts'
+                    ? 'bg-slate-600 text-slate-100'
+                    : 'text-slate-400 hover:text-slate-300 hover:bg-bg-hover'
+                }`}
+              >
+                Active Alerts
+              </button>
+              <button
+                onClick={() => setAlertTab('feed')}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                  alertTab === 'feed'
+                    ? 'bg-slate-600 text-slate-100'
+                    : 'text-slate-400 hover:text-slate-300 hover:bg-bg-hover'
+                }`}
+              >
+                Event Feed
+              </button>
+            </div>
+
+            {alertTab === 'alerts' ? (
+              <>
+                {alerts.length > 0 ? (
                   <div className="space-y-3 max-h-48 overflow-y-auto">
-                    {highSeverityEnv.map((ev, i) => {
-                      const sevStyle = ev.severity === 'immediate'
-                        ? { bg: 'bg-red-500/10', border: 'border-red-500', icon: AlertCircle, iconColor: 'text-red-500' }
-                        : { bg: 'bg-amber-500/10', border: 'border-amber-500', icon: AlertTriangle, iconColor: 'text-amber-500' }
-                      const Icon = sevStyle.icon
-                      return (
-                        <div key={ev.event_id || i} className={`p-3 rounded-lg ${sevStyle.bg} border-l-2 ${sevStyle.border} flex items-start gap-3`}>
-                          <Icon size={16} className={sevStyle.iconColor} />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="px-1.5 py-0.5 rounded text-xs bg-slate-500/20 text-slate-400 border border-slate-500/30 font-mono">ENV</span>
-                              <span className="text-xs text-slate-500">{ev.severity}</span>
-                            </div>
-                            <div className="text-sm text-slate-200 mt-1">{ev.headline}</div>
-                            <div className="text-xs text-slate-500 mt-1">{ev.source} · {new Date(ev.fetched_at * 1000).toLocaleTimeString()}</div>
-                          </div>
-                        </div>
-                      )
-                    })}
+                    {alerts.map((alert, i) => (
+                      <AlertItem key={i} alert={alert} />
+                    ))}
                   </div>
-                )
-              }
-              return (
-                <div className="flex items-center gap-2 text-slate-500 py-4">
-                  <CheckCircle size={16} className="text-green-500" />
-                  <span>No active alerts</span>
-                </div>
-              )
-            })()}
+                ) : (() => {
+                  const highSeverityEnv = envEvents
+                    .filter(e => e.severity === 'immediate' || e.severity === 'priority')
+                    .sort((a, b) => {
+                      const ord: Record<string, number> = { immediate: 0, priority: 1 }
+                      const diff = (ord[a.severity] ?? 2) - (ord[b.severity] ?? 2)
+                      if (diff !== 0) return diff
+                      return (b.fetched_at || 0) - (a.fetched_at || 0)
+                    })
+                    .slice(0, 5)
+                  if (highSeverityEnv.length > 0) {
+                    return (
+                      <div className="space-y-3 max-h-48 overflow-y-auto">
+                        {highSeverityEnv.map((ev, i) => {
+                          const sevStyle = ev.severity === 'immediate'
+                            ? { bg: 'bg-red-500/10', border: 'border-red-500', icon: AlertCircle, iconColor: 'text-red-500' }
+                            : { bg: 'bg-amber-500/10', border: 'border-amber-500', icon: AlertTriangle, iconColor: 'text-amber-500' }
+                          const Icon = sevStyle.icon
+                          return (
+                            <div key={ev.event_id || i} className={`p-3 rounded-lg ${sevStyle.bg} border-l-2 ${sevStyle.border} flex items-start gap-3`}>
+                              <Icon size={16} className={sevStyle.iconColor} />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="px-1.5 py-0.5 rounded text-xs bg-slate-500/20 text-slate-400 border border-slate-500/30 font-mono">ENV</span>
+                                  <span className="text-xs text-slate-500">{ev.severity}</span>
+                                </div>
+                                <div className="text-sm text-slate-200 mt-1">{ev.headline}</div>
+                                <div className="text-xs text-slate-500 mt-1">{ev.source} · {new Date(ev.fetched_at * 1000).toLocaleTimeString()}</div>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  }
+                  return (
+                    <div className="flex items-center gap-2 text-slate-500 py-4">
+                      <CheckCircle size={16} className="text-green-500" />
+                      <span>No active alerts</span>
+                    </div>
+                  )
+                })()}
+              </>
+            ) : (
+              <LiveEventFeed events={envEvents} envStatus={envStatus} embedded />
+            )}
           </div>
 
           {/* Quick Stats */}
@@ -692,14 +728,10 @@ export default function Dashboard() {
         {/* RF Propagation */}
         <BandConditionsCard bandConditions={bandConditions} />
 
-        {/* Live Event Feed */}
-        <LiveEventFeed events={envEvents} envStatus={envStatus} />
-      </div>
-
-      {/* Bottom row: Tropo Forecast */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Tropo Forecast */}
         <HepburnTropoCard />
       </div>
+
     </div>
   )
 }
