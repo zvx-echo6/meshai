@@ -130,6 +130,24 @@ def _parse_motion(params: dict) -> tuple:
 def _now() -> int: return int(time.time())
 
 
+def _is_update(conn, d: dict) -> bool:
+    """Return True if any CAP id in `references` was previously broadcast."""
+    refs = d.get("references") or []
+    if not refs:
+        return False
+    ref_ids = [r["identifier"] for r in refs
+              if isinstance(r, dict) and r.get("identifier")]
+    if not ref_ids:
+        return False
+    placeholders = ",".join("?" * len(ref_ids))
+    row = conn.execute(
+        f"SELECT 1 FROM nws_alerts WHERE event_id IN ({placeholders}) "
+        "AND last_broadcast_at IS NOT NULL LIMIT 1",
+        ref_ids,
+    ).fetchone()
+    return row is not None
+
+
 def _parse_iso(s: Optional[str]) -> Optional[int]:
     if not s: return None
     try: return int(datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp())
@@ -270,19 +288,21 @@ def handle_nws(envelope: dict, subject: str,
             (cap_id, event_type, cap_severity, county, state,
              headline, description, expires_epoch, now, None),
         )
+        _prefix = "Update" if _is_update(conn, d) else ""
         wire = _render(event_type=event_type, area_desc=area_desc,
                         geocoder_city=ge.get("city"), county=county, state=state,
                         expires_epoch=expires_epoch, lat=lat, lon=lon, now=now,
-                        d=d)
+                        prefix=_prefix, d=d)
         _attach_commit(data, cap_id=cap_id, event_log_row_id=log_id)
         return wire
 
     if row["last_broadcast_at"] is None:
         # Cold-start race: row exists but broadcast was previously dropped.
+        _prefix = "Update" if _is_update(conn, d) else ""
         wire = _render(event_type=event_type, area_desc=area_desc,
                         geocoder_city=ge.get("city"), county=county, state=state,
                         expires_epoch=expires_epoch, lat=lat, lon=lon, now=now,
-                        d=d)
+                        prefix=_prefix, d=d)
         _attach_commit(data, cap_id=cap_id, event_log_row_id=log_id)
         return wire
 
