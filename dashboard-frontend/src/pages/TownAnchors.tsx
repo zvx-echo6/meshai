@@ -68,7 +68,7 @@ export default function TownAnchors() {
         <h1 className="text-xl font-semibold text-slate-100">Town Anchors</h1>
         <span className="text-xs text-slate-500 ml-2">{rows.length} towns</span>
         <button onClick={beginAdd}
-          className="ml-auto flex items-center gap-1 px-3 py-1 bg-cyan-700 hover:bg-cyan-600 rounded text-white text-sm">
+          className="ml-auto flex items-center gap-1 px-3 py-1 bg-[#f59e0b] hover:bg-[#d97706] text-black font-sans font-medium text-sm">
           <Plus className="w-4 h-4" /> Add town
         </button>
       </div>
@@ -82,25 +82,25 @@ export default function TownAnchors() {
 
       {adding && <RowEditor draft={draft} setDraft={setDraft} onSave={save} onCancel={cancel} adding />}
 
-      <div className="bg-slate-800/60 border border-slate-700 overflow-x-auto">
+      <div className="bg-bg-card border border-border overflow-x-auto">
         <table className="w-full text-sm text-slate-200">
-          <thead className="bg-slate-900 text-xs text-slate-400 uppercase">
+          <thead className="bg-[#161616] border-b border-border">
             <tr>
-              <th className="px-3 py-2 text-left">Name</th>
-              <th className="px-3 py-2 text-right">Lat</th>
-              <th className="px-3 py-2 text-right">Lon</th>
-              <th className="px-3 py-2 text-center">State</th>
-              <th className="px-3 py-2 text-center">On</th>
-              <th className="px-3 py-2"></th>
+              <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-left">Name</th>
+              <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-right">Lat</th>
+              <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-right">Lon</th>
+              <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-center">State</th>
+              <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-center">On</th>
+              <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666]"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-700/60">
+          <tbody className="divide-y divide-border">
             {rows.map(r => editing === r.anchor_id ? (
-              <tr key={r.anchor_id} className="bg-slate-900/40">
+              <tr key={r.anchor_id} className="bg-bg-card border-b border-border hover:bg-bg-hover">
                 <td colSpan={6} className="px-3 py-2"><RowEditor draft={draft} setDraft={setDraft} onSave={save} onCancel={cancel} /></td>
               </tr>
             ) : (
-              <tr key={r.anchor_id} className="hover:bg-slate-800/50">
+              <tr key={r.anchor_id} className="hover:bg-bg-hover">
                 <td className="px-3 py-2 capitalize">{r.name}</td>
                 <td className="px-3 py-2 text-right text-xs">{r.lat.toFixed(4)}</td>
                 <td className="px-3 py-2 text-right text-xs">{r.lon.toFixed(4)}</td>
@@ -126,13 +126,13 @@ function RowEditor({ draft, setDraft, onSave, onCancel, adding }: {
 }) {
   const upd = (k: keyof TownAnchor, v: unknown) => setDraft({ ...draft, [k]: v })
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-3 bg-slate-900/50 rounded">
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-3 bg-[#1a1a1a]">
       <label className="text-xs text-slate-400 col-span-2">Name (lowercased on save)
-        <input className="block w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-100"
+        <input className="block w-full mt-1 bg-bg border border-border px-2 py-1 text-slate-100"
           value={draft.name} onChange={e => upd('name', e.target.value)} disabled={!adding} />
       </label>
       <label className="text-xs text-slate-400">State
-        <input className="block w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-100"
+        <input className="block w-full mt-1 bg-bg border border-border px-2 py-1 text-slate-100"
           value={draft.state ?? ''} onChange={e => upd('state', e.target.value)} />
       </label>
       <label className="text-xs text-slate-400 flex items-center gap-2">
@@ -140,16 +140,16 @@ function RowEditor({ draft, setDraft, onSave, onCancel, adding }: {
         Enabled
       </label>
       <label className="text-xs text-slate-400">Lat
-        <input type="number" step="any" className="block w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-100"
+        <input type="number" step="any" className="block w-full mt-1 bg-bg border border-border px-2 py-1 text-slate-100"
           value={draft.lat} onChange={e => upd('lat', parseFloat(e.target.value))} />
       </label>
       <label className="text-xs text-slate-400">Lon
-        <input type="number" step="any" className="block w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-100"
+        <input type="number" step="any" className="block w-full mt-1 bg-bg border border-border px-2 py-1 text-slate-100"
           value={draft.lon} onChange={e => upd('lon', parseFloat(e.target.value))} />
       </label>
       <div className="col-span-2 flex items-center justify-end gap-2 mt-2">
-        <button onClick={onCancel} className="px-3 py-1 text-slate-300 hover:bg-slate-700 rounded text-sm">Cancel</button>
-        <button onClick={onSave} className="px-3 py-1 bg-cyan-700 hover:bg-cyan-600 text-white rounded text-sm">Save</button>
+        <button onClick={onCancel} className="px-3 py-1 text-slate-300 hover:bg-bg-hover text-sm">Cancel</button>
+        <button onClick={onSave} className="px-3 py-1 bg-[#f59e0b] hover:bg-[#d97706] text-black font-sans font-medium text-sm">Save</button>
       </div>
     </div>
   )

@@ -93,15 +93,14 @@ export default function Layout({ children }: LayoutProps) {
       {/* Sidebar */}
       <aside className="w-[220px] flex-shrink-0 bg-bg-card border-r border-border flex flex-col overflow-y-auto">
         {/* Logo */}
-        <div className="p-5 border-b border-border">
-          <div className="flex items-center gap-3">
-            <div className="w-[3px] h-8 bg-accent flex-shrink-0" />
-            <div>
-              <div className="font-sans font-bold text-white text-[15px] leading-tight tracking-tight">MeshAI</div>
-              <div className="text-xs font-mono text-[#666]">
-                v{status?.version || '...'}
-              </div>
-            </div>
+        <div className="bg-[#000000] px-4 py-3 border-b border-border flex flex-col items-center">
+          <img
+            src="/meshai-logo.png"
+            alt="MeshAI"
+            className="w-[190px] block"
+          />
+          <div className="font-mono text-[10px] text-[#555] mt-1 self-start">
+            v{status?.version || '...'}
           </div>
         </div>
 
@@ -116,14 +115,14 @@ export default function Layout({ children }: LayoutProps) {
                 to={item.path}
                 className={`flex items-center gap-3 px-5 py-3 text-sm font-sans transition-colors relative ${
                   isActive
-                    ? 'text-white'
-                    : 'text-[#777] hover:text-[#888]'
+                    ? 'text-white bg-transparent'
+                    : 'text-[#777] hover:text-white hover:bg-bg-hover'
                 }`}
               >
                 {isActive && (
-                  <div className="absolute right-0 top-0 bottom-0 w-0.5 bg-accent" />
+                  <div className="absolute right-0 top-0 bottom-0 w-[2px] bg-[#f59e0b]" />
                 )}
-                <Icon size={18} />
+                <Icon size={16} />
                 {item.label}
               </Link>
             )
