@@ -33,6 +33,11 @@ class ChannelTestRequest(BaseModel):
     headers: Optional[Dict[str, str]] = {}
 
 
+class SinkTestRequest(BaseModel):
+    """Request body for sink connectivity test."""
+    name: str  # Sink name from config
+
+
 class RuleSourcesRequest(BaseModel):
     """Request body for rule sources health check."""
     categories: List[str] = []
@@ -303,3 +308,94 @@ async def send_rule_live(request: Request, rule_index: int):
     )
 
     return result
+
+
+# =============================================================================
+# SINKS ENDPOINTS (Phase A of routing revamp)
+# =============================================================================
+
+@router.get("/sinks")
+async def get_sinks(request: Request):
+    """Get configured notification sinks.
+
+    Returns list of named sinks with their type and config.
+    Phase A: read-only list; Phase B adds edit endpoints.
+    """
+    config = getattr(request.app.state, "config", None)
+    if not config or not hasattr(config, "notifications"):
+        return []
+
+    sinks = getattr(config.notifications, "sinks", {})
+    if not sinks:
+        return []
+
+    result = []
+    for name, sink in sinks.items():
+        # Convert dataclass to dict if needed
+        if hasattr(sink, "__dataclass_fields__"):
+            sink_dict = {
+                "name": name,
+                "type": sink.type,
+                "channel": getattr(sink, "channel", 0),
+                "node_ids": getattr(sink, "node_ids", []),
+                "smtp_host": getattr(sink, "smtp_host", ""),
+                "smtp_port": getattr(sink, "smtp_port", 587),
+                "from_address": getattr(sink, "from_address", ""),
+                "recipients": getattr(sink, "recipients", []),
+                "webhook_url": getattr(sink, "webhook_url", ""),
+            }
+        else:
+            sink_dict = {"name": name, **sink}
+
+        result.append(sink_dict)
+
+    return result
+
+
+@router.post("/sinks/test")
+async def test_sink(request: Request, body: SinkTestRequest):
+    """Test a named sink's connectivity.
+
+    Uses the existing channel test_connection() method.
+    """
+    config = getattr(request.app.state, "config", None)
+    if not config or not hasattr(config, "notifications"):
+        raise HTTPException(status_code=404, detail="Notifications not configured")
+
+    sinks = getattr(config.notifications, "sinks", {})
+    if not sinks:
+        raise HTTPException(status_code=404, detail="No sinks configured")
+
+    if body.name not in sinks:
+        raise HTTPException(status_code=404, detail=f"Sink not found: {body.name}")
+
+    sink = sinks[body.name]
+
+    # Get connector for mesh channels
+    connector = getattr(request.app.state, "connector", None)
+
+    try:
+        from ...notifications.channels import create_channel_from_sink
+        channel = create_channel_from_sink(sink, connector=connector)
+        result = await channel.test_connection()
+        return {
+            "sink": body.name,
+            "type": sink.type,
+            **result
+        }
+    except ValueError as e:
+        return {
+            "sink": body.name,
+            "type": getattr(sink, "type", "unknown"),
+            "success": False,
+            "message": str(e),
+            "error": str(e),
+        }
+    except Exception as e:
+        return {
+            "sink": body.name,
+            "type": getattr(sink, "type", "unknown"),
+            "success": False,
+            "message": f"Test failed: {str(e)}",
+            "error": str(e),
+        }

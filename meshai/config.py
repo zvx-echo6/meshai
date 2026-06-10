@@ -500,6 +500,53 @@ class EnvironmentalConfig:
 
 
 @dataclass
+class SinkConfig:
+    """Named notification sink — transport defined once, referenced by name.
+
+    Phase A of routing revamp: transports defined once in sinks block,
+    referenced by name in toggles/rules (Phase B).
+    """
+
+    type: str = "mesh_broadcast"  # mesh_broadcast|mesh_dm|email|webhook
+
+    # Mesh broadcast
+    channel: int = 0  # Channel index (>= 0, 0 is valid primary channel)
+
+    # Mesh DM
+    node_ids: list = field(default_factory=list)
+
+    # Email (SMTP)
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_tls: bool = True
+    from_address: str = ""
+    recipients: list = field(default_factory=list)
+
+    # Webhook
+    webhook_url: str = ""
+    webhook_headers: dict = field(default_factory=dict)
+
+    def validate(self) -> list[str]:
+        """Validate sink config, return list of errors."""
+        errors = []
+        if self.type not in ("mesh_broadcast", "mesh_dm", "email", "webhook"):
+            errors.append(f"Invalid sink type: {self.type}")
+        if self.type == "mesh_broadcast" and self.channel < 0:
+            errors.append(f"Channel must be >= 0, got {self.channel}")
+        if self.type == "mesh_dm" and not self.node_ids:
+            errors.append("mesh_dm sink requires node_ids")
+        if self.type == "email" and not self.smtp_host:
+            errors.append("email sink requires smtp_host")
+        if self.type == "email" and not self.recipients:
+            errors.append("email sink requires recipients")
+        if self.type == "webhook" and not self.webhook_url:
+            errors.append("webhook sink requires webhook_url")
+        return errors
+
+
+@dataclass
 class NotificationRuleConfig:
     """Self-contained notification rule with inline delivery config."""
 
@@ -642,6 +689,7 @@ class NotificationsConfig:
     toggles: dict = field(default_factory=_default_toggles)  # family -> NotificationToggle
     digest: DigestConfig = field(default_factory=DigestConfig)
     rules: list = field(default_factory=list)  # List of NotificationRuleConfig
+    sinks: dict = field(default_factory=dict)  # name -> SinkConfig
 
 @dataclass
 class DashboardConfig:
@@ -784,6 +832,11 @@ def _dict_to_dataclass(cls, data: dict):
                 notifications.toggles = {
                     name: _dict_to_dataclass(NotificationToggle, t) if isinstance(t, dict) else t
                     for name, t in value["toggles"].items()
+                }
+            if "sinks" in value and isinstance(value["sinks"], dict):
+                notifications.sinks = {
+                    name: _dict_to_dataclass(SinkConfig, s) if isinstance(s, dict) else s
+                    for name, s in value["sinks"].items()
                 }
             if "channels" in value and isinstance(value["channels"], list) and value["channels"]:
                 _migrate_legacy_channels(notifications, value)

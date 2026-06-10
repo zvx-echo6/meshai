@@ -14,7 +14,7 @@ import httpx
 
 if TYPE_CHECKING:
     from ..connector import MeshConnector
-    from ..config import NotificationRuleConfig
+    from ..config import NotificationRuleConfig, SinkConfig
     from .events import NotificationPayload
 
 from meshai.notifications.renderers import MeshRenderer, EmailRenderer, WebhookRenderer
@@ -837,3 +837,51 @@ def create_channel_from_dict(config: dict, connector=None) -> NotificationChanne
         )
     else:
         raise ValueError("Unknown channel type: %s" % channel_type)
+
+def create_channel_from_sink(sink: "SinkConfig", connector=None) -> NotificationChannel:
+    """Create a channel instance from a SinkConfig dataclass.
+
+    Phase A of routing revamp: sinks are named transports defined once,
+    this factory creates the channel instance for delivery.
+
+    Args:
+        sink: SinkConfig dataclass instance
+        connector: MeshConnector instance (required for mesh channels)
+
+    Returns:
+        NotificationChannel instance
+
+    Raises:
+        ValueError: If sink type is unknown or channel < 0
+    """
+    sink_type = sink.type
+
+    if sink_type == "mesh_broadcast":
+        if sink.channel < 0:
+            raise ValueError(f"Channel must be >= 0, got {sink.channel}")
+        return MeshBroadcastChannel(
+            connector=connector,
+            channel_index=sink.channel,
+        )
+    elif sink_type == "mesh_dm":
+        return MeshDMChannel(
+            connector=connector,
+            node_ids=sink.node_ids,
+        )
+    elif sink_type == "email":
+        return EmailChannel(
+            smtp_host=sink.smtp_host,
+            smtp_port=sink.smtp_port,
+            smtp_user=sink.smtp_user,
+            smtp_password=sink.smtp_password,
+            smtp_tls=sink.smtp_tls,
+            from_address=sink.from_address,
+            recipients=sink.recipients,
+        )
+    elif sink_type == "webhook":
+        return WebhookChannel(
+            url=sink.webhook_url,
+            headers=sink.webhook_headers,
+        )
+    else:
+        raise ValueError(f"Unknown sink type: {sink_type}")
