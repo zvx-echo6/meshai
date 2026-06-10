@@ -17,31 +17,20 @@ export default {
     extend: {
       colors: {
         bg: {
-          DEFAULT: '#0a0e17',
-          card: '#0f1520',
-          hover: '#162030',
-          elevated: '#1a2535',
+          DEFAULT: '#111111',
+          card: '#0d0d0d',
+          hover: '#161616',
+          elevated: '#1a1a1a',
         },
         border: {
-          DEFAULT: '#1c2a3a',
-          light: '#243345',
-          bright: '#2d4060',
+          DEFAULT: '#1e1e1e',
+          light: '#222222',
+          bright: '#2a2a2a',
         },
-        amber: {
+        accent: {
           DEFAULT: '#f59e0b',
           dim: '#d97706',
-          glow: '#fbbf24',
-          muted: 'rgba(245,158,11,0.15)',
-        },
-        blue: {
-          DEFAULT: '#38bdf8',
-          dim: '#0ea5e9',
-          muted: 'rgba(56,189,248,0.12)',
-        },
-        danger: {
-          DEFAULT: '#f97316',
-          dim: '#ea580c',
-          muted: 'rgba(249,115,22,0.15)',
+          muted: 'rgba(245,158,11,0.12)',
         },
         slate: {
           100: '#f1f5f9',

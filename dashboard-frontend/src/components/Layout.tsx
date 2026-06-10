@@ -89,18 +89,16 @@ export default function Layout({ children }: LayoutProps) {
   })
 
   return (
-    <div className="flex h-screen overflow-hidden bg-bg text-slate-200">
+    <div className="flex h-screen overflow-hidden bg-bg text-white">
       {/* Sidebar */}
       <aside className="w-[220px] flex-shrink-0 bg-bg-card border-r border-border flex flex-col overflow-y-auto">
         {/* Logo */}
         <div className="p-5 border-b border-border">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-white font-bold text-xl">
-              M
-            </div>
+            <div className="w-[3px] h-8 bg-accent flex-shrink-0" />
             <div>
-              <div className="font-semibold text-lg">MeshAI</div>
-              <div className="text-xs text-slate-500 font-mono">
+              <div className="font-sans font-bold text-white text-lg">MeshAI</div>
+              <div className="text-xs font-mono text-[#333]">
                 v{status?.version || '...'}
               </div>
             </div>
@@ -116,14 +114,14 @@ export default function Layout({ children }: LayoutProps) {
               <Link
                 key={item.path}
                 to={item.path}
-                className={`flex items-center gap-3 px-5 py-3 text-sm transition-colors relative ${
+                className={`flex items-center gap-3 px-5 py-3 text-sm font-sans transition-colors relative ${
                   isActive
-                    ? 'text-blue-400 bg-blue-500/10'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-bg-hover'
+                    ? 'text-white'
+                    : 'text-[#444] hover:text-[#888]'
                 }`}
               >
                 {isActive && (
-                  <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-blue-500" />
+                  <div className="absolute right-0 top-0 bottom-0 w-0.5 bg-accent" />
                 )}
                 <Icon size={18} />
                 {item.label}
@@ -140,15 +138,15 @@ export default function Layout({ children }: LayoutProps) {
                 status?.connected ? 'bg-green-500' : 'bg-red-500'
               }`}
             />
-            <span className="text-xs text-slate-400">
+            <span className="text-xs font-sans text-[#444]">
               {status?.connected ? 'Connected' : 'Disconnected'}
             </span>
           </div>
-          <div className="text-xs text-slate-500 font-mono truncate">
+          <div className="text-xs font-mono text-[#333] truncate">
             {status?.connection_type?.toUpperCase()}: {status?.connection_target}
           </div>
-          <div className="text-xs text-slate-500 mt-1">
-            Uptime: {status ? formatUptime(status.uptime_seconds) : '...'}
+          <div className="text-xs font-sans text-[#333] mt-1">
+            Uptime: <span className="font-mono">{status ? formatUptime(status.uptime_seconds) : '...'}</span>
           </div>
         </div>
       </aside>
@@ -157,7 +155,7 @@ export default function Layout({ children }: LayoutProps) {
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
         <header className="h-14 flex-shrink-0 border-b border-border bg-bg-card flex items-center justify-between px-6">
-          <h1 className="text-lg font-semibold">
+          <h1 className="text-lg font-sans font-semibold text-white">
             {getPageTitle(location.pathname)}
           </h1>
           <div className="flex items-center gap-6">
@@ -165,15 +163,15 @@ export default function Layout({ children }: LayoutProps) {
             <div className="flex items-center gap-2">
               <div
                 className={`w-2 h-2 rounded-full ${
-                  connected ? 'bg-green-500 animate-pulse-slow' : 'bg-slate-500'
+                  connected ? 'bg-accent animate-pulse-slow' : 'bg-[#333]'
                 }`}
               />
-              <span className="text-xs text-slate-400">
+              <span className="text-xs font-sans text-[#444]">
                 {connected ? 'Live' : 'Offline'}
               </span>
             </div>
             {/* Clock */}
-            <div className="text-sm font-mono text-slate-400">
+            <div className="text-sm font-mono text-[#333]">
               {timeStr} MT
             </div>
           </div>

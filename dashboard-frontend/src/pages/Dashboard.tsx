@@ -46,7 +46,7 @@ function HealthGauge({ health }: { health: MeshHealth }) {
   return (
     <div className="flex flex-col items-center">
       <svg width="140" height="140" viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r="45" fill="none" stroke="#1c2a3a" strokeWidth="8" />
+        <circle cx="50" cy="50" r="45" fill="none" stroke="#1e1e1e" strokeWidth="8" />
         <circle
           cx="50" cy="50" r="45" fill="none" stroke="#f59e0b" strokeWidth="8"
           strokeLinecap="round" strokeDasharray={circumference}
@@ -56,7 +56,7 @@ function HealthGauge({ health }: { health: MeshHealth }) {
         <text x="50" y="46" textAnchor="middle" className="font-mono font-bold" style={{ fontSize: '24px', fill: '#f59e0b' }}>
           {score.toFixed(1)}
         </text>
-        <text x="50" y="62" textAnchor="middle" className="font-sans" style={{ fontSize: '10px', fill: '#94a3b8' }}>
+        <text x="50" y="62" textAnchor="middle" className="font-sans" style={{ fontSize: '10px', fill: '#444' }}>
           {tier}
         </text>
       </svg>
@@ -66,18 +66,18 @@ function HealthGauge({ health }: { health: MeshHealth }) {
 
 function PillarBar({ label, value }: { label: string; value: number }) {
   const getColor = (v: number) => {
-    if (v > 66) return 'bg-amber'
-    if (v > 33) return 'bg-amber-dim'
-    return 'bg-danger'
+    if (v > 66) return 'bg-accent'
+    if (v > 33) return 'bg-accent-dim'
+    return 'bg-red-500'
   }
 
   return (
     <div className="flex items-center gap-2">
-      <div className="w-24 text-xs font-sans text-slate-400 truncate">{label}</div>
+      <div className="w-24 text-xs font-sans text-[#444] truncate">{label}</div>
       <div className="flex-1 h-2 bg-border overflow-hidden">
         <div className={`h-full ${getColor(value)} transition-all duration-300`} style={{ width: `${value}%` }} />
       </div>
-      <div className="w-12 text-right text-xs font-mono text-slate-300">{value.toFixed(1)}</div>
+      <div className="w-12 text-right text-xs font-mono text-[#e0e0e0]">{value.toFixed(1)}</div>
     </div>
   )
 }
@@ -88,13 +88,13 @@ function AlertItem({ alert }: { alert: Alert }) {
       case 'critical':
       case 'emergency':
       case 'immediate':
-        return { bg: 'bg-danger-muted', border: 'border-danger', icon: AlertCircle, iconColor: 'text-danger' }
+        return { bg: 'bg-red-500/5', border: 'border-red-500', icon: AlertCircle, iconColor: 'text-red-500' }
       case 'warning':
       case 'priority':
-        return { bg: 'bg-amber-muted', border: 'border-amber', icon: AlertTriangle, iconColor: 'text-amber' }
+        return { bg: 'bg-accent/5', border: 'border-accent', icon: AlertTriangle, iconColor: 'text-accent' }
       case 'routine':
       default:
-        return { bg: 'bg-blue-muted', border: 'border-blue', icon: Info, iconColor: 'text-blue' }
+        return { bg: 'bg-[#161616]', border: 'border-[#333]', icon: Info, iconColor: 'text-[#444]' }
     }
   }
 
@@ -105,8 +105,8 @@ function AlertItem({ alert }: { alert: Alert }) {
     <div className={`p-3 ${styles.bg} border-l-2 ${styles.border} flex items-start gap-3`}>
       <Icon size={16} className={styles.iconColor} />
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-sans text-slate-200">{alert.message}</div>
-        <div className="text-xs font-mono text-slate-500 mt-1">{alert.timestamp || 'Just now'}</div>
+        <div className="text-sm font-sans font-medium text-white">{alert.message}</div>
+        <div className="text-[10px] font-mono text-[#333] mt-1">{alert.timestamp || 'Just now'}</div>
       </div>
     </div>
   )
@@ -114,31 +114,34 @@ function AlertItem({ alert }: { alert: Alert }) {
 
 function SourceCard({ source }: { source: SourceHealth }) {
   const getStatusColor = () => {
-    if (!source.is_loaded) return 'bg-danger'
-    if (source.last_error) return 'bg-amber'
-    return 'bg-blue'
+    if (!source.is_loaded) return 'bg-red-500'
+    if (source.last_error) return 'bg-accent'
+    return 'bg-green-500'
   }
 
   return (
     <div className="flex items-center gap-3 p-2 bg-bg-hover">
       <div className={`w-2 h-2 rounded-full ${getStatusColor()}`} />
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-sans font-medium text-slate-300 truncate">{source.name}</div>
-        <div className="text-xs font-sans text-slate-500">{source.node_count} nodes · {source.type}</div>
+        <div className="text-sm font-sans font-medium text-white truncate">{source.name}</div>
+        <div className="text-[10px] font-sans text-[#333]">{source.node_count} nodes · {source.type}</div>
       </div>
     </div>
   )
 }
 
-function StatCard({ icon: Icon, label, value, subvalue, valueClass, subvalueClass }: { icon: typeof Radio; label: string; value: string | number; subvalue?: string; valueClass?: string; subvalueClass?: string }) {
+function StatCard({ icon: Icon, label, value, subvalue, accent }: { icon: typeof Radio; label: string; value: string | number; subvalue?: string; accent?: string }) {
   return (
-    <div className="bg-bg-card border border-border p-3">
-      <div className="flex items-center gap-2 text-slate-400 mb-2">
-        <Icon size={14} />
-        <span className="text-xs font-sans">{label}</span>
+    <div
+      className="bg-bg-card border border-border p-3"
+      style={accent ? { borderTopWidth: '2px', borderTopColor: accent } : undefined}
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <Icon size={14} style={{ color: accent || '#333' }} />
+        <span className="text-[9px] font-sans uppercase tracking-widest text-[#333]">{label}</span>
       </div>
-      <div className={`font-mono text-xl ${valueClass || 'text-amber'}`}>{value}</div>
-      {subvalue && <div className={`text-xs font-sans mt-1 ${subvalueClass || 'text-slate-500'}`}>{subvalue}</div>}
+      <div className="font-mono text-xl" style={{ color: accent || '#e0e0e0' }}>{value}</div>
+      {subvalue && <div className="text-[9px] font-sans mt-1 text-[#333]">{subvalue}</div>}
     </div>
   )
 }
@@ -151,19 +154,19 @@ function StatCard({ icon: Icon, label, value, subvalue, valueClass, subvalueClas
 function BandConditionsCard({ bandConditions }: { bandConditions: BandConditionsStatus | null }) {
   const getRatingColor = (rating?: string) => {
     switch (rating) {
-      case 'Good': return 'bg-blue'
-      case 'Fair': return 'bg-amber-dim'
-      case 'Poor': return 'bg-danger'
-      default: return 'bg-slate-600'
+      case 'Good': return 'bg-green-500'
+      case 'Fair': return 'bg-accent'
+      case 'Poor': return 'bg-red-500'
+      default: return 'bg-[#333]'
     }
   }
 
   const getRatingTextColor = (rating?: string) => {
     switch (rating) {
-      case 'Good': return 'text-blue'
-      case 'Fair': return 'text-amber-dim'
-      case 'Poor': return 'text-danger'
-      default: return 'text-slate-500'
+      case 'Good': return 'text-green-500'
+      case 'Fair': return 'text-accent'
+      case 'Poor': return 'text-red-500'
+      default: return 'text-[#333]'
     }
   }
 
@@ -175,13 +178,13 @@ function BandConditionsCard({ bandConditions }: { bandConditions: BandConditions
   if (!bandConditions?.enabled || !bandConditions?.ratings) {
     return (
       <div className="bg-bg-card border border-border p-4 flex flex-col h-full">
-        <h2 className="text-sm font-sans font-medium text-slate-400 mb-3 flex items-center gap-2">
+        <h2 className="text-[10px] font-sans uppercase tracking-widest text-[#333] mb-3 flex items-center gap-2">
           <Zap size={14} />
           RF Propagation
         </h2>
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center py-8">
-            <div className="font-sans text-slate-400">No band conditions data</div>
+            <div className="font-sans text-[#333]">No band conditions data</div>
           </div>
         </div>
       </div>
@@ -192,7 +195,7 @@ function BandConditionsCard({ bandConditions }: { bandConditions: BandConditions
 
   return (
     <div className="bg-bg-card border border-border p-4 flex flex-col h-full">
-      <h2 className="text-sm font-sans font-medium text-slate-400 mb-3 flex items-center gap-2">
+      <h2 className="text-[10px] font-sans uppercase tracking-widest text-[#333] mb-3 flex items-center gap-2">
         <Zap size={14} />
         RF Propagation
       </h2>
@@ -200,12 +203,12 @@ function BandConditionsCard({ bandConditions }: { bandConditions: BandConditions
       {/* Slot label */}
       <div className="text-center mb-3">
         <span className="text-lg">{getSlotEmoji(bandConditions.slot_label)}</span>
-        <span className="text-sm font-sans text-slate-300 ml-2">{bandConditions.slot_label}</span>
+        <span className="text-sm font-sans text-[#444] ml-2">{bandConditions.slot_label}</span>
       </div>
 
       {/* Band conditions header */}
-      <div className="text-xs font-sans text-slate-500 mb-2 flex items-center gap-1">
-        📡 Band Conditions:
+      <div className="text-[10px] font-sans uppercase tracking-widest text-[#333] mb-2 flex items-center gap-1">
+        📡 Band Conditions
       </div>
 
       {/* Band rows */}
@@ -214,7 +217,7 @@ function BandConditionsCard({ bandConditions }: { bandConditions: BandConditions
           const rating = bandConditions.ratings?.[band]
           return (
             <div key={band} className="flex items-center justify-between px-2 py-1.5 bg-bg-hover">
-              <span className="text-sm font-mono text-slate-300">{band}</span>
+              <span className="text-sm font-mono text-[#444]">{band}</span>
               <span className="text-sm flex items-center gap-2">
                 <span className={`inline-block w-2 h-2 rounded-full ${getRatingColor(rating)}`} />
                 <span className={`font-sans ${getRatingTextColor(rating)}`}>{rating || '—'}</span>
@@ -225,7 +228,7 @@ function BandConditionsCard({ bandConditions }: { bandConditions: BandConditions
       </div>
 
       {/* Footer: source and time */}
-      <div className="mt-auto pt-3 border-t border-border text-xs font-sans text-slate-500">
+      <div className="mt-auto pt-3 border-t border-border text-[10px] font-sans text-[#333]">
         {bandConditions.source && (
           <span>{bandConditions.source === 'swpc_local' ? 'SWPC' : 'HamQSL'}</span>
         )}
@@ -303,16 +306,16 @@ function HepburnTropoCard() {
   return (
     <div className="bg-bg-card border border-border p-4 flex flex-col">
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-sans font-medium text-slate-400 flex items-center gap-2">
+        <h2 className="text-[10px] font-sans uppercase tracking-widest text-[#333] flex items-center gap-2">
           <Radio size={14} />
           Tropo Forecast (Hepburn)
         </h2>
         <div className="flex items-center gap-2">
-          {saving && <span className="text-xs font-sans text-slate-500">saving...</span>}
+          {saving && <span className="text-xs font-sans text-[#333]">saving...</span>}
           <select
             value={region}
             onChange={e => handleRegionChange(e.target.value)}
-            className="text-xs font-sans bg-bg-hover border border-border px-2 py-1 min-h-[36px] text-slate-300 focus:outline-none focus:border-amber"
+            className="text-xs font-sans bg-bg-hover border border-border px-2 py-1 min-h-[36px] text-[#e0e0e0] focus:outline-none focus:border-accent"
           >
             {TROPO_REGIONS.map(r => (
               <option key={r.code} value={r.code}>{r.label}</option>
@@ -321,10 +324,10 @@ function HepburnTropoCard() {
         </div>
       </div>
 
-      <div className="text-xs font-sans text-slate-500 mb-2">{regionLabel} — 6-day forecast</div>
+      <div className="text-xs font-sans text-[#333] mb-2">{regionLabel} — 6-day forecast</div>
 
       {imgError ? (
-        <div className="flex items-center justify-center h-48 text-slate-500 text-sm font-sans">
+        <div className="flex items-center justify-center h-48 text-[#333] text-sm font-sans">
           Failed to load forecast image
         </div>
       ) : (
@@ -336,8 +339,8 @@ function HepburnTropoCard() {
         />
       )}
 
-      <div className="text-xs font-sans text-slate-600 mt-2">
-        Source: <a href="https://www.dxinfocentre.com/tropo.html" target="_blank" rel="noopener noreferrer" className="text-blue hover:text-blue-dim">dxinfocentre.com</a>
+      <div className="text-[10px] font-sans text-[#333] mt-2">
+        Source: <a href="https://www.dxinfocentre.com/tropo.html" target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:text-sky-300">dxinfocentre.com</a>
       </div>
     </div>
   )
@@ -345,37 +348,37 @@ function HepburnTropoCard() {
 
 // Source icon mapping
 const SOURCE_ICONS: Record<string, { icon: typeof Cloud; color: string; label: string }> = {
-  nws: { icon: Cloud, color: 'text-blue', label: 'NWS' },
-  swpc: { icon: Sun, color: 'text-amber', label: 'SWPC' },
-  ducting: { icon: Radio, color: 'text-blue-dim', label: 'Tropo' },
-  nifc: { icon: Flame, color: 'text-danger', label: 'NIFC' },
-  firms: { icon: Satellite, color: 'text-danger-dim', label: 'FIRMS' },
-  avalanche: { icon: Mountain, color: 'text-slate-300', label: 'Avy' },
-  usgs: { icon: Droplets, color: 'text-blue', label: 'USGS' },
-  traffic: { icon: Car, color: 'text-slate-400', label: 'Traffic' },
-  roads: { icon: Construction, color: 'text-amber-dim', label: '511' },
+  nws: { icon: Cloud, color: 'text-sky-400', label: 'NWS' },
+  swpc: { icon: Sun, color: 'text-accent', label: 'SWPC' },
+  ducting: { icon: Radio, color: 'text-sky-500', label: 'Tropo' },
+  nifc: { icon: Flame, color: 'text-red-500', label: 'NIFC' },
+  firms: { icon: Satellite, color: 'text-red-400', label: 'FIRMS' },
+  avalanche: { icon: Mountain, color: 'text-[#444]', label: 'Avy' },
+  usgs: { icon: Droplets, color: 'text-sky-400', label: 'USGS' },
+  traffic: { icon: Car, color: 'text-[#444]', label: 'Traffic' },
+  roads: { icon: Construction, color: 'text-accent-dim', label: '511' },
 }
 
 // Severity badge colors (3-level system + legacy support)
 const SEVERITY_COLORS: Record<string, string> = {
   // New 3-level system
-  routine: 'bg-slate-700/40 text-slate-400 border-slate-600/30',
-  priority: 'bg-amber-muted text-amber border-amber/30',
-  immediate: 'bg-danger-muted text-danger border-danger/30',
+  routine: 'bg-[#1e1e1e] text-[#444] border-[#222]',
+  priority: 'bg-accent/5 text-accent border-accent/30',
+  immediate: 'bg-red-500/5 text-red-500 border-red-500/30',
   // NWS native (for raw event display)
-  info: 'bg-blue-muted text-blue border-blue/30',
-  advisory: 'bg-blue-muted text-blue border-blue/30',
-  moderate: 'bg-amber-muted text-amber-dim border-amber-dim/30',
-  watch: 'bg-amber-muted text-amber border-amber/30',
-  warning: 'bg-amber-muted text-amber border-amber/30',
-  severe: 'bg-danger-muted text-danger border-danger/30',
-  extreme: 'bg-danger-muted text-danger border-danger/30',
-  critical: 'bg-danger-muted text-danger border-danger/30',
-  emergency: 'bg-danger-muted text-danger border-danger/30',
+  info: 'bg-sky-400/10 text-sky-400 border-sky-400/30',
+  advisory: 'bg-sky-400/10 text-sky-400 border-sky-400/30',
+  moderate: 'bg-accent/5 text-accent-dim border-accent-dim/30',
+  watch: 'bg-accent/5 text-accent border-accent/30',
+  warning: 'bg-accent/5 text-accent border-accent/30',
+  severe: 'bg-red-500/5 text-red-500 border-red-500/30',
+  extreme: 'bg-red-500/5 text-red-500 border-red-500/30',
+  critical: 'bg-red-500/5 text-red-500 border-red-500/30',
+  emergency: 'bg-red-500/5 text-red-500 border-red-500/30',
 }
 
 function EventFeedItem({ event, isLocal }: { event: EnvEvent; isLocal?: boolean }) {
-  const sourceConfig = SOURCE_ICONS[event.source] || { icon: Info, color: 'text-slate-400', label: event.source }
+  const sourceConfig = SOURCE_ICONS[event.source] || { icon: Info, color: 'text-[#444]', label: event.source }
   const Icon = sourceConfig.icon
   const severityStyle = SEVERITY_COLORS[event.severity?.toLowerCase()] || SEVERITY_COLORS.info
 
@@ -410,24 +413,24 @@ function EventFeedItem({ event, isLocal }: { event: EnvEvent; isLocal?: boolean 
   const subtitle = description ? description.split('. ')[0] : null
 
   return (
-    <div className={`flex items-start gap-2 py-2 border-b border-border/50 last:border-0 ${isLocal ? 'border-l-2 border-l-amber pl-2 -ml-2' : ''}`}>
+    <div className={`flex items-start gap-2 py-2 border-b border-border/50 last:border-0 ${isLocal ? 'border-l-2 border-l-accent pl-2 -ml-2' : ''}`}>
       <Icon size={14} className={`mt-0.5 flex-shrink-0 ${sourceConfig.color}`} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5">
-          <span className={`px-1.5 py-0.5 text-xs font-sans border ${severityStyle}`}>
+          <span className={`px-1.5 py-0.5 text-[10px] font-sans uppercase tracking-wide border ${severityStyle}`}>
             {event.severity || 'info'}
           </span>
           {isLocal && (
-            <span className="px-1.5 py-0.5 text-xs font-sans bg-amber-muted text-amber border border-amber/30" title="LOCAL: event coordinates fall inside the mesh's monitoring area (per the adapter's bbox config on Environment) — operators in this region are directly affected.">
+            <span className="px-1.5 py-0.5 text-[10px] font-sans uppercase tracking-wide bg-accent/5 text-accent border border-accent/30" title="LOCAL: event coordinates fall inside the mesh's monitoring area (per the adapter's bbox config on Environment) — operators in this region are directly affected.">
               LOCAL
             </span>
           )}
-          <span className="text-xs font-sans text-slate-500">{sourceConfig.label}</span>
-          <span className="text-xs font-mono text-slate-600 ml-auto">{formatTime(event.fetched_at)}</span>
+          <span className="text-[10px] font-sans text-[#333]">{sourceConfig.label}</span>
+          <span className="text-[10px] font-mono text-[#333] ml-auto">{formatTime(event.fetched_at)}</span>
         </div>
-        <div className={`text-sm font-sans font-medium truncate ${isLocal ? 'text-slate-100' : 'text-slate-300'}`}>{title}</div>
+        <div className={`text-sm font-sans font-medium truncate ${isLocal ? 'text-white' : 'text-[#e0e0e0]'}`}>{title}</div>
         {subtitle && (
-          <div className="text-xs font-sans text-slate-500 truncate mt-0.5">{subtitle}</div>
+          <div className="text-[10px] font-sans text-[#333] truncate mt-0.5">{subtitle}</div>
         )}
       </div>
     </div>
@@ -490,20 +493,20 @@ function LiveEventFeed({ events, envStatus, embedded }: { events: EnvEvent[]; en
       ) : (
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center py-8">
-            <CheckCircle size={24} className="text-blue mx-auto mb-2" />
-            <div className="font-sans text-slate-400">No active events</div>
-            <div className="text-xs font-sans text-slate-500">All clear</div>
+            <CheckCircle size={24} className="text-green-500 mx-auto mb-2" />
+            <div className="font-sans text-[#444]">No active events</div>
+            <div className="text-[10px] font-sans text-[#333]">All clear</div>
           </div>
         </div>
       )}
 
       {/* Feed health summary */}
       {feedSummary && (
-        <div className={`text-xs font-sans mt-3 pt-3 border-t border-border ${feedSummary.errors.length > 0 ? 'text-danger' : 'text-slate-500'}`}>
+        <div className={`text-[10px] font-sans mt-3 pt-3 border-t border-border ${feedSummary.errors.length > 0 ? 'text-red-500' : 'text-[#333]'}`}>
           <span className="font-mono">{feedSummary.active}</span> of <span className="font-mono">{feedSummary.total}</span> feeds active
           {feedSummary.secAgo !== null && <> · Last update <span className="font-mono">{feedSummary.secAgo}s</span> ago</>}
           {feedSummary.errors.length > 0 && (
-            <span className="text-danger"> · {feedSummary.errors.join(', ')}: error</span>
+            <span className="text-red-500"> · {feedSummary.errors.join(', ')}: error</span>
           )}
         </div>
       )}
@@ -514,7 +517,7 @@ function LiveEventFeed({ events, envStatus, embedded }: { events: EnvEvent[]; en
 
   return (
     <div className="bg-bg-card border border-border p-4 flex flex-col h-full">
-      <h2 className="text-sm font-sans font-medium text-slate-400 mb-3 flex items-center gap-2">
+      <h2 className="text-[10px] font-sans uppercase tracking-widest text-[#333] mb-3 flex items-center gap-2">
         <Activity size={14} />
         Live Event Feed
       </h2>
@@ -584,7 +587,7 @@ export default function Dashboard() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="font-sans text-slate-400">Loading...</div>
+        <div className="font-sans text-[#444]">Loading...</div>
       </div>
     )
   }
@@ -592,7 +595,7 @@ export default function Dashboard() {
   if (error) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="font-sans text-danger">Error: {error}</div>
+        <div className="font-sans text-red-500">Error: {error}</div>
       </div>
     )
   }
@@ -603,7 +606,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Mesh Health */}
         <div className="bg-bg-card border border-border p-4">
-          <h2 className="text-sm font-sans font-medium text-slate-400 mb-3">Mesh Health</h2>
+          <h2 className="text-[10px] font-sans uppercase tracking-widest text-[#333] mb-3">Mesh Health</h2>
           {health && (
             <>
               <HealthGauge health={health} />
@@ -625,20 +628,20 @@ export default function Dashboard() {
             <div className="flex items-center gap-4 mb-3 border-b border-border">
               <button
                 onClick={() => setAlertTab('alerts')}
-                className={`py-2.5 -mb-px text-xs font-sans font-medium transition-colors border-b-2 ${
+                className={`py-2.5 -mb-px text-[10px] font-sans uppercase tracking-widest transition-colors border-b ${
                   alertTab === 'alerts'
-                    ? 'border-amber text-slate-100'
-                    : 'border-transparent text-slate-400 hover:text-slate-300'
+                    ? 'border-accent text-white'
+                    : 'border-transparent text-[#444]'
                 }`}
               >
                 Active Alerts
               </button>
               <button
                 onClick={() => setAlertTab('feed')}
-                className={`py-2.5 -mb-px text-xs font-sans font-medium transition-colors border-b-2 ${
+                className={`py-2.5 -mb-px text-[10px] font-sans uppercase tracking-widest transition-colors border-b ${
                   alertTab === 'feed'
-                    ? 'border-amber text-slate-100'
-                    : 'border-transparent text-slate-400 hover:text-slate-300'
+                    ? 'border-accent text-white'
+                    : 'border-transparent text-[#444]'
                 }`}
               >
                 Event Feed
@@ -668,19 +671,19 @@ export default function Dashboard() {
                       <div className="space-y-2 max-h-48 overflow-y-auto">
                         {highSeverityEnv.map((ev, i) => {
                           const sevStyle = ev.severity === 'immediate'
-                            ? { bg: 'bg-danger-muted', border: 'border-danger', icon: AlertCircle, iconColor: 'text-danger' }
-                            : { bg: 'bg-amber-muted', border: 'border-amber', icon: AlertTriangle, iconColor: 'text-amber' }
+                            ? { bg: 'bg-red-500/5', border: 'border-red-500', icon: AlertCircle, iconColor: 'text-red-500' }
+                            : { bg: 'bg-accent/5', border: 'border-accent', icon: AlertTriangle, iconColor: 'text-accent' }
                           const Icon = sevStyle.icon
                           return (
                             <div key={ev.event_id || i} className={`p-3 ${sevStyle.bg} border-l-2 ${sevStyle.border} flex items-start gap-3`}>
                               <Icon size={16} className={sevStyle.iconColor} />
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
-                                  <span className="px-1.5 py-0.5 text-xs font-sans bg-slate-700/40 text-slate-400 border border-slate-600/30">ENV</span>
-                                  <span className="text-xs font-sans text-slate-500">{ev.severity}</span>
+                                  <span className="px-1.5 py-0.5 text-[10px] font-sans uppercase tracking-wide bg-[#1e1e1e] text-[#444] border border-[#222]">ENV</span>
+                                  <span className="text-[10px] font-sans text-[#333]">{ev.severity}</span>
                                 </div>
-                                <div className="text-sm font-sans font-medium text-slate-200 mt-1">{ev.headline}</div>
-                                <div className="text-xs font-sans text-slate-500 mt-1">{ev.source} · <span className="font-mono">{new Date(ev.fetched_at * 1000).toLocaleTimeString()}</span></div>
+                                <div className="text-sm font-sans font-medium text-white mt-1">{ev.headline}</div>
+                                <div className="text-[10px] font-mono text-[#333] mt-1">{ev.source} · {new Date(ev.fetched_at * 1000).toLocaleTimeString()}</div>
                               </div>
                             </div>
                           )
@@ -689,8 +692,8 @@ export default function Dashboard() {
                     )
                   }
                   return (
-                    <div className="flex items-center gap-2 text-slate-500 py-4">
-                      <CheckCircle size={16} className="text-blue" />
+                    <div className="flex items-center gap-2 text-[#444] py-4">
+                      <CheckCircle size={16} className="text-green-500" />
                       <span className="font-sans">No active alerts</span>
                     </div>
                   )
@@ -703,10 +706,10 @@ export default function Dashboard() {
 
           {/* Quick Stats */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <StatCard icon={Radio} label="Nodes Online" value={health?.total_nodes || 0} subvalue={`${health?.unlocated_count || 0} unlocated`} />
-            <StatCard icon={Cpu} label="Infrastructure" value={`${health?.infra_online || 0}/${health?.infra_total || 0}`} valueClass="text-blue" subvalue={health?.infra_online === health?.infra_total ? 'All online' : 'Some offline'} subvalueClass={health?.infra_online === health?.infra_total ? 'text-blue-dim' : 'text-danger'} />
-            <StatCard icon={Activity} label="Utilization" value={`${health?.util_percent?.toFixed(1) || 0}%`} subvalue={`${health?.flagged_nodes || 0} flagged`} />
-            <StatCard icon={MapPin} label="Regions" value={health?.total_regions || 0} subvalue={`${health?.battery_warnings || 0} battery warnings`} />
+            <StatCard icon={Radio} label="Nodes Online" value={health?.total_nodes || 0} accent="#22c55e" subvalue={`${health?.unlocated_count || 0} unlocated`} />
+            <StatCard icon={Cpu} label="Infrastructure" value={`${health?.infra_online || 0}/${health?.infra_total || 0}`} accent="#38bdf8" subvalue={health?.infra_online === health?.infra_total ? 'All online' : 'Some offline'} />
+            <StatCard icon={Activity} label="Utilization" value={`${health?.util_percent?.toFixed(1) || 0}%`} accent="#f59e0b" subvalue={`${health?.flagged_nodes || 0} flagged`} />
+            <StatCard icon={MapPin} label="Regions" value={health?.total_regions || 0} accent="#333333" subvalue={`${health?.battery_warnings || 0} battery warnings`} />
           </div>
         </div>
       </div>
@@ -715,7 +718,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Mesh Sources */}
         <div className="bg-bg-card border border-border p-4">
-          <h2 className="text-sm font-sans font-medium text-slate-400 mb-3">Mesh Sources (<span className="font-mono">{sources.length}</span>)</h2>
+          <h2 className="text-[10px] font-sans uppercase tracking-widest text-[#333] mb-3">Mesh Sources (<span className="font-mono">{sources.length}</span>)</h2>
           {sources.length > 0 ? (
             <div className="space-y-1">
               {sources.map((source, i) => (
@@ -723,7 +726,7 @@ export default function Dashboard() {
               ))}
             </div>
           ) : (
-            <div className="font-sans text-slate-500 py-4">No sources configured</div>
+            <div className="font-sans text-[#333] py-4">No sources configured</div>
           )}
         </div>
 
