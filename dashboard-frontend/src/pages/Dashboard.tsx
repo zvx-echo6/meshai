@@ -40,31 +40,23 @@ import {
 function HealthGauge({ health }: { health: MeshHealth }) {
   const score = health.score
   const tier = health.tier
-
-  const getColor = (s: number) => {
-    if (s >= 80) return '#22c55e'
-    if (s >= 60) return '#f59e0b'
-    return '#ef4444'
-  }
-
-  const color = getColor(score)
   const circumference = 2 * Math.PI * 45
   const progress = (score / 100) * circumference
 
   return (
     <div className="flex flex-col items-center">
       <svg width="140" height="140" viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r="45" fill="none" stroke="#1e2a3a" strokeWidth="8" />
+        <circle cx="50" cy="50" r="45" fill="none" stroke="#1c2a3a" strokeWidth="8" />
         <circle
-          cx="50" cy="50" r="45" fill="none" stroke={color} strokeWidth="8"
+          cx="50" cy="50" r="45" fill="none" stroke="#f59e0b" strokeWidth="8"
           strokeLinecap="round" strokeDasharray={circumference}
           strokeDashoffset={circumference - progress} transform="rotate(-90 50 50)"
           className="transition-all duration-500"
         />
-        <text x="50" y="46" textAnchor="middle" className="fill-slate-100 font-mono text-2xl font-bold" style={{ fontSize: '24px' }}>
+        <text x="50" y="46" textAnchor="middle" className="font-mono font-bold" style={{ fontSize: '24px', fill: '#f59e0b' }}>
           {score.toFixed(1)}
         </text>
-        <text x="50" y="62" textAnchor="middle" className="fill-slate-400 text-xs" style={{ fontSize: '10px' }}>
+        <text x="50" y="62" textAnchor="middle" className="font-sans" style={{ fontSize: '10px', fill: '#94a3b8' }}>
           {tier}
         </text>
       </svg>
@@ -74,15 +66,15 @@ function HealthGauge({ health }: { health: MeshHealth }) {
 
 function PillarBar({ label, value }: { label: string; value: number }) {
   const getColor = (v: number) => {
-    if (v >= 80) return 'bg-green-500'
-    if (v >= 60) return 'bg-amber-500'
-    return 'bg-red-500'
+    if (v > 66) return 'bg-amber'
+    if (v > 33) return 'bg-amber-dim'
+    return 'bg-danger'
   }
 
   return (
-    <div className="flex items-center gap-3">
-      <div className="w-24 text-xs text-slate-400 truncate">{label}</div>
-      <div className="flex-1 h-2 bg-border rounded-full overflow-hidden">
+    <div className="flex items-center gap-2">
+      <div className="w-24 text-xs font-sans text-slate-400 truncate">{label}</div>
+      <div className="flex-1 h-2 bg-border overflow-hidden">
         <div className={`h-full ${getColor(value)} transition-all duration-300`} style={{ width: `${value}%` }} />
       </div>
       <div className="w-12 text-right text-xs font-mono text-slate-300">{value.toFixed(1)}</div>
@@ -96,13 +88,13 @@ function AlertItem({ alert }: { alert: Alert }) {
       case 'critical':
       case 'emergency':
       case 'immediate':
-        return { bg: 'bg-red-500/10', border: 'border-red-500', icon: AlertCircle, iconColor: 'text-red-500' }
+        return { bg: 'bg-danger-muted', border: 'border-danger', icon: AlertCircle, iconColor: 'text-danger' }
       case 'warning':
       case 'priority':
-        return { bg: 'bg-amber-500/10', border: 'border-amber-500', icon: AlertTriangle, iconColor: 'text-amber-500' }
+        return { bg: 'bg-amber-muted', border: 'border-amber', icon: AlertTriangle, iconColor: 'text-amber' }
       case 'routine':
       default:
-        return { bg: 'bg-blue-500/10', border: 'border-blue-500', icon: Info, iconColor: 'text-blue-500' }
+        return { bg: 'bg-blue-muted', border: 'border-blue', icon: Info, iconColor: 'text-blue' }
     }
   }
 
@@ -110,11 +102,11 @@ function AlertItem({ alert }: { alert: Alert }) {
   const Icon = styles.icon
 
   return (
-    <div className={`p-3 rounded-lg ${styles.bg} border-l-2 ${styles.border} flex items-start gap-3`}>
+    <div className={`p-3 ${styles.bg} border-l-2 ${styles.border} flex items-start gap-3`}>
       <Icon size={16} className={styles.iconColor} />
       <div className="flex-1 min-w-0">
-        <div className="text-sm text-slate-200">{alert.message}</div>
-        <div className="text-xs text-slate-500 mt-1">{alert.timestamp || 'Just now'}</div>
+        <div className="text-sm font-sans text-slate-200">{alert.message}</div>
+        <div className="text-xs font-mono text-slate-500 mt-1">{alert.timestamp || 'Just now'}</div>
       </div>
     </div>
   )
@@ -122,31 +114,31 @@ function AlertItem({ alert }: { alert: Alert }) {
 
 function SourceCard({ source }: { source: SourceHealth }) {
   const getStatusColor = () => {
-    if (!source.is_loaded) return 'bg-red-500'
-    if (source.last_error) return 'bg-amber-500'
-    return 'bg-green-500'
+    if (!source.is_loaded) return 'bg-danger'
+    if (source.last_error) return 'bg-amber'
+    return 'bg-blue'
   }
 
   return (
-    <div className="flex items-center gap-3 p-3 rounded-lg bg-bg-hover">
+    <div className="flex items-center gap-3 p-2 bg-bg-hover">
       <div className={`w-2 h-2 rounded-full ${getStatusColor()}`} />
       <div className="flex-1 min-w-0">
-        <div className="text-sm text-slate-200 truncate">{source.name}</div>
-        <div className="text-xs text-slate-500">{source.node_count} nodes · {source.type}</div>
+        <div className="text-sm font-sans font-medium text-slate-300 truncate">{source.name}</div>
+        <div className="text-xs font-sans text-slate-500">{source.node_count} nodes · {source.type}</div>
       </div>
     </div>
   )
 }
 
-function StatCard({ icon: Icon, label, value, subvalue }: { icon: typeof Radio; label: string; value: string | number; subvalue?: string }) {
+function StatCard({ icon: Icon, label, value, subvalue, valueClass, subvalueClass }: { icon: typeof Radio; label: string; value: string | number; subvalue?: string; valueClass?: string; subvalueClass?: string }) {
   return (
-    <div className="bg-bg-card border border-border rounded-lg p-4">
+    <div className="bg-bg-card border border-border p-3">
       <div className="flex items-center gap-2 text-slate-400 mb-2">
         <Icon size={14} />
-        <span className="text-xs">{label}</span>
+        <span className="text-xs font-sans">{label}</span>
       </div>
-      <div className="font-mono text-xl text-slate-100">{value}</div>
-      {subvalue && <div className="text-xs text-slate-500 mt-1">{subvalue}</div>}
+      <div className={`font-mono text-xl ${valueClass || 'text-amber'}`}>{value}</div>
+      {subvalue && <div className={`text-xs font-sans mt-1 ${subvalueClass || 'text-slate-500'}`}>{subvalue}</div>}
     </div>
   )
 }
@@ -157,12 +149,21 @@ function StatCard({ icon: Icon, label, value, subvalue }: { icon: typeof Radio; 
 
 // Band Conditions Card
 function BandConditionsCard({ bandConditions }: { bandConditions: BandConditionsStatus | null }) {
-  const getRatingEmoji = (rating?: string) => {
+  const getRatingColor = (rating?: string) => {
     switch (rating) {
-      case 'Good': return '🟢'  // green circle
-      case 'Fair': return '🟡'  // yellow circle
-      case 'Poor': return '🔴'  // red circle
-      default: return '—'
+      case 'Good': return 'bg-blue'
+      case 'Fair': return 'bg-amber-dim'
+      case 'Poor': return 'bg-danger'
+      default: return 'bg-slate-600'
+    }
+  }
+
+  const getRatingTextColor = (rating?: string) => {
+    switch (rating) {
+      case 'Good': return 'text-blue'
+      case 'Fair': return 'text-amber-dim'
+      case 'Poor': return 'text-danger'
+      default: return 'text-slate-500'
     }
   }
 
@@ -173,14 +174,14 @@ function BandConditionsCard({ bandConditions }: { bandConditions: BandConditions
 
   if (!bandConditions?.enabled || !bandConditions?.ratings) {
     return (
-      <div className="bg-bg-card border border-border rounded-lg p-4 flex flex-col h-full">
-        <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
+      <div className="bg-bg-card border border-border p-4 flex flex-col h-full">
+        <h2 className="text-sm font-sans font-medium text-slate-400 mb-3 flex items-center gap-2">
           <Zap size={14} />
           RF Propagation
         </h2>
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center py-8">
-            <div className="text-slate-400">No band conditions data</div>
+            <div className="font-sans text-slate-400">No band conditions data</div>
           </div>
         </div>
       </div>
@@ -190,32 +191,33 @@ function BandConditionsCard({ bandConditions }: { bandConditions: BandConditions
   const bands = ['80-40m', '30-20m', '17-15m', '12-10m'] as const
 
   return (
-    <div className="bg-bg-card border border-border rounded-lg p-4 flex flex-col h-full">
-      <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
+    <div className="bg-bg-card border border-border p-4 flex flex-col h-full">
+      <h2 className="text-sm font-sans font-medium text-slate-400 mb-3 flex items-center gap-2">
         <Zap size={14} />
         RF Propagation
       </h2>
 
       {/* Slot label */}
-      <div className="text-center mb-4">
+      <div className="text-center mb-3">
         <span className="text-lg">{getSlotEmoji(bandConditions.slot_label)}</span>
-        <span className="text-sm text-slate-300 ml-2">{bandConditions.slot_label}</span>
+        <span className="text-sm font-sans text-slate-300 ml-2">{bandConditions.slot_label}</span>
       </div>
 
       {/* Band conditions header */}
-      <div className="text-xs text-slate-500 mb-3 flex items-center gap-1">
+      <div className="text-xs font-sans text-slate-500 mb-2 flex items-center gap-1">
         📡 Band Conditions:
       </div>
 
       {/* Band rows */}
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         {bands.map(band => {
           const rating = bandConditions.ratings?.[band]
           return (
-            <div key={band} className="flex items-center justify-between px-2 py-1.5 rounded bg-bg-hover">
+            <div key={band} className="flex items-center justify-between px-2 py-1.5 bg-bg-hover">
               <span className="text-sm font-mono text-slate-300">{band}</span>
-              <span className="text-sm">
-                {getRatingEmoji(rating)} <span className="text-slate-300 ml-1">{rating || '—'}</span>
+              <span className="text-sm flex items-center gap-2">
+                <span className={`inline-block w-2 h-2 rounded-full ${getRatingColor(rating)}`} />
+                <span className={`font-sans ${getRatingTextColor(rating)}`}>{rating || '—'}</span>
               </span>
             </div>
           )
@@ -223,12 +225,12 @@ function BandConditionsCard({ bandConditions }: { bandConditions: BandConditions
       </div>
 
       {/* Footer: source and time */}
-      <div className="mt-auto pt-3 border-t border-border text-xs text-slate-500">
+      <div className="mt-auto pt-3 border-t border-border text-xs font-sans text-slate-500">
         {bandConditions.source && (
           <span>{bandConditions.source === 'swpc_local' ? 'SWPC' : 'HamQSL'}</span>
         )}
         {bandConditions.sent_at && (
-          <span className="ml-2">
+          <span className="font-mono ml-2">
             {new Date(bandConditions.sent_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </span>
         )}
@@ -299,18 +301,18 @@ function HepburnTropoCard() {
   const regionLabel = TROPO_REGIONS.find(r => r.code === region)?.label || region
 
   return (
-    <div className="bg-bg-card border border-border rounded-lg p-4 flex flex-col">
+    <div className="bg-bg-card border border-border p-4 flex flex-col">
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-medium text-slate-400 flex items-center gap-2">
+        <h2 className="text-sm font-sans font-medium text-slate-400 flex items-center gap-2">
           <Radio size={14} />
           Tropo Forecast (Hepburn)
         </h2>
         <div className="flex items-center gap-2">
-          {saving && <span className="text-xs text-slate-500">saving...</span>}
+          {saving && <span className="text-xs font-sans text-slate-500">saving...</span>}
           <select
             value={region}
             onChange={e => handleRegionChange(e.target.value)}
-            className="text-xs bg-bg-hover border border-border rounded px-2 py-1 text-slate-300 focus:outline-none focus:border-slate-500"
+            className="text-xs font-sans bg-bg-hover border border-border px-2 py-1 min-h-[36px] text-slate-300 focus:outline-none focus:border-amber"
           >
             {TROPO_REGIONS.map(r => (
               <option key={r.code} value={r.code}>{r.label}</option>
@@ -319,23 +321,23 @@ function HepburnTropoCard() {
         </div>
       </div>
 
-      <div className="text-xs text-slate-500 mb-2">{regionLabel} — 6-day forecast</div>
+      <div className="text-xs font-sans text-slate-500 mb-2">{regionLabel} — 6-day forecast</div>
 
       {imgError ? (
-        <div className="flex items-center justify-center h-48 text-slate-500 text-sm">
+        <div className="flex items-center justify-center h-48 text-slate-500 text-sm font-sans">
           Failed to load forecast image
         </div>
       ) : (
         <img
           src={imgUrl}
           alt={`Hepburn tropo forecast — ${regionLabel}`}
-          className="w-full rounded border border-border"
+          className="w-full border border-border"
           onError={() => setImgError(true)}
         />
       )}
 
-      <div className="text-xs text-slate-600 mt-2">
-        Source: <a href="https://www.dxinfocentre.com/tropo.html" target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-slate-300">dxinfocentre.com</a>
+      <div className="text-xs font-sans text-slate-600 mt-2">
+        Source: <a href="https://www.dxinfocentre.com/tropo.html" target="_blank" rel="noopener noreferrer" className="text-blue hover:text-blue-dim">dxinfocentre.com</a>
       </div>
     </div>
   )
@@ -343,33 +345,33 @@ function HepburnTropoCard() {
 
 // Source icon mapping
 const SOURCE_ICONS: Record<string, { icon: typeof Cloud; color: string; label: string }> = {
-  nws: { icon: Cloud, color: 'text-blue-400', label: 'NWS' },
-  swpc: { icon: Sun, color: 'text-yellow-400', label: 'SWPC' },
-  ducting: { icon: Radio, color: 'text-cyan-400', label: 'Tropo' },
-  nifc: { icon: Flame, color: 'text-orange-400', label: 'NIFC' },
-  firms: { icon: Satellite, color: 'text-red-400', label: 'FIRMS' },
+  nws: { icon: Cloud, color: 'text-blue', label: 'NWS' },
+  swpc: { icon: Sun, color: 'text-amber', label: 'SWPC' },
+  ducting: { icon: Radio, color: 'text-blue-dim', label: 'Tropo' },
+  nifc: { icon: Flame, color: 'text-danger', label: 'NIFC' },
+  firms: { icon: Satellite, color: 'text-danger-dim', label: 'FIRMS' },
   avalanche: { icon: Mountain, color: 'text-slate-300', label: 'Avy' },
-  usgs: { icon: Droplets, color: 'text-blue-300', label: 'USGS' },
-  traffic: { icon: Car, color: 'text-purple-400', label: 'Traffic' },
-  roads: { icon: Construction, color: 'text-amber-400', label: '511' },
+  usgs: { icon: Droplets, color: 'text-blue', label: 'USGS' },
+  traffic: { icon: Car, color: 'text-slate-400', label: 'Traffic' },
+  roads: { icon: Construction, color: 'text-amber-dim', label: '511' },
 }
 
 // Severity badge colors (3-level system + legacy support)
 const SEVERITY_COLORS: Record<string, string> = {
   // New 3-level system
-  routine: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-  priority: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-  immediate: 'bg-red-600/20 text-red-300 border-red-600/30',
+  routine: 'bg-slate-700/40 text-slate-400 border-slate-600/30',
+  priority: 'bg-amber-muted text-amber border-amber/30',
+  immediate: 'bg-danger-muted text-danger border-danger/30',
   // NWS native (for raw event display)
-  info: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-  advisory: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-  moderate: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-  watch: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-  warning: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-  severe: 'bg-red-500/20 text-red-400 border-red-500/30',
-  extreme: 'bg-red-600/20 text-red-300 border-red-600/30',
-  critical: 'bg-red-600/20 text-red-300 border-red-600/30',
-  emergency: 'bg-red-700/20 text-red-200 border-red-700/30',
+  info: 'bg-blue-muted text-blue border-blue/30',
+  advisory: 'bg-blue-muted text-blue border-blue/30',
+  moderate: 'bg-amber-muted text-amber-dim border-amber-dim/30',
+  watch: 'bg-amber-muted text-amber border-amber/30',
+  warning: 'bg-amber-muted text-amber border-amber/30',
+  severe: 'bg-danger-muted text-danger border-danger/30',
+  extreme: 'bg-danger-muted text-danger border-danger/30',
+  critical: 'bg-danger-muted text-danger border-danger/30',
+  emergency: 'bg-danger-muted text-danger border-danger/30',
 }
 
 function EventFeedItem({ event, isLocal }: { event: EnvEvent; isLocal?: boolean }) {
@@ -408,24 +410,24 @@ function EventFeedItem({ event, isLocal }: { event: EnvEvent; isLocal?: boolean 
   const subtitle = description ? description.split('. ')[0] : null
 
   return (
-    <div className={`flex items-start gap-2 py-2 border-b border-border/50 last:border-0 ${isLocal ? 'border-l-2 border-l-blue-500 pl-2 -ml-2' : ''}`}>
+    <div className={`flex items-start gap-2 py-2 border-b border-border/50 last:border-0 ${isLocal ? 'border-l-2 border-l-amber pl-2 -ml-2' : ''}`}>
       <Icon size={14} className={`mt-0.5 flex-shrink-0 ${sourceConfig.color}`} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5">
-          <span className={`px-1.5 py-0.5 rounded text-xs border ${severityStyle}`}>
+          <span className={`px-1.5 py-0.5 text-xs font-sans border ${severityStyle}`}>
             {event.severity || 'info'}
           </span>
           {isLocal && (
-            <span className="px-1.5 py-0.5 rounded text-xs bg-blue-500/20 text-blue-400 border border-blue-500/30" title="LOCAL: event coordinates fall inside the mesh's monitoring area (per the adapter's bbox config on Environment) — operators in this region are directly affected.">
+            <span className="px-1.5 py-0.5 text-xs font-sans bg-amber-muted text-amber border border-amber/30" title="LOCAL: event coordinates fall inside the mesh's monitoring area (per the adapter's bbox config on Environment) — operators in this region are directly affected.">
               LOCAL
             </span>
           )}
-          <span className="text-xs text-slate-500">{sourceConfig.label}</span>
-          <span className="text-xs text-slate-600 ml-auto">{formatTime(event.fetched_at)}</span>
+          <span className="text-xs font-sans text-slate-500">{sourceConfig.label}</span>
+          <span className="text-xs font-mono text-slate-600 ml-auto">{formatTime(event.fetched_at)}</span>
         </div>
-        <div className={`text-sm truncate ${isLocal ? 'text-slate-100' : 'text-slate-300'}`}>{title}</div>
+        <div className={`text-sm font-sans font-medium truncate ${isLocal ? 'text-slate-100' : 'text-slate-300'}`}>{title}</div>
         {subtitle && (
-          <div className="text-xs text-slate-500 truncate mt-0.5">{subtitle}</div>
+          <div className="text-xs font-sans text-slate-500 truncate mt-0.5">{subtitle}</div>
         )}
       </div>
     </div>
@@ -488,20 +490,20 @@ function LiveEventFeed({ events, envStatus, embedded }: { events: EnvEvent[]; en
       ) : (
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center py-8">
-            <CheckCircle size={24} className="text-green-500 mx-auto mb-2" />
-            <div className="text-slate-400">No active events</div>
-            <div className="text-xs text-slate-500">All clear</div>
+            <CheckCircle size={24} className="text-blue mx-auto mb-2" />
+            <div className="font-sans text-slate-400">No active events</div>
+            <div className="text-xs font-sans text-slate-500">All clear</div>
           </div>
         </div>
       )}
 
       {/* Feed health summary */}
       {feedSummary && (
-        <div className={`text-xs mt-3 pt-3 border-t border-border ${feedSummary.errors.length > 0 ? 'text-amber-400' : 'text-slate-500'}`}>
-          {feedSummary.active} of {feedSummary.total} feeds active
-          {feedSummary.secAgo !== null && ` · Last update ${feedSummary.secAgo}s ago`}
+        <div className={`text-xs font-sans mt-3 pt-3 border-t border-border ${feedSummary.errors.length > 0 ? 'text-danger' : 'text-slate-500'}`}>
+          <span className="font-mono">{feedSummary.active}</span> of <span className="font-mono">{feedSummary.total}</span> feeds active
+          {feedSummary.secAgo !== null && <> · Last update <span className="font-mono">{feedSummary.secAgo}s</span> ago</>}
           {feedSummary.errors.length > 0 && (
-            <span className="text-amber-400"> · {feedSummary.errors.join(', ')}: error</span>
+            <span className="text-danger"> · {feedSummary.errors.join(', ')}: error</span>
           )}
         </div>
       )}
@@ -511,8 +513,8 @@ function LiveEventFeed({ events, envStatus, embedded }: { events: EnvEvent[]; en
   if (embedded) return <div className="flex flex-col h-full">{content}</div>
 
   return (
-    <div className="bg-bg-card border border-border rounded-lg p-4 flex flex-col h-full">
-      <h2 className="text-sm font-medium text-slate-400 mb-3 flex items-center gap-2">
+    <div className="bg-bg-card border border-border p-4 flex flex-col h-full">
+      <h2 className="text-sm font-sans font-medium text-slate-400 mb-3 flex items-center gap-2">
         <Activity size={14} />
         Live Event Feed
       </h2>
@@ -582,7 +584,7 @@ export default function Dashboard() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-slate-400">Loading...</div>
+        <div className="font-sans text-slate-400">Loading...</div>
       </div>
     )
   }
@@ -590,22 +592,22 @@ export default function Dashboard() {
   if (error) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-red-400">Error: {error}</div>
+        <div className="font-sans text-danger">Error: {error}</div>
       </div>
     )
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Top row: Health + Alerts + Stats */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Mesh Health */}
-        <div className="bg-bg-card border border-border rounded-lg p-6">
-          <h2 className="text-sm font-medium text-slate-400 mb-4">Mesh Health</h2>
+        <div className="bg-bg-card border border-border p-4">
+          <h2 className="text-sm font-sans font-medium text-slate-400 mb-3">Mesh Health</h2>
           {health && (
             <>
               <HealthGauge health={health} />
-              <div className="mt-6 space-y-3">
+              <div className="mt-4 space-y-2">
                 <PillarBar label="Infrastructure" value={health.pillars?.infrastructure ?? 0} />
                 <PillarBar label="Utilization" value={health.pillars?.utilization ?? 0} />
                 <PillarBar label="Coverage" value={health.pillars?.coverage ?? 0} />
@@ -617,26 +619,26 @@ export default function Dashboard() {
         </div>
 
         {/* Alerts + Stats */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="lg:col-span-2 space-y-4">
           {/* Active Alerts / Event Feed — tabbed */}
-          <div className="bg-bg-card border border-border rounded-lg p-6">
-            <div className="flex items-center gap-1 mb-4">
+          <div className="bg-bg-card border border-border p-4">
+            <div className="flex items-center gap-4 mb-3 border-b border-border">
               <button
                 onClick={() => setAlertTab('alerts')}
-                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                className={`py-2.5 -mb-px text-xs font-sans font-medium transition-colors border-b-2 ${
                   alertTab === 'alerts'
-                    ? 'bg-slate-600 text-slate-100'
-                    : 'text-slate-400 hover:text-slate-300 hover:bg-bg-hover'
+                    ? 'border-amber text-slate-100'
+                    : 'border-transparent text-slate-400 hover:text-slate-300'
                 }`}
               >
                 Active Alerts
               </button>
               <button
                 onClick={() => setAlertTab('feed')}
-                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                className={`py-2.5 -mb-px text-xs font-sans font-medium transition-colors border-b-2 ${
                   alertTab === 'feed'
-                    ? 'bg-slate-600 text-slate-100'
-                    : 'text-slate-400 hover:text-slate-300 hover:bg-bg-hover'
+                    ? 'border-amber text-slate-100'
+                    : 'border-transparent text-slate-400 hover:text-slate-300'
                 }`}
               >
                 Event Feed
@@ -646,7 +648,7 @@ export default function Dashboard() {
             {alertTab === 'alerts' ? (
               <>
                 {alerts.length > 0 ? (
-                  <div className="space-y-3 max-h-48 overflow-y-auto">
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
                     {alerts.map((alert, i) => (
                       <AlertItem key={i} alert={alert} />
                     ))}
@@ -663,22 +665,22 @@ export default function Dashboard() {
                     .slice(0, 5)
                   if (highSeverityEnv.length > 0) {
                     return (
-                      <div className="space-y-3 max-h-48 overflow-y-auto">
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
                         {highSeverityEnv.map((ev, i) => {
                           const sevStyle = ev.severity === 'immediate'
-                            ? { bg: 'bg-red-500/10', border: 'border-red-500', icon: AlertCircle, iconColor: 'text-red-500' }
-                            : { bg: 'bg-amber-500/10', border: 'border-amber-500', icon: AlertTriangle, iconColor: 'text-amber-500' }
+                            ? { bg: 'bg-danger-muted', border: 'border-danger', icon: AlertCircle, iconColor: 'text-danger' }
+                            : { bg: 'bg-amber-muted', border: 'border-amber', icon: AlertTriangle, iconColor: 'text-amber' }
                           const Icon = sevStyle.icon
                           return (
-                            <div key={ev.event_id || i} className={`p-3 rounded-lg ${sevStyle.bg} border-l-2 ${sevStyle.border} flex items-start gap-3`}>
+                            <div key={ev.event_id || i} className={`p-3 ${sevStyle.bg} border-l-2 ${sevStyle.border} flex items-start gap-3`}>
                               <Icon size={16} className={sevStyle.iconColor} />
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
-                                  <span className="px-1.5 py-0.5 rounded text-xs bg-slate-500/20 text-slate-400 border border-slate-500/30 font-mono">ENV</span>
-                                  <span className="text-xs text-slate-500">{ev.severity}</span>
+                                  <span className="px-1.5 py-0.5 text-xs font-sans bg-slate-700/40 text-slate-400 border border-slate-600/30">ENV</span>
+                                  <span className="text-xs font-sans text-slate-500">{ev.severity}</span>
                                 </div>
-                                <div className="text-sm text-slate-200 mt-1">{ev.headline}</div>
-                                <div className="text-xs text-slate-500 mt-1">{ev.source} · {new Date(ev.fetched_at * 1000).toLocaleTimeString()}</div>
+                                <div className="text-sm font-sans font-medium text-slate-200 mt-1">{ev.headline}</div>
+                                <div className="text-xs font-sans text-slate-500 mt-1">{ev.source} · <span className="font-mono">{new Date(ev.fetched_at * 1000).toLocaleTimeString()}</span></div>
                               </div>
                             </div>
                           )
@@ -688,8 +690,8 @@ export default function Dashboard() {
                   }
                   return (
                     <div className="flex items-center gap-2 text-slate-500 py-4">
-                      <CheckCircle size={16} className="text-green-500" />
-                      <span>No active alerts</span>
+                      <CheckCircle size={16} className="text-blue" />
+                      <span className="font-sans">No active alerts</span>
                     </div>
                   )
                 })()}
@@ -700,28 +702,28 @@ export default function Dashboard() {
           </div>
 
           {/* Quick Stats */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <StatCard icon={Radio} label="Nodes Online" value={health?.total_nodes || 0} subvalue={`${health?.unlocated_count || 0} unlocated`} />
-            <StatCard icon={Cpu} label="Infrastructure" value={`${health?.infra_online || 0}/${health?.infra_total || 0}`} subvalue={health?.infra_online === health?.infra_total ? 'All online' : 'Some offline'} />
+            <StatCard icon={Cpu} label="Infrastructure" value={`${health?.infra_online || 0}/${health?.infra_total || 0}`} valueClass="text-blue" subvalue={health?.infra_online === health?.infra_total ? 'All online' : 'Some offline'} subvalueClass={health?.infra_online === health?.infra_total ? 'text-blue-dim' : 'text-danger'} />
             <StatCard icon={Activity} label="Utilization" value={`${health?.util_percent?.toFixed(1) || 0}%`} subvalue={`${health?.flagged_nodes || 0} flagged`} />
             <StatCard icon={MapPin} label="Regions" value={health?.total_regions || 0} subvalue={`${health?.battery_warnings || 0} battery warnings`} />
           </div>
         </div>
       </div>
 
-      {/* Middle row: Sources + RF Propagation + Live Feed */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Middle row: Sources + RF Propagation + Tropo */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Mesh Sources */}
-        <div className="bg-bg-card border border-border rounded-lg p-6">
-          <h2 className="text-sm font-medium text-slate-400 mb-4">Mesh Sources ({sources.length})</h2>
+        <div className="bg-bg-card border border-border p-4">
+          <h2 className="text-sm font-sans font-medium text-slate-400 mb-3">Mesh Sources (<span className="font-mono">{sources.length}</span>)</h2>
           {sources.length > 0 ? (
-            <div className="space-y-2">
+            <div className="space-y-1">
               {sources.map((source, i) => (
                 <SourceCard key={i} source={source} />
               ))}
             </div>
           ) : (
-            <div className="text-slate-500 py-4">No sources configured</div>
+            <div className="font-sans text-slate-500 py-4">No sources configured</div>
           )}
         </div>
 
