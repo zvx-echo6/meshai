@@ -591,6 +591,15 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "description": "Minimum danger level to broadcast (3=Considerable, 4=High, 5=Extreme).",
     },
 
+    # =================================================================
+    # DASHBOARD -- UI-only settings persisted for the operator
+    # =================================================================
+    ("dashboard", "tropo_region"): {
+        "default": "wam",
+        "type": "str",
+        "description": "Hepburn tropo forecast region code displayed on dashboard.",
+    },
+
 }
 
 
@@ -719,6 +728,11 @@ ADAPTER_META: dict[str, dict[str, Any]] = {
         "include_in_llm_context": True,
         "reminder_enabled": True,
         "description": "Subset of itd_511 traffic_events filtered to work-zone sub_type, used as the reminder target.",
+    },
+    "dashboard": {
+        "display_name": "Dashboard UI settings",
+        "include_in_llm_context": False,
+        "description": "Operator UI preferences persisted to adapter_config (region selectors, display options).",
     },
 }
 
