@@ -15,6 +15,7 @@ def _serialize_health_score(score) -> dict:
         "tier": score.tier,
         "infrastructure": round(score.infrastructure, 1),
         "utilization": round(score.utilization, 1),
+        "coverage": round(score.coverage, 1),
         "behavior": round(score.behavior, 1),
         "power": round(score.power, 1),
         "infra_online": score.infra_online,
@@ -73,6 +74,7 @@ async def get_health(request: Request):
         "pillars": {
             "infrastructure": round(score.infrastructure, 1),
             "utilization": round(score.utilization, 1),
+            "coverage": round(score.coverage, 1),
             "behavior": round(score.behavior, 1),
             "power": round(score.power, 1),
         },

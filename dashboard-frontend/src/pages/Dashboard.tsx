@@ -696,6 +696,7 @@ export default function Dashboard() {
               <div className="mt-6 space-y-3">
                 <PillarBar label="Infrastructure" value={health.pillars?.infrastructure ?? 0} />
                 <PillarBar label="Utilization" value={health.pillars?.utilization ?? 0} />
+                <PillarBar label="Coverage" value={health.pillars?.coverage ?? 0} />
                 <PillarBar label="Behavior" value={health.pillars?.behavior ?? 0} />
                 <PillarBar label="Power" value={health.pillars?.power ?? 0} />
               </div>
@@ -714,12 +715,48 @@ export default function Dashboard() {
                   <AlertItem key={i} alert={alert} />
                 ))}
               </div>
-            ) : (
-              <div className="flex items-center gap-2 text-slate-500 py-4">
-                <CheckCircle size={16} className="text-green-500" />
-                <span>No active alerts</span>
-              </div>
-            )}
+            ) : (() => {
+              const highSeverityEnv = envEvents
+                .filter(e => e.severity === 'immediate' || e.severity === 'priority')
+                .sort((a, b) => {
+                  const ord: Record<string, number> = { immediate: 0, priority: 1 }
+                  const diff = (ord[a.severity] ?? 2) - (ord[b.severity] ?? 2)
+                  if (diff !== 0) return diff
+                  return (b.fetched_at || 0) - (a.fetched_at || 0)
+                })
+                .slice(0, 5)
+              if (highSeverityEnv.length > 0) {
+                return (
+                  <div className="space-y-3 max-h-48 overflow-y-auto">
+                    {highSeverityEnv.map((ev, i) => {
+                      const sevStyle = ev.severity === 'immediate'
+                        ? { bg: 'bg-red-500/10', border: 'border-red-500', icon: AlertCircle, iconColor: 'text-red-500' }
+                        : { bg: 'bg-amber-500/10', border: 'border-amber-500', icon: AlertTriangle, iconColor: 'text-amber-500' }
+                      const Icon = sevStyle.icon
+                      return (
+                        <div key={ev.event_id || i} className={`p-3 rounded-lg ${sevStyle.bg} border-l-2 ${sevStyle.border} flex items-start gap-3`}>
+                          <Icon size={16} className={sevStyle.iconColor} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="px-1.5 py-0.5 rounded text-xs bg-slate-500/20 text-slate-400 border border-slate-500/30 font-mono">ENV</span>
+                              <span className="text-xs text-slate-500">{ev.severity}</span>
+                            </div>
+                            <div className="text-sm text-slate-200 mt-1">{ev.headline}</div>
+                            <div className="text-xs text-slate-500 mt-1">{ev.source} · {new Date(ev.fetched_at * 1000).toLocaleTimeString()}</div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              }
+              return (
+                <div className="flex items-center gap-2 text-slate-500 py-4">
+                  <CheckCircle size={16} className="text-green-500" />
+                  <span>No active alerts</span>
+                </div>
+              )
+            })()}
           </div>
 
           {/* Quick Stats */}
