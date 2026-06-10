@@ -98,7 +98,7 @@ export default function Layout({ children }: LayoutProps) {
             <div className="w-[3px] h-8 bg-accent flex-shrink-0" />
             <div>
               <div className="font-sans font-bold text-white text-[15px] leading-tight tracking-tight">MeshAI</div>
-              <div className="text-xs font-mono text-[#333]">
+              <div className="text-xs font-mono text-[#666]">
                 v{status?.version || '...'}
               </div>
             </div>
@@ -117,7 +117,7 @@ export default function Layout({ children }: LayoutProps) {
                 className={`flex items-center gap-3 px-5 py-3 text-sm font-sans transition-colors relative ${
                   isActive
                     ? 'text-white'
-                    : 'text-[#444] hover:text-[#888]'
+                    : 'text-[#777] hover:text-[#888]'
                 }`}
               >
                 {isActive && (
@@ -138,14 +138,14 @@ export default function Layout({ children }: LayoutProps) {
                 status?.connected ? 'bg-green-500' : 'bg-red-500'
               }`}
             />
-            <span className="text-xs font-sans text-[#444]">
+            <span className="text-xs font-sans text-[#777]">
               {status?.connected ? 'Connected' : 'Disconnected'}
             </span>
           </div>
-          <div className="text-xs font-mono text-[#333] truncate">
+          <div className="text-xs font-mono text-[#666] truncate">
             {status?.connection_type?.toUpperCase()}: {status?.connection_target}
           </div>
-          <div className="text-xs font-sans text-[#333] mt-1">
+          <div className="text-xs font-sans text-[#666] mt-1">
             Uptime: <span className="font-mono">{status ? formatUptime(status.uptime_seconds) : '...'}</span>
           </div>
         </div>
@@ -166,12 +166,12 @@ export default function Layout({ children }: LayoutProps) {
                   connected ? 'bg-accent animate-pulse-slow' : 'bg-[#333]'
                 }`}
               />
-              <span className="text-xs font-sans text-[#444]">
+              <span className="text-xs font-sans text-[#777]">
                 {connected ? 'Live' : 'Offline'}
               </span>
             </div>
             {/* Clock */}
-            <div className="text-sm font-mono text-[#333]">
+            <div className="text-sm font-mono text-[#666]">
               {timeStr} MT
             </div>
           </div>

@@ -156,7 +156,7 @@ export default function AdapterConfig() {
 
  if (loading) {
   return (
-   <div className="p-6 flex items-center gap-2 text-[#444]">
+   <div className="p-6 flex items-center gap-2 text-[#777]">
     <Loader2 className="w-5 h-5 animate-spin" /> Loading adapter config…
    </div>
   )
@@ -182,11 +182,11 @@ export default function AdapterConfig() {
    <div className="flex items-center gap-2 text-white">
     <Sliders className="w-5 h-5" />
     <h1 className="text-xl font-semibold">Adapter Config</h1>
-    <span className="text-xs text-[#333] ml-2">
+    <span className="text-xs text-[#666] ml-2">
      {Object.values(config).reduce((n, l) => n + l.length, 0)} settings across {allAdapters.length} adapters
     </span>
    </div>
-   <p className="text-xs text-[#444] max-w-3xl">
+   <p className="text-xs text-[#777] max-w-3xl">
     Per-adapter tunables (thresholds, freshness windows, toggles, curation lists).
     Changes take effect on the next handler call -- no container restart needed.
     Sentence templates, emoji, and translation maps live in code by design — see the CODE rule under <a href="/reference#adapter-config" className="text-accent hover:underline">Adapter Config &amp; the CODE Rule</a> in Reference. The <strong>LLM context</strong> toggle on each card gates whether that adapter's data lands in the system prompt when you DM the bot; broadcasts are unaffected.
@@ -208,7 +208,7 @@ export default function AdapterConfig() {
       <div className="p-4 flex items-start gap-4">
        <button
         onClick={() => setExpanded((e) => ({ ...e, [adapter]: !e[adapter] }))}
-        className="text-[#444] hover:text-white"
+        className="text-[#777] hover:text-white"
         aria-label="toggle expand"
        >
         {isExpanded
@@ -218,16 +218,16 @@ export default function AdapterConfig() {
        <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
          <h2 className="text-base font-semibold text-white">{m.display_name}</h2>
-         <code className="text-xs text-[#333]">{adapter}</code>
+         <code className="text-xs text-[#666]">{adapter}</code>
          {rows.length > 0 && (
-          <span className="text-xs text-[#444] ml-1">({rows.length} settings)</span>
+          <span className="text-xs text-[#777] ml-1">({rows.length} settings)</span>
          )}
          {rows.length === 0 && (
-          <span className="text-xs text-[#333] ml-1 italic">(meta only)</span>
+          <span className="text-xs text-[#666] ml-1 italic">(meta only)</span>
          )}
         </div>
         {m.description && (
-         <p className="text-xs text-[#444] mt-1">{m.description}</p>
+         <p className="text-xs text-[#777] mt-1">{m.description}</p>
         )}
        </div>
 
@@ -303,13 +303,13 @@ function KeyRow({ row, status, error, onCommit, onReset }: KeyRowProps) {
    <div className="flex-1 min-w-0">
     <div className="flex items-center gap-2">
      <code className="text-sm font-mono text-accent">{row.key}</code>
-     <span className="text-xs text-[#333]">[{row.type}]</span>
+     <span className="text-xs text-[#666]">[{row.type}]</span>
      {!isDefault && (
       <span className="text-xs text-accent">edited</span>
      )}
     </div>
     {row.description && (
-     <p className="text-xs text-[#444] mt-1">{row.description}</p>
+     <p className="text-xs text-[#777] mt-1">{row.description}</p>
     )}
    </div>
 
@@ -345,7 +345,7 @@ function KeyRow({ row, status, error, onCommit, onReset }: KeyRowProps) {
     <button
      onClick={onReset}
      disabled={isDefault}
-     className="text-[#444] hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+     className="text-[#777] hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
      title="Reset to default"
     >
      <RotateCcw className="w-4 h-4" />
