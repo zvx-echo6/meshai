@@ -108,10 +108,10 @@ def test_two_pass_drift_emits_growth_with_direction_and_speed():
         data=data_b, now=1780768800,
     )
     assert wire is not None, "pass-B boundary should fire growth broadcast"
-    assert "moving N" in wire, f"expected N direction, got: {wire}"
+    assert "Moving N" in wire, f"expected N direction, got: {wire}"
     assert data_b.get("category") == "wildfire_growth"
-    assert data_b.get("severity") == "priority"
-    assert wire.startswith("🔥 Pine Gulch moving N ")
+    assert data_b.get("_severity_override") == "immediate"
+    assert wire.startswith("🔥 Pine Gulch")
 
     conn = get_db()
     passes = conn.execute(

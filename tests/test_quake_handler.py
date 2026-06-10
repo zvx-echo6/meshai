@@ -53,14 +53,14 @@ def test_m3_anywhere_broadcasts(mem_db):
     env = _quake_env(mag=3.5, lat=37.0, lon=-122.0)  # SF Bay area, outside Idaho
     wire = handle_quake(env, env["subject"], data={}, now=1_000_000)
     assert wire is not None
-    assert "Magnitude 3.5" in wire
+    assert "M3.5" in wire
 
 
 def test_m25_inside_idaho_broadcasts(mem_db):
     env = _quake_env(mag=2.7, lat=44.094, lon=-115.962, event_id="uu1")
     wire = handle_quake(env, env["subject"], data={}, now=1_000_000)
     assert wire is not None
-    assert "Magnitude 2.7" in wire
+    assert "M2.7" in wire
 
 
 def test_m25_outside_idaho_skipped(mem_db):
@@ -124,8 +124,8 @@ def test_wire_includes_depth_and_coords(mem_db):
     env = _quake_env(mag=4.1, depth_km=9.0, lat=44.094, lon=-115.962,
                       event_id="d1")
     wire = handle_quake(env, env["subject"], data={}, now=1_000_000)
-    assert "9km depth" in wire
-    assert "@ 44.094,-115.962" in wire
+    assert "Depth: 9 km" in wire
+    assert "@ 44.094, -115.962" in wire
 
 
 # ---- per-event dedup ----

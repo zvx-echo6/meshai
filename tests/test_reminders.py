@@ -51,6 +51,22 @@ def _seed_work_zone(conn, *, external_id, last_broadcast_at, end_at=None,
     )
 
 
+def _enable_wfigs_reminders():
+    """Enable wfigs reminders (default is disabled in adapter_config)."""
+    from meshai.persistence import get_db
+    conn = get_db()
+    conn.execute(
+        "UPDATE adapter_config SET default_json='true' "
+        "WHERE adapter='reminders_wfigs' AND key='enabled'"
+    )
+    conn.execute(
+        "UPDATE adapter_config SET value_json='true' "
+        "WHERE adapter='reminders_wfigs' AND key='enabled'"
+    )
+    from meshai.adapter_config import adapter_config as _ac
+    _ac.invalidate()
+
+
 @pytest.fixture
 def mock_dispatcher():
     d = MagicMock()
@@ -67,6 +83,7 @@ def test_wfigs_reminder_fires_past_cadence(mock_dispatcher):
     """A fire whose last_broadcast_at is past the 8h cadence emits Active:."""
     now = 1_780_000_000
     conn = get_db()
+    _enable_wfigs_reminders()
     _seed_fire(conn, irwin_id="F1", last_broadcast_at=now - 9 * 3600)
 
     sch = ReminderScheduler(mock_dispatcher, clock=lambda: now)
@@ -119,6 +136,7 @@ def test_wfigs_reminder_skipped_when_last_event_age_24h(mock_dispatcher):
 def test_wfigs_reminder_stamps_last_broadcast_at(mock_dispatcher):
     now = 1_780_000_000
     conn = get_db()
+    _enable_wfigs_reminders()
     _seed_fire(conn, irwin_id="F1", last_broadcast_at=now - 9 * 3600)
     sch = ReminderScheduler(mock_dispatcher, clock=lambda: now)
     asyncio.run(sch.tick_once())

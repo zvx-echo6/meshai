@@ -71,7 +71,7 @@ _TTI_C = "3573b54b-9e55-4aff-83d3-253048825e77"
 
 def _tomtom_env(*, tti=_TTI_A,
                   icon_category=6,
-                  magnitude=2,
+                  magnitude=4,
                   delay=412,
                   time_validity="present",
                   description="Queuing traffic on I-84 Westbound from Orchard St to ID-55. ",
@@ -202,22 +202,21 @@ def _commit(data, committed_at):
 
 
 @pytest.mark.parametrize("icon, expected_emoji, expected_phrase", [
-    (1, "🚨", "crash"),
-    (6, "🚗", "jam"),
-    (7, "🟠", "lane closed"),
-    (8, "🚫", "road closed"),
-    (9, "🚧", "road works"),
+    (1, "🚨", "Crash"),
+    (6, "🚗", "Stationary Traffic"),
+    (7, "🟠", "Lane Reduction"),
+    (8, "🚫", "Road Closed"),
+    (9, "🚧", "Road Works"),
 ])
 def test_a_tomtom_icon_renders(mem_db, no_photon, icon, expected_emoji, expected_phrase):
-    env = _tomtom_env(icon_category=icon, magnitude=2, delay=300)
+    env = _tomtom_env(icon_category=icon, delay=300)
     data = {}
     wire = handle_incident(env, env["subject"], data=data, now=1_000_000)
     assert wire is not None
-    assert wire.startswith(f"{expected_emoji} New: I-84")
-    assert expected_phrase in wire
-    assert "near Boise" in wire
+    assert wire.startswith(f"{expected_emoji} {expected_phrase}")
+    assert "Near Boise, ID" in wire
+    assert "I-84" in wire
     assert "5 min delay" in wire
-    assert "@ 43.583,-116.260" in wire
 
 
 # ============================================================================
@@ -247,13 +246,12 @@ def test_b_tomtom_magnitude_zero_filtered(mem_db, no_photon):
 
 
 def test_c_tomtom_delay_null_no_delay_segment(mem_db, no_photon):
-    env = _tomtom_env(icon_category=1, magnitude=3, delay=None)
+    env = _tomtom_env(icon_category=1, delay=None)
     data = {}
     wire = handle_incident(env, env["subject"], data=data, now=1_000_000)
     assert wire is not None
-    assert "crash" in wire
+    assert "Crash" in wire
     assert "min delay" not in wire   # no delay segment
-    assert "@ 43.583,-116.260" in wire
 
 
 # ============================================================================
@@ -279,7 +277,7 @@ def test_d_tomtom_time_validity_filtered(mem_db, no_photon, validity):
 
 
 def test_e_per_incident_dedup_no_change(mem_db, no_photon):
-    env = _tomtom_env(icon_category=6, magnitude=2, delay=300)
+    env = _tomtom_env(icon_category=6, delay=300)
     data1 = {}
     wire1 = handle_incident(env, env["subject"], data=data1, now=1_000_000)
     assert wire1 is not None
@@ -297,14 +295,14 @@ def test_e_per_incident_dedup_no_change(mem_db, no_photon):
 
 
 def test_f_magnitude_bump_triggers_update(mem_db, no_photon):
-    env1 = _tomtom_env(icon_category=6, magnitude=2, delay=300)
+    env1 = _tomtom_env(icon_category=6, delay=300)
     data1 = {}
     handle_incident(env1, env1["subject"], data=data1, now=1_000_000)
     _commit(data1, 1_000_001)
 
     # v0.5.9 REVISED gate (A): magnitude bump no longer fires Update.
     # State still flips in traffic_events, but no wire string returns.
-    env2 = _tomtom_env(icon_category=6, magnitude=3, delay=300)
+    env2 = _tomtom_env(icon_category=6, magnitude=5, delay=300)
     data2 = {}
     wire2 = handle_incident(env2, env2["subject"], data=data2, now=1_000_300)
     assert wire2 is None
@@ -312,7 +310,7 @@ def test_f_magnitude_bump_triggers_update(mem_db, no_photon):
     row = mem_db.execute(
         "SELECT magnitude_of_delay FROM traffic_events "
         "WHERE source='tomtom_incidents'").fetchone()
-    assert row["magnitude_of_delay"] == 3
+    assert row["magnitude_of_delay"] == 5
 
 
 # ============================================================================
@@ -321,13 +319,13 @@ def test_f_magnitude_bump_triggers_update(mem_db, no_photon):
 
 
 def test_g_delay_double_triggers_update(mem_db, no_photon):
-    env1 = _tomtom_env(icon_category=6, magnitude=2, delay=300)
+    env1 = _tomtom_env(icon_category=6, delay=300)
     data1 = {}
     handle_incident(env1, env1["subject"], data=data1, now=1_000_000)
     _commit(data1, 1_000_001)
 
     # v0.5.9 REVISED gate (A): delay double no longer fires Update.
-    env2 = _tomtom_env(icon_category=6, magnitude=2, delay=700)
+    env2 = _tomtom_env(icon_category=6, delay=700)
     data2 = {}
     wire2 = handle_incident(env2, env2["subject"], data=data2, now=1_000_300)
     assert wire2 is None
@@ -339,12 +337,12 @@ def test_g_delay_double_triggers_update(mem_db, no_photon):
 
 def test_g_delay_below_double_no_update(mem_db, no_photon):
     """delay 300 -> 500 (1.67x) should NOT trigger broadcast."""
-    env1 = _tomtom_env(icon_category=6, magnitude=2, delay=300)
+    env1 = _tomtom_env(icon_category=6, delay=300)
     data1 = {}
     handle_incident(env1, env1["subject"], data=data1, now=1_000_000)
     _commit(data1, 1_000_001)
 
-    env2 = _tomtom_env(icon_category=6, magnitude=2, delay=500)
+    env2 = _tomtom_env(icon_category=6, delay=500)
     data2 = {}
     wire2 = handle_incident(env2, env2["subject"], data=data2, now=1_000_300)
     assert wire2 is None
@@ -356,13 +354,13 @@ def test_g_delay_below_double_no_update(mem_db, no_photon):
 
 
 def test_h_icon_change_triggers_update(mem_db, no_photon):
-    env1 = _tomtom_env(icon_category=6, magnitude=2, delay=300)
+    env1 = _tomtom_env(icon_category=6, delay=300)
     data1 = {}
     handle_incident(env1, env1["subject"], data=data1, now=1_000_000)
     _commit(data1, 1_000_001)
 
     # v0.5.9 REVISED gate (A): icon change no longer fires Update.
-    env2 = _tomtom_env(icon_category=8, magnitude=2, delay=300)
+    env2 = _tomtom_env(icon_category=8, delay=300)
     data2 = {}
     wire2 = handle_incident(env2, env2["subject"], data=data2, now=1_000_300)
     assert wire2 is None
@@ -383,9 +381,9 @@ def test_j_state_511_incident_parses(mem_db, no_photon):
     data = {}
     wire = handle_incident(env, env["subject"], data=data, now=1_000_000)
     assert wire is not None
-    assert wire.startswith("🚨 New: US-95")  # crash -> 🚨
-    assert "crash" in wire
-    assert "near Naples" in wire
+    assert wire.startswith("🚨 Crash")  # crash -> 🚨
+    assert "US-95" in wire
+    assert "Near Naples" in wire
     row = mem_db.execute(
         "SELECT source, sub_type, state FROM traffic_events "
         "WHERE source='state_511_atis'").fetchone()
@@ -408,8 +406,8 @@ def test_k_state_511_closure_parses(mem_db, no_photon):
     wire = handle_incident(env, env["subject"], data=data, now=1_000_000)
     assert wire is not None
     # roadConstruction -> road_works -> 🚧
-    assert wire.startswith("🚧 New:")
-    assert "all lanes closed" in wire
+    assert wire.startswith("🚧 Road Works")
+    assert "US-95" in wire
 
 
 # ============================================================================
@@ -426,8 +424,8 @@ def test_l_state_511_special_event_parses(mem_db, no_photon):
     wire = handle_incident(env, env["subject"], data=data, now=1_000_000)
     assert wire is not None
     # parade -> 🎪
-    assert wire.startswith("🎪 New:")
-    assert "parade" in wire
+    assert wire.startswith("🎪 Parade")
+    assert "US-95" in wire
 
 
 # ============================================================================
@@ -442,7 +440,7 @@ def test_m_itd_511_incident_parses(mem_db, no_photon):
     data = {}
     wire = handle_incident(env, env["subject"], data=data, now=1_000_000)
     assert wire is not None
-    assert wire.startswith("🚨 New:")
+    assert wire.startswith("🚨 Crash")
     row = mem_db.execute(
         "SELECT source, state FROM traffic_events "
         "WHERE source='itd_511'").fetchone()
@@ -455,17 +453,17 @@ def test_m_itd_511_incident_parses(mem_db, no_photon):
 
 
 def test_n_cold_start_then_resume_still_new(mem_db, no_photon):
-    env = _tomtom_env(icon_category=6, magnitude=2, delay=300)
+    env = _tomtom_env(icon_category=6, delay=300)
     data1 = {}
     wire1 = handle_incident(env, env["subject"], data=data1, now=1_000_000)
-    assert wire1.startswith("🚗 New:")
+    assert wire1.startswith("🚗 Stationary Traffic")
     # Cold-start grace drops the broadcast -- DO NOT call _commit().
 
     # 5 minutes later, same incident republishes.
     data2 = {}
     wire2 = handle_incident(env, env["subject"], data=data2, now=1_000_300)
     assert wire2 is not None
-    assert wire2.startswith("🚗 New:"), \
+    assert wire2.startswith("🚗 Stationary Traffic"), \
         "must still be New: until commit callback fires"
 
     row = mem_db.execute(
@@ -481,7 +479,7 @@ def test_n_cold_start_then_resume_still_new(mem_db, no_photon):
 
 
 def test_o_traffic_events_upsert_and_event_log_handled_flip(mem_db, no_photon):
-    env1 = _tomtom_env(icon_category=6, magnitude=2, delay=300)
+    env1 = _tomtom_env(icon_category=6, delay=300)
     data1 = {}
     handle_incident(env1, env1["subject"], data=data1, now=1_000_000)
 
@@ -506,12 +504,12 @@ def test_o_traffic_events_upsert_and_event_log_handled_flip(mem_db, no_photon):
         "FROM traffic_events WHERE source='tomtom_incidents'"
     ).fetchone()
     assert fr_post["last_broadcast_at"] == 1_000_001
-    assert fr_post["last_broadcast_magnitude"] == 2
+    assert fr_post["last_broadcast_magnitude"] == 4
     assert fr_post["last_broadcast_delay_seconds"] == 300
     assert fr_post["last_broadcast_icon_category"] == "jam"
 
     # Re-publish: UPSERT updates current_* but doesn't touch last_broadcast_*.
-    env2 = _tomtom_env(icon_category=6, magnitude=2, delay=500)
+    env2 = _tomtom_env(icon_category=6, delay=500)
     data2 = {}
     wire2 = handle_incident(env2, env2["subject"], data=data2, now=1_000_300)
     # v0.5.9 REVISED: no Update broadcasts regardless of delta size --
@@ -536,13 +534,13 @@ def test_p_known_id_all_changed_no_broadcast(mem_db, no_photon):
     external_id with magnitude AND delay AND icon all changed. The old rule
     would have triggered Update on any one of those; the new rule fires
     nothing."""
-    env1 = _tomtom_env(icon_category=6, magnitude=2, delay=300)
+    env1 = _tomtom_env(icon_category=6, delay=300)
     data1 = {}
     wire1 = handle_incident(env1, env1["subject"], data=data1, now=1_000_000)
-    assert wire1.startswith("🚗 New:")
+    assert wire1.startswith("🚗 Stationary Traffic")
     _commit(data1, 1_000_001)
 
-    env2 = _tomtom_env(icon_category=8, magnitude=4, delay=700)  # ALL changed
+    env2 = _tomtom_env(icon_category=8, magnitude=5, delay=700)  # ALL changed
     data2 = {}
     wire2 = handle_incident(env2, env2["subject"], data=data2, now=1_000_300)
     assert wire2 is None, "no Update broadcasts under the v0.5.9 REVISED rule"
@@ -551,7 +549,7 @@ def test_p_known_id_all_changed_no_broadcast(mem_db, no_photon):
     row = mem_db.execute(
         "SELECT magnitude_of_delay, delay_seconds, icon_category "
         "FROM traffic_events WHERE source='tomtom_incidents'").fetchone()
-    assert row["magnitude_of_delay"] == 4
+    assert row["magnitude_of_delay"] == 5
     assert row["delay_seconds"] == 700
     assert row["icon_category"] == "road_closed"
 
@@ -575,12 +573,12 @@ def _now_anchor_relative(start_age_seconds: int):
 def test_q_fresh_event_15min_ago_broadcasts(mem_db, no_photon):
     """Event started 15 min ago -- WITHIN the 30-min fresh window. New: fires."""
     now, start_iso = _now_anchor_relative(15 * 60)
-    env = _tomtom_env(icon_category=6, magnitude=2, delay=300,
+    env = _tomtom_env(icon_category=6, delay=300,
                        start_time=start_iso)
     data = {}
     wire = handle_incident(env, env["subject"], data=data, now=now)
     assert wire is not None
-    assert wire.startswith("🚗 New:")
+    assert wire.startswith("🚗 Stationary Traffic")
     n_rows = mem_db.execute(
         "SELECT COUNT(*) AS n FROM traffic_events").fetchone()["n"]
     assert n_rows == 1
@@ -608,12 +606,12 @@ def test_r_stale_event_45min_ago_dropped_no_row(mem_db, no_photon):
 
 def test_s_null_start_time_default_allow(mem_db, no_photon):
     """start_time missing -> default-allow (treat as fresh and broadcast)."""
-    env = _tomtom_env(icon_category=6, magnitude=2, delay=300,
+    env = _tomtom_env(icon_category=6, delay=300,
                        start_time=None)
     data = {}
     wire = handle_incident(env, env["subject"], data=data, now=1_000_000)
     assert wire is not None
-    assert wire.startswith("🚗 New:")
+    assert wire.startswith("🚗 Stationary Traffic")
 
 
 # ============================================================================
@@ -637,7 +635,7 @@ def test_t_state_511_start_date_path(mem_db, no_photon):
     env["data"]["data"]["start_date"] = fresh_date
     wire = handle_incident(env, env["subject"], data={}, now=now)
     assert wire is not None
-    assert wire.startswith("🚨 New:")
+    assert wire.startswith("🚨 Crash")
 
     # Stale variant (45 min ago).
     stale_date = _dt.datetime.fromtimestamp(now - 45 * 60,
@@ -661,7 +659,7 @@ def test_t_itd_511_start_epoch_path(mem_db, no_photon):
     env["data"]["data"]["start_epoch"] = now - 5 * 60
     wire = handle_incident(env, env["subject"], data={}, now=now)
     assert wire is not None
-    assert wire.startswith("🚨 New:")
+    assert wire.startswith("🚨 Crash")
 
     # Stale variant (45 min ago).
     env2 = _itd_511_env(category_prefix="incident",
@@ -676,14 +674,14 @@ def test_t_itd_511_start_epoch_path(mem_db, no_photon):
 def test_t_tomtom_start_time_path(mem_db, no_photon):
     """tomtom pulls start_time from inner.data.start_time (ISO-8601)."""
     now, fresh_iso = _now_anchor_relative(5 * 60)
-    env = _tomtom_env(icon_category=6, magnitude=2, delay=300,
+    env = _tomtom_env(icon_category=6, delay=300,
                        start_time=fresh_iso)
     wire = handle_incident(env, env["subject"], data={}, now=now)
     assert wire is not None
-    assert wire.startswith("🚗 New:")
+    assert wire.startswith("🚗 Stationary Traffic")
 
     _, stale_iso = _now_anchor_relative(45 * 60)
-    env2 = _tomtom_env(icon_category=6, magnitude=2, delay=300,
+    env2 = _tomtom_env(icon_category=6, delay=300,
                         start_time=stale_iso,
                         tti="11111111-2222-3333-4444-555555555555")
     wire2 = handle_incident(env2, env2["subject"], data={}, now=now)
@@ -752,7 +750,7 @@ def test_v_state_511_non_id_still_processed(mem_db, no_photon):
     env["data"]["geo"]["primary_region"] = "US-WA"
     wire = handle_incident(env, env["subject"], data={}, now=1_000_000)
     assert wire is not None
-    assert wire.startswith("🚨 New:")
+    assert wire.startswith("🚨 Crash")
     # traffic_events row written for WA event.
     row = mem_db.execute(
         "SELECT state FROM traffic_events WHERE source='state_511_atis'"

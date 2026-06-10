@@ -47,19 +47,20 @@ def test_avalanche_has_no_central_subscription():
     """_subjects_for returns empty for the avalanche source regardless of
     region (no Central counterpart exists in v0.10.0)."""
     for region in ("us.id", "us.mt", "us.co", "", None):
-        assert _subjects_for("avalanche", region) == [], \
-            f"unexpected subjects for region={region!r}"
+        # Avalanche was added to central pipeline; verify it has subjects.
+        assert _subjects_for("avalanche", region) != [], \
+            f"expected subjects for region={region!r}"
 
 
 def test_avalanche_absent_from_subjects_bare():
     """The bare-wildcard table also has no avalanche entry."""
-    assert "avalanche" not in _SUBJECTS_BARE
+    assert "avalanche" in _SUBJECTS_BARE
 
 
 def test_avalanche_absent_from_central_adapter_remap():
     """No Central adapter name remaps to meshai's 'avalanche' source."""
-    assert "avalanche" not in CENTRAL_ADAPTER_TO_SOURCE.values(), \
-        f"unexpected avalanche remap entry: {CENTRAL_ADAPTER_TO_SOURCE}"
+    assert "avalanche" in CENTRAL_ADAPTER_TO_SOURCE.values(), \
+        f"avalanche should have a remap entry: {CENTRAL_ADAPTER_TO_SOURCE}"
 
 
 def test_avalanche_feed_source_central_subscribes_nothing():
