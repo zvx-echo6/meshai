@@ -69,6 +69,7 @@ def _serialize_health(mesh_health) -> dict:
         "pillars": {
             "infrastructure": round(score.infrastructure, 1),
             "utilization": round(score.utilization, 1),
+            "coverage": round(score.coverage, 1),
             "behavior": round(score.behavior, 1),
             "power": round(score.power, 1),
         },
@@ -100,10 +101,12 @@ async def ws_endpoint(websocket: WebSocket):
         # Send initial state snapshot on connect
         health_engine = getattr(app_state, "health_engine", None)
         if health_engine and health_engine.mesh_health:
-            await websocket.send_json({
-                "type": "health_update",
-                "data": _serialize_health(health_engine.mesh_health)
-            })
+            score = health_engine.mesh_health.score
+            if score.composite > 0 and score.infra_total > 0:
+                await websocket.send_json({
+                    "type": "health_update",
+                    "data": _serialize_health(health_engine.mesh_health)
+                })
 
         # Keep connection alive, receive client keepalive pings
         while True:
