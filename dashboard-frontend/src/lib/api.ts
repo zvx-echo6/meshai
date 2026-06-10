@@ -19,6 +19,7 @@ export interface MeshHealth {
   pillars: {
     infrastructure: number
     utilization: number
+    coverage: number
     behavior: number
     power: number
   }
