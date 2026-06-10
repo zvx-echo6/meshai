@@ -100,9 +100,9 @@ function FeedStatusCard({ feed }: { feed: FeedHealth }) {
      <div className={`w-2 h-2 rounded-full ${color}`} />
      <span className="text-sm font-medium text-white uppercase">{feed.source}</span>
     </div>
-    <span className="text-xs text-[#444]">{text}</span>
+    <span className="text-xs text-[#777]">{text}</span>
    </div>
-   <div className="text-xs font-mono text-[#333] space-y-1">
+   <div className="text-xs font-mono text-[#666] space-y-1">
     <div>Events: {feed.event_count}</div>
     <div>Last fetch: {lastFetch}</div>
     {feed.last_error && <div className="text-accent truncate">{feed.last_error}</div>}
@@ -146,14 +146,14 @@ function FeedSourceToggle({ value, onChange, disabled, centralDisabled }: {
     type="button"
     disabled={disabled}
     onClick={() => onChange('native')}
-    className={`${base} ${value === 'native' ? 'bg-accent text-white' : 'text-[#444] hover:text-white'}`}
+    className={`${base} ${value === 'native' ? 'bg-accent text-white' : 'text-[#777] hover:text-white'}`}
    >native</button>
    <button
     type="button"
     disabled={disabled || centralDisabled}
     title={centralDisabled ? 'Central not available for this adapter' : ''}
     onClick={() => { if (!centralDisabled) onChange('central') }}
-    className={`${base} ${centralDisabled ? 'text-[#333] cursor-not-allowed' : value === 'central' ? 'bg-accent text-white' : 'text-[#444] hover:text-white'}`}
+    className={`${base} ${centralDisabled ? 'text-[#666] cursor-not-allowed' : value === 'central' ? 'bg-accent text-white' : 'text-[#777] hover:text-white'}`}
    >central</button>
   </div>
  )
@@ -173,11 +173,11 @@ function AdapterPanel({ title, subtitle, enabled, onEnabled, feedSource, onFeedS
    <div className="flex items-center justify-between">
     <div>
      <span className="text-sm font-medium text-[#e0e0e0]">{title}</span>
-     {subtitle && <p className="text-xs text-[#333]">{subtitle}</p>}
+     {subtitle && <p className="text-xs text-[#666]">{subtitle}</p>}
     </div>
     <div className="flex items-center gap-4">
      <div className="flex items-center gap-1">
-      <span className="text-[10px] uppercase tracking-wide text-[#333]">source</span>
+      <span className="text-[10px] uppercase tracking-wide text-[#666]">source</span>
       <FeedSourceToggle value={feedSource} onChange={onFeedSource} disabled={!enabled} centralDisabled={centralDisabled} />
      </div>
      <Toggle label="" checked={enabled} onChange={onEnabled} />
@@ -189,15 +189,15 @@ function AdapterPanel({ title, subtitle, enabled, onEnabled, feedSource, onFeedS
     </div>
    )}
    {nativeOnly && (
-    <div className="text-[11px] text-[#333]">Central not available for this adapter — native only</div>
+    <div className="text-[11px] text-[#666]">Central not available for this adapter — native only</div>
    )}
    <div className={enabled ? 'space-y-3' : 'space-y-3 opacity-40 pointer-events-none select-none'}>
     {children}
    </div>
    {(health || (events && events.length > 0)) && (
     <div className="pt-2 border-t border-border space-y-3">
-     <div className="text-[10px] uppercase tracking-wide text-[#333]">Live status</div>
-     {health ? <FeedStatusCard feed={health} /> : <div className="text-xs text-[#333]">No status reported.</div>}
+     <div className="text-[10px] uppercase tracking-wide text-[#666]">Live status</div>
+     {health ? <FeedStatusCard feed={health} /> : <div className="text-xs text-[#666]">No status reported.</div>}
      {events && events.length > 0 && (
       <div className="space-y-2">
        {events.slice(0, 5).map((e, i) => <EventCard key={i} event={e} />)}
@@ -636,7 +636,7 @@ const save = async () => {
 
  const up = (patch: Partial<EnvConfig>) => env && setEnv({ ...env, ...patch })
 
- if (loading) return <div className="flex items-center justify-center h-64 text-[#444]">Loading environmental config…</div>
+ if (loading) return <div className="flex items-center justify-center h-64 text-[#777]">Loading environmental config…</div>
  if (!env) return <div className="flex items-center justify-center h-64 text-red-400">{error || 'No config'}</div>
 
  const healthFor = (key: AdapterKey): FeedHealth | undefined =>
@@ -664,9 +664,9 @@ const save = async () => {
     )}
     {env.nws.feed_source === 'central' && (
      <div className="border-t border-border pt-4 mt-4">
-      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#333] mb-3">Broadcast Filters</div>
+      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">Broadcast Filters</div>
       <div className="mb-3">
-       <div className="text-xs font-sans text-[#444] mb-2">Severities to broadcast</div>
+       <div className="text-xs font-sans text-[#777] mb-2">Severities to broadcast</div>
        <div className="flex gap-6">
         {['Extreme', 'Severe', 'Moderate', 'Minor'].map((sev) => (
          <label key={sev} className="flex items-center gap-2 cursor-pointer">
@@ -690,7 +690,7 @@ const save = async () => {
    case 'swpc': return (
     <div className="space-y-6">
      <div>
-      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#333] mb-3">
+      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">
        Broadcast Thresholds
       </div>
       <div className="grid grid-cols-3 gap-4">
@@ -741,7 +741,7 @@ const save = async () => {
       </div>
      )}
      <div>
-      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#333] mb-3">Incident Types</div>
+      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">Incident Types</div>
       <div className="flex gap-6">
        {[['WF', 'Wildfire'], ['RX', 'Prescribed Burn'], ['OTHER', 'Other']].map(([val, label]) => (
         <label key={val} className="flex items-center gap-2 cursor-pointer">
@@ -754,7 +754,7 @@ const save = async () => {
       </div>
      </div>
      <div>
-      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#333] mb-3">Broadcast Triggers</div>
+      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">Broadcast Triggers</div>
       <div className="space-y-2">
        <label className="flex items-center justify-between">
         <span className="text-sm font-sans text-[#e0e0e0]">Broadcast on acres increase</span>
@@ -788,7 +788,7 @@ const save = async () => {
       onChange={(v) => up({ avalanche: { ...env.avalanche, center_ids: v } })}
       helper="e.g., SNFAC" infoLink="https://avalanche.org/avalanche-centers/" />
      <div>
-      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#333] mb-3">
+      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">
        Broadcast Settings
       </div>
       <div className="grid grid-cols-2 gap-4">
@@ -820,7 +820,7 @@ const save = async () => {
       </div>
      )}
      <div>
-      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#333] mb-3">
+      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">
        Magnitude Thresholds
       </div>
       <div className="grid grid-cols-2 gap-4">
@@ -839,10 +839,10 @@ const save = async () => {
       </div>
      </div>
      <div>
-      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#333] mb-3">
+      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">
        PAGER Alert Levels
       </div>
-      <div className="text-xs text-[#333] mb-2">
+      <div className="text-xs text-[#666] mb-2">
        Broadcast at any magnitude when USGS PAGER alert reaches these levels
       </div>
       <div className="flex gap-6">
@@ -868,7 +868,7 @@ const save = async () => {
    case 'traffic': return (<>
     <TextInput label="API Key" value={env.traffic.api_key} onChange={(v) => up({ traffic: { ...env.traffic, api_key: v } })} type="password" helper="developer.tomtom.com" />
     <NumberInput label="Tick Seconds" value={env.traffic.tick_seconds} onChange={(v) => up({ traffic: { ...env.traffic, tick_seconds: v } })} min={60} />
-    <div className="text-xs text-[#333] mt-2">Corridors:</div>
+    <div className="text-xs text-[#666] mt-2">Corridors:</div>
     {(env.traffic.corridors || []).map((c, i) => (
      <div key={i} className="grid grid-cols-4 gap-2 items-end">
       <TextInput label="Name" value={c.name} onChange={(v) => { const n = [...env.traffic.corridors]; n[i] = { ...c, name: v }; up({ traffic: { ...env.traffic, corridors: n } }) }} />
@@ -879,10 +879,10 @@ const save = async () => {
     ))}
     <button onClick={() => up({ traffic: { ...env.traffic, corridors: [...(env.traffic.corridors || []), { name: '', lat: 0, lon: 0 }] } })} className="text-xs text-accent hover:underline">+ Add Corridor</button>
     <div className="border-t border-border pt-4 mt-4">
-     <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#333] mb-3">Broadcast Filters</div>
+     <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">Broadcast Filters</div>
      <div className="grid grid-cols-2 gap-4">
       <div>
-       <label className="text-xs font-sans text-[#444] mb-1 block">Minimum Magnitude</label>
+       <label className="text-xs font-sans text-[#777] mb-1 block">Minimum Magnitude</label>
        <select
         value={tomtomConfig.min_magnitude}
         onChange={(e) => setTomtomConfig({...tomtomConfig, min_magnitude: parseInt(e.target.value)})}
@@ -893,7 +893,7 @@ const save = async () => {
         <option value={3}>3 — Major (orange+)</option>
         <option value={4}>4 — Severe (red only)</option>
        </select>
-       <p className="text-xs text-[#333] mt-1">Drop TomTom incidents below this severity level</p>
+       <p className="text-xs text-[#666] mt-1">Drop TomTom incidents below this severity level</p>
       </div>
      </div>
      <div className="mt-3 space-y-2">
@@ -919,10 +919,10 @@ const save = async () => {
      ))}
     </div>
     <div className="border-t border-border pt-4 mt-4">
-     <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#333] mb-3">Broadcast Filters</div>
+     <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">Broadcast Filters</div>
      <div className="grid grid-cols-2 gap-4">
       <div>
-       <label className="text-xs font-sans text-[#444] mb-1 block">Minimum Severity</label>
+       <label className="text-xs font-sans text-[#777] mb-1 block">Minimum Severity</label>
        <select
         value={roads511Config.min_severity}
         onChange={(e) => setRoads511Config({...roads511Config, min_severity: e.target.value})}
@@ -932,11 +932,11 @@ const save = async () => {
         <option value="Minor">Minor+</option>
         <option value="Major">Major only</option>
        </select>
-       <p className="text-xs text-[#333] mt-1">Drop ITD 511 events below this severity</p>
+       <p className="text-xs text-[#666] mt-1">Drop ITD 511 events below this severity</p>
       </div>
      </div>
      <div className="mt-4">
-      <div className="text-xs font-sans text-[#444] mb-2">Categories</div>
+      <div className="text-xs font-sans text-[#777] mb-2">Categories</div>
       <div className="flex gap-6">
        {([['incident', 'Incident'], ['closure', 'Closure'], ['special_event', 'Special Event']] as const).map(([val, label]) => (
         <label key={val} className="flex items-center gap-2 cursor-pointer">
@@ -949,7 +949,7 @@ const save = async () => {
       </div>
      </div>
      <div className="mt-4">
-      <div className="text-xs font-sans text-[#444] mb-2">Sub-types</div>
+      <div className="text-xs font-sans text-[#777] mb-2">Sub-types</div>
       <div className="grid grid-cols-2 gap-2">
        {([['accident', 'Crash'], ['road_closed', 'Road Closed'], ['lane_closed', 'Lane Closure'], ['vehicle_on_fire', 'Vehicle Fire'], ['flooding', 'Flooding'], ['debris', 'Debris'], ['road_works', 'Road Works'], ['disabled_vehicle', 'Disabled Vehicle']] as const).map(([val, label]) => (
         <label key={val} className="flex items-center gap-2 cursor-pointer">
@@ -975,11 +975,11 @@ const save = async () => {
         <NumberInput key={lbl} label={lbl} value={env.wzdx?.bbox?.[i] ?? 0} onChange={(v) => { const b = [...(env.wzdx?.bbox || [0, 0, 0, 0])]; b[i] = v; up({ wzdx: { ...env.wzdx!, bbox: b } }) }} step={0.01} />
        ))}
       </div>
-      <div className="text-xs text-[#333]">Bounding box [W,S,E,N] geographic filter</div>
+      <div className="text-xs text-[#666]">Bounding box [W,S,E,N] geographic filter</div>
      </>
     )}
     <div className="border-t border-border pt-4 mt-4">
-     <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#333] mb-3">Broadcast Settings</div>
+     <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">Broadcast Settings</div>
      <label className="flex items-center justify-between">
       <span className="text-sm font-sans text-[#e0e0e0]">Broadcast work zone events</span>
       <input type="checkbox" checked={wzdxConfig.broadcast}
@@ -989,7 +989,7 @@ const save = async () => {
      {wzdxConfig.broadcast ? (
       <div className="space-y-3 mt-3">
        <div>
-        <label className="text-xs font-sans text-[#444] mb-1 block">Min Severity</label>
+        <label className="text-xs font-sans text-[#777] mb-1 block">Min Severity</label>
         <select
          value={wzdxConfig.min_severity}
          onChange={(e) => setWzdxConfig({...wzdxConfig, min_severity: e.target.value})}
@@ -1001,7 +1001,7 @@ const save = async () => {
         </select>
        </div>
        <div>
-        <div className="text-xs font-sans text-[#444] mb-2">Sub-types</div>
+        <div className="text-xs font-sans text-[#777] mb-2">Sub-types</div>
         <div className="flex gap-6">
          {([['road_works', 'Road Works'], ['lane_closed', 'Lane Closure'], ['road_closed', 'Road Closed']] as const).map(([val, label]) => (
           <label key={val} className="flex items-center gap-2 cursor-pointer">
@@ -1015,7 +1015,7 @@ const save = async () => {
        </div>
       </div>
      ) : (
-      <p className="text-xs text-[#333] mt-2">Work zone events stored for LLM context only {'\u2014'} no mesh broadcasts.</p>
+      <p className="text-xs text-[#666] mt-2">Work zone events stored for LLM context only {'\u2014'} no mesh broadcasts.</p>
      )}
     </div>
    </>)
@@ -1052,7 +1052,7 @@ const save = async () => {
      <Toggle label="Feeds Enabled" checked={env.enabled} onChange={(v) => up({ enabled: v })} />
      {hasChanges && (
       <>
-       <button onClick={discard} className="flex items-center gap-1 px-3 py-1.5 text-sm text-[#444] hover:text-white border border-border">
+       <button onClick={discard} className="flex items-center gap-1 px-3 py-1.5 text-sm text-[#777] hover:text-white border border-border">
         <RotateCcw size={14} /> Discard
        </button>
        <button onClick={save} disabled={saving} className="flex items-center gap-1 px-3 py-1.5 text-sm bg-accent text-white disabled:opacity-50">
@@ -1077,7 +1077,7 @@ const save = async () => {
    <div className="flex gap-1 border-b border-border overflow-x-auto">
     {FAMILIES.map(({ key, label, icon: Icon }) => (
      <button key={key} onClick={() => { setFamily(key); const f = FAMILIES.find((x) => x.key === key)!; setAdapter(f.adapters[0] ?? null) }}
-      className={`flex items-center gap-2 px-4 py-2 text-sm whitespace-nowrap border-b-2 -mb-px transition-colors ${family === key ? 'border-accent text-accent' : 'border-transparent text-[#444] hover:text-white'}`}>
+      className={`flex items-center gap-2 px-4 py-2 text-sm whitespace-nowrap border-b-2 -mb-px transition-colors ${family === key ? 'border-accent text-accent' : 'border-transparent text-[#777] hover:text-white'}`}>
       <Icon size={15} /> {label}
      </button>
     ))}
@@ -1089,7 +1089,7 @@ const save = async () => {
      <div className="flex items-center justify-between">
       <div>
        <span className="text-sm font-medium text-[#e0e0e0]">Central Connection</span>
-       <p className="text-xs text-[#333]">NATS JetStream source for any adapter set to "central"</p>
+       <p className="text-xs text-[#666]">NATS JetStream source for any adapter set to "central"</p>
       </div>
       <Toggle label="" checked={!!env.central.enabled}
           onChange={(v) => up({ central: { ...env.central!, enabled: v } })} />
@@ -1113,8 +1113,8 @@ const save = async () => {
    {/* Tracking placeholder */}
    {family === 'tracking' && (
     <div className="flex flex-col items-center justify-center h-[40vh] text-center">
-     <Satellite size={32} className="text-[#333] mb-4" />
-     <p className="text-[#333] max-w-md">No adapters yet. ADS-B / AIS / satellite passes are planned for v0.5.</p>
+     <Satellite size={32} className="text-[#666] mb-4" />
+     <p className="text-[#666] max-w-md">No adapters yet. ADS-B / AIS / satellite passes are planned for v0.5.</p>
     </div>
    )}
 
@@ -1124,14 +1124,14 @@ const save = async () => {
      <div className="flex items-center justify-between">
       <div>
        <span className="text-sm font-medium text-[#e0e0e0]">Mesh Health</span>
-       <p className="text-xs text-[#333]">Node/infra telemetry — sourced from the mesh, not an environmental feed.</p>
+       <p className="text-xs text-[#666]">Node/infra telemetry — sourced from the mesh, not an environmental feed.</p>
       </div>
       <div className="flex items-center gap-1">
-       <span className="text-[10px] uppercase tracking-wide text-[#333]">source</span>
+       <span className="text-[10px] uppercase tracking-wide text-[#666]">source</span>
        <FeedSourceToggle value="native" onChange={() => {}} disabled={false} centralDisabled={true} />
       </div>
      </div>
-     <div className="text-[11px] text-[#333]">Central not available — reserved for a future migration.</div>
+     <div className="text-[11px] text-[#666]">Central not available — reserved for a future migration.</div>
     </div>
    )}
 
@@ -1142,7 +1142,7 @@ const save = async () => {
       <div className="flex gap-1">
        {fam.adapters.map((k) => (
         <button key={k} onClick={() => setAdapter(k)}
-         className={`px-3 py-1.5 text-sm ${activeAdapter === k ? 'bg-bg-hover text-white' : 'text-[#444] hover:text-white'}`}>
+         className={`px-3 py-1.5 text-sm ${activeAdapter === k ? 'bg-bg-hover text-white' : 'text-[#777] hover:text-white'}`}>
          {META[k].label}
         </button>
        ))}
