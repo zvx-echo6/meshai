@@ -571,6 +571,11 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "type": "int",
         "description": "Allow re-broadcast of the same CAP id after this many seconds (the nws_handler relaxes its dedup gate past this point and uses an Active: prefix).",
     },
+    ("nws", "locations_max_chars"): {
+        "default": 120,
+        "type": "int",
+        "description": "Maximum characters for the locations field on line 4 of NWS wire. Truncates at word boundary.",
+    },
 
     # =================================================================
     # AVALANCHE -- 1 setting (min danger level broadcast floor)

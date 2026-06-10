@@ -384,8 +384,12 @@ def _render(*, event_type, area_desc, geocoder_city, county, state,
     compass, speed_mph = _parse_motion(params)
     motion = f"Moving {compass} {speed_mph} mph" if compass and speed_mph else ""
     locations = (desc.get("locations") or "").rstrip("., ")
-    if len(locations) > 40:
-        locations = locations[:37] + "..."
+    _loc_limit = int(adapter_config.nws.locations_max_chars)
+    if len(locations) > _loc_limit:
+        cut = locations[:_loc_limit].rsplit(" ", 1)[0]
+        if not cut:
+            cut = locations[:_loc_limit]
+        locations = cut + "\u2026"
     if motion and locations:
         line4 = f"{motion} — {locations}"
     elif motion:
