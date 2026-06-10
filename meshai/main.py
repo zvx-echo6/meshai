@@ -126,16 +126,30 @@ class MeshAI:
                     if self.broadcaster and self.health_engine.mesh_health:
                         try:
                             mh = self.health_engine.mesh_health
-                            health_dict = {
-                                "score": round(mh.score.composite, 1),
-                                "tier": mh.score.tier,
-                                "total_nodes": mh.total_nodes,
-                                "total_regions": mh.total_regions,
-                                "infra_online": mh.score.infra_online,
-                                "infra_total": mh.score.infra_total,
-                                "last_computed": mh.last_computed,
-                            }
-                            await self.broadcaster.broadcast("health_update", health_dict)
+                            sc = mh.score
+                            if sc.composite > 0 and sc.infra_total > 0:
+                                health_dict = {
+                                    "score": round(sc.composite, 1),
+                                    "tier": sc.tier,
+                                    "pillars": {
+                                        "infrastructure": round(sc.infrastructure, 1),
+                                        "utilization": round(sc.utilization, 1),
+                                        "coverage": round(sc.coverage, 1),
+                                        "behavior": round(sc.behavior, 1),
+                                        "power": round(sc.power, 1),
+                                    },
+                                    "infra_online": sc.infra_online,
+                                    "infra_total": sc.infra_total,
+                                    "util_percent": round(sc.util_percent, 1),
+                                    "flagged_nodes": sc.flagged_nodes,
+                                    "battery_warnings": sc.battery_warnings,
+                                    "total_nodes": mh.total_nodes,
+                                    "total_regions": mh.total_regions,
+                                    "unlocated_count": getattr(mh, "unlocated_count", 0),
+                                    "last_computed": mh.last_computed,
+                                    "recommendations": getattr(mh, "recommendations", []),
+                                }
+                                await self.broadcaster.broadcast("health_update", health_dict)
                         except Exception as e:
                             logger.debug("Dashboard broadcast error: %s", e)
 
