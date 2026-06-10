@@ -19,6 +19,7 @@ from .commands.status import set_start_time
 from .config import Config
 from .config_loader import load_config, get_config_dir_from_path
 from .connector import MeshConnector, MeshMessage
+from .central_normalizer import init_geocoder_config
 from .context import MeshContext
 from .history import ConversationHistory
 from .memory import ConversationSummary
@@ -244,6 +245,19 @@ class MeshAI:
             init_db()
         except Exception:
             logger.exception("persistence init_db failed at startup")
+
+        # v0.6-3b: Initialize geocoder config from config.yaml
+        try:
+            gc = self.config.environmental.geocoder
+            init_geocoder_config(
+                url=gc.url,
+                timeout=gc.timeout_seconds,
+                radius=gc.radius_km,
+                limit=gc.limit
+            )
+            logger.info("Geocoder configured: %s", gc.url)
+        except Exception:
+            logger.exception("geocoder init failed - using defaults")
 
         # Conversation history
         self.history = ConversationHistory(self.config.history)

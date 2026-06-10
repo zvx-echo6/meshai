@@ -469,6 +469,16 @@ class CentralConsumerConfig:
 
 
 @dataclass
+class GeocoderConfig:
+    """Photon reverse geocoder settings."""
+    
+    url: str = "https://photon.komoot.io"
+    timeout_seconds: float = 2.0
+    radius_km: float = 80.0
+    limit: int = 10
+
+
+@dataclass
 class EnvironmentalConfig:
     """Environmental feeds settings."""
 
@@ -486,6 +496,7 @@ class EnvironmentalConfig:
     wzdx: WZDxConfig = field(default_factory=WZDxConfig)
     firms: FIRMSConfig = field(default_factory=FIRMSConfig)
     central: CentralConsumerConfig = field(default_factory=CentralConsumerConfig)
+    geocoder: GeocoderConfig = field(default_factory=GeocoderConfig)
 
 
 @dataclass

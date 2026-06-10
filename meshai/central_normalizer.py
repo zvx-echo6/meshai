@@ -25,7 +25,7 @@ import urllib.request
 from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Optional
-from meshai.adapter_config import adapter_config
+# Geocoder config is set via init_geocoder_config()
 
 logger = logging.getLogger(__name__)
 
@@ -248,13 +248,31 @@ def _is_uninformative_road(road: Optional[str]) -> bool:
 # 2026-06-04). It's the same Echo6-local Photon instance that backs Central's
 # NaviBackend reverse-geocoder. Photon takes osm_tag=place (KEY only, not
 # key:value with comma-list -- that returns 0 features -- per probe).
-# v0.6-3b: photon endpoint settings live in adapter_config.geocoder.
-# Module-level names retained as backward-compat aliases so existing
-# test imports / monkeypatches still resolve.
-PHOTON_BASE_URL = "http://100.64.0.24:2322"
-PHOTON_TIMEOUT_S = 2.0
-PHOTON_RADIUS_KM = 80     # ≈ 50 miles
-PHOTON_LIMIT = 10
+# v0.6-3b: photon geocoder config - initialized via init_geocoder_config()
+# Defaults to public Komoot Photon; deployments override in config.yaml.
+
+class _GeocoderSettings:
+    url: str = "https://photon.komoot.io"
+    timeout_seconds: float = 2.0
+    radius_km: float = 80.0
+    limit: int = 10
+
+_geocoder = _GeocoderSettings()
+
+
+def init_geocoder_config(url: str = None, timeout: float = None,
+                         radius: float = None, limit: int = None) -> None:
+    """Initialize geocoder settings from config.yaml values."""
+    if url is not None:
+        _geocoder.url = url
+    if timeout is not None:
+        _geocoder.timeout_seconds = timeout
+    if radius is not None:
+        _geocoder.radius_km = radius
+    if limit is not None:
+        _geocoder.limit = limit
+
+
 # OSM place classes we accept as "town". Suburb included for metro coverage;
 # locality is rare but valid for tiny rural places.
 _TOWN_OSM_VALUES = frozenset({"city", "town", "village"})
@@ -282,13 +300,13 @@ def _photon_reverse_places(lat: float, lon: float) -> list[dict]:
     qs = urllib.parse.urlencode({
         "lat":     f"{lat:.6f}",
         "lon":     f"{lon:.6f}",
-        "radius":  PHOTON_RADIUS_KM,
+        "radius":  _geocoder.radius_km,
         "osm_tag": "place",
-        "limit":   PHOTON_LIMIT,
+        "limit":   _geocoder.limit,
     })
-    url = f"{PHOTON_BASE_URL}/reverse?{qs}"
+    url = f"{_geocoder.url}/reverse?{qs}"
     try:
-        with urllib.request.urlopen(url, timeout=PHOTON_TIMEOUT_S) as resp:
+        with urllib.request.urlopen(url, timeout=_geocoder.timeout_seconds) as resp:
             body = resp.read()
         d = json.loads(body)
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError,
@@ -308,7 +326,7 @@ def nearest_town(lat: float, lon: float, max_distance_mi: float = 50.0) -> Optio
     event is N of the town. Returns None if no town within range or if
     Photon is unreachable.
 
-    Calls Photon /reverse?osm_tag=place at PHOTON_BASE_URL. Results are
+    Calls Photon /reverse?osm_tag=place at _geocoder.url. Results are
     H3-cell-cached (resolution 7 ≈ 5 km cells) so the second event near
     the same town is free.
     """
