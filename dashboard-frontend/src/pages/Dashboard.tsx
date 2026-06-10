@@ -6,14 +6,12 @@ import {
   fetchEnvStatus,
   fetchEnvActive,
   fetchSWPC,
-  fetchDucting,
   type MeshHealth,
   type SourceHealth,
   type Alert,
   type EnvStatus,
   type EnvEvent,
-  type SWPCStatus,
-  type DuctingStatus,
+  type BandConditionsStatus,
 } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import {
@@ -35,49 +33,9 @@ import {
   Satellite,
   Sun,
 } from 'lucide-react'
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  ResponsiveContainer,
-  ReferenceLine,
-  LineChart,
-  Line,
-} from 'recharts'
 
-// Extended types for history data
-interface KpHistoryEntry {
-  time: string
-  value: number
-}
 
-interface ProfileEntry {
-  level_hPa: number
-  height_m: number
-  N: number
-  M: number
-  T_C: number
-  RH: number
-}
 
-interface ExtendedSWPCStatus extends SWPCStatus {
-  kp_history?: KpHistoryEntry[]
-  sfi_history?: { time: string; value: number }[]
-}
-
-interface ExtendedDuctingStatus extends DuctingStatus {
-  profile?: ProfileEntry[]
-  gradients?: {
-    from_level: number
-    to_level: number
-    from_height_m: number
-    to_height_m: number
-    gradient: number
-  }[]
-  assessment?: string
-  location?: { lat: number; lon: number }
-}
 
 function HealthGauge({ health }: { health: MeshHealth }) {
   const score = health.score
@@ -193,243 +151,88 @@ function StatCard({ icon: Icon, label, value, subvalue }: { icon: typeof Radio; 
   )
 }
 
-// Scale badge component for R/S/G
-function ScaleBadge({ label, value }: { label: string; value: number }) {
-  const getColor = () => {
-    if (value === 0) return 'bg-green-500/20 text-green-400 border-green-500/50'
-    if (value <= 2) return 'bg-amber-500/20 text-amber-400 border-amber-500/50'
-    return 'bg-red-500/20 text-red-400 border-red-500/50'
-  }
 
-  return (
-    <span className={`px-2 py-1 rounded text-xs font-mono font-medium border ${getColor()}`}>
-      {label}{value}
-    </span>
-  )
-}
 
-// Large value display for SFI/Kp
-function BigValue({ label, value, unit, getColor }: { label: string; value: number | undefined; unit?: string; getColor: (v: number) => string }) {
-  const color = value !== undefined ? getColor(value) : 'text-slate-400'
-  return (
-    <div className="text-center">
-      <div className="text-xs text-slate-500 mb-1">{label}</div>
-      <div className={`font-mono text-3xl font-bold ${color}`}>
-        {value?.toFixed(0) ?? '—'}
-      </div>
-      {unit && <div className="text-xs text-slate-500">{unit}</div>}
-    </div>
-  )
-}
 
-// Kp trend sparkline chart
-function KpTrendChart({ history }: { history: KpHistoryEntry[] }) {
-  const chartData = useMemo(() => {
-    if (!history || history.length === 0) return []
-    // Take last 16 entries (48 hours of 3-hourly data)
-    return history.slice(-16).map((entry, i) => ({
-      idx: i,
-      value: entry.value,
-      time: entry.time,
-    }))
-  }, [history])
 
-  if (chartData.length === 0) return null
-
-  const maxKp = Math.max(...chartData.map(d => d.value), 5)
-  const currentKp = chartData[chartData.length - 1]?.value ?? 0
-
-  // Gradient color based on max Kp
-  const getGradientId = () => {
-    if (maxKp > 5) return 'kpGradientRed'
-    if (maxKp > 3) return 'kpGradientAmber'
-    return 'kpGradientGreen'
-  }
-
-  return (
-    <div className="h-20 w-full">
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={chartData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
-          <defs>
-            <linearGradient id="kpGradientGreen" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#22c55e" stopOpacity={0.4} />
-              <stop offset="100%" stopColor="#22c55e" stopOpacity={0.05} />
-            </linearGradient>
-            <linearGradient id="kpGradientAmber" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.4} />
-              <stop offset="100%" stopColor="#f59e0b" stopOpacity={0.05} />
-            </linearGradient>
-            <linearGradient id="kpGradientRed" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#ef4444" stopOpacity={0.4} />
-              <stop offset="100%" stopColor="#ef4444" stopOpacity={0.05} />
-            </linearGradient>
-          </defs>
-          <YAxis domain={[0, Math.ceil(maxKp)]} hide />
-          <XAxis dataKey="idx" hide />
-          <ReferenceLine y={3} stroke="#f59e0b" strokeDasharray="3 3" strokeOpacity={0.5} />
-          <ReferenceLine y={5} stroke="#ef4444" strokeDasharray="3 3" strokeOpacity={0.5} />
-          <Area
-            type="monotone"
-            dataKey="value"
-            stroke={currentKp > 5 ? '#ef4444' : currentKp > 3 ? '#f59e0b' : '#22c55e'}
-            fill={`url(#${getGradientId()})`}
-            strokeWidth={2}
-          />
-        </AreaChart>
-      </ResponsiveContainer>
-      <div className="flex justify-between text-xs text-slate-600 px-1">
-        <span>48h ago</span>
-        <span>now</span>
-      </div>
-    </div>
-  )
-}
-
-// Refractivity profile chart
-function RefractivityChart({ profile }: { profile: ProfileEntry[] }) {
-  const chartData = useMemo(() => {
-    if (!profile || profile.length === 0) return []
-    return [...profile].sort((a, b) => a.height_m - b.height_m).map(p => ({
-      height: p.height_m,
-      M: p.M,
-    }))
-  }, [profile])
-
-  if (chartData.length === 0) return null
-
-  return (
-    <div className="h-24 w-full">
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={chartData} margin={{ top: 5, right: 10, bottom: 5, left: 5 }}>
-          <XAxis
-            dataKey="M"
-            type="number"
-            domain={['dataMin - 20', 'dataMax + 20']}
-            tick={{ fontSize: 10, fill: '#64748b' }}
-            tickLine={false}
-            axisLine={{ stroke: '#334155' }}
-          />
-          <YAxis
-            dataKey="height"
-            type="number"
-            domain={[0, 'dataMax']}
-            tick={{ fontSize: 10, fill: '#64748b' }}
-            tickLine={false}
-            axisLine={{ stroke: '#334155' }}
-            tickFormatter={(v) => `${(v/1000).toFixed(1)}k`}
-          />
-          <Line
-            type="monotone"
-            dataKey="M"
-            stroke="#3b82f6"
-            strokeWidth={2}
-            dot={{ r: 3, fill: '#3b82f6' }}
-          />
-        </LineChart>
-      </ResponsiveContainer>
-      <div className="text-center text-xs text-slate-600">M-units vs Height (km)</div>
-    </div>
-  )
-}
-
-// RF Propagation Card
-function RFPropagationCard({ swpc, ducting }: { swpc: ExtendedSWPCStatus | null; ducting: ExtendedDuctingStatus | null }) {
-  const getSfiColor = (v: number) => {
-    if (v >= 120) return 'text-green-400'
-    if (v >= 80) return 'text-amber-400'
-    return 'text-red-400'
-  }
-
-  const getKpColor = (v: number) => {
-    if (v <= 3) return 'text-green-400'
-    if (v <= 5) return 'text-amber-400'
-    return 'text-red-400'
-  }
-
-  const getDuctingBadge = (condition?: string) => {
-    if (!condition) return null
-    const styles: Record<string, string> = {
-      normal: 'bg-green-500/20 text-green-400 border-green-500/50',
-      super_refraction: 'bg-amber-500/20 text-amber-400 border-amber-500/50',
-      surface_duct: 'bg-blue-500/20 text-blue-400 border-blue-500/50',
-      elevated_duct: 'bg-blue-500/20 text-blue-400 border-blue-500/50',
+// Band Conditions Card
+function BandConditionsCard({ bandConditions }: { bandConditions: BandConditionsStatus | null }) {
+  const getRatingEmoji = (rating?: string) => {
+    switch (rating) {
+      case 'Good': return '\ud83d\udfe2'  // green circle
+      case 'Fair': return '\ud83d\udfe1'  // yellow circle
+      case 'Poor': return '\ud83d\udd34'  // red circle
+      default: return '\u2014'
     }
-    const labels: Record<string, string> = {
-      normal: 'Normal',
-      super_refraction: 'Super Refraction',
-      surface_duct: 'Surface Duct',
-      elevated_duct: 'Elevated Duct',
-    }
+  }
+
+  const getSlotEmoji = (label?: string) => {
+    if (!label) return ''
+    return label.includes('Night') ? '\ud83c\udf19' : '\u2600\ufe0f'
+  }
+
+  if (!bandConditions?.enabled || !bandConditions?.ratings) {
     return (
-      <span className={`px-2 py-1 rounded text-xs font-medium border ${styles[condition] || styles.normal}`}>
-        {labels[condition] || condition}
-      </span>
+      <div className="bg-bg-card border border-border rounded-lg p-4 flex flex-col h-full">
+        <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
+          <Zap size={14} />
+          RF Propagation
+        </h2>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center py-8">
+            <div className="text-slate-400">No band conditions data</div>
+          </div>
+        </div>
+      </div>
     )
   }
+
+  const bands = ['80-40m', '30-20m', '17-15m', '12-10m'] as const
 
   return (
     <div className="bg-bg-card border border-border rounded-lg p-4 flex flex-col h-full">
       <h2 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
         <Zap size={14} />
-        <span title="R (Radio Blackouts), S (Solar Radiation Storms), G (Geomagnetic Storms) — NOAA SWPC scales. Kp 3 = quiet baseline, Kp >= 5 = aurora visible at mid-latitudes and HF degraded. See Reference → Solar &amp; Geomagnetic.">RF Propagation</span>
+        RF Propagation
       </h2>
 
-      {/* Top row: SFI and Kp big values */}
-      <div className="flex justify-around mb-4">
-        <BigValue label="SFI" value={swpc?.sfi} getColor={getSfiColor} />
-        <div className="w-px bg-border" />
-        <BigValue label="Kp" value={swpc?.kp_current} getColor={getKpColor} />
+      {/* Slot label */}
+      <div className="text-center mb-4">
+        <span className="text-lg">{getSlotEmoji(bandConditions.slot_label)}</span>
+        <span className="text-sm text-slate-300 ml-2">{bandConditions.slot_label}</span>
       </div>
 
-      {/* R/S/G Scale badges */}
-      <div className="flex justify-center gap-2 mb-4">
-        <ScaleBadge label="R" value={swpc?.r_scale ?? 0} />
-        <ScaleBadge label="S" value={swpc?.s_scale ?? 0} />
-        <ScaleBadge label="G" value={swpc?.g_scale ?? 0} />
+      {/* Band conditions header */}
+      <div className="text-xs text-slate-500 mb-3 flex items-center gap-1">
+        <span>\ud83d\udce1</span> Band Conditions:
       </div>
 
-      {/* Kp Trend Chart */}
-      {swpc?.kp_history && swpc.kp_history.length > 0 && (
-        <div className="mb-4">
-          <div className="text-xs text-slate-500 mb-1">Kp Trend (48h)</div>
-          <KpTrendChart history={swpc.kp_history} />
-        </div>
-      )}
-
-      {/* Divider */}
-      <div className="border-t border-border my-3" />
-
-      {/* Tropospheric section */}
-      <div className="flex items-center gap-2 mb-2">
-        <Cloud size={14} className="text-slate-400" />
-        <span className="text-xs text-slate-500">Tropospheric</span>
-        {getDuctingBadge(ducting?.condition)}
-      </div>
-
-      {ducting?.min_gradient !== undefined && (
-        <div className="text-xs text-slate-400 font-mono mb-2">
-          dM/dz: {ducting.min_gradient.toFixed(1)} M-units/km
-        </div>
-      )}
-
-      {/* Refractivity profile chart */}
-      {ducting?.profile && ducting.profile.length > 0 && (
-        <RefractivityChart profile={ducting.profile} />
-      )}
-
-      {/* SWPC Warnings */}
-      {swpc?.active_warnings && swpc.active_warnings.length > 0 && (
-        <div className="mt-auto pt-3 border-t border-border">
-          <div className="text-xs text-slate-500 mb-1">SWPC Alerts</div>
-          <div className="flex flex-wrap gap-1">
-            {swpc.active_warnings.slice(0, 3).map((w, i) => (
-              <span key={i} className="px-2 py-0.5 rounded text-xs bg-amber-500/20 text-amber-400 border border-amber-500/30 truncate max-w-full">
-                {w.replace('Space Weather Message Code: ', '')}
+      {/* Band rows */}
+      <div className="space-y-2">
+        {bands.map(band => {
+          const rating = bandConditions.ratings?.[band]
+          return (
+            <div key={band} className="flex items-center justify-between px-2 py-1.5 rounded bg-bg-hover">
+              <span className="text-sm font-mono text-slate-300">{band}</span>
+              <span className="text-sm">
+                {getRatingEmoji(rating)} <span className="text-slate-300 ml-1">{rating || '\u2014'}</span>
               </span>
-            ))}
-          </div>
-        </div>
-      )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Footer: source and time */}
+      <div className="mt-auto pt-3 border-t border-border text-xs text-slate-500">
+        {bandConditions.source && (
+          <span>{bandConditions.source === 'swpc_local' ? 'SWPC' : 'HamQSL'}</span>
+        )}
+        {bandConditions.sent_at && (
+          <span className="ml-2">
+            {new Date(bandConditions.sent_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          </span>
+        )}
+      </div>
     </div>
   )
 }
@@ -613,8 +416,7 @@ export default function Dashboard() {
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [envStatus, setEnvStatus] = useState<EnvStatus | null>(null)
   const [envEvents, setEnvEvents] = useState<EnvEvent[]>([])
-  const [swpc, setSwpc] = useState<ExtendedSWPCStatus | null>(null)
-  const [ducting, setDucting] = useState<ExtendedDuctingStatus | null>(null)
+  const [bandConditions, setBandConditions] = useState<BandConditionsStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -628,16 +430,14 @@ export default function Dashboard() {
       fetchEnvStatus(),
       fetchEnvActive().catch(() => []),
       fetchSWPC().catch(() => null),
-      fetchDucting().catch(() => null),
     ])
-      .then(([h, src, a, e, events, sw, duct]) => {
+      .then(([h, src, a, e, events, bc]) => {
         setHealth(h)
         setSources(src)
         setAlerts(a)
         setEnvStatus(e)
         setEnvEvents(events)
-        setSwpc(sw as ExtendedSWPCStatus)
-        setDucting(duct as ExtendedDuctingStatus)
+        setBandConditions(bc as BandConditionsStatus)
         setLoading(false)
         document.title = 'Dashboard — MeshAI'
       })
@@ -786,7 +586,7 @@ export default function Dashboard() {
         </div>
 
         {/* RF Propagation */}
-        <RFPropagationCard swpc={swpc} ducting={ducting} />
+        <BandConditionsCard bandConditions={bandConditions} />
 
         {/* Live Event Feed */}
         <LiveEventFeed events={envEvents} envStatus={envStatus} />
