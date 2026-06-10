@@ -88,7 +88,7 @@ def test_render_digest_returns_no_fires_when_table_empty():
     from meshai.notifications.scheduled.fire_digest import render_digest
 
     async def _run():
-        return await render_digest(llm_backend=None, max_chars=200)
+        return await render_digest(now=None)
     wire, source = asyncio.run(_run())
     assert wire == ""
     assert source == "no_fires"
@@ -102,9 +102,9 @@ def test_render_digest_terse_fallback_when_no_llm():
     from meshai.notifications.scheduled.fire_digest import render_digest
 
     async def _run():
-        return await render_digest(llm_backend=None, max_chars=200)
+        return await render_digest(now=None)
     wire, source = asyncio.run(_run())
-    assert source == "fallback_terse"
+    assert source == "deterministic"
     assert wire
     assert "Cache Peak" in wire
     assert len(wire) <= 200
@@ -124,10 +124,12 @@ def test_render_digest_uses_llm_when_available():
     from meshai.notifications.scheduled.fire_digest import render_digest
 
     async def _run():
-        return await render_digest(llm_backend=StubLLM(), max_chars=200)
+        return await render_digest(now=None)
     wire, source = asyncio.run(_run())
-    assert source == "llm"
-    assert wire == "Cache Peak 1847 ac stable; no spotting today."
+    assert source == "deterministic"
+    # render_digest is now fully deterministic (no LLM backend).
+    assert "Cache Peak" in wire
+    assert "1,847 ac" in wire
 
 
 # ===========================================================================

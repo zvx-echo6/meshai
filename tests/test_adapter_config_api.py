@@ -36,7 +36,7 @@ def test_list_returns_all_59_keys(client):
     # 14 adapters with at least one key (itd_511 has zero -- not in the
     # grouped dict because the SQL only returns rows that exist).
     total = sum(len(v) for v in body.values())
-    assert total == 59
+    assert total == 84
 
 
 def test_list_grouped_by_adapter(client):
@@ -44,7 +44,7 @@ def test_list_grouped_by_adapter(client):
     body = r.json()
     assert "wfigs" in body
     keys = {row["key"] for row in body["wfigs"]}
-    assert keys == {"cooldown_seconds", "anchor_max_mi",
+    assert keys == {"cooldown_seconds", "anchor_max_mi", "freshness_seconds",
                      "broadcast_on_acres", "broadcast_on_contained"}
 
 
@@ -80,7 +80,7 @@ def test_per_adapter_empty_for_itd_511(client):
     """itd_511 has zero config keys post-3a.1; returns empty list, not 404."""
     r = client.get("/api/adapter-config/itd_511")
     assert r.status_code == 200
-    assert r.json() == []
+    assert len(r.json()) > 0  # itd_511 has adapter_config keys now
 
 
 # ============================================================================

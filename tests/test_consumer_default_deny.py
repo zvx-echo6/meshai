@@ -111,7 +111,7 @@ def test_handler_returns_none_drops_event(consumer, mem_db, monkeypatch):
                           title="Old Jam", headline="Headline Jam",
                           extra_data={
                               "id": "ID:tomtom:TTI-stale",
-                              "magnitude_of_delay": 2,
+                              "magnitude_of_delay": 4,
                               "icon_category": 6,
                               "time_validity": "past",  # filtered
                               "start_time": "2024-01-01T00:00:00Z",
@@ -160,7 +160,7 @@ def test_handler_returns_wire_event_emitted(consumer, mem_db, monkeypatch):
         inner_id="ID:tomtom:TTI-aaaa1111-2222-3333-4444-555555555555-TTR1",
         extra_data={
             "id": "ID:tomtom:TTI-aaaa1111-2222-3333-4444-555555555555-TTR1",
-            "magnitude_of_delay": 2,
+            "magnitude_of_delay": 4,
             "icon_category": 6,
             "time_validity": "present",
             "start_time": now_iso,

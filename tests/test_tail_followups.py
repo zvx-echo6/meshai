@@ -247,6 +247,21 @@ def test_wfigs_tombstone_stamps_column():
     assert row["tombstoned_at"] is not None
 
 
+def _enable_wfigs_reminders():
+    """Enable wfigs reminders (default is disabled in adapter_config)."""
+    conn = get_db()
+    conn.execute(
+        "UPDATE adapter_config SET default_json='true' "
+        "WHERE adapter='reminders_wfigs' AND key='enabled'"
+    )
+    conn.execute(
+        "UPDATE adapter_config SET value_json='true' "
+        "WHERE adapter='reminders_wfigs' AND key='enabled'"
+    )
+    from meshai.adapter_config import adapter_config as _ac
+    _ac.invalidate()
+
+
 def test_reminder_skipped_when_fire_tombstoned():
     """ReminderScheduler treats fires.tombstoned_at NOT NULL as terminated."""
     from meshai.notifications.reminders import ReminderScheduler
@@ -275,6 +290,7 @@ def test_reminder_skipped_when_fire_tombstoned():
 def test_reminder_fires_when_fire_not_tombstoned():
     """Same shape but tombstoned_at IS NULL -> reminder fires."""
     from meshai.notifications.reminders import ReminderScheduler
+    _enable_wfigs_reminders()
     conn = get_db()
     now = 1_780_000_000
     irwin = "REM-LIVE"

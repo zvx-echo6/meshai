@@ -370,6 +370,15 @@ def test_real_dispatch_arms_cold_start_anchor(db_path):
 
 def test_real_dispatch_stale_drop_persists(db_path):
     """A stale event increments stale_dropped on disk."""
+    # The dispatcher reads fire freshness from adapter_config.wfigs.freshness_seconds
+    # (default 0 = disabled). Set it to 60 so the stale gate triggers.
+    from meshai.persistence import get_db as _gdb
+    _gdb().execute(
+        "UPDATE adapter_config SET default_json='60', value_json='60' "
+        "WHERE adapter='wfigs' AND key='freshness_seconds'"
+    )
+    from meshai.adapter_config import adapter_config as _ac
+    _ac.invalidate()
     cfg = _build_config(cold_start_grace=0, fire_freshness=60)
     factory, _ = _mk_channel_factory()
     d = Dispatcher(cfg, factory)

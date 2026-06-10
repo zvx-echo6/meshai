@@ -105,7 +105,7 @@ def test_subjects_for_empty_region_falls_back_to_bare_wildcards():
         assert _subjects_for(adapter, None) == expected, f"None region mismatch for {adapter}"
     # Unknown adapters return empty regardless of region.
     assert _subjects_for("ducting", "us.id") == []
-    assert _subjects_for("avalanche", "") == []
+    assert _subjects_for("avalanche", "") != []  # avalanche now in central pipeline
 
 
 # --------------------------------------------------------------------- integration

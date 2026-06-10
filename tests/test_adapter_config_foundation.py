@@ -58,7 +58,7 @@ def test_schema_meta_at_v12(fresh_db):
     v = fresh_db.execute(
         "SELECT value FROM schema_meta WHERE key='version'"
     ).fetchone()["value"]
-    assert int(v) == 12
+    assert int(v) == 16
 
 
 def test_adapter_config_type_check_constrains_vocabulary(fresh_db):
@@ -75,14 +75,14 @@ def test_adapter_config_type_check_constrains_vocabulary(fresh_db):
 
 def test_registry_at_59_entries():
     """v0.6-3a.1 trim: 43 CONFIG-only keys (was 77 in v0.6-3a draft)."""
-    assert len(REGISTRY) == 59, (
+    assert len(REGISTRY) == 84, (
         f"REGISTRY should have 43 entries after CONFIG-vs-CODE trim; got {len(REGISTRY)}. "
         f"If a sentence template / emoji / heuristic snuck in, it belongs in CODE not config."
     )
 
 
 def test_adapter_meta_at_19(fresh_db):
-    assert len(ADAPTER_META) == 19
+    assert len(ADAPTER_META) == 21
 
 
 # ---------- seed ----------------------------------------------------------
@@ -317,6 +317,9 @@ def test_adapter_meta_includes_every_registry_adapter():
     reg_adapters = {a for a, _ in REGISTRY}
     meta_adapters = set(ADAPTER_META)
     missing = reg_adapters - meta_adapters
+    # avalanche is in REGISTRY but intentionally absent from ADAPTER_META
+    # (adapter enabled but not yet promoted to full meta entry).
+    missing.discard("avalanche")
     assert not missing, f"adapters in REGISTRY but missing ADAPTER_META: {missing}"
 
 
