@@ -27,6 +27,13 @@ services:
     container_name: meshai
     restart: unless-stopped
 
+    # Resolve external HTTP feeds via the LXC host's working resolver
+    # (Tailscale MagicDNS, 100.100.100.100). The Docker daemon default
+    # of 1.1.1.1/8.8.8.8 is unreachable from this container's NAT egress,
+    # which silently broke NWS/SWPC/meshview hostname resolution.
+    dns:
+      - 100.100.100.100
+
     # Uncomment for USB serial connection to Meshtastic device
     # devices:
     #   - /dev/ttyUSB0:/dev/ttyUSB0
@@ -35,6 +42,8 @@ services:
     ports:
       # Web-based config interface (ttyd)
       - "7682:7682"
+      # Dashboard API
+      - "8080:8080"
 
     volumes:
       # Persistent data (database, config)

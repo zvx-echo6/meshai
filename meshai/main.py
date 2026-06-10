@@ -16,7 +16,8 @@ from .cli import run_configurator
 from .commands import CommandDispatcher
 from .commands.dispatcher import create_dispatcher
 from .commands.status import set_start_time
-from .config import Config, load_config
+from .config import Config
+from .config_loader import load_config, get_config_dir_from_path
 from .connector import MeshConnector, MeshMessage
 from .context import MeshContext
 from .history import ConversationHistory
@@ -44,6 +45,11 @@ class MeshAI:
         self.mesh_reporter = None
         self.subscription_manager = None
         self.alert_engine = None
+        self.notification_router = None
+        self.event_bus = None  # Notification pipeline EventBus (v0.3)
+        self._pipeline_scheduler = None  # DigestScheduler from start_pipeline()
+        self.env_store = None  # Environmental feeds store
+        self._central_consumer = None  # Central NATS consumer (v0.4)
         self._last_sub_check: float = 0.0
         self.router: Optional[MessageRouter] = None
         self.responder: Optional[Responder] = None
@@ -51,6 +57,7 @@ class MeshAI:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._last_cleanup: float = 0.0
         self._last_health_compute: float = 0.0
+        self.broadcaster = None  # Dashboard WebSocket broadcaster
 
     async def start(self) -> None:
         """Start the bot."""
@@ -76,6 +83,27 @@ class MeshAI:
         # Write PID file
         self._write_pid()
 
+        # Start the notification pipeline's async components (digest scheduler).
+        # build_pipeline() ran in _init_components(); this starts its scheduler
+        # now that we are inside the running event loop.
+        if self.event_bus is not None:
+            from .notifications.pipeline import start_pipeline
+            # v0.7-fire-tracker-4 llm_backend hook: surface the LLM into
+            # the pipeline components dict BEFORE start_pipeline spawns the
+            # scheduled broadcasters. FireDigestScheduler reads this.
+            try:
+                comps = getattr(self.event_bus, "_pipeline_components", {}) or {}
+                comps["llm_backend"] = self.llm
+                self.event_bus._pipeline_components = comps
+            except Exception:
+                logger.exception("could not seed llm_backend into pipeline components")
+            self._pipeline_scheduler = await start_pipeline(self.event_bus, self.config)
+            logger.info("Notification pipeline started")
+
+            from .central.consumer import CentralConsumer
+            self._central_consumer = CentralConsumer(self.config.environmental, self.event_bus)
+            await self._central_consumer.start()
+
         logger.info("MeshAI started successfully")
 
         # Keep running
@@ -94,11 +122,58 @@ class MeshAI:
                     self.health_engine.compute(self.data_store)
                     self._last_health_compute = time.time()
 
+                    # Broadcast health update to dashboard
+                    if self.broadcaster and self.health_engine.mesh_health:
+                        try:
+                            mh = self.health_engine.mesh_health
+                            health_dict = {
+                                "score": round(mh.score.composite, 1),
+                                "tier": mh.score.tier,
+                                "total_nodes": mh.total_nodes,
+                                "total_regions": mh.total_regions,
+                                "infra_online": mh.score.infra_online,
+                                "infra_total": mh.score.infra_total,
+                                "last_computed": mh.last_computed,
+                            }
+                            await self.broadcaster.broadcast("health_update", health_dict)
+                        except Exception as e:
+                            logger.debug("Dashboard broadcast error: %s", e)
+
                     # Check for alertable conditions
                     if self.alert_engine:
                         alerts = self.alert_engine.check()
                         if alerts:
                             await self._dispatch_alerts(alerts)
+
+                        # Broadcast alerts to dashboard
+                        if self.broadcaster:
+                            for alert in alerts:
+                                try:
+                                    await self.broadcaster.broadcast("alert_fired", alert)
+                                except Exception:
+                                    pass
+
+            # Environmental feed refresh
+            if self.env_store:
+                try:
+                    env_changed = self.env_store.refresh()
+                    if env_changed and self.alert_engine:
+                        env_alerts = self.alert_engine.check_environmental(self.env_store)
+                        if env_alerts:
+                            await self._dispatch_alerts(env_alerts)
+                            if self.broadcaster:
+                                for ea in env_alerts:
+                                    await self.broadcaster.broadcast("alert_fired", ea)
+
+                    # Broadcast env updates to dashboard
+                    if env_changed and self.broadcaster:
+                        await self.broadcaster.broadcast("env_update", {
+                            "active_count": len(self.env_store.get_active()),
+                            "swpc": self.env_store.get_swpc_status(),
+                            "ducting": self.env_store.get_ducting_status(),
+                        })
+                except Exception as e:
+                    logger.debug("Env refresh error: %s", e)
 
             # Check scheduled subscriptions (every 60 seconds)
             if self.subscription_manager and self.mesh_reporter:
@@ -118,6 +193,13 @@ class MeshAI:
         logger.info("Stopping MeshAI...")
         self._running = False
 
+        if self._pipeline_scheduler is not None:
+            from .notifications.pipeline import stop_pipeline
+            await stop_pipeline(self._pipeline_scheduler)
+
+        if self._central_consumer is not None:
+            await self._central_consumer.stop()
+
         if self.connector:
             self.connector.disconnect()
 
@@ -129,6 +211,7 @@ class MeshAI:
         if self.knowledge:
             self.knowledge.close()
         if self.data_store:
+            await self.data_store.stop_mqtt_sources()
             self.data_store.close()
         if self.subscription_manager:
             self.subscription_manager.close()
@@ -138,6 +221,16 @@ class MeshAI:
 
     async def _init_components(self) -> None:
         """Initialize all components."""
+        # v0.6-3a: persistence init runs FIRST so any subsequent handler
+        # or dispatcher that calls get_db() finds the v6 schema applied
+        # and adapter_config seeded. The seed (INSERT OR IGNORE) is
+        # idempotent on every restart.
+        try:
+            from meshai.persistence import init_db
+            init_db()
+        except Exception:
+            logger.exception("persistence init_db failed at startup")
+
         # Conversation history
         self.history = ConversationHistory(self.config.history)
         await self.history.initialize()
@@ -214,9 +307,12 @@ class MeshAI:
             self.data_store = MeshDataStore(
                 source_configs=enabled_sources,
                 db_path="/data/mesh_history.db",
+                offline_threshold_hours=self.config.mesh_intelligence.offline_threshold_hours,
             )
             # Initial fetch and backfill
             self.data_store.force_refresh()
+            # Start MQTT source subscription loops
+            await self.data_store.start_mqtt_sources()
             # Log status
             for status in self.data_store.get_status():
                 if status["is_loaded"]:
@@ -281,8 +377,48 @@ class MeshAI:
                 subscription_manager=self.subscription_manager,
                 config=mi,
                 db_path="/data/mesh_history.db",
+                timezone=self.config.timezone,
             )
             logger.info(f"Alert engine initialized (critical: {mi.critical_nodes}, channel: {mi.alert_channel})")
+
+
+        # Notification router
+        if self.config.notifications.enabled:
+            from .notifications.router import NotificationRouter
+            self.notification_router = NotificationRouter(
+                config=self.config.notifications,
+                connector=self.connector,
+                llm_backend=self.llm,
+                timezone=self.config.timezone,
+            )
+            logger.info("Notification router initialized")
+
+            # Notification pipeline (v0.3 EventBus). Built here so env
+            # adapters constructed below can emit Events into the live
+            # pipeline at runtime via EnvironmentalStore(event_bus=...).
+            from .notifications.pipeline import build_pipeline
+            self.event_bus = build_pipeline(self.config, self.llm, self.connector)
+            # v0.6-6: expose bus to dashboard API for live refresh hooks.
+            try:
+                from meshai.dashboard.server import app as _dash_app
+                _dash_app.state.bus = self.event_bus
+                _dash_app.state.config = self.config
+            except Exception:
+                logger.debug('dashboard app.state stash skipped')
+            logger.info("Notification pipeline EventBus initialized")
+
+        # Environmental feeds
+        env_cfg = self.config.environmental
+        if env_cfg.enabled:
+            from .env.store import EnvironmentalStore
+            # Pass region anchors for fire proximity calculation
+            region_anchors = self.config.mesh_intelligence.regions if self.config.mesh_intelligence.enabled else []
+            self.env_store = EnvironmentalStore(
+                config=env_cfg, region_anchors=region_anchors, event_bus=self.event_bus
+            )
+            logger.info(f"Environmental feeds enabled ({len(self.env_store._adapters)} adapters)")
+        else:
+            self.env_store = None
 
         # Knowledge base (optional - Qdrant with SQLite fallback)
         kb_cfg = self.config.knowledge
@@ -329,6 +465,8 @@ class MeshAI:
             data_store=self.data_store,
             health_engine=self.health_engine,
             subscription_manager=self.subscription_manager,
+            env_store=self.env_store,
+            notification_router=self.notification_router,
         )
 
         # Message router
@@ -340,10 +478,24 @@ class MeshAI:
             source_manager=self.data_store,
             health_engine=self.health_engine,
             mesh_reporter=self.mesh_reporter,
+            env_store=self.env_store,
+            # notification_router not used by MessageRouter
         )
 
         # Responder
         self.responder = Responder(self.config.response, self.connector)
+
+        # Dashboard
+        if hasattr(self.config, 'dashboard') and self.config.dashboard.enabled:
+            try:
+                from .dashboard.server import start_dashboard
+                self.broadcaster = await start_dashboard(self)
+                logger.info("Dashboard started on port %d", self.config.dashboard.port)
+            except Exception as e:
+                logger.warning("Dashboard failed to start: %s", e)
+                self.broadcaster = None
+        else:
+            self.broadcaster = None
 
     async def _on_message(self, message: MeshMessage) -> None:
         """Handle incoming message."""
@@ -470,37 +622,45 @@ class MeshAI:
             message = alert["message"]
             logger.info(f"ALERT: {message}")
 
-            # Send to alert channel if configured
-            if alert_channel >= 0 and self.connector:
+            # Route through notification router if enabled
+            if self.notification_router:
+                try:
+                    await self.notification_router.process_alert(alert)
+                except Exception as e:
+                    logger.error(f"Notification router error: {e}")
+
+            # Fallback: Send to alert channel if no notification router
+            elif alert_channel >= 0 and self.connector:
                 try:
                     self.connector.send_message(
                         text=message,
-                        destination=None,  # Broadcast
+                        destination=None,
                         channel=alert_channel,
                     )
                     logger.info(f"Alert sent to channel {alert_channel}")
                 except Exception as e:
                     logger.error(f"Failed to send channel alert: {e}")
 
-            # Send DMs to matching subscribers
-            if self.alert_engine and self.subscription_manager:
-                subscribers = self.alert_engine.get_subscribers_for_alert(alert)
-                for sub in subscribers:
-                    user_id = sub["user_id"]
-                    try:
-                        await self._send_sub_dm(user_id, message)
-                        logger.info(f"Alert DM sent to {user_id}: {alert['type']}")
-                    except Exception as e:
-                        logger.error(f"Failed to send alert DM to {user_id}: {e}")
+                # Fallback: Send DMs to matching subscribers
+                if self.alert_engine and self.subscription_manager:
+                    subscribers = self.alert_engine.get_subscribers_for_alert(alert)
+                    for sub in subscribers:
+                        user_id = sub["user_id"]
+                        try:
+                            await self._send_sub_dm(user_id, message)
+                            logger.info(f"Alert DM sent to {user_id}: {alert['type']}")
+                        except Exception as e:
+                            logger.error(f"Failed to send alert DM to {user_id}: {e}")
 
-        self.alert_engine.clear_pending()
+        if self.alert_engine:
+            self.alert_engine.clear_pending()
 
     async def _check_scheduled_subs(self) -> None:
         """Check for and deliver due scheduled reports."""
         from datetime import datetime
         from zoneinfo import ZoneInfo
 
-        tz = ZoneInfo("America/Boise")
+        tz = ZoneInfo(self.config.timezone)
         now = datetime.now(tz)
         current_hhmm = now.strftime("%H%M")
         current_day = now.strftime("%a").lower()
@@ -610,12 +770,21 @@ def main() -> None:
         run_configurator(args.config_file)
         return
 
-    # Load config
-    config = load_config(args.config_file)
+    # Load config - support both old (/data/config.yaml) and new (/data/config/) layouts
+    config_path = args.config_file
+    config_dir = get_config_dir_from_path(config_path)
 
-    # Check if config exists
-    if not args.config_file.exists():
-        logger.warning(f"Config file not found: {args.config_file}")
+    # Check for new multi-file layout first
+    if (config_dir / "config.yaml").exists():
+        logger.info(f"Loading config from multi-file layout: {config_dir}")
+        config = load_config(config_dir)
+    elif config_path.exists():
+        # Fall back to legacy single-file loading
+        logger.info(f"Loading legacy config: {config_path}")
+        from .config import load_config as legacy_load
+        config = legacy_load(config_path)
+    else:
+        logger.warning(f"Config not found at {config_path} or {config_dir}")
         logger.info("Run 'meshai --config' to create one, or copy config.example.yaml")
         sys.exit(1)
 

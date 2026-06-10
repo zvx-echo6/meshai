@@ -26,15 +26,20 @@ INFRASTRUCTURE_ROLES = {"ROUTER", "ROUTER_LATE", "ROUTER_CLIENT"}
 
 # Default thresholds
 DEFAULT_LOCALITY_RADIUS_MILES = 8.0
-DEFAULT_OFFLINE_THRESHOLD_HOURS = 24
-DEFAULT_PACKET_THRESHOLD = 500  # Non-text packets per 24h
-DEFAULT_BATTERY_WARNING_PERCENT = 20
+DEFAULT_OFFLINE_THRESHOLD_HOURS = 2  # Hours before node considered offline
+DEFAULT_PACKET_THRESHOLD = 7200  # Non-text packets per 24h (5/min avg)
+# TODO: behavior pillar uses wrong scale - see meshai-v03-notification-handoff.md bug #2
+# NOTE: This is aligned with notification config's packet_flood threshold.
+# 5 packets/min avg × 60 min × 24 hr = 7,200 packets/day.
+# A node averaging 5+ non-text packets/min is misbehaving.
+DEFAULT_BATTERY_WARNING_PERCENT = 30  # Battery level to warn (30% gives time to respond)
 
-# Utilization thresholds (percentage)
-UTIL_HEALTHY = 15
-UTIL_CAUTION = 20
-UTIL_WARNING = 25
-UTIL_UNHEALTHY = 35
+# Utilization thresholds (percentage) - based on real Meshtastic behavior
+# Firmware starts throttling GPS at 25%, severe degradation above 35%
+UTIL_HEALTHY = 20     # Under 20% = channel is clear
+UTIL_CAUTION = 25     # 20-25% = slight degradation, occasional collisions
+UTIL_WARNING = 35     # 25-35% = severe degradation, firmware throttling
+UTIL_UNHEALTHY = 45   # 35-45% = mesh struggling badly, reliability dropping
 
 # Pillar weights (5-pillar system)
 WEIGHT_INFRASTRUCTURE = 0.30
@@ -58,6 +63,9 @@ class HealthScore:
     infra_online: int = 0
     infra_total: int = 0
     util_percent: float = 0.0
+    util_max_percent: float = 0.0  # Highest node utilization (hotspot indicator)
+    util_method: str = "none"  # "telemetry", "packet_estimate", or "none"
+    util_node_count: int = 0  # Nodes reporting utilization
     coverage_avg_gateways: float = 0.0
     coverage_single_gw_count: int = 0
     coverage_full_count: int = 0
@@ -486,10 +494,19 @@ class MeshHealthEngine:
             data_sources.append(f"{len(all_channels)} ch")
         data_str = ", ".join(data_sources) if data_sources else "nodes only"
 
+        # Log utilization method used
+        util_method = mesh_score.util_method
+        if util_method == "telemetry":
+            util_info = f"util={mesh_score.util_percent:.1f}% (max={mesh_score.util_max_percent:.1f}%, {mesh_score.util_node_count} nodes reporting)"
+        elif util_method == "packet_estimate":
+            util_info = f"util={mesh_score.util_percent:.1f}% (packet estimate fallback)"
+        else:
+            util_info = "util=N/A (no data)"
+
         logger.info(
             f"Mesh health computed: {mesh_health.total_nodes} nodes, "
             f"{mesh_health.total_regions} regions, score {mesh_score.composite:.0f}/100 "
-            f"[{data_str}]"
+            f"[{data_str}] [{util_info}]"
         )
 
         return mesh_health
@@ -541,6 +558,31 @@ class MeshHealthEngine:
         all_nodes = list(nodes.values())
         return self._compute_node_group_score(all_nodes, has_packet_data)
 
+    def _compute_utilization_score(self, util_percent: float) -> float:
+        """Convert utilization percentage to health score using thresholds.
+
+        Thresholds based on real Meshtastic behavior:
+        - Under 20%: Clear channel (score 100)
+        - 20-25%: Slight degradation (score 75-100)
+        - 25-35%: Severe degradation, firmware throttling (score 50-75)
+        - 35-45%: Mesh struggling badly (score 25-50)
+        - Over 45%: Mesh effectively dead (score 0-25)
+        """
+        if util_percent < UTIL_HEALTHY:  # <20%
+            return 100.0
+        elif util_percent < UTIL_CAUTION:  # 20-25%
+            # Interpolate from 100 to 75
+            return 100.0 - ((util_percent - UTIL_HEALTHY) / (UTIL_CAUTION - UTIL_HEALTHY)) * 25
+        elif util_percent < UTIL_WARNING:  # 25-35%
+            # Interpolate from 75 to 50
+            return 75.0 - ((util_percent - UTIL_CAUTION) / (UTIL_WARNING - UTIL_CAUTION)) * 25
+        elif util_percent < UTIL_UNHEALTHY:  # 35-45%
+            # Interpolate from 50 to 25
+            return 50.0 - ((util_percent - UTIL_WARNING) / (UTIL_UNHEALTHY - UTIL_WARNING)) * 25
+        else:  # 45%+
+            # Interpolate from 25 to 0 over next 10%
+            return max(0.0, 25.0 - ((util_percent - UTIL_UNHEALTHY) / 10) * 25)
+
     def _compute_node_group_score(
         self,
         node_list: list[UnifiedNode],
@@ -568,33 +610,84 @@ class MeshHealthEngine:
         else:
             infra_score = 100.0  # No infrastructure = not penalized
 
-        # Channel utilization (based on packet counts if available)
-        # BUG 7 FIX: Use actual Meshtastic airtime calculation
-        if has_packet_data:
+        # Channel utilization - prefer real telemetry over packet estimate
+        #
+        # Priority 1: Use firmware-reported channel_utilization from nodes
+        # This is the most accurate measure - the firmware calculates this
+        # from actual radio activity over the last minute.
+        #
+        # Priority 2: Fall back to packet count estimate if no telemetry
+        # This is a rough approximation using 200ms/packet (MediumFast preset).
+        # It's less accurate because different presets have different airtime,
+        # and it sums packets across all nodes regardless of channel.
+
+        util_percent = 0.0
+        util_max_percent = 0.0
+        util_score = 100.0
+        util_method = "none"
+        util_node_count = 0
+        util_data_available = False
+
+        # Try to get real channel_utilization from infrastructure nodes
+        # Use infrastructure nodes because they're the routers - they see the most traffic
+        util_readings = []
+        for n in infra_nodes:
+            if n.channel_utilization is not None and n.channel_utilization >= 0:
+                util_readings.append(n.channel_utilization)
+
+        # If no infra nodes have it, try all nodes
+        if not util_readings:
+            for n in node_list:
+                if n.channel_utilization is not None and n.channel_utilization >= 0:
+                    util_readings.append(n.channel_utilization)
+
+        if util_readings:
+            # Use the HIGHEST value - the busiest node is the bottleneck
+            # If one router is at 45% utilization, the mesh has a problem
+            # even if other nodes are at 10%
+            util_max_percent = max(util_readings)
+            util_percent = util_max_percent  # Use max for scoring
+            util_score = self._compute_utilization_score(util_percent)
+            util_method = "telemetry"
+            util_node_count = len(util_readings)
+            util_data_available = True
+
+            # Also compute average for informational purposes
+            # (stored in util_percent, max in util_max_percent)
+            # Actually, use max for the score since that's the bottleneck
+
+        elif has_packet_data:
+            # Fallback: Estimate from packet counts
+            # This is a rough approximation - only use when telemetry unavailable
+            #
+            # WARNING: This method has known issues:
+            # - Assumes 200ms airtime per packet (only correct for MediumFast)
+            # - Sums packets across all nodes even on different channels
+            # - Can't distinguish retries from new packets
+            # Use real channel_utilization from telemetry when available.
+
             total_non_text_packets = sum((n.packets_sent_24h - n.text_messages_24h) for n in node_list)
-            # Average airtime per packet on MediumFast: ~200ms
-            # Total available airtime per hour: 3,600,000ms
-            # Utilization = (packets_per_hour * airtime_ms) / total_airtime_ms * 100
             packets_per_hour = total_non_text_packets / 24.0  # 24h window
             airtime_per_packet_ms = 200  # ~200ms on MediumFast preset
             util_percent = (packets_per_hour * airtime_per_packet_ms) / 3_600_000 * 100
+            util_max_percent = util_percent  # No per-node data available
+            util_score = self._compute_utilization_score(util_percent)
+            util_method = "packet_estimate"
+            util_node_count = 0
+            util_data_available = True
 
-            # Apply scoring thresholds with interpolation
-            if util_percent < UTIL_HEALTHY:  # <15%
-                util_score = 100.0
-            elif util_percent < UTIL_CAUTION:  # 15-20%
-                util_score = 100.0 - ((util_percent - UTIL_HEALTHY) / (UTIL_CAUTION - UTIL_HEALTHY)) * 25
-            elif util_percent < UTIL_WARNING:  # 20-25%
-                util_score = 75.0 - ((util_percent - UTIL_CAUTION) / (UTIL_WARNING - UTIL_CAUTION)) * 25
-            elif util_percent < UTIL_UNHEALTHY:  # 25-35%
-                util_score = 50.0 - ((util_percent - UTIL_WARNING) / (UTIL_UNHEALTHY - UTIL_WARNING)) * 25
-            else:  # 35%+
-                util_score = max(0.0, 25.0 - ((util_percent - UTIL_UNHEALTHY) / 10) * 25)
+            logger.debug(
+                f"Utilization using packet estimate fallback: {util_percent:.1f}% "
+                f"({total_non_text_packets} non-text packets/24h)"
+            )
         else:
-            # No packet data available - assume healthy utilization
-            # This prevents penalizing the score when we simply don't have data
+            # No utilization data available - don't penalize
             util_percent = 0.0
+            util_max_percent = 0.0
             util_score = 100.0
+            util_method = "none"
+            util_node_count = 0
+            util_data_available = False
 
         # Node behavior (flagged nodes)
         flagged = [n for n in node_list if (n.packets_sent_24h - n.text_messages_24h) > self.packet_threshold]
@@ -674,13 +767,16 @@ class MeshHealthEngine:
             infra_online=infra_online,
             infra_total=infra_total,
             util_percent=util_percent,
+            util_max_percent=util_max_percent,
+            util_method=util_method,
+            util_node_count=util_node_count,
             coverage_avg_gateways=coverage_avg_gw,
             coverage_single_gw_count=coverage_single,
             coverage_full_count=coverage_full,
             flagged_nodes=flagged_count,
             battery_warnings=battery_warnings,
             solar_index=solar_index,
-            util_data_available=has_packet_data,
+            util_data_available=util_data_available,
             coverage_data_available=coverage_available,
         )
 

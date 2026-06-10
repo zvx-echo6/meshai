@@ -1,0 +1,57 @@
+# MeshAI Local Configuration Template
+# Copy to /data/config/local.yaml and customize for your deployment
+# This file is gitignored - contains operator-identifying values
+
+# Operator Identity
+identity:
+  name: ""                    # Bot display name
+  owner: ""                   # Owner callsign/name
+  primary_node_id: ""         # Your main mesh node ID
+  contact_email: ""           # For NWS user_agent, SMTP from
+
+# Region Coordinates
+# Map your region names to their lat/lon center points
+regions:
+  "Example Region":
+    lat: 0.0
+    lon: 0.0
+  # Add more regions as needed:
+  # "Another Region":
+  #   lat: 42.5
+  #   lon: -114.5
+
+# Mesh Data Source URLs
+mesh_sources:
+  meshmonitor_url: ""         # Your MeshMonitor instance
+  sources:
+    # Per-source URL overrides (matches names in mesh_sources.yaml)
+    "My-Meshview":
+      url: ""
+    # "My-MeshMonitor":
+    #   url: ""
+
+# Infrastructure Hosts
+infrastructure:
+  tcp_host: ""                # Meshtastic TCP host (meshtasticd)
+  qdrant_host: ""             # Qdrant vector DB (optional)
+  tei_host: ""                # TEI embedding service (optional)
+  sparse_host: ""             # Sparse embedding service (optional)
+
+# Environmental Feed Center Point
+env_center:
+  latitude: 0.0               # Center of your coverage area
+  longitude: 0.0
+
+# Notification Targets
+notification_targets:
+  smtp_from: ""               # Email from address
+  smtp_recipients: []         # Default email recipients
+  webhook_urls: []            # Webhook endpoints
+  alert_node_ids: []          # Node IDs for mesh DM alerts
+
+# Critical Infrastructure Nodes (short names)
+critical_nodes: []
+# Example:
+# critical_nodes:
+#   - "MHR"
+#   - "HPR"

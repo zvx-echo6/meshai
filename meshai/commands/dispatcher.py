@@ -161,6 +161,8 @@ def create_dispatcher(
     data_store=None,
     health_engine=None,
     subscription_manager=None,
+    env_store=None,
+    notification_router=None,
 ) -> CommandDispatcher:
     """Create and populate command dispatcher with default commands.
 
@@ -172,6 +174,7 @@ def create_dispatcher(
         data_store: MeshDataStore for neighbor data
         health_engine: MeshHealthEngine for infrastructure detection
         subscription_manager: SubscriptionManager for subscription commands
+        env_store: EnvironmentalStore for weather/propagation commands
 
     Returns:
         Configured CommandDispatcher
@@ -222,26 +225,89 @@ def create_dispatcher(
         dispatcher.register(alias_handler)
 
     # Register subscription commands
-    sub_cmd = SubCommand(subscription_manager, mesh_reporter, data_store)
+    sub_cmd = SubCommand(subscription_manager, mesh_reporter, data_store, notification_router)
     dispatcher.register(sub_cmd)
     for alias in getattr(sub_cmd, 'aliases', []):
-        alias_handler = SubCommand(subscription_manager, mesh_reporter, data_store)
+        alias_handler = SubCommand(subscription_manager, mesh_reporter, data_store, notification_router)
         alias_handler.name = alias
         dispatcher.register(alias_handler)
 
-    unsub_cmd = UnsubCommand(subscription_manager)
+    unsub_cmd = UnsubCommand(subscription_manager, notification_router)
     dispatcher.register(unsub_cmd)
     for alias in getattr(unsub_cmd, 'aliases', []):
-        alias_handler = UnsubCommand(subscription_manager)
+        alias_handler = UnsubCommand(subscription_manager, notification_router)
         alias_handler.name = alias
         dispatcher.register(alias_handler)
 
-    mysubs_cmd = MySubsCommand(subscription_manager)
+    mysubs_cmd = MySubsCommand(subscription_manager, notification_router)
     dispatcher.register(mysubs_cmd)
     for alias in getattr(mysubs_cmd, 'aliases', []):
-        alias_handler = MySubsCommand(subscription_manager)
+        alias_handler = MySubsCommand(subscription_manager, notification_router)
         alias_handler.name = alias
         dispatcher.register(alias_handler)
+
+    # Register environmental commands
+    if env_store:
+        from .alerts_cmd import AlertsCommand
+        from .solar_cmd import SolarCommand
+
+        alerts_cmd = AlertsCommand(env_store)
+        dispatcher.register(alerts_cmd)
+
+        solar_cmd = SolarCommand(env_store)
+        dispatcher.register(solar_cmd)
+
+        # Register !hf as an alias for !solar
+        hf_cmd = SolarCommand(env_store)
+        hf_cmd.name = "hf"
+        dispatcher.register(hf_cmd)
+
+        # Register !wx-alerts as an alias for !alerts
+        wx_cmd = AlertsCommand(env_store)
+        wx_cmd.name = "wx-alerts"
+        dispatcher.register(wx_cmd)
+
+        # Register fire command
+        from .fire_cmd import FireCommand
+        fire_cmd = FireCommand(env_store)
+        dispatcher.register(fire_cmd)
+
+        # Register avalanche command
+        from .avy_cmd import AvalancheCommand
+        avy_cmd = AvalancheCommand(env_store)
+        dispatcher.register(avy_cmd)
+
+        # Register !avalanche as alias for !avy
+        avalanche_cmd = AvalancheCommand(env_store)
+        avalanche_cmd.name = "avalanche"
+        dispatcher.register(avalanche_cmd)
+
+        # Register streams command
+        from .streams_cmd import StreamsCommand
+        streams_cmd = StreamsCommand(env_store)
+        dispatcher.register(streams_cmd)
+        for alias in getattr(streams_cmd, 'aliases', []):
+            alias_handler = StreamsCommand(env_store)
+            alias_handler.name = alias
+            dispatcher.register(alias_handler)
+
+        # Register roads command
+        from .roads_cmd import RoadsCommand
+        roads_cmd = RoadsCommand(env_store)
+        dispatcher.register(roads_cmd)
+        for alias in getattr(roads_cmd, 'aliases', []):
+            alias_handler = RoadsCommand(env_store)
+            alias_handler.name = alias
+            dispatcher.register(alias_handler)
+
+        # Register hotspots command (NASA FIRMS satellite fire detection)
+        from .hotspots_cmd import HotspotsCommand
+        hotspots_cmd = HotspotsCommand(env_store)
+        dispatcher.register(hotspots_cmd)
+        for alias in getattr(hotspots_cmd, 'aliases', []):
+            alias_handler = HotspotsCommand(env_store)
+            alias_handler.name = alias
+            dispatcher.register(alias_handler)
 
     # Register custom commands
     if custom_commands:

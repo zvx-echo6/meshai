@@ -65,6 +65,81 @@ _MESH_KEYWORDS = {
     "repeaters", "regions", "localities", "score", "status",
 }
 
+# v0.6-5: env keywords expand the mesh-question detector so the LLM gets
+# env_reporter blocks when the user asks about fires/quakes/weather/etc.
+# Each keyword maps to a coarse subtype used by _detect_env_subtype.
+_ENV_KEYWORDS_TO_SUBTYPE: dict[str, str] = {
+    # fires
+    "fire": "fires", "fires": "fires", "wildfire": "fires",
+    "wildfires": "fires", "hotspot": "fires", "hotspots": "fires",
+    "burning": "fires", "smoke": "fires",
+    # quakes
+    "quake": "quakes", "quakes": "quakes", "earthquake": "quakes",
+    "earthquakes": "quakes", "seismic": "quakes", "tsunami": "quakes",
+    # gauges (placed BEFORE weather alerts so "flood" wins over "warning"
+    # in cases like "river flood warning")
+    "flood": "gauges", "flooding": "gauges",
+    "gauge": "gauges", "river": "gauges", "stream": "gauges",
+    # weather alerts
+    "warning": "alerts", "watch": "alerts", "advisory": "alerts",
+    "tornado": "alerts", "thunderstorm": "alerts", "blizzard": "alerts",
+    # space weather + band conditions
+    "swpc": "swpc", "geomag": "swpc", "solar": "swpc", "kp": "swpc",
+    "propagation": "swpc", "aurora": "swpc",
+    "band": "swpc", "bands": "swpc", "hf": "swpc",
+    # traffic / roads
+    "road": "traffic", "roads": "traffic", "jam": "traffic",
+    "crash": "traffic", "closure": "traffic", "511": "traffic",
+    "incident": "traffic", "incidents": "traffic",
+    # v0.7-fire-4-final: "traffic"/"commute"/"highway" added so a
+    # query literally mentioning "traffic" hits the traffic subtype.
+    "traffic": "traffic", "commute": "traffic", "highway": "traffic",
+    # generic
+    "storm": "alerts", "weather": "alerts",
+}
+
+
+# v0.7-fire-4-final: multi-word phrase triggers. Matched as whole-
+# phrase substrings of the message (NOT single-word membership) so
+# they carry multi-word semantics without a single word like "why"
+# or "filtered" firing false-positives in unrelated queries.
+# Drop-audit phrases unlock the env scope path so
+# env_reporter.build_drop_audit lands in the system prompt.
+_ENV_PHRASES_TO_SUBTYPE: dict[str, str] = {
+    "why didn't":       "drop_audit",
+    "why didnt":        "drop_audit",
+    "why am i not":     "drop_audit",
+    "why am i missing": "drop_audit",
+    "what was filtered":"drop_audit",
+    "drop audit":       "drop_audit",
+    "filtered out":     "drop_audit",
+}
+
+
+def _detect_env_subtype(message_lower: str) -> Optional[str]:
+    """Return the env subtype matched by the first env keyword/phrase
+    in the message. `None` when no env keyword matches.
+
+    v0.7-fire-4-final: phrase map is checked FIRST so multi-word
+    triggers (e.g. "why didn't I hear ...") work without their
+    constituent single words (e.g. "why" alone) firing false
+    positives. Single-word map then uses set-intersection on
+    tokenized words so partial-word collisions ("firearm" / "fire")
+    don't fire.
+    """
+    if not message_lower:
+        return None
+    # 1) Phrase substring match (multi-word semantics).
+    for phrase, subtype in _ENV_PHRASES_TO_SUBTYPE.items():
+        if phrase in message_lower:
+            return subtype
+    # 2) Single-word tokenized match.
+    words = set(re.findall(r"\b\w+\b", message_lower))
+    for kw, subtype in _ENV_KEYWORDS_TO_SUBTYPE.items():
+        if kw in words:
+            return subtype
+    return None
+
 # Phrases that indicate mesh questions
 _MESH_PHRASES = [
     "how's the mesh",
@@ -87,6 +162,16 @@ _MESH_PHRASES = [
     "how are",
 ]
 
+# Keywords that indicate environmental/weather/propagation questions
+_ENV_KEYWORDS = {
+    "weather", "alert", "warning", "fire", "wildfire", "smoke", "burn",
+    "road", "closure", "snow", "avalanche", "avy", "backcountry",
+    "solar", "hf", "propagation", "kp", "aurora", "blackout",
+    "flood", "stream", "river", "ducting", "tropo", "duct",
+    "uhf", "vhf", "band", "conditions", "forecast", "sfi",
+    "ionosphere", "geomagnetic", "storm", "traffic", "highway", "interstate", "gauge",
+}
+
 # City name to region mapping (hardcoded fallback)
 # City/alias mapping now built from config - see _build_alias_map()
 
@@ -100,8 +185,8 @@ coverage gap, and problem node on the mesh. USE THIS DATA in your response.
 
 RESPONSE STYLE:
 - DETAILED, data-driven responses. Reference specific node names, scores, gateway counts.
-- Use LOCAL NAMES from the region descriptions (Magic Valley, Treasure Valley, etc.)
-- ALWAYS use local region names: say "Treasure Valley" not "South Western ID", say "Magic Valley" not "South Central ID". The code names mean nothing to users.
+- Use LOCAL NAMES from the region descriptions when available.
+{region_name_instructions}
 - When listing nodes, be concise: "BT Base c8d5 — via AIDA" not "BT Base c8d5 (c8d5) is connected via AIDA-MeshMonitor in the South Western ID region."
 - Don't repeat the region on every line when listing multiple nodes in the same region. Say the region once at the top, then just list the nodes.
 - Don't include shortnames in parentheses when you're already giving the full name — it's noise.
@@ -187,6 +272,7 @@ class MessageRouter:
         source_manager=None,
         health_engine=None,
         mesh_reporter=None,
+        env_store=None,
     ):
         self.config = config
         self.connector = connector
@@ -199,6 +285,7 @@ class MessageRouter:
         self.source_manager = source_manager
         self.health_engine = health_engine
         self.mesh_reporter = mesh_reporter
+        self.env_store = env_store
         self.continuations = ContinuationState(max_continuations=3)
 
         # Per-user mesh context tracking for follow-up handling
@@ -317,28 +404,30 @@ class MessageRouter:
         if not query:
             return RouteResult(RouteType.IGNORE)
 
-        # Route to LLM
+        # v0.7-fire-tracker-4-revised: the LLM DM path with env_reporter
+        # injection is the natural-language interface. No bolt-on
+        # structured-command parallel.
         return RouteResult(RouteType.LLM, query=query)
 
     def _is_mesh_question(self, message: str) -> bool:
-        """Check if message is asking about mesh health/status.
+        """Check if message is asking about mesh health/status OR env state.
 
-        Args:
-            message: User message text
-
-        Returns:
-            True if this is a mesh-related question
+        v0.6-5: env keywords (fire/quake/flood/etc.) also trigger the
+        mesh-question path so the env_reporter blocks land in the system
+        prompt. Single detector per Matt\'s spec.
         """
         msg_lower = message.lower()
 
-        # Check for mesh phrases
+        # Mesh phrases.
         for phrase in _MESH_PHRASES:
             if phrase in msg_lower:
                 return True
 
-        # Check for mesh keywords
+        # Mesh keywords + env keywords.
         words = set(re.findall(r'\b\w+\b', msg_lower))
         if words & _MESH_KEYWORDS:
+            return True
+        if _detect_env_subtype(msg_lower) is not None:
             return True
 
         return False
@@ -346,16 +435,18 @@ class MessageRouter:
     def _detect_mesh_scope(self, message: str) -> tuple[str, Optional[str]]:
         """Detect the scope of a mesh question.
 
-        Args:
-            message: User message text
-
-        Returns:
-            Tuple of (scope_type, scope_value):
-            - ("node", "{identifier}") if asking about specific node
-            - ("region", "{region_name}") if asking about specific region
-            - ("mesh", None) for general mesh questions
+        Returns one of:
+          - ("env", subtype)  : fires/quakes/alerts/gauges/traffic/swpc
+          - ("node", id)      : specific node
+          - ("region", name)  : specific region
+          - ("mesh", None)    : general mesh question
         """
         msg_lower = message.lower()
+
+        # === ENV (v0.6-5: check first; env scope routes through env_reporter) ===
+        env_subtype = _detect_env_subtype(msg_lower)
+        if env_subtype is not None:
+            return ("env", env_subtype)
 
         # === NODE MATCHING (check first - more specific) ===
         if self.health_engine and self.health_engine.mesh_health:
@@ -624,7 +715,9 @@ class MessageRouter:
                 cmd_lines.append("")
                 cmd_lines.append(
                     "CRITICAL: ONLY mention commands in the list above when asked about commands. "
-                    "If a command is not listed here, it does NOT exist. Do not invent commands."
+                    "If a command is not listed here, it does NOT exist. Do not invent commands. "
+                    "If no command list appears above, you have NO commands -- say so plainly "
+                    "instead of guessing names."
                 )
                 system_prompt += "\n".join(cmd_lines)
 
@@ -681,16 +774,52 @@ class MessageRouter:
 
         should_inject_mesh = is_direct_mesh_question or is_followup
 
-        if self.source_manager and self.mesh_reporter and should_inject_mesh:
-            # Detect scope from current message
+        # v0.7-fire-tracker-4: scope detection hoisted above its first
+        # use. Pre-fix, the env_reporter check below referenced scope_type
+        # while the assignment lived ~15 lines later inside the
+        # source_manager branch -- UnboundLocalError on every env query
+        # ("are there any fires?", "what's the weather?", etc.), the
+        # exception got caught in main.py and the bot went silent.
+        scope_type: str = "mesh"
+        scope_value = None
+        if should_inject_mesh:
             scope_type, scope_value = self._detect_mesh_scope(query)
-
-            # For follow-ups with no detected scope, use previous scope
+            # For follow-ups with no detected scope, use previous scope.
             if is_followup and scope_type == "mesh" and scope_value is None:
                 prev_scope = user_ctx.get("last_scope", ("mesh", None))
                 if prev_scope[0] != "mesh" or prev_scope[1] is not None:
                     scope_type, scope_value = prev_scope
-                    logger.debug(f"Using previous scope for follow-up: {scope_type}, {scope_value}")
+                    logger.debug(
+                        f"Using previous scope for follow-up: "
+                        f"{scope_type}, {scope_value}"
+                    )
+
+        # v0.6-5 env_reporter: when scope is "env" OR when injecting mesh
+        # context, append the env_reporter blocks. The reporter itself gates
+        # per-adapter via adapter_meta.include_in_llm_context.
+        if should_inject_mesh and scope_type == "env":
+            try:
+                from meshai.notifications.env_reporter import env_reporter
+                env_block = env_reporter.build_all()
+                if env_block:
+                    system_prompt += "\n\n" + env_block
+                # Drop audit is useful for "why didn\'t I hear about X?" --
+                # always include the most-recent hour when env scope.
+                drop_block = env_reporter.build_drop_audit(hours=1)
+                if drop_block:
+                    system_prompt += "\n\n" + drop_block
+                # v0.7-fire-4-final: positive-framed grounding clause.
+                # Closes Class B hallucination (LLM inventing counts
+                # / place names when an env block is empty -- e.g.
+                # "144 earthquakes worldwide" against an empty
+                # quake_events 24h window).
+                system_prompt += "\n\n" + ENV_GROUNDING_CLAUSE
+            except Exception:
+                logger.exception("env_reporter injection failed")
+
+        if self.source_manager and self.mesh_reporter and should_inject_mesh:
+            # v0.7-fire-tracker-4: scope already detected above; no
+            # second call needed.
 
             # Always include Tier 1 summary for mesh questions
             tier1 = self.mesh_reporter.build_tier1_summary()
@@ -709,8 +838,21 @@ class MessageRouter:
             if recommendations:
                 system_prompt += "\n\n" + recommendations
 
-            # Add mesh awareness instructions
-            system_prompt += _MESH_AWARENESS_PROMPT
+            # Add mesh awareness instructions with dynamic region name mappings
+            region_name_instructions = ""
+            if self.config.mesh_intelligence and self.config.mesh_intelligence.regions:
+                # Build region name mappings for the prompt
+                mappings = []
+                for region in self.config.mesh_intelligence.regions:
+                    local = getattr(region, "local_name", "") or ""
+                    if local and local != region.name:
+                        mappings.append(f'say "{local}" not "{region.name}"')
+                if mappings:
+                    region_name_instructions = f"- ALWAYS use local region names: {', '.join(mappings)}. The code names mean nothing to users."
+
+            system_prompt += _MESH_AWARENESS_PROMPT.format(
+                region_name_instructions=region_name_instructions
+            )
 
             # Build region geography from config dynamically
             if self.config.mesh_intelligence and self.config.mesh_intelligence.regions:
@@ -736,6 +878,16 @@ class MessageRouter:
         else:
             # Not a mesh question
             self._update_user_mesh_context(message.sender_id, is_mesh=False)
+
+        # 7. Environmental context injection
+        if self.env_store:
+            query_lower = query.lower() if query else ""
+            env_relevant = any(kw in query_lower for kw in _ENV_KEYWORDS)
+            # Also inject env context if mesh context is being injected
+            if env_relevant or should_inject_mesh:
+                env_summary = self.env_store.get_summary()
+                if env_summary:
+                    system_prompt += "\n\n" + env_summary
 
         # DEBUG: Log system prompt status
         logger.debug(f"System prompt length: {len(system_prompt)} chars")
@@ -835,3 +987,18 @@ class MessageRouter:
             history=self.history,
         )
 
+
+# v0.7-fire-4-final: positive-framed grounding clause appended to
+# the system prompt whenever env scope is detected. Frames the
+# constraint as "answer from the blocks" rather than "do not
+# hallucinate" (Matt's mitigation guidance) so the LLM doesn't
+# default to a blanket apology disclaimer every other message.
+ENV_GROUNDING_CLAUSE = (
+    "ENVIRONMENTAL CONTEXT GROUNDING:\n"
+    "Answer only from the environmental context blocks above. If a "
+    "block is empty or missing for an adapter the user asked about "
+    "(e.g. no NWS alerts in the block), say something like \"No "
+    "active <category> right now\" -- never invent specific numbers, "
+    "place names, or counts. If you do not have a relevant block for "
+    "the question, say so briefly."
+)

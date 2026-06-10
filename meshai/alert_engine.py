@@ -68,6 +68,7 @@ class AlertEngine:
         subscription_manager: "SubscriptionManager",
         config: "MeshIntelligenceConfig",
         db_path: str = "",
+        timezone: str = "America/Boise",
     ):
         self._health = health_engine
         self._reporter = reporter
@@ -75,6 +76,7 @@ class AlertEngine:
         self._rules = config.alert_rules
         self._critical_nodes = set(n.upper() for n in (config.critical_nodes or []))
         self._db_path = db_path
+        self._timezone = timezone
 
         self._states: dict[str, AlertState] = {}
         self._prev_infra_online: dict[int, bool] = {}
@@ -140,7 +142,7 @@ class AlertEngine:
                         alerts.append(self._make_alert(
                             alert_type, name, short, node_num, region,
                             f"{emoji} {name} went offline in {region_display}.{escalation}",
-                            is_critical,
+                            "immediate" if is_critical else "priority",
                         ))
                         state.fire(now)
 
@@ -151,7 +153,7 @@ class AlertEngine:
                         alerts.append(self._make_alert(
                             "infra_recovery", name, short, node_num, region,
                             f"\u2705 {name} is back online in {region_display}.",
-                            is_critical,
+                            "immediate" if is_critical else "priority",
                         ))
                         state.resolve()
 
@@ -194,7 +196,7 @@ class AlertEngine:
                         alerts.append(self._make_alert(
                             "power_source_change", name, short, node_num, region,
                             f"\u26A1 {name} switched from USB to battery in {region_display}. Possible power outage.",
-                            is_critical,
+                            "immediate" if is_critical else "priority",
                         ))
                         state.fire(now)
                 elif prev_source == "battery" and current_source == "usb":
@@ -215,7 +217,7 @@ class AlertEngine:
                             alerts.append(self._make_alert(
                                 "battery_emergency", name, short, node_num, region,
                                 f"\U0001F6A8 {name} battery EMERGENCY at {bat:.0f}% in {region_display}.",
-                                is_critical,
+                                "immediate" if is_critical else "priority",
                             ))
                             state.fire(now)
 
@@ -227,7 +229,7 @@ class AlertEngine:
                             alerts.append(self._make_alert(
                                 "battery_critical", name, short, node_num, region,
                                 f"\U0001F50B {name} battery critical at {bat:.0f}% in {region_display}.",
-                                is_critical,
+                                "immediate" if is_critical else "priority",
                             ))
                             state.fire(now)
 
@@ -239,7 +241,7 @@ class AlertEngine:
                             alerts.append(self._make_alert(
                                 "battery_warning", name, short, node_num, region,
                                 f"\U0001F50B {name} battery low at {bat:.0f}% in {region_display}.",
-                                is_critical,
+                                "immediate" if is_critical else "priority",
                             ))
                             state.fire(now)
 
@@ -259,14 +261,18 @@ class AlertEngine:
                         alerts.append(self._make_alert(
                             "battery_trend", name, short, node_num, region,
                             f"\U0001F50B {name} battery declining: {trend['start']:.0f}% \u2192 {trend['end']:.0f}% over 7 days ({trend['rate']:.1f}%/day) in {region_display}.",
-                            is_critical,
+                            "immediate" if is_critical else "priority",
                         ))
                         state.fire(now)
 
+            # NOTE: has_solar is never populated in current version.
+            # Solar Quality Engine (v0.3) will replace this with real solar
+            # monitoring based on location, weather, and inversion data.
+            # For now this check effectively never fires.
             if self._rules.solar_not_charging and getattr(node, "has_solar", False) and 0 < bat <= 100:
                 try:
                     from zoneinfo import ZoneInfo
-                    tz = ZoneInfo("America/Boise")
+                    tz = ZoneInfo(self._timezone)
                     hour = datetime.now(tz).hour
                     if 8 <= hour <= 18:
                         prev_bat = self._prev_battery.get(node_num)
@@ -277,7 +283,7 @@ class AlertEngine:
                                 alerts.append(self._make_alert(
                                     "solar_not_charging", name, short, node_num, region,
                                     f"\u2600\uFE0F {name} solar not charging in {region_display}.",
-                                    is_critical,
+                                    "immediate" if is_critical else "priority",
                                 ))
                                 state.fire(now)
                 except Exception:
@@ -358,7 +364,7 @@ class AlertEngine:
                         alerts.append(self._make_alert(
                             "infra_single_gateway", name, short, node_num, region,
                             f"\u26A0\uFE0F {name} dropped to single gateway in {region_display}. At risk if gateway fails.",
-                            is_critical,
+                            "immediate" if is_critical else "priority",
                         ))
                         state.fire(now)
                 elif prev_gw is not None and prev_gw <= 1.0 and node.avg_gateways > 1.0:
@@ -391,7 +397,7 @@ class AlertEngine:
                             "message": f"\U0001F4E1 Feeder gateway {feeder} stopped responding.",
                             "scope_type": "mesh",
                             "scope_value": None,
-                            "is_critical": False,
+                            "severity": "routine",
                         })
                         state.fire(now)
 
@@ -432,7 +438,7 @@ class AlertEngine:
                             "message": f"\U0001F6A8 TOTAL BLACKOUT: All infrastructure in {region_display} is offline!",
                             "scope_type": "region",
                             "scope_value": region.name,
-                            "is_critical": True,
+                            "severity": "immediate",
                         })
                         state.fire(now)
 
@@ -463,7 +469,7 @@ class AlertEngine:
                         "message": f"\U0001F4C9 Mesh health dropped to {current:.0f}/100 (threshold: {threshold}).",
                         "scope_type": "mesh",
                         "scope_value": None,
-                        "is_critical": False,
+                        "severity": "routine",
                     })
                     state.fire(now)
             elif current >= threshold:
@@ -492,7 +498,7 @@ class AlertEngine:
                             "message": f"\U0001F4C9 {region_display} health dropped to {current:.0f}/100 (threshold: {threshold}).",
                             "scope_type": "region",
                             "scope_value": region.name,
-                            "is_critical": False,
+                            "severity": "routine",
                         })
                         state.fire(now)
                 elif current >= threshold:
@@ -544,7 +550,7 @@ class AlertEngine:
             logger.debug(f"Battery trend query error: {e}")
             return None
 
-    def _make_alert(self, alert_type, name, short, node_num, region, message, is_critical):
+    def _make_alert(self, alert_type, name, short, node_num, region, message, severity="priority"):
         return {
             "type": alert_type,
             "node_name": name,
@@ -554,7 +560,7 @@ class AlertEngine:
             "message": message,
             "scope_type": "region" if region and region != "Unknown" else "mesh",
             "scope_value": region if region and region != "Unknown" else None,
-            "is_critical": is_critical,
+            "severity": severity,
         }
 
     def _get_region_display(self, region: str) -> str:
@@ -581,3 +587,135 @@ class AlertEngine:
             scope_type=alert.get("scope_type"),
             scope_value=alert.get("scope_value"),
         )
+
+    def check_environmental(self, env_store) -> list[dict]:
+        """Check environmental feeds for alertable conditions.
+
+        Args:
+            env_store: EnvironmentalStore instance
+
+        Returns:
+            List of alert dicts
+        """
+        alerts = []
+        now = time.time()
+
+        # NWS severe weather affecting mesh zones
+        mesh_zones = set(getattr(env_store, "_mesh_zones", []))
+        for evt in env_store.get_active(source="nws"):
+            if evt.get("severity") not in ("severe", "extreme", "warning"):
+                continue
+            event_zones = set(evt.get("areas", []))
+            if mesh_zones and not (event_zones & mesh_zones):
+                continue
+            key = f"env_nws_{evt['event_id']}"
+            state = self._get_state(key)
+            if not state.should_fire(now):
+                continue
+            state.fire(now)
+            alerts.append({
+                "type": "weather_warning",
+                "message": f"Warning: {evt['event_type']}: {evt.get('headline', '')[:150]}",
+                "node_num": None,
+                "node_name": evt["event_type"],
+                "node_short": "NWS",
+                "region": "",
+                "scope_type": "mesh",
+                "scope_value": None,
+                "severity": "immediate" if evt["severity"] == "extreme" else "priority",
+            })
+
+        # SWPC R-scale >= 3 (HF blackout affecting mesh backhaul)
+        swpc = env_store.get_swpc_status()
+        if swpc and swpc.get("r_scale", 0) >= 3:
+            r_scale = swpc["r_scale"]
+            key = f"env_swpc_r{r_scale}"
+            state = self._get_state(key)
+            if state.should_fire(now):
+                state.fire(now)
+                alerts.append({
+                    "type": "hf_blackout",
+                    "message": f"Warning: R{r_scale} HF Radio Blackout -- mesh backhaul links may degrade",
+                    "severity": "priority",
+                    "node_num": None,
+                    "node_name": f"R{r_scale} Blackout",
+                    "node_short": "SWPC",
+                    "region": "",
+                    "scope_type": "mesh",
+                    "scope_value": None,
+                    "severity": "immediate" if r_scale >= 4 else "priority",
+                })
+
+        # Tropospheric ducting (informational -- not critical but operators want to know)
+        ducting = env_store.get_ducting_status()
+        if ducting and ducting.get("condition") in ("surface_duct", "elevated_duct"):
+            key = "env_ducting_active"
+            state = self._get_state(key)
+            if state.should_fire(now):
+                state.fire(now)
+                condition = ducting.get("condition", "ducting").replace("_", " ")
+                gradient = ducting.get("min_gradient", "?")
+                alerts.append({
+                    "type": "tropospheric_ducting",
+                    "message": f"Tropospheric {condition} detected (dM/dz {gradient} M-units/km)",
+                    "severity": "routine",
+                    "node_num": None,
+                    "node_name": "Ducting",
+                    "node_short": "TROPO",
+                    "region": "",
+                    "scope_type": "mesh",
+                    "scope_value": None,
+                    "severity": "routine",
+                })
+
+        # Wildfire proximity alerts
+        fires = env_store.get_active(source="nifc")
+        for fire in fires:
+            distance_km = fire.get("distance_km")
+            if distance_km is None:
+                continue
+
+            name = fire.get("name", "Unknown")
+            acres = fire.get("acres", 0)
+            pct = fire.get("pct_contained", 0)
+            anchor = fire.get("nearest_anchor", "mesh area")
+
+            if distance_km < 25:
+                # Critical - fire within 25km
+                key = f"env_fire_critical_{name}"
+                state = self._get_state(key)
+                if state.should_fire(now):
+                    state.fire(now)
+                    alerts.append({
+                        "type": "wildfire_proximity",
+                        "message": f"Wildfire '{name}' within {int(distance_km)} km of {anchor} -- {int(acres):,} ac, {int(pct)}% contained",
+                        "severity": "immediate",
+                        "node_num": None,
+                        "node_name": name,
+                        "node_short": "FIRE",
+                        "region": anchor,
+                        "scope_type": "mesh",
+                        "scope_value": None,
+                        "severity": "immediate",
+                    })
+
+            elif distance_km < 50:
+                # Warning - fire within 50km
+                key = f"env_fire_warning_{name}"
+                state = self._get_state(key)
+                if state.should_fire(now):
+                    state.fire(now)
+                    alerts.append({
+                        "type": "wildfire_proximity",
+                        "message": f"Wildfire '{name}' {int(distance_km)} km from {anchor} -- {int(acres):,} ac, {int(pct)}% contained",
+                        "severity": "priority",
+                        "node_num": None,
+                        "node_name": name,
+                        "node_short": "FIRE",
+                        "region": anchor,
+                        "scope_type": "mesh",
+                        "scope_value": None,
+                        "severity": "routine",
+                    })
+
+        return alerts

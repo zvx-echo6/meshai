@@ -630,7 +630,7 @@ class MeshReporter:
                 usb += 1
             elif node.battery_percent >= 50:
                 ok += 1
-            elif node.battery_percent >= 20:
+            elif node.battery_percent >= 30:
                 low += 1
             else:
                 critical += 1
