@@ -94,13 +94,14 @@ export default function Layout({ children }: LayoutProps) {
       <aside className="w-[220px] flex-shrink-0 bg-bg-card border-r border-border flex flex-col overflow-y-auto">
         {/* Logo */}
         <div className="p-5 border-b border-border">
-          <div className="flex items-center gap-3">
-            <div className="w-[3px] h-8 bg-accent flex-shrink-0" />
-            <div>
-              <div className="font-sans font-bold text-white text-[15px] leading-tight tracking-tight">MeshAI</div>
-              <div className="text-xs font-mono text-[#666]">
-                v{status?.version || '...'}
-              </div>
+          <div className="flex flex-col justify-center">
+            <img
+              src="/meshai-logo.png"
+              alt="MeshAI"
+              className="w-[180px] block -mx-4"
+            />
+            <div className="font-mono text-[10px] text-[#555] mt-1">
+              v{status?.version || '...'}
             </div>
           </div>
         </div>
