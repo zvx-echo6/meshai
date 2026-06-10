@@ -324,8 +324,12 @@ def _render(*, event_type, area_desc, geocoder_city, county, state,
     else:
         time_seg = ""
     area = (area_desc or "").split(";")[0].strip()
-    if len(area) > 50:
-        area = area[:50].rsplit(" ", 1)[0]
+    _area_limit = int(adapter_config.nws.area_max_chars)
+    if len(area) > _area_limit:
+        cut = area[:_area_limit].rsplit(" ", 1)[0]
+        if not cut:
+            cut = area[:_area_limit]
+        area = cut + "\u2026"
     if time_seg and area:
         line2 = f"{time_seg} — {area}"
     elif time_seg:

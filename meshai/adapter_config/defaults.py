@@ -576,6 +576,11 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "type": "int",
         "description": "Maximum characters for the locations field on line 4 of NWS wire. Truncates at word boundary.",
     },
+    ("nws", "area_max_chars"): {
+        "default": 80,
+        "type": "int",
+        "description": "Maximum characters for the area field on line 2 of NWS wire. Truncates at last word boundary.",
+    },
 
     # =================================================================
     # AVALANCHE -- 1 setting (min danger level broadcast floor)
