@@ -41,20 +41,38 @@ interface NotificationRuleConfig {
 interface NotificationToggle {
   name: string
   enabled: boolean
-  min_severity: string
   regions: string[]
   severity_channels: Record<string, string[]>
-  broadcast_channel: number | null
-  node_ids: string[]
-  smtp_host: string
-  smtp_port: number
-  smtp_user: string
-  smtp_password: string
-  smtp_tls: boolean
-  from_address: string
-  recipients: string[]
-  webhook_url: string
-  webhook_headers: Record<string, string>
+  freshness_seconds?: number
+  cooldown_seconds?: number
+  // Legacy fields (deprecated, use sinks instead)
+  min_severity?: string
+  broadcast_channel?: number | null
+  node_ids?: string[]
+  smtp_host?: string
+  smtp_port?: number
+  smtp_user?: string
+  smtp_password?: string
+  smtp_tls?: boolean
+  from_address?: string
+  recipients?: string[]
+  webhook_url?: string
+  webhook_headers?: Record<string, string>
+}
+
+interface SinkConfig {
+  type: 'mesh_broadcast' | 'mesh_dm' | 'email' | 'webhook'
+  channel?: number
+  node_ids?: string[]
+  smtp_host?: string
+  smtp_port?: number
+  smtp_user?: string
+  smtp_password?: string
+  smtp_tls?: boolean
+  from_address?: string
+  recipients?: string[]
+  webhook_url?: string
+  webhook_headers?: Record<string, string>
 }
 
 interface NotificationsConfig {
@@ -64,6 +82,8 @@ interface NotificationsConfig {
   band_conditions_schedule?: string[]
   rules: NotificationRuleConfig[]
   toggles?: Record<string, NotificationToggle>
+  sinks?: Record<string, SinkConfig>
+  digest?: { include?: string[] }
 }
 
 interface AlertCategory {
@@ -341,7 +361,7 @@ function InfoButton({ info }: { info: string }) {
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); setOpen(!open) }}
-        className="ml-1.5 w-4 h-4 rounded-full bg-slate-700 hover:bg-slate-600 text-slate-400 hover:text-slate-200 inline-flex items-center justify-center text-xs transition-colors"
+        className="ml-1.5 w-4 h-4 rounded-full bg-gray-700 hover:bg-gray-600 text-gray-400 hover:text-gray-200 inline-flex items-center justify-center text-xs transition-colors"
         title="More info"
       >
         ?
@@ -349,7 +369,7 @@ function InfoButton({ info }: { info: string }) {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-6 z-50 w-72 p-3 bg-[#1a2332] border border-[#2a3a4a] shadow-xl text-xs text-slate-300 leading-relaxed">
+          <div className="absolute left-0 top-6 z-50 w-72 p-3 bg-[#1a2332] border border-[#2a3a4a] shadow-xl text-xs text-gray-300 leading-relaxed">
             {info}
           </div>
         </>
@@ -373,7 +393,7 @@ function TextInput({ label, value, onChange, type = 'text', placeholder = '', he
 
   return (
     <div className="space-y-1">
-      <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+      <label className="flex items-center text-xs text-gray-500 uppercase tracking-wide">
         {label}
         {info && <InfoButton info={info} />}
       </label>
@@ -383,19 +403,19 @@ function TextInput({ label, value, onChange, type = 'text', placeholder = '', he
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 font-mono focus:outline-none focus:border-accent placeholder-slate-600"
+          className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-gray-200 font-mono focus:outline-none focus:border-accent placeholder-gray-600"
         />
         {isPassword && (
           <button
             type="button"
             onClick={() => setShowPassword(!showPassword)}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
           >
             {showPassword ? <EyeOff size={16} /> : <EyeIcon size={16} />}
           </button>
         )}
       </div>
-      {helper && <p className="text-xs text-slate-600">{helper}</p>}
+      {helper && <p className="text-xs text-gray-600">{helper}</p>}
     </div>
   )
 }
@@ -412,7 +432,7 @@ function NumberInput({ label, value, onChange, min, max, step = 1, helper = '', 
 }) {
   return (
     <div className="space-y-1">
-      <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+      <label className="flex items-center text-xs text-gray-500 uppercase tracking-wide">
         {label}
         {info && <InfoButton info={info} />}
       </label>
@@ -423,9 +443,9 @@ function NumberInput({ label, value, onChange, min, max, step = 1, helper = '', 
         min={min}
         max={max}
         step={step}
-        className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 font-mono focus:outline-none focus:border-accent"
+        className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-gray-200 font-mono focus:outline-none focus:border-accent"
       />
-      {helper && <p className="text-xs text-slate-600">{helper}</p>}
+      {helper && <p className="text-xs text-gray-600">{helper}</p>}
     </div>
   )
 }
@@ -440,11 +460,11 @@ function Toggle({ label, checked, onChange, helper = '', info = '' }: {
   return (
     <div className="flex items-center justify-between py-2">
       <div>
-        <span className="flex items-center text-sm text-slate-300">
+        <span className="flex items-center text-sm text-gray-300">
           {label}
           {info && <InfoButton info={info} />}
         </span>
-        {helper && <p className="text-xs text-slate-600">{helper}</p>}
+        {helper && <p className="text-xs text-gray-600">{helper}</p>}
       </div>
       <button
         type="button"
@@ -472,7 +492,7 @@ function TimeInput({ label, value, onChange, helper = '', info = '' }: {
 }) {
   return (
     <div className="space-y-1">
-      <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+      <label className="flex items-center text-xs text-gray-500 uppercase tracking-wide">
         {label}
         {info && <InfoButton info={info} />}
       </label>
@@ -480,9 +500,9 @@ function TimeInput({ label, value, onChange, helper = '', info = '' }: {
         type="time"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 focus:outline-none focus:border-accent"
+        className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-gray-200 focus:outline-none focus:border-accent"
       />
-      {helper && <p className="text-xs text-slate-600">{helper}</p>}
+      {helper && <p className="text-xs text-gray-600">{helper}</p>}
     </div>
   )
 }
@@ -510,7 +530,7 @@ function ListInput({ label, value, onChange, placeholder = 'Add item...', helper
 
   return (
     <div className="space-y-1">
-      <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+      <label className="flex items-center text-xs text-gray-500 uppercase tracking-wide">
         {label}
         {info && <InfoButton info={info} />}
       </label>
@@ -520,7 +540,7 @@ function ListInput({ label, value, onChange, placeholder = 'Add item...', helper
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addItem())}
-          className="flex-1 px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 font-mono focus:outline-none focus:border-accent"
+          className="flex-1 px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-gray-200 font-mono focus:outline-none focus:border-accent"
           placeholder={placeholder}
         />
         <button
@@ -536,13 +556,13 @@ function ListInput({ label, value, onChange, placeholder = 'Add item...', helper
           {value.map((item, i) => (
             <span
               key={i}
-              className="inline-flex items-center gap-1 px-2 py-1 bg-[#1e2a3a] rounded text-sm text-slate-300"
+              className="inline-flex items-center gap-1 px-2 py-1 bg-[#1e2a3a] rounded text-sm text-gray-300"
             >
               {item}
               <button
                 type="button"
                 onClick={() => removeItem(i)}
-                className="text-slate-500 hover:text-red-400"
+                className="text-gray-500 hover:text-red-400"
               >
                 <X size={14} />
               </button>
@@ -550,7 +570,7 @@ function ListInput({ label, value, onChange, placeholder = 'Add item...', helper
           ))}
         </div>
       )}
-      {helper && <p className="text-xs text-slate-600">{helper}</p>}
+      {helper && <p className="text-xs text-gray-600">{helper}</p>}
     </div>
   )
 }
@@ -565,7 +585,7 @@ function SeveritySelector({ value, onChange }: {
 
   return (
     <div className="space-y-1">
-      <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+      <label className="flex items-center text-xs text-gray-500 uppercase tracking-wide">
         Severity Threshold
         <InfoButton info="Only alerts at or above this severity trigger this rule. ROUTINE = informational, PRIORITY = needs attention, IMMEDIATE = act now." />
       </label>
@@ -576,10 +596,10 @@ function SeveritySelector({ value, onChange }: {
           className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-left flex items-center justify-between hover:border-accent transition-colors"
         >
           <div>
-            <span className="text-slate-200">{selected.label}</span>
-            <span className="text-slate-500 ml-2">- {selected.description}</span>
+            <span className="text-gray-200">{selected.label}</span>
+            <span className="text-gray-500 ml-2">- {selected.description}</span>
           </div>
-          <ChevronDown size={16} className={`text-slate-500 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+          <ChevronDown size={16} className={`text-gray-500 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>
         {isOpen && (
           <>
@@ -594,15 +614,15 @@ function SeveritySelector({ value, onChange }: {
                     value === opt.value ? 'bg-accent/10' : ''
                   }`}
                 >
-                  <div className="font-medium text-slate-200">{opt.label}</div>
-                  <div className="text-xs text-slate-500">{opt.description}</div>
+                  <div className="font-medium text-gray-200">{opt.label}</div>
+                  <div className="text-xs text-gray-500">{opt.description}</div>
                 </button>
               ))}
             </div>
           </>
         )}
       </div>
-      <p className="text-xs text-slate-600">Lower = more notifications. "Warning" recommended for most rules.</p>
+      <p className="text-xs text-gray-500">Lower = more notifications. "Priority" recommended for most rules.</p>
     </div>
   )
 }
@@ -679,7 +699,7 @@ function ChannelTestButton({ rule }: {
         type="button"
         onClick={handleTest}
         disabled={testing}
-        className="flex items-center gap-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-sm disabled:opacity-50"
+        className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm disabled:opacity-50"
       >
         {testing ? (
           <>
@@ -915,17 +935,17 @@ function NotificationRuleCard({
   }
 
   return (
-    <div className={`border overflow-hidden ${rule.enabled ? 'border-[#1e2a3a]' : 'border-slate-700 opacity-60'}`}>
+    <div className={`border overflow-hidden ${rule.enabled ? 'border-[#1e2a3a]' : 'border-gray-700 opacity-60'}`}>
       {/* Header */}
       <div
         className="flex items-center justify-between p-3 bg-[#0a0e17] cursor-pointer"
         onClick={() => setExpanded(!expanded)}
       >
         <div className="flex items-center gap-3 min-w-0 flex-1">
-          {expanded ? <ChevronDown size={16} className="text-slate-500 flex-shrink-0" /> : <ChevronRight size={16} className="text-slate-500 flex-shrink-0" />}
+          {expanded ? <ChevronDown size={16} className="text-gray-500 flex-shrink-0" /> : <ChevronRight size={16} className="text-gray-500 flex-shrink-0" />}
           <button
             onClick={(e) => { e.stopPropagation(); onChange({ ...rule, enabled: !rule.enabled }) }}
-            className={`w-2 h-2 rounded-full flex-shrink-0 ${rule.enabled ? 'bg-green-500' : 'bg-slate-500'}`}
+            className={`w-2 h-2 rounded-full flex-shrink-0 ${rule.enabled ? 'bg-green-500' : 'bg-gray-500'}`}
             title={rule.enabled ? 'Enabled' : 'Disabled'}
           />
           {rule.trigger_type === 'schedule' ? (
@@ -933,9 +953,9 @@ function NotificationRuleCard({
           ) : (
             <Zap size={14} className="text-yellow-400 flex-shrink-0" />
           )}
-          <span className="font-medium text-slate-200 truncate" title={rule.name || undefined}>{rule.name || 'New Rule'}</span>
+          <span className="font-medium text-gray-200 truncate" title={rule.name || undefined}>{rule.name || 'New Rule'}</span>
           {!expanded && (
-            <span className={`text-xs truncate hidden sm:block ${!rule.delivery_type ? 'text-amber-400' : 'text-slate-500'}`}>
+            <span className={`text-xs truncate hidden sm:block ${!rule.delivery_type ? 'text-amber-400' : 'text-gray-500'}`}>
               {getSummary()}
             </span>
           )}
@@ -945,7 +965,7 @@ function NotificationRuleCard({
           {!expanded && (() => {
             const badgeBase = 'hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs mr-2'
             if (!rule.enabled) {
-              return <span className={`${badgeBase} bg-slate-800 text-slate-500`}>Disabled</span>
+              return <span className={`${badgeBase} bg-gray-800 text-gray-500`}>Disabled</span>
             }
             if (!ruleStats) return null
             const count = ruleStats.fire_count || 0
@@ -965,7 +985,7 @@ function NotificationRuleCard({
                 </span>
               )
             }
-            return <span className={`${badgeBase} bg-slate-800 text-slate-400`}>No activity yet</span>
+            return <span className={`${badgeBase} bg-gray-800 text-gray-400`}>No activity yet</span>
           })()}
           {/* Source indicators */}
           {!expanded && (
@@ -983,7 +1003,7 @@ function NotificationRuleCard({
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); onDuplicate() }}
-            className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-500/10 rounded"
+            className="p-1.5 text-gray-400 hover:text-gray-200 hover:bg-gray-500/10 rounded"
             title="Duplicate"
           >
             <Copy size={14} />
@@ -1008,7 +1028,7 @@ function NotificationRuleCard({
             </span>
           )}
           {ruleStats?.fire_count !== undefined && ruleStats.fire_count > 0 && (
-            <span className="text-slate-500">
+            <span className="text-gray-500">
               Fired {ruleStats.fire_count}x
             </span>
           )}
@@ -1029,7 +1049,7 @@ function NotificationRuleCard({
 
           {/* Trigger type toggle */}
           <div className="space-y-2">
-            <label className="text-xs text-slate-500 uppercase tracking-wide">Trigger Type</label>
+            <label className="text-xs text-gray-500 uppercase tracking-wide">Trigger Type</label>
             <div className="flex gap-2">
               <button
                 type="button"
@@ -1037,7 +1057,7 @@ function NotificationRuleCard({
                 className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 border transition-colors ${
                   rule.trigger_type !== 'schedule'
                     ? 'bg-accent/10 border-accent text-accent'
-                    : 'bg-[#0a0e17] border-[#1e2a3a] text-slate-400 hover:text-slate-200'
+                    : 'bg-[#0a0e17] border-[#1e2a3a] text-gray-400 hover:text-gray-200'
                 }`}
               >
                 <Zap size={16} />
@@ -1049,14 +1069,14 @@ function NotificationRuleCard({
                 className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 border transition-colors ${
                   rule.trigger_type === 'schedule'
                     ? 'bg-accent/10 border-accent text-accent'
-                    : 'bg-[#0a0e17] border-[#1e2a3a] text-slate-400 hover:text-slate-200'
+                    : 'bg-[#0a0e17] border-[#1e2a3a] text-gray-400 hover:text-gray-200'
                 }`}
               >
                 <Clock size={16} />
                 <span>Schedule</span>
               </button>
             </div>
-            <p className="text-xs text-slate-600">
+            <p className="text-xs text-gray-600">
               {rule.trigger_type === 'schedule'
                 ? 'Send reports on a schedule (daily briefings, weekly digests)'
                 : 'React to alert conditions (fires, outages, weather warnings)'}
@@ -1066,7 +1086,7 @@ function NotificationRuleCard({
           {/* WHEN section - Condition trigger */}
           {rule.trigger_type !== 'schedule' && (
             <div className="space-y-4 p-4 bg-[#0a0e17] border border-[#1e2a3a]">
-              <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
+              <div className="flex items-center gap-2 text-sm font-medium text-gray-300">
                 <AlertTriangle size={14} />
                 WHEN (Condition)
               </div>
@@ -1077,11 +1097,11 @@ function NotificationRuleCard({
               />
 
               <div className="space-y-2">
-                <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+                <label className="flex items-center text-xs text-gray-500 uppercase tracking-wide">
                   Alert Categories
                   <InfoButton info="Select which types of alerts trigger this rule. Leave all unchecked to match ALL categories. Categories are grouped by family — use the 'All' / 'Clear' buttons in each header to bulk-toggle." />
                 </label>
-                <div className="text-xs text-slate-500 mb-2">
+                <div className="text-xs text-gray-500 mb-2">
                   {(rule.categories?.length || 0) === 0 ? 'All categories (none selected)' : `${rule.categories?.length} selected`}
                 </div>
                 <GroupedCategoryPicker
@@ -1095,7 +1115,7 @@ function NotificationRuleCard({
               {/* Source health display */}
               {sourceHealth && Object.keys(sourceHealth).length > 0 && (
                 <div className="space-y-2">
-                  <label className="text-xs text-slate-500 uppercase tracking-wide">Data Sources</label>
+                  <label className="text-xs text-gray-500 uppercase tracking-wide">Data Sources</label>
                   <div className="flex flex-wrap gap-2">
                     {getSourceIndicators()}
                   </div>
@@ -1107,17 +1127,17 @@ function NotificationRuleCard({
           {/* WHEN section - Schedule trigger */}
           {rule.trigger_type === 'schedule' && (
             <div className="space-y-4 p-4 bg-[#0a0e17] border border-[#1e2a3a]">
-              <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
+              <div className="flex items-center gap-2 text-sm font-medium text-gray-300">
                 <Calendar size={14} />
                 WHEN (Schedule)
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs text-slate-500 uppercase tracking-wide">Frequency</label>
+                <label className="text-xs text-gray-500 uppercase tracking-wide">Frequency</label>
                 <select
                   value={rule.schedule_frequency || 'daily'}
                   onChange={(e) => onChange({ ...rule, schedule_frequency: e.target.value as 'daily' | 'twice_daily' | 'weekly' })}
-                  className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 focus:outline-none focus:border-accent"
+                  className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-gray-200 focus:outline-none focus:border-accent"
                 >
                   {frequencyOptions.map(opt => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -1142,7 +1162,7 @@ function NotificationRuleCard({
 
               {rule.schedule_frequency === 'weekly' && (
                 <div className="space-y-2">
-                  <label className="text-xs text-slate-500 uppercase tracking-wide">Days</label>
+                  <label className="text-xs text-gray-500 uppercase tracking-wide">Days</label>
                   <div className="flex flex-wrap gap-2">
                     {dayOptions.map((day) => (
                       <button
@@ -1152,7 +1172,7 @@ function NotificationRuleCard({
                         className={`px-3 py-1.5 rounded text-sm capitalize transition-colors ${
                           rule.schedule_days?.includes(day)
                             ? 'bg-accent text-white'
-                            : 'bg-[#1e2a3a] text-slate-400 hover:text-slate-200'
+                            : 'bg-[#1e2a3a] text-gray-400 hover:text-gray-200'
                         }`}
                       >
                         {day.slice(0, 3)}
@@ -1163,24 +1183,24 @@ function NotificationRuleCard({
               )}
 
               <div className="space-y-1">
-                <label className="text-xs text-slate-500 uppercase tracking-wide">Report Type</label>
+                <label className="text-xs text-gray-500 uppercase tracking-wide">Report Type</label>
                 <select
                   value={rule.message_type || 'mesh_health_summary'}
                   onChange={(e) => onChange({ ...rule, message_type: e.target.value })}
-                  className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 focus:outline-none focus:border-accent"
+                  className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-gray-200 focus:outline-none focus:border-accent"
                 >
                   {messageTypeOptions.map(opt => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </select>
-                <p className="text-xs text-slate-600">
+                <p className="text-xs text-gray-600">
                   {messageTypeOptions.find(m => m.value === rule.message_type)?.description}
                 </p>
               </div>
 
               {rule.message_type === 'custom' && (
                 <div className="space-y-1">
-                  <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+                  <label className="flex items-center text-xs text-gray-500 uppercase tracking-wide">
                     Custom Message
                     <InfoButton info="Available tokens: {MESH_SCORE}, {NODE_COUNT}, {NODES_ONLINE}, {ACTIVE_ALERTS}, {KP}, {SFI}, {DATE}, {TIME}" />
                   </label>
@@ -1189,7 +1209,7 @@ function NotificationRuleCard({
                     onChange={(e) => onChange({ ...rule, custom_message: e.target.value })}
                     rows={4}
                     placeholder="Good morning! Mesh health: {MESH_SCORE}/100 with {NODE_COUNT} nodes online."
-                    className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 font-mono focus:outline-none focus:border-accent placeholder-slate-600"
+                    className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-gray-200 font-mono focus:outline-none focus:border-accent placeholder-gray-600"
                   />
                 </div>
               )}
@@ -1198,18 +1218,18 @@ function NotificationRuleCard({
 
           {/* REGIONS section — scope rule to specific regions; empty = all regions */}
           <div className="space-y-2 p-4 bg-[#0a0e17] border border-[#1e2a3a]">
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
+            <div className="flex items-center gap-2 text-sm font-medium text-gray-300">
               <MapPin size={14} />
               REGIONS
               <InfoButton info="Limit this rule to alerts from specific regions. Empty selection = all regions (backward compatible). Region names come from /api/regions." />
             </div>
-            <div className="text-xs text-slate-500">
+            <div className="text-xs text-gray-500">
               {(rule.region_scope?.length || 0) === 0
                 ? 'All regions (none selected)'
                 : `${rule.region_scope.length} of ${regions.length} selected`}
             </div>
             {regions.length === 0 ? (
-              <div className="text-xs text-slate-600 italic">No regions configured.</div>
+              <div className="text-xs text-gray-600 italic">No regions configured.</div>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {regions.map(r => {
@@ -1222,7 +1242,7 @@ function NotificationRuleCard({
                       className={`px-3 py-1.5 rounded text-sm transition-colors ${
                         on
                           ? 'bg-accent text-white'
-                          : 'bg-[#1e2a3a] text-slate-400 hover:text-slate-200'
+                          : 'bg-[#1e2a3a] text-gray-400 hover:text-gray-200'
                       }`}
                       title={r.local_name || r.name}
                     >
@@ -1236,26 +1256,26 @@ function NotificationRuleCard({
 
           {/* SEND VIA section */}
           <div className="space-y-4 p-4 bg-[#0a0e17] border border-[#1e2a3a]">
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
+            <div className="flex items-center gap-2 text-sm font-medium text-gray-300">
               <Send size={14} />
               SEND VIA
             </div>
 
             <div className="space-y-1">
-              <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+              <label className="flex items-center text-xs text-gray-500 uppercase tracking-wide">
                 Delivery Method
                 <InfoButton info="Where this notification gets delivered. Select (None) to save the rule without delivery - it will match conditions but won't send until you configure a delivery method." />
               </label>
               <select
                 value={rule.delivery_type || ''}
                 onChange={(e) => onChange({ ...rule, delivery_type: e.target.value })}
-                className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 focus:outline-none focus:border-accent"
+                className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-gray-200 focus:outline-none focus:border-accent"
               >
                 {deliveryOptions.map(opt => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
-              <p className="text-xs text-slate-600">
+              <p className="text-xs text-gray-600">
                 {deliveryOptions.find(d => d.value === (rule.delivery_type || ''))?.description}
               </p>
             </div>
@@ -1310,7 +1330,7 @@ function NotificationRuleCard({
                 />
 
                 <details className="group">
-                  <summary className="flex items-center gap-2 cursor-pointer text-sm text-slate-400 hover:text-slate-200">
+                  <summary className="flex items-center gap-2 cursor-pointer text-sm text-gray-400 hover:text-gray-200">
                     <ChevronRight size={14} className="group-open:rotate-90 transition-transform" />
                     SMTP Configuration
                   </summary>
@@ -1391,7 +1411,7 @@ function NotificationRuleCard({
 
           {/* Rule statistics */}
           {ruleStats && (
-            <div className="flex items-center gap-4 text-xs text-slate-500">
+            <div className="flex items-center gap-4 text-xs text-gray-500">
               <span>Last fired: {formatRelativeTime(ruleStats.last_fired)}</span>
               <span>Last tested: {formatRelativeTime(ruleStats.last_test)}</span>
               <span>Total fires: {ruleStats.fire_count}</span>
@@ -1401,11 +1421,11 @@ function NotificationRuleCard({
           {/* Example message */}
           {rule.trigger_type !== 'schedule' && (
             <div className="space-y-2">
-              <label className="text-xs text-slate-500 uppercase tracking-wide">Example Message</label>
+              <label className="text-xs text-gray-500 uppercase tracking-wide">Example Message</label>
               <div className="p-3 bg-[#1e2a3a]/50 border border-[#1e2a3a]">
-                <p className="text-sm text-slate-300 font-mono">{getExampleMessage()}</p>
+                <p className="text-sm text-gray-300 font-mono">{getExampleMessage()}</p>
               </div>
-              <p className="text-xs text-slate-600">This is an example of what this rule would send.</p>
+              <p className="text-xs text-gray-600">This is an example of what this rule would send.</p>
             </div>
           )}
         </div>
@@ -1478,10 +1498,10 @@ function GroupedCategoryPicker({
           <button
             type="button"
             onClick={() => toggleOpen(key)}
-            className="flex items-center gap-2 text-sm text-slate-200 flex-1 min-w-0"
+            className="flex items-center gap-2 text-sm text-gray-200 flex-1 min-w-0"
           >
-            {isOpen ? <ChevronDown size={14} className="text-slate-500 flex-shrink-0" /> : <ChevronRight size={14} className="text-slate-500 flex-shrink-0" />}
-            {Icon && <Icon size={14} className="text-slate-400 flex-shrink-0" />}
+            {isOpen ? <ChevronDown size={14} className="text-gray-500 flex-shrink-0" /> : <ChevronRight size={14} className="text-gray-500 flex-shrink-0" />}
+            {Icon && <Icon size={14} className="text-gray-400 flex-shrink-0" />}
             <span className="truncate">{label} ({cats.length})</span>
             {selectedInFamily > 0 && (
               <span className="ml-1 text-xs text-accent">{selectedInFamily} selected</span>
@@ -1491,7 +1511,7 @@ function GroupedCategoryPicker({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSelectMany(ids, 'add') }}
-              className="text-xs px-2 py-0.5 rounded text-slate-400 hover:text-accent hover:bg-accent/10"
+              className="text-xs px-2 py-0.5 rounded text-gray-400 hover:text-accent hover:bg-accent/10"
               title="Select all in family"
             >
               All
@@ -1499,7 +1519,7 @@ function GroupedCategoryPicker({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSelectMany(ids, 'remove') }}
-              className="text-xs px-2 py-0.5 rounded text-slate-400 hover:text-red-400 hover:bg-red-500/10"
+              className="text-xs px-2 py-0.5 rounded text-gray-400 hover:text-red-400 hover:bg-red-500/10"
               title="Clear family"
             >
               Clear
@@ -1515,13 +1535,13 @@ function GroupedCategoryPicker({
                 className="flex items-start gap-2 p-2 rounded hover:bg-[#1e2a3a]/50 cursor-pointer"
               >
                 <div className={`w-4 h-4 mt-0.5 rounded border flex items-center justify-center flex-shrink-0 ${
-                  selected.includes(cat.id) ? 'bg-accent border-accent' : 'border-slate-600'
+                  selected.includes(cat.id) ? 'bg-accent border-accent' : 'border-gray-600'
                 }`}>
                   {selected.includes(cat.id) && <Check size={12} className="text-white" />}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm text-slate-200">{cat.name}</div>
-                  <div className="text-xs text-slate-500">{cat.description}</div>
+                  <div className="text-sm text-gray-200">{cat.name}</div>
+                  <div className="text-xs text-gray-500">{cat.description}</div>
                 </div>
               </label>
             ))}
@@ -1538,82 +1558,288 @@ function GroupedCategoryPicker({
     </div>
   )
 }
-const TOGGLE_CHANNELS = ['digest', 'mesh_broadcast', 'mesh_dm', 'email', 'webhook']
 const TOGGLE_SEVERITIES = ['routine', 'priority', 'immediate']
+const SINK_TYPE_LABELS: Record<string, { label: string; Icon: typeof Radio }> = {
+  mesh_broadcast: { label: 'Mesh Broadcast', Icon: Radio },
+  mesh_dm: { label: 'Mesh DM', Icon: MessageSquare },
+  email: { label: 'Email', Icon: Mail },
+  webhook: { label: 'Webhook', Icon: Globe },
+}
 
-function MasterToggles({ toggles, onChange }: {
-  toggles: Record<string, NotificationToggle>
-  onChange: (t: Record<string, NotificationToggle>) => void
+// Destinations / Sinks management section
+function DestinationsSection({ sinks, onChange, onTest }: {
+  sinks: Record<string, SinkConfig>
+  onChange: (s: Record<string, SinkConfig>) => void
+  onTest: (name: string) => Promise<void>
 }) {
-  const [expanded, setExpanded] = useState<string | null>(null)
-  const upd = (fam: string, patch: Partial<NotificationToggle>) =>
-    onChange({ ...toggles, [fam]: { ...(toggles[fam] || {}), name: fam, ...patch } as NotificationToggle })
+  const [editingSink, setEditingSink] = useState<{ name: string; config: SinkConfig; isNew: boolean } | null>(null)
+  const [testing, setTesting] = useState<string | null>(null)
+
+  const saveSink = () => {
+    if (!editingSink) return
+    const newSinks = { ...sinks }
+    newSinks[editingSink.name] = editingSink.config
+    onChange(newSinks)
+    setEditingSink(null)
+  }
+
+  const deleteSink = (name: string) => {
+    const newSinks = { ...sinks }
+    delete newSinks[name]
+    onChange(newSinks)
+  }
+
+  const testSink = async (name: string) => {
+    setTesting(name)
+    try {
+      await onTest(name)
+    } finally {
+      setTesting(null)
+    }
+  }
+
   return (
     <div className="space-y-3 mb-8">
-      <div className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
-        Master Toggles
-        <InfoButton info="Per-family notification policy: enable a family, set its severity threshold, choose which channels fire at each severity, and scope to regions (PagerDuty/Grafana-style)." />
+      <div className="flex items-center justify-between">
+        <div className="flex items-center text-xs text-gray-500 uppercase tracking-wide">
+          Destinations
+          <InfoButton info="Named notification destinations (sinks). Define once, reference by name in family routing matrices. Replaces inline transport config." />
+        </div>
+        <button
+          type="button"
+          onClick={() => setEditingSink({ name: '', config: { type: 'mesh_broadcast', channel: 0 }, isNew: true })}
+          className="flex items-center gap-1 px-2 py-1 text-xs bg-accent/20 text-accent hover:bg-accent/30 rounded"
+        >
+          <Plus size={12} /> Add Destination
+        </button>
+      </div>
+
+      {Object.keys(sinks).length === 0 ? (
+        <div className="text-sm text-gray-500 p-4 border border-dashed border-gray-700 rounded text-center">
+          No destinations configured. Add one to enable sink-name routing.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+          {Object.entries(sinks).map(([name, sink]) => {
+            const typeInfo = SINK_TYPE_LABELS[sink.type] || { label: sink.type, Icon: Globe }
+            const TypeIcon = typeInfo.Icon
+            return (
+              <div key={name} className="border border-gray-700 p-3 rounded bg-gray-900/50">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <TypeIcon size={14} className="text-gray-400" />
+                    <span className="text-sm font-medium text-gray-200">{name}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => testSink(name)}
+                      disabled={testing === name}
+                      className="p-1 text-gray-500 hover:text-accent"
+                      title="Test connection"
+                    >
+                      {testing === name ? <RefreshCw size={12} className="animate-spin" /> : <Send size={12} />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingSink({ name, config: { ...sink }, isNew: false })}
+                      className="p-1 text-gray-500 hover:text-gray-300"
+                      title="Edit"
+                    >
+                      <EyeIcon size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteSink(name)}
+                      className="p-1 text-gray-500 hover:text-red-400"
+                      title="Delete"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                </div>
+                <div className="text-xs text-gray-500">
+                  {sink.type === 'mesh_broadcast' && `Channel ${sink.channel ?? 0}`}
+                  {sink.type === 'mesh_dm' && `${(sink.node_ids || []).length} node(s)`}
+                  {sink.type === 'email' && (sink.smtp_host || 'SMTP not configured')}
+                  {sink.type === 'webhook' && (sink.webhook_url?.substring(0, 30) || 'URL not set')}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Edit/Add Sink Dialog */}
+      {editingSink && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-gray-900 border border-gray-700 rounded-lg p-4 w-full max-w-md">
+            <h3 className="text-lg font-medium text-gray-200 mb-4">
+              {editingSink.isNew ? 'Add Destination' : `Edit: ${editingSink.name}`}
+            </h3>
+            <div className="space-y-3">
+              {editingSink.isNew && (
+                <TextInput
+                  label="Name"
+                  value={editingSink.name}
+                  onChange={(v) => setEditingSink({ ...editingSink, name: v })}
+                  placeholder="mesh-primary"
+                />
+              )}
+              <SelectInput
+                label="Type"
+                value={editingSink.config.type}
+                options={[
+                  { value: 'mesh_broadcast', label: 'Mesh Broadcast', description: 'Send to mesh channel' },
+                  { value: 'mesh_dm', label: 'Mesh DM', description: 'Direct message to nodes' },
+                  { value: 'email', label: 'Email', description: 'Send via SMTP' },
+                  { value: 'webhook', label: 'Webhook', description: 'HTTP POST' },
+                ]}
+                onChange={(v) => setEditingSink({ ...editingSink, config: { ...editingSink.config, type: v as SinkConfig['type'] } })}
+              />
+
+              {editingSink.config.type === 'mesh_broadcast' && (
+                <NumberInput
+                  label="Channel"
+                  value={editingSink.config.channel ?? 0}
+                  onChange={(v) => setEditingSink({ ...editingSink, config: { ...editingSink.config, channel: v } })}
+                  helper="Mesh channel index (0 = primary)"
+                />
+              )}
+
+              {editingSink.config.type === 'mesh_dm' && (
+                <ListInput
+                  label="Node IDs"
+                  value={editingSink.config.node_ids || []}
+                  onChange={(v) => setEditingSink({ ...editingSink, config: { ...editingSink.config, node_ids: v } })}
+                  placeholder="!abcd1234"
+                />
+              )}
+
+              {editingSink.config.type === 'email' && (
+                <>
+                  <TextInput label="SMTP Host" value={editingSink.config.smtp_host || ''} onChange={(v) => setEditingSink({ ...editingSink, config: { ...editingSink.config, smtp_host: v } })} />
+                  <NumberInput label="SMTP Port" value={editingSink.config.smtp_port ?? 587} onChange={(v) => setEditingSink({ ...editingSink, config: { ...editingSink.config, smtp_port: v } })} />
+                  <TextInput label="From Address" value={editingSink.config.from_address || ''} onChange={(v) => setEditingSink({ ...editingSink, config: { ...editingSink.config, from_address: v } })} />
+                  <ListInput label="Recipients" value={editingSink.config.recipients || []} onChange={(v) => setEditingSink({ ...editingSink, config: { ...editingSink.config, recipients: v } })} placeholder="ops@example.com" />
+                </>
+              )}
+
+              {editingSink.config.type === 'webhook' && (
+                <TextInput label="Webhook URL" value={editingSink.config.webhook_url || ''} onChange={(v) => setEditingSink({ ...editingSink, config: { ...editingSink.config, webhook_url: v } })} placeholder="https://..." />
+              )}
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button type="button" onClick={() => setEditingSink(null)} className="px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200">Cancel</button>
+              <button type="button" onClick={saveSink} disabled={editingSink.isNew && !editingSink.name} className="px-3 py-1.5 text-sm bg-accent text-white rounded hover:bg-accent/80 disabled:opacity-50">Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MasterToggles({ toggles, sinks, digest, onChange, onDigestChange }: {
+  toggles: Record<string, NotificationToggle>
+  sinks: Record<string, SinkConfig>
+  digest: { include?: string[] }
+  onChange: (t: Record<string, NotificationToggle>) => void
+  onDigestChange: (d: { include?: string[] }) => void
+}) {
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const sinkNames = Object.keys(sinks)
+  const upd = (fam: string, patch: Partial<NotificationToggle>) =>
+    onChange({ ...toggles, [fam]: { ...(toggles[fam] || {}), name: fam, ...patch } as NotificationToggle })
+
+  const toggleDigestInclude = (fam: string, include: boolean) => {
+    const current = new Set(digest.include || [])
+    if (include) current.add(fam); else current.delete(fam)
+    onDigestChange({ ...digest, include: Array.from(current) })
+  }
+
+  return (
+    <div className="space-y-3 mb-8">
+      <div className="flex items-center text-xs text-gray-500 uppercase tracking-wide">
+        Family Routing
+        <InfoButton info="Per-family notification routing: enable a family, scope to regions, and select which destinations receive each severity level. Destinations are configured in the Destinations section above." />
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {TOGGLE_FAMILY_META.map(({ key, label, Icon }) => {
           const t = (toggles[key] || ({} as NotificationToggle))
           const isOpen = expanded === key
-          const chanCount = Object.values(t.severity_channels || {}).reduce((n, arr) => n + ((arr as string[])?.length || 0), 0)
+          const destCount = Object.values(t.severity_channels || {}).reduce((n, arr) => n + ((arr as string[])?.length || 0), 0)
           const regionCount = (t.regions || []).length
+          const inDigest = (digest.include || []).includes(key)
           return (
-            <div key={key} className="border border-[#1e2a3a] p-3">
+            <div key={key} className="border border-gray-700 rounded p-3 bg-gray-900/30">
               <div className="flex items-center justify-between">
                 <button type="button" onClick={() => setExpanded(isOpen ? null : key)}
-                        className="flex items-center gap-2 text-sm text-slate-200">
+                        className="flex items-center gap-2 text-sm text-gray-200">
                   <Icon size={15} /> {label}
                   {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                 </button>
                 <Toggle label="" checked={!!t.enabled} onChange={(v) => upd(key, { enabled: v })} />
               </div>
               {!isOpen && (
-                <div className="text-xs text-slate-600 mt-1">
+                <div className="text-xs text-gray-500 mt-1">
                   {t.enabled
-                    ? `${regionCount || 'all'} region${regionCount === 1 ? '' : 's'}, ${chanCount} channel${chanCount === 1 ? '' : 's'} at ${t.min_severity || 'priority'}+`
+                    ? `${regionCount || 'all'} region${regionCount === 1 ? '' : 's'}, ${destCount} destination${destCount === 1 ? '' : 's'}${inDigest ? ', in digest' : ''}`
                     : 'OFF'}
                 </div>
               )}
               {isOpen && (
                 <div className={`mt-3 space-y-3 ${t.enabled ? '' : 'opacity-40 pointer-events-none select-none'}`}>
-                  <SeveritySelector value={t.min_severity || 'priority'} onChange={(v) => upd(key, { min_severity: v })} />
-                  <div className="text-xs text-slate-500">Severity &rarr; channels</div>
-                  <table className="text-xs w-full">
-                    <thead>
-                      <tr><th></th>{TOGGLE_CHANNELS.map((c) => <th key={c} className="text-slate-500 font-normal px-1">{c.replace('_', ' ')}</th>)}</tr>
-                    </thead>
-                    <tbody>
-                      {TOGGLE_SEVERITIES.map((sev) => (
-                        <tr key={sev}>
-                          <td className="text-slate-400 pr-2">{sev}</td>
-                          {TOGGLE_CHANNELS.map((ch) => {
-                            const on = (t.severity_channels?.[sev] || []).includes(ch)
-                            return (
-                              <td key={ch} className="text-center">
-                                <input type="checkbox" checked={on} onChange={(e) => {
-                                  const cur: Record<string, string[]> = { ...(t.severity_channels || {}) }
-                                  const arr = new Set(cur[sev] || [])
-                                  if (e.target.checked) arr.add(ch); else arr.delete(ch)
-                                  cur[sev] = Array.from(arr)
-                                  upd(key, { severity_channels: cur })
-                                }} />
-                              </td>
-                            )
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <ListInput label="Regions (empty = all)" value={t.regions || []} onChange={(v) => upd(key, { regions: v })} placeholder="Add region..." />                  <div className="text-xs text-slate-500 pt-1">Channel config</div>
-                  <NumberInput label="Broadcast channel" value={t.broadcast_channel ?? 0} onChange={(v) => upd(key, { broadcast_channel: v })} />
-                  <ListInput label="DM node IDs" value={t.node_ids || []} onChange={(v) => upd(key, { node_ids: v })} placeholder="!nodeid" />
-                  <ListInput label="Email recipients" value={t.recipients || []} onChange={(v) => upd(key, { recipients: v })} placeholder="ops@example.com" />
-                  <TextInput label="SMTP host" value={t.smtp_host || ''} onChange={(v) => upd(key, { smtp_host: v })} placeholder="smtp.example.com" />
-                  <NumberInput label="SMTP port" value={t.smtp_port ?? 587} onChange={(v) => upd(key, { smtp_port: v })} />
-                  <TextInput label="Webhook URL" value={t.webhook_url || ''} onChange={(v) => upd(key, { webhook_url: v })} placeholder="https://..." />
+                  <ListInput label="Regions (empty = all)" value={t.regions || []} onChange={(v) => upd(key, { regions: v })} placeholder="Add region..." />
+                  <NumberInput label="Freshness (seconds)" value={t.freshness_seconds ?? 600} onChange={(v) => upd(key, { freshness_seconds: v })} helper="Drop events older than this" />
+                  <NumberInput label="Cooldown (seconds)" value={t.cooldown_seconds ?? 300} onChange={(v) => upd(key, { cooldown_seconds: v })} helper="Throttle per (family, category, region)" />
+
+                  <div className="text-xs text-gray-500 pt-2">Severity → Destinations</div>
+                  {sinkNames.length === 0 ? (
+                    <div className="text-xs text-amber-500 p-2 border border-amber-700/50 rounded bg-amber-900/20">
+                      No destinations configured. Add one in the Destinations section above.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {TOGGLE_SEVERITIES.map((sev) => {
+                        const selected = t.severity_channels?.[sev] || []
+                        return (
+                          <div key={sev} className="flex items-center gap-2">
+                            <span className="text-xs text-gray-400 w-16 capitalize">{sev}</span>
+                            <div className="flex-1 flex flex-wrap gap-1">
+                              {sinkNames.map((sn) => {
+                                const on = selected.includes(sn)
+                                return (
+                                  <button
+                                    key={sn}
+                                    type="button"
+                                    onClick={() => {
+                                      const cur: Record<string, string[]> = { ...(t.severity_channels || {}) }
+                                      const arr = new Set(cur[sev] || [])
+                                      if (on) arr.delete(sn); else arr.add(sn)
+                                      cur[sev] = Array.from(arr)
+                                      upd(key, { severity_channels: cur })
+                                    }}
+                                    className={`px-2 py-0.5 text-xs rounded ${on ? 'bg-accent text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+                                  >
+                                    {sn}
+                                  </button>
+                                )
+                              })}
+                              {selected.length === 0 && <span className="text-xs text-gray-600 italic">none</span>}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  <Toggle
+                    label="Include in digest"
+                    checked={inDigest}
+                    onChange={(v) => toggleDigestInclude(key, v)}
+                    helper="Include this family's events in the periodic digest summary"
+                  />
                 </div>
               )}
             </div>
@@ -1808,7 +2034,7 @@ export default function Notifications() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-slate-400">Loading notifications config...</div>
+        <div className="text-gray-400">Loading notifications config...</div>
       </div>
     )
   }
@@ -1829,15 +2055,15 @@ export default function Notifications() {
           <div className="bg-[#1a2332] border border-[#2a3a4a] shadow-xl max-w-2xl w-full mx-4 max-h-[85vh] overflow-auto">
             <div className="p-4 border-b border-[#2a3a4a] flex items-center justify-between sticky top-0 bg-[#1a2332]">
               <h3 className="text-lg font-semibold">Test Notification Rule</h3>
-              <button onClick={closeTestDialog} className="text-slate-500 hover:text-slate-300">
+              <button onClick={closeTestDialog} className="text-gray-500 hover:text-gray-300">
                 <X size={20} />
               </button>
             </div>
             <div className="p-4 space-y-4">
               {testDialog.loading ? (
                 <div className="flex items-center justify-center py-8">
-                  <RefreshCw size={20} className="animate-spin text-slate-400 mr-2" />
-                  <div className="text-slate-400">
+                  <RefreshCw size={20} className="animate-spin text-gray-400 mr-2" />
+                  <div className="text-gray-400">
                     {testDialog.action ? `${testDialog.action.replace('_', ' ').replace('send ', 'Sending ')}...` : 'Loading current data...'}
                   </div>
                 </div>
@@ -1845,9 +2071,9 @@ export default function Notifications() {
                 <>
                   {/* Section 1: Current Data */}
                   <div className="space-y-2">
-                    <div className="text-sm font-medium text-slate-400 uppercase tracking-wide">Current Data</div>
+                    <div className="text-sm font-medium text-gray-400 uppercase tracking-wide">Current Data</div>
                     {testResult.live_data_summary && testResult.live_data_summary.length > 0 ? (
-                      <div className="p-3 bg-slate-800/50 rounded space-y-1">
+                      <div className="p-3 bg-gray-800/50 rounded space-y-1">
                         {testResult.live_data_summary.map((line, i) => (
                           <div
                             key={i}
@@ -1858,7 +2084,7 @@ export default function Notifications() {
                         ))}
                       </div>
                     ) : (
-                      <div className="p-3 bg-slate-800/50 rounded text-sm text-slate-500">
+                      <div className="p-3 bg-gray-800/50 rounded text-sm text-gray-500">
                         No live data available for this rule's categories
                       </div>
                     )}
@@ -1866,14 +2092,14 @@ export default function Notifications() {
 
                   {/* Section 2: Alert Conditions */}
                   <div className="space-y-2">
-                    <div className="text-sm font-medium text-slate-400 uppercase tracking-wide">Rule Matching</div>
+                    <div className="text-sm font-medium text-gray-400 uppercase tracking-wide">Rule Matching</div>
                     <div className="flex items-center gap-2 flex-wrap">
                       {testResult.conditions_matched && testResult.conditions_matched > 0 ? (
                         <span className="px-2 py-1 bg-green-500/20 text-green-400 rounded text-sm">
                           {testResult.conditions_matched} condition{testResult.conditions_matched !== 1 ? 's' : ''} match - this rule WOULD fire
                         </span>
                       ) : (
-                        <span className="px-2 py-1 bg-slate-700 text-slate-400 rounded text-sm">
+                        <span className="px-2 py-1 bg-gray-700 text-gray-400 rounded text-sm">
                           No conditions trigger this rule right now
                         </span>
                       )}
@@ -1907,11 +2133,11 @@ export default function Notifications() {
 
                   {/* Section 3: Preview Messages */}
                   <div className="space-y-2">
-                    <div className="text-sm font-medium text-slate-400 uppercase tracking-wide">
+                    <div className="text-sm font-medium text-gray-400 uppercase tracking-wide">
                       {testResult.is_example ? 'Example Messages' : 'Messages That Would Fire'}
                     </div>
                     {testResult.preview_messages?.map((msg, i) => (
-                      <div key={i} className="p-3 bg-slate-800 rounded text-sm font-mono break-words">
+                      <div key={i} className="p-3 bg-gray-800 rounded text-sm font-mono break-words">
                         {msg}
                       </div>
                     ))}
@@ -1948,7 +2174,7 @@ export default function Notifications() {
             <div className="p-4 border-t border-[#2a3a4a] flex justify-between sticky bottom-0 bg-[#1a2332]">
               <button
                 onClick={closeTestDialog}
-                className="px-4 py-2 text-slate-400 hover:text-slate-200"
+                className="px-4 py-2 text-gray-400 hover:text-gray-200"
               >
                 Close
               </button>
@@ -1964,7 +2190,7 @@ export default function Notifications() {
                         <button
                           onClick={() => sendTestAction('send_status')}
                           disabled={testDialog.loading}
-                          className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm disabled:opacity-50"
+                          className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm disabled:opacity-50"
                           title="Send current conditions summary"
                         >
                           Send Current Conditions
@@ -1973,7 +2199,7 @@ export default function Notifications() {
                       <button
                         onClick={() => sendTestAction('send_test')}
                         disabled={testDialog.loading}
-                        className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm disabled:opacity-50"
+                        className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm disabled:opacity-50"
                         title="Send example alert message"
                       >
                         Send Example Alert
@@ -2000,14 +2226,14 @@ export default function Notifications() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-gray-500">
             Alert delivery and scheduled reports. Rules define what triggers a notification and where it gets sent.
           </p>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={fetchConfig}
-            className="p-2 text-slate-400 hover:text-slate-200 hover:bg-bg-hover rounded transition-colors"
+            className="p-2 text-gray-400 hover:text-gray-200 hover:bg-bg-hover rounded transition-colors"
             title="Refresh"
           >
             <RefreshCw size={18} />
@@ -2015,7 +2241,7 @@ export default function Notifications() {
           <button
             onClick={discardChanges}
             disabled={!hasChanges}
-            className="flex items-center gap-2 px-3 py-2 text-slate-400 hover:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="flex items-center gap-2 px-3 py-2 text-gray-400 hover:text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             <RotateCcw size={16} />
             Discard
@@ -2023,7 +2249,7 @@ export default function Notifications() {
           <button
             onClick={saveConfig}
             disabled={saving || !hasChanges}
-            className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent/80 disabled:bg-slate-700 disabled:cursor-not-allowed rounded text-white transition-colors"
+            className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent/80 disabled:bg-gray-700 disabled:cursor-not-allowed rounded text-white transition-colors"
           >
             <Save size={16} />
             {saving ? 'Saving...' : 'Save'}
@@ -2058,7 +2284,7 @@ export default function Notifications() {
           <>            {/* Cold-start grace -- v0.5.8b */}
             <div className="space-y-3 p-4 bg-[#0a0e17] border border-[#1e2a3a]">
               <div className="flex items-center gap-2">
-                <label className="text-xs text-slate-500 uppercase tracking-wide">Cold-start grace</label>
+                <label className="text-xs text-gray-500 uppercase tracking-wide">Cold-start grace</label>
               </div>
               <NumberInput
                 label="Grace period (seconds)"
@@ -2074,7 +2300,7 @@ export default function Notifications() {
             {/* Band Conditions -- v0.5.11 */}
             <div className="space-y-3 p-4 bg-[#0a0e17] border border-[#1e2a3a]">
               <div className="flex items-center gap-2">
-                <label className="text-xs text-slate-500 uppercase tracking-wide">Band Conditions (HF propagation)</label>
+                <label className="text-xs text-gray-500 uppercase tracking-wide">Band Conditions (HF propagation)</label>
               </div>
               <Toggle
                 label="Enable scheduled band-conditions broadcasts"
@@ -2117,25 +2343,47 @@ export default function Notifications() {
                   />
                 </div>
               )}
-              <p className="text-xs text-slate-600">All times are Mountain Time (America/Boise). DST handled automatically.</p>
+              <p className="text-xs text-gray-500">All times are Mountain Time (America/Boise). DST handled automatically.</p>
             </div>
 
-            {/* Master Toggles */}
+            {/* Destinations Section */}
+            <DestinationsSection
+              sinks={config.sinks || {}}
+              onChange={(s) => setConfig({ ...config, sinks: s })}
+              onTest={async (name) => {
+                try {
+                  const res = await fetch(`/api/sinks/${name}/test`, { method: 'POST' })
+                  const result = await res.json()
+                  if (result.success) {
+                    setSuccess(`Sink '${name}' test: ${result.message}`)
+                  } else {
+                    setError(`Sink '${name}' test failed: ${result.error || result.message}`)
+                  }
+                } catch (err) {
+                  setError(`Sink test failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
+                }
+              }}
+            />
+
+            {/* Family Routing (formerly Master Toggles) */}
             {config.toggles && (
               <MasterToggles
                 toggles={config.toggles}
+                sinks={config.sinks || {}}
+                digest={config.digest || {}}
                 onChange={(t) => setConfig({ ...config, toggles: t })}
+                onDigestChange={(d) => setConfig({ ...config, digest: d })}
               />
             )}
 
             {/* Rules Section */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+                <label className="flex items-center text-xs text-gray-500 uppercase tracking-wide">
                   Notification Rules
                   <InfoButton info="Each rule is self-contained: define what triggers it (condition or schedule), where to send it (mesh, email, webhook), and behavior settings." />
                 </label>
-                <span className="text-xs text-slate-500">
+                <span className="text-xs text-gray-500">
                   {config.rules?.length || 0} rule{(config.rules?.length || 0) !== 1 ? 's' : ''}
                 </span>
               </div>
@@ -2164,14 +2412,14 @@ export default function Notifications() {
               <div className="flex gap-2">
                 <button
                   onClick={addRule}
-                  className="flex-1 py-3 border border-dashed border-[#1e2a3a] text-slate-500 hover:text-slate-300 hover:border-accent flex items-center justify-center gap-2 transition-colors"
+                  className="flex-1 py-3 border border-dashed border-[#1e2a3a] text-gray-500 hover:text-gray-300 hover:border-accent flex items-center justify-center gap-2 transition-colors"
                 >
                   <Plus size={16} /> Add Rule
                 </button>
                 <div className="relative">
                   <button
                     onClick={() => setShowTemplates(!showTemplates)}
-                    className="py-3 px-4 border border-dashed border-[#1e2a3a] text-slate-500 hover:text-slate-300 hover:border-accent flex items-center gap-2 transition-colors"
+                    className="py-3 px-4 border border-dashed border-[#1e2a3a] text-gray-500 hover:text-gray-300 hover:border-accent flex items-center gap-2 transition-colors"
                   >
                     <Layers size={16} /> Add from Template
                   </button>
@@ -2179,15 +2427,15 @@ export default function Notifications() {
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setShowTemplates(false)} />
                       <div className="absolute right-0 top-full mt-2 z-50 w-80 bg-[#1a2332] border border-[#2a3a4a] shadow-xl overflow-hidden">
-                        <div className="p-2 border-b border-[#2a3a4a] text-xs text-slate-500 uppercase">Rule Templates</div>
+                        <div className="p-2 border-b border-[#2a3a4a] text-xs text-gray-500 uppercase">Rule Templates</div>
                         {RULE_TEMPLATES.map((t) => (
                           <button
                             key={t.id}
                             onClick={() => addFromTemplate(t.id)}
                             className="w-full p-3 text-left hover:bg-[#2a3a4a] transition-colors"
                           >
-                            <div className="font-medium text-slate-200">{t.name}</div>
-                            <div className="text-xs text-slate-500 mt-0.5">{t.description}</div>
+                            <div className="font-medium text-gray-200">{t.name}</div>
+                            <div className="text-xs text-gray-500 mt-0.5">{t.description}</div>
                           </button>
                         ))}
                       </div>
