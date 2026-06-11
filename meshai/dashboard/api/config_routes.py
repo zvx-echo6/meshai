@@ -332,3 +332,163 @@ def _diff_keys(before, after, *, prefix: str) -> list[str]:
 
     walk(before, after, prefix)
     return sorted(out)
+
+
+# ---- v0.7 Sink management endpoints ----------------------------------------
+
+
+@router.get("/sinks")
+async def list_sinks(request: Request):
+    """List all configured sinks."""
+    config = request.app.state.config
+    sinks = getattr(config.notifications, "sinks", {}) or {}
+    return {
+        name: _dataclass_to_dict(sink) if hasattr(sink, "__dataclass_fields__") else sink
+        for name, sink in sinks.items()
+    }
+
+
+@router.get("/sinks/{name}")
+async def get_sink(name: str, request: Request):
+    """Get a specific sink by name."""
+    config = request.app.state.config
+    sinks = getattr(config.notifications, "sinks", {}) or {}
+    sink = sinks.get(name)
+    if sink is None:
+        raise HTTPException(status_code=404, detail=f"Sink '{name}' not found")
+    return _dataclass_to_dict(sink) if hasattr(sink, "__dataclass_fields__") else sink
+
+
+@router.put("/sinks/{name}")
+async def upsert_sink(name: str, request: Request):
+    """Create or update a sink.
+
+    Validates the sink config and persists through the /api/config write path.
+    """
+    from meshai.config import SinkConfig
+
+    config_path = request.app.state.config_path
+    if not config_path:
+        raise HTTPException(status_code=500, detail="Config path not set")
+
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid JSON: {e}")
+
+    # Validate sink config
+    try:
+        sink = _dict_to_dataclass(SinkConfig, body)
+        errors = sink.validate()
+        if errors:
+            raise HTTPException(status_code=422, detail=f"Invalid sink config: {'; '.join(errors)}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid sink config: {e}")
+
+    # Get current notifications config
+    config = request.app.state.config
+    notifications_dict = _dataclass_to_dict(config.notifications)
+
+    # Update sinks
+    if "sinks" not in notifications_dict:
+        notifications_dict["sinks"] = {}
+    notifications_dict["sinks"][name] = _dataclass_to_dict(sink)
+
+    # Persist through the standard config write path
+    config_dir = get_config_dir_from_path(config_path)
+    save_section("notifications", notifications_dict, config_dir)
+
+    # Update live config
+    if not hasattr(config.notifications, "sinks") or config.notifications.sinks is None:
+        config.notifications.sinks = {}
+    config.notifications.sinks[name] = sink
+
+    logger.info("Sink '%s' upserted: type=%s", name, sink.type)
+    return {"saved": True, "sink": name}
+
+
+@router.delete("/sinks/{name}")
+async def delete_sink(name: str, request: Request):
+    """Delete a sink.
+
+    Returns 409 Conflict if the sink is referenced by any toggle's severity_channels.
+    """
+    config_path = request.app.state.config_path
+    if not config_path:
+        raise HTTPException(status_code=500, detail="Config path not set")
+
+    config = request.app.state.config
+    sinks = getattr(config.notifications, "sinks", {}) or {}
+
+    if name not in sinks:
+        raise HTTPException(status_code=404, detail=f"Sink '{name}' not found")
+
+    # Check if sink is referenced by any toggle
+    toggles = getattr(config.notifications, "toggles", {}) or {}
+    references = []
+    for toggle_name, toggle in toggles.items():
+        if not hasattr(toggle, "severity_channels"):
+            continue
+        sev_channels = getattr(toggle, "severity_channels", {}) or {}
+        for severity, sink_names in sev_channels.items():
+            if name in (sink_names or []):
+                references.append(f"{toggle_name}.severity_channels.{severity}")
+
+    if references:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Sink '{name}' is referenced by: {', '.join(references)}. "
+                   f"Remove references before deleting."
+        )
+
+    # Get current notifications config
+    notifications_dict = _dataclass_to_dict(config.notifications)
+
+    # Remove sink
+    if "sinks" in notifications_dict and name in notifications_dict["sinks"]:
+        del notifications_dict["sinks"][name]
+
+    # Persist
+    config_dir = get_config_dir_from_path(config_path)
+    save_section("notifications", notifications_dict, config_dir)
+
+    # Update live config
+    if hasattr(config.notifications, "sinks") and config.notifications.sinks:
+        del config.notifications.sinks[name]
+
+    logger.info("Sink '%s' deleted", name)
+    return {"deleted": True, "sink": name}
+
+
+@router.post("/sinks/{name}/test")
+async def test_sink(name: str, request: Request):
+    """Test a sink's connectivity.
+
+    Uses the channel's test_connection() method.
+    """
+    from meshai.notifications.channels import create_channel_from_sink
+
+    config = request.app.state.config
+    sinks = getattr(config.notifications, "sinks", {}) or {}
+    sink = sinks.get(name)
+
+    if sink is None:
+        raise HTTPException(status_code=404, detail=f"Sink '{name}' not found")
+
+    # Get connector from app state (may be None for non-mesh sinks)
+    connector = getattr(request.app.state, "connector", None)
+
+    try:
+        channel = create_channel_from_sink(sink, connector)
+        result = await channel.test_connection()
+        return result
+    except Exception as e:
+        logger.exception("Sink test failed for '%s'", name)
+        return {
+            "success": False,
+            "message": f"Test failed: {e}",
+            "error": str(e),
+            "details": {"sink": name, "type": sink.type}
+        }
