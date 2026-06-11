@@ -325,6 +325,13 @@ def _attach_commit_handles(data: Optional[dict], *, irwin_id: str,
     data["_on_broadcast_committed"] = _on_commit
     data["_broadcast_audit"] = {"table": "fires", "pk": irwin_id}
     data["_cooldown_suffix"] = irwin_id
+    # v0.6-4: WFIGS publishes the SAME envelope id (IrwinID) for every sweep
+    # over an incident's life, so the dispatcher's (source, id) dedup
+    # permanently swallowed every post-"New" lifecycle broadcast (growth /
+    # containment updates) this handler deliberately synthesized. Stamping
+    # the state that justified THIS broadcast into the dedup suffix lets
+    # unchanged re-deliveries dedup as before while genuine updates pass.
+    data["_dedup_suffix"] = f"{acres}|{contained_pct}"
 
 
 # ---------- helpers -------------------------------------------------------

@@ -357,13 +357,38 @@ class Dispatcher:
                 )
                 return
 
-        # ---------- Section 2 — per-toggle cooldown ----------
+        # ---------- Section 2 — region scope + severity floor + matrix ----
+        # v0.6-4 (B13 fix): resolution before commitment. Region scope, the
+        # min_severity floor, and severity_channels matrix resolution all
+        # run BEFORE the cooldown/dedup guards, so an event that was never
+        # going to deliver (wrong region, below floor, empty matrix row)
+        # cannot arm a cooldown window or burn a dedup slot. Previously a
+        # non-deliverable event committed both, silently suppressing later
+        # deliverable events for up to the dedup retention window (7 days).
+        regions = getattr(tog, "regions", None) or []
+        if regions:
+            ev_regions = set(filter(None, [event.region, *(event.regions or [])]))
+            if not (set(regions) & ev_regions):
+                return
+        event_rank = self.SEVERITY_RANK.get(event.severity, 0)
+        if event_rank < self.SEVERITY_RANK.get(getattr(tog, "min_severity", "routine"), 0):
+            return
+        sev_channels = getattr(tog, "severity_channels", None) or {}
+        ch_types = [c for c in sev_channels.get(event.severity, []) if c != "digest"]
+        if not ch_types:
+            return
+
+        # ---------- Section 3 — per-toggle cooldown (check only) ----------
         # Immediate-severity events bypass cooldown entirely — they are
         # already rate-controlled by source handler change detection.
+        # v0.6-4 (B13 fix): this section only CHECKS the cooldown. Arming
+        # it is deferred to Section 6 and happens only after a delivery
+        # actually succeeded.
         if getattr(event, "severity", None) == "immediate":
             cooldown_s = 0
         else:
             cooldown_s = int(getattr(tog, "cooldown_seconds", 300) or 0)
+        ck = None
         if cooldown_s > 0:
             suffix = (event.data or {}).get("_cooldown_suffix", "")
             region_key = event.region or "*"
@@ -380,22 +405,22 @@ class Dispatcher:
                 self._cooldown_dropped += 1
                 self._persist_state()
                 return  # silent throttle — no log spam
-            self._toggle_cooldown[ck] = now
-            self._persist_cooldown(ck, now, cooldown_s)
-            # In-memory prune: mirror the SQLite cutoff when the map grows
-            # past the threshold. The SQLite prune already ran inside
-            # _persist_cooldown.
-            # v0.6-3b: prune size + multiplier from adapter_config.
-            _prune_size = int(adapter_config.dispatcher.cooldown_prune_size)
-            _prune_mult = int(adapter_config.dispatcher.cooldown_prune_multiplier)
-            if len(self._toggle_cooldown) > _prune_size:
-                cutoff = now - (_prune_mult * cooldown_s)
-                self._toggle_cooldown = {
-                    k: t for k, t in self._toggle_cooldown.items() if t >= cutoff
-                }
+            # v0.6-4 (B13 fix): arming moved to Section 6 (post-delivery).
 
-        # ---------- Section 3 — (source, event.id) dedup ----------
-        dk = (event.source or "", event.id or "")
+        # ---------- Section 4 — (source, event.id) dedup (check only) ------
+        # v0.6-4: the dedup key gains an optional handler-supplied suffix
+        # (event.data["_dedup_suffix"]). Feeds like WFIGS publish the SAME
+        # upstream id (IrwinID) on every sweep for the life of an incident,
+        # so a bare (source, id) key permanently suppressed every later
+        # lifecycle broadcast (growth/containment updates) the handler had
+        # deliberately synthesized. Handlers that gate their own re-renders
+        # stamp the state that justified THIS broadcast into the suffix;
+        # unchanged re-deliveries still dedup, genuine updates pass.
+        _dd_suffix = str((event.data or {}).get("_dedup_suffix", "") or "")
+        _dd_id = event.id or ""
+        if _dd_suffix:
+            _dd_id = f"{_dd_id}#{_dd_suffix}"
+        dk = (event.source or "", _dd_id)
         if dk in self._dedup_lru:
             # Touch to keep recent.
             self._dedup_lru.move_to_end(dk)
@@ -405,23 +430,11 @@ class Dispatcher:
             # evidence we're still seeing this id.
             self._persist_dedup(dk, time.time())
             return
-        self._dedup_lru[dk] = True
-        self._persist_dedup(dk, time.time())
-        # v0.6-3b: read cap from adapter_config (default 10_000).
-        _lru_max = int(adapter_config.dispatcher.dedup_lru_max)
-        while len(self._dedup_lru) > _lru_max:
-            self._dedup_lru.popitem(last=False)  # evict oldest
+        # v0.6-4 (B13 fix): recording moved to Section 6 (post-delivery).
+        # A delivery that fails (or raises for every channel) leaves no
+        # dedup trace, so the next feed sweep retries it naturally.
 
-        regions = getattr(tog, "regions", None) or []
-        if regions:
-            ev_regions = set(filter(None, [event.region, *(event.regions or [])]))
-            if not (set(regions) & ev_regions):
-                return
-        event_rank = self.SEVERITY_RANK.get(event.severity, 0)
-        if event_rank < self.SEVERITY_RANK.get(getattr(tog, "min_severity", "routine"), 0):
-            return
-
-        # ---------- Section 4 — friendly composer wired in ----------
+        # ---------- Section 5 — friendly composer wired in ----------
         # Render once per event; reused across every channel below. Wrapped
         # so a renderer fault never blocks delivery — we fall back to the
         # legacy make_payload_from_event message (event.summary|title|category).
@@ -431,10 +444,8 @@ class Dispatcher:
             self._logger.exception("mesh composer crashed; falling back to legacy message")
             friendly = None
 
-        sev_channels = getattr(tog, "severity_channels", None) or {}
-        for ch_type in sev_channels.get(event.severity, []):
-            if ch_type == "digest":
-                continue
+        delivered_any = False
+        for ch_type in ch_types:
             try:
                 rule = self._toggle_to_rule(tog, ch_type, event)
                 channel = self._channel_factory(rule, self._connector)
@@ -444,6 +455,7 @@ class Dispatcher:
                     payload = make_payload_from_event(event)
                 success = await channel.deliver(payload, rule)
                 if success:
+                    delivered_any = True
                     self._logger.info(f"Dispatched event {event.id} via toggle {fam}/{ch_type}")
                     # v0.5.8b post-broadcast commit. Persistence-side
                     # bookkeeping that should only happen when a delivery
@@ -454,6 +466,35 @@ class Dispatcher:
                     self._logger.warning(f"Toggle channel delivery returned False for {fam}/{ch_type}")
             except Exception:
                 self._logger.exception(f"Toggle channel delivery failed for {fam}/{ch_type}")
+
+        # ---------- Section 6 — guard commit (v0.6-4, B13 fix) ----------
+        # Cooldown arming + dedup recording happen ONLY after at least one
+        # channel actually delivered. A fully-failed delivery leaves no
+        # guard state behind, so the next feed sweep retries naturally
+        # instead of being silently suppressed.
+        if not delivered_any:
+            return
+        commit_now = time.time()
+        if ck is not None and cooldown_s > 0:
+            self._toggle_cooldown[ck] = commit_now
+            self._persist_cooldown(ck, commit_now, cooldown_s)
+            # In-memory prune: mirror the SQLite cutoff when the map grows
+            # past the threshold. The SQLite prune already ran inside
+            # _persist_cooldown.
+            # v0.6-3b: prune size + multiplier from adapter_config.
+            _prune_size = int(adapter_config.dispatcher.cooldown_prune_size)
+            _prune_mult = int(adapter_config.dispatcher.cooldown_prune_multiplier)
+            if len(self._toggle_cooldown) > _prune_size:
+                cutoff = commit_now - (_prune_mult * cooldown_s)
+                self._toggle_cooldown = {
+                    k: t for k, t in self._toggle_cooldown.items() if t >= cutoff
+                }
+        self._dedup_lru[dk] = True
+        self._persist_dedup(dk, commit_now)
+        # v0.6-3b: read cap from adapter_config (default 10_000).
+        _lru_max = int(adapter_config.dispatcher.dedup_lru_max)
+        while len(self._dedup_lru) > _lru_max:
+            self._dedup_lru.popitem(last=False)  # evict oldest
 
     def dispatch_stats(self) -> dict:
         """Expose v0.5.2 toggle-path guard counters for ops/health endpoints.
