@@ -87,6 +87,9 @@ class Dispatcher:
         self._toggle_cooldown: dict[tuple[str, str, str], float] = {}
         # Insertion-ordered (source, event.id) -> sentinel; evict oldest at cap.
         self._dedup_lru: "OrderedDict[tuple[str, str], bool]" = OrderedDict()
+        # v0.7: track toggles that have logged legacy fallback deprecation warning
+        # (once per toggle per boot, not per event)
+        self._legacy_warned: set[str] = set()
         # v0.6-2: hydrate from SQLite. Graceful no-op if persistence is
         # unavailable -- the dispatcher still works, just without
         # cross-restart durability.
@@ -281,22 +284,25 @@ class Dispatcher:
     async def _dispatch_toggles(self, event: Event) -> None:
         """Route an event through its family master-toggle (parallel to rules).
 
-        v0.5.2 guards (run in order, at the entrance):
-          1. Staleness   — drop events older than `toggle.freshness_seconds`.
-                           Solves the restart-wave problem definitively: a
-                           backlog of stale events from durable storage gets
-                           dropped here, never broadcast.
-          2. Cooldown    — per (toggle.name, category, region) throttle keyed
-                           on `toggle.cooldown_seconds`. Silent, no log spam.
-          3. Dedup       — bounded LRU on (source, event.id); catches Central
-                           re-delivery during reconnect.
-        Then composes a friendly mesh string instead of the prior raw
-        `[Family] central.category` debug format.
+        v0.7 guard order (B13 fix — guards run BEFORE arming cooldown/dedup):
+          0. Cold-start grace — suppress broadcasts in first N seconds
+          1. Staleness — drop events older than toggle.freshness_seconds
+          2. Region filter — drop if event region not in toggle.regions
+          3. Matrix resolution — resolve severity_channels[severity] to sinks
+             → IF empty, return WITHOUT arming cooldown or recording dedup
+          4. Cooldown — per (toggle, category, region) throttle
+          5. Dedup — bounded LRU on (source, event.id)
+          6. Deliver per resolved sink
+
+        v0.7 sink-name routing: severity_channels values are sink names
+        (not channel types). Sinks resolved against config.notifications.sinks.
 
         v0.6-2: every mutation of the four drop counters, the cold-start
         anchor, the cooldown map, and the dedup LRU writes through to
         SQLite via the _persist_* helpers. Read fast-path stays in-memory.
         """
+        from meshai.notifications.channels import create_channel_from_sink
+
         toggles = getattr(self._config.notifications, "toggles", None)
         if not isinstance(toggles, dict) or not toggles:
             return
@@ -357,7 +363,50 @@ class Dispatcher:
                 )
                 return
 
-        # ---------- Section 2 — per-toggle cooldown ----------
+        # ---------- Section 2 — region filter (B13: moved before cooldown/dedup) ----------
+        regions = getattr(tog, "regions", None) or []
+        if regions:
+            ev_regions = set(filter(None, [event.region, *(event.regions or [])]))
+            if not (set(regions) & ev_regions):
+                return
+
+        # ---------- Section 3 — matrix resolution (B13: moved before cooldown/dedup) ----------
+        # severity_channels values can be:
+        #   - sink names (v0.7+): resolve against config.notifications.sinks
+        #   - channel types (v0.5/v0.6 legacy): mesh_broadcast, mesh_dm, email, webhook
+        # Backwards compatibility: if no sinks config exists OR a channel type name is used,
+        # fall back to _toggle_to_rule for inline transport config.
+        sinks_config = getattr(self._config.notifications, "sinks", None) or {}
+        sev_channels = getattr(tog, "severity_channels", None) or {}
+        sink_names = sev_channels.get(event.severity, [])
+
+        # Legacy channel types that trigger _toggle_to_rule fallback
+        LEGACY_CHANNEL_TYPES = {"mesh_broadcast", "mesh_dm", "email", "webhook", "digest"}
+
+        resolved_sinks: list[tuple[str, object, bool]] = []  # (name, config, is_legacy)
+        for sink_name in sink_names:
+            # Skip digest pseudo-channel (no-op)
+            if sink_name == "digest":
+                continue
+
+            sink = sinks_config.get(sink_name)
+            if sink is not None:
+                # v0.7+ sink-name routing
+                resolved_sinks.append((sink_name, sink, False))
+            elif sink_name in LEGACY_CHANNEL_TYPES:
+                # v0.5/v0.6 backwards compatibility: channel type name
+                # Use _toggle_to_rule to build a rule from inline transport config
+                resolved_sinks.append((sink_name, sink_name, True))  # sink_name IS the channel type
+            else:
+                self._logger.warning(
+                    f"dispatcher: unknown sink '{sink_name}' in toggle {fam}; skipping"
+                )
+
+        if not resolved_sinks:
+            # No sinks to deliver to — return WITHOUT arming cooldown or dedup (B13 fix)
+            return
+
+        # ---------- Section 4 — per-toggle cooldown (B13: moved after matrix) ----------
         # Immediate-severity events bypass cooldown entirely — they are
         # already rate-controlled by source handler change detection.
         if getattr(event, "severity", None) == "immediate":
@@ -394,7 +443,7 @@ class Dispatcher:
                     k: t for k, t in self._toggle_cooldown.items() if t >= cutoff
                 }
 
-        # ---------- Section 3 — (source, event.id) dedup ----------
+        # ---------- Section 5 — (source, event.id) dedup (B13: moved after matrix) ----------
         dk = (event.source or "", event.id or "")
         if dk in self._dedup_lru:
             # Touch to keep recent.
@@ -412,16 +461,7 @@ class Dispatcher:
         while len(self._dedup_lru) > _lru_max:
             self._dedup_lru.popitem(last=False)  # evict oldest
 
-        regions = getattr(tog, "regions", None) or []
-        if regions:
-            ev_regions = set(filter(None, [event.region, *(event.regions or [])]))
-            if not (set(regions) & ev_regions):
-                return
-        event_rank = self.SEVERITY_RANK.get(event.severity, 0)
-        if event_rank < self.SEVERITY_RANK.get(getattr(tog, "min_severity", "routine"), 0):
-            return
-
-        # ---------- Section 4 — friendly composer wired in ----------
+        # ---------- Section 6 — compose + deliver per sink ----------
         # Render once per event; reused across every channel below. Wrapped
         # so a renderer fault never blocks delivery — we fall back to the
         # legacy make_payload_from_event message (event.summary|title|category).
@@ -431,29 +471,54 @@ class Dispatcher:
             self._logger.exception("mesh composer crashed; falling back to legacy message")
             friendly = None
 
-        sev_channels = getattr(tog, "severity_channels", None) or {}
-        for ch_type in sev_channels.get(event.severity, []):
-            if ch_type == "digest":
-                continue
+        for sink_name, sink_or_ch_type, is_legacy in resolved_sinks:
             try:
-                rule = self._toggle_to_rule(tog, ch_type, event)
-                channel = self._channel_factory(rule, self._connector)
-                if friendly is not None and ch_type in ("mesh_broadcast", "mesh_dm"):
-                    payload = make_payload_from_event(event, message=friendly)
+                if is_legacy:
+                    # v0.5/v0.6 backwards compatibility: use _toggle_to_rule
+                    # DEPRECATED: This fallback will be removed in session 3.
+                    # Run migration to convert severity_channels to sink names.
+                    ch_type = sink_or_ch_type  # sink_or_ch_type IS the channel type string
+                    if fam not in self._legacy_warned:
+                        self._legacy_warned.add(fam)
+                        self._logger.warning(
+                            "DEPRECATED: toggle '%s' uses channel-type routing ('%s'). "
+                            "Run migrate_config_routing.py to convert to sink-name routing. "
+                            "This fallback will be removed in a future release.",
+                            fam, ch_type,
+                        )
+                    rule = self._toggle_to_rule(tog, ch_type, event)
+                    channel = self._channel_factory(rule, self._connector)
+                    sink_type = ch_type
+                    if friendly is not None and ch_type in ("mesh_broadcast", "mesh_dm"):
+                        payload = make_payload_from_event(event, message=friendly)
+                    else:
+                        payload = make_payload_from_event(event)
+                    success = await channel.deliver(payload, rule)
+                    if success:
+                        self._logger.info(f"Dispatched event {event.id} via toggle {fam}/{ch_type}")
+                        self._post_broadcast_commit(event, payload, rule, ch_type)
+                    else:
+                        self._logger.warning(f"Toggle channel delivery returned False for {fam}/{ch_type}")
                 else:
-                    payload = make_payload_from_event(event)
-                success = await channel.deliver(payload, rule)
-                if success:
-                    self._logger.info(f"Dispatched event {event.id} via toggle {fam}/{ch_type}")
-                    # v0.5.8b post-broadcast commit. Persistence-side
-                    # bookkeeping that should only happen when a delivery
-                    # actually went out: mesh_broadcasts_out audit row +
-                    # handler-supplied last_broadcast_* UPDATE callback.
-                    self._post_broadcast_commit(event, payload, rule, ch_type)
-                else:
-                    self._logger.warning(f"Toggle channel delivery returned False for {fam}/{ch_type}")
+                    # v0.7+ sink-name routing
+                    sink = sink_or_ch_type
+                    sink_type = getattr(sink, "type", "mesh_broadcast")
+                    channel = create_channel_from_sink(sink, self._connector)
+                    if friendly is not None and sink_type in ("mesh_broadcast", "mesh_dm"):
+                        payload = make_payload_from_event(event, message=friendly)
+                    else:
+                        payload = make_payload_from_event(event)
+                    # channel.deliver() signature requires rule but doesn't use it;
+                    # pass None for compatibility (channels use their own config)
+                    success = await channel.deliver(payload, None)
+                    if success:
+                        self._logger.info(f"Dispatched event {event.id} via toggle {fam}/{sink_name}")
+                        # v0.7: post-broadcast commit with sink info (not rule)
+                        self._post_broadcast_commit_sink(event, payload, sink, sink_name)
+                    else:
+                        self._logger.warning(f"Toggle channel delivery returned False for {fam}/{sink_name}")
             except Exception:
-                self._logger.exception(f"Toggle channel delivery failed for {fam}/{ch_type}")
+                self._logger.exception(f"Toggle channel delivery failed for {fam}/{sink_name}")
 
     def dispatch_stats(self) -> dict:
         """Expose v0.5.2 toggle-path guard counters for ops/health endpoints.
@@ -612,6 +677,58 @@ class Dispatcher:
             except Exception:
                 self._logger.exception(
                     "post-broadcast: handler commit-callback raised"
+                )
+
+    def _post_broadcast_commit_sink(self, event, payload, sink, sink_name: str) -> None:
+        """v0.7 sink-based audit commit (replaces _post_broadcast_commit for sink routing).
+
+        Same logic as _post_broadcast_commit but extracts channel/node_ids from
+        SinkConfig instead of NotificationRuleConfig.
+        """
+        data = getattr(event, "data", None) or {}
+        if not data:
+            return
+        committed_at = time.time()
+
+        audit = data.get("_broadcast_audit")
+        if isinstance(audit, dict):
+            try:
+                from meshai.persistence import get_db
+                conn = get_db()
+                text = payload.message if payload is not None else (event.title or "")
+                bytes_sent = len(text.encode("utf-8")) if text else 0
+                sink_type = getattr(sink, "type", "mesh_broadcast")
+                if sink_type == "mesh_dm":
+                    node_ids = list(getattr(sink, "node_ids", []) or [])
+                    recipient = ",".join(map(str, node_ids)) or "dm"
+                else:
+                    recipient = "broadcast"
+                channel = getattr(sink, "channel", None)
+                conn.execute(
+                    "INSERT INTO mesh_broadcasts_out(sent_at, recipient, channel, "
+                    "text, source_event_table, source_event_pk, bytes_sent, "
+                    "ack_received) VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        int(committed_at), recipient, channel, text,
+                        audit.get("table"), audit.get("pk"),
+                        bytes_sent, 0,
+                    ),
+                )
+            except Exception:
+                self._logger.exception(
+                    "post-broadcast: mesh_broadcasts_out insert failed "
+                    "(sink=%s table=%s pk=%s)",
+                    sink_name, audit.get("table"), audit.get("pk"),
+                )
+
+        cb = data.get("_on_broadcast_committed")
+        if callable(cb):
+            try:
+                cb(committed_at)
+            except Exception:
+                self._logger.exception(
+                    "post-broadcast: handler commit-callback raised (sink=%s)",
+                    sink_name,
                 )
 
     def _toggle_to_rule(self, tog, ch_type: str, event: Event):
