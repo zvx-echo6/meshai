@@ -583,7 +583,7 @@ class NotificationToggle:
 
 
 TOGGLE_FAMILIES = [
-    "mesh_health", "weather", "fire", "rf_propagation",
+    "mesh_health", "weather", "fire", "rf_propagation", "satpass",
     "roads", "avalanche", "seismic", "tracking",
 ]
 

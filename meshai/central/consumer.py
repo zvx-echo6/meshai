@@ -50,6 +50,7 @@ _SUBJECTS_BARE: dict[str, list[str]] = {
     "traffic": ["central.traffic.>"],
     "roads511": ["central.traffic.>"],   # shared with traffic; sub-adapter routing
     "avalanche": ["central.avy.advisory.>"],
+    "satpass": ["central.sat.pass.>"],
 }
 
 # Backwards-compat: keep ADAPTER_SUBJECTS importable for legacy readers/tests.
@@ -207,6 +208,7 @@ CENTRAL_ADAPTER_TO_SOURCE: dict[str, str] = {
     "itd_511": "roads511",
     "avalanche_org": "avalanche",
     "firms": "firms",
+    "sat_passes": "satpass",
 }
 
 # Central hierarchical category prefix -> meshai flat category.
@@ -236,6 +238,7 @@ _CATEGORY_MAP: list[tuple[str, str]] = [
     ("incident", "road_incident"),
     ("closure", "road_closure"),
     ("traffic.", "traffic_congestion"),
+    ("sat.", "sat_pass"),
 ]
 
 
@@ -535,6 +538,9 @@ class CentralConsumer:
                 # commit #5 (env_reporter). Closes the v0.5.13
                 # silent-drop on central.fire.hotspot.> (audit doc
                 # finding #2).
+                elif inner.get("adapter") == "sat_passes":
+                    from meshai.central.satpass_handler import handle_satpass
+                    synthesized = handle_satpass(envelope, subject, data=data) or None
                 elif inner.get("adapter") == "firms":
                     from meshai.central.firms_handler import handle_firms
                     synthesized = handle_firms(envelope, subject, data=data) or None
