@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Migration script for MeshAI routing simplification: synthesize sinks.
+"""Migration script for MeshAI routing simplification: synthesize sinks + matrix rewrite.
 
 This script reads existing notification toggles and rules, extracts their
 inline transport configurations, and synthesizes named sinks.
@@ -12,7 +12,10 @@ The migration:
 3. For each enabled rule with inline transport config, synthesizes a named sink
 4. Deduplicates identical transports into one sink
 5. Writes the sinks block to the config
-6. Does NOT remove inline fields (done in a later step)
+6. Rewrites severity_channels: channel types → sink names (Phase B)
+7. Blanks matrix rows below old min_severity threshold (Phase B)
+8. Removes min_severity field from toggles (Phase B)
+9. Does NOT remove inline transport fields (done in a later step)
 
 Idempotent: refuses to run if a sinks block already exists.
 """
@@ -163,14 +166,15 @@ def extract_sink_from_rule(rule: dict) -> Optional[dict]:
     return None
 
 
-def synthesize_sinks(notifications: dict) -> dict:
+def synthesize_sinks(notifications: dict) -> tuple[dict, dict]:
     """Synthesize named sinks from toggles and rules.
 
     Returns:
-        dict mapping sink names to sink configs
+        (sinks: dict mapping sink names to sink configs,
+         hash_to_name: dict mapping sink hashes to names for matrix migration)
     """
     sinks = {}
-    hash_to_name = {}  # For deduplication
+    hash_to_name = {}  # For deduplication + matrix migration lookup
 
     # Process toggles - extract ALL configured transports per toggle
     toggles = notifications.get("toggles", {})
@@ -233,7 +237,161 @@ def synthesize_sinks(notifications: dict) -> dict:
         rule_name = rule.get("name", f"rule-{i}")
         logger.info(f"  Rule '{rule_name}' → sink '{sink_name}'")
 
-    return sinks
+    return sinks, hash_to_name
+
+
+# ---------- Phase B: Matrix rewrite ----------
+
+SEVERITY_RANK = {"routine": 0, "priority": 1, "immediate": 2}
+
+
+def build_channel_type_to_sink_map(toggle: dict, hash_to_name: dict) -> dict[str, str]:
+    """Build a mapping from channel type to sink name for a toggle.
+
+    Uses the same hash-based lookup as synthesize_sinks to find which sink
+    was created from each transport type in this toggle.
+
+    Returns:
+        {"mesh_broadcast": "mesh-ch0", "mesh_dm": "dm-abc123", ...}
+    """
+    mapping = {}
+    sink_dicts = extract_sinks_from_toggle(toggle)
+    for sink_dict in sink_dicts:
+        sink_type = sink_dict["type"]
+        sink_hash = compute_sink_hash(sink_dict)
+        if sink_hash in hash_to_name:
+            mapping[sink_type] = hash_to_name[sink_hash]
+    return mapping
+
+
+def migrate_toggle_matrix(
+    toggle_name: str,
+    toggle: dict,
+    channel_to_sink: dict[str, str],
+) -> tuple[dict, list[str]]:
+    """Rewrite a toggle's severity_channels from channel types to sink names.
+
+    Also blanks matrix rows below old min_severity (they never fired anyway).
+
+    Args:
+        toggle_name: Name of this toggle (for logging)
+        toggle: The toggle dict
+        channel_to_sink: Mapping from channel type to sink name
+
+    Returns:
+        (new_severity_channels, list_of_changes)
+    """
+    changes = []
+    old_matrix = toggle.get("severity_channels", {})
+    old_min_severity = toggle.get("min_severity", "routine")
+    min_rank = SEVERITY_RANK.get(old_min_severity, 0)
+
+    new_matrix = {}
+    for severity in ["routine", "priority", "immediate"]:
+        sev_rank = SEVERITY_RANK.get(severity, 0)
+        old_channels = old_matrix.get(severity, [])
+
+        # If this severity was below min_severity, blank the row
+        if sev_rank < min_rank:
+            if old_channels:
+                changes.append(f"  {severity}: blanked (was below min_severity={old_min_severity})")
+            new_matrix[severity] = []
+            continue
+
+        # Convert channel types to sink names
+        new_sinks = []
+        for ch_type in old_channels:
+            # Skip digest pseudo-channel (it's a no-op)
+            if ch_type == "digest":
+                changes.append(f"  {severity}: removed 'digest' (no-op pseudo-channel)")
+                continue
+            sink_name = channel_to_sink.get(ch_type)
+            if sink_name:
+                new_sinks.append(sink_name)
+            else:
+                # Channel type has no corresponding sink (shouldn't happen if
+                # synthesize_sinks ran first, but be defensive)
+                changes.append(f"  {severity}: WARNING: no sink for channel type '{ch_type}'")
+        new_matrix[severity] = new_sinks
+
+        # Log the conversion
+        if old_channels != new_sinks:
+            changes.append(f"  {severity}: {old_channels} → {new_sinks}")
+
+    return new_matrix, changes
+
+
+def migrate_all_matrices(
+    notifications: dict,
+    hash_to_name: dict,
+) -> tuple[dict[str, dict], dict[str, list[str]]]:
+    """Rewrite all toggle severity_channels matrices.
+
+    Returns:
+        (toggle_name -> new_severity_channels, toggle_name -> list_of_changes)
+    """
+    new_matrices = {}
+    all_changes = {}
+
+    toggles = notifications.get("toggles", {})
+    for toggle_name, toggle in toggles.items():
+        if not isinstance(toggle, dict):
+            continue
+
+        channel_to_sink = build_channel_type_to_sink_map(toggle, hash_to_name)
+        if not channel_to_sink:
+            # Toggle has no inline transport config, skip matrix rewrite
+            continue
+
+        new_matrix, changes = migrate_toggle_matrix(toggle_name, toggle, channel_to_sink)
+        if changes:
+            new_matrices[toggle_name] = new_matrix
+            all_changes[toggle_name] = changes
+
+    return new_matrices, all_changes
+
+
+def render_matrix_updates_yaml(
+    toggle_updates: dict[str, dict],
+    min_severity_removals: list[str],
+    layout: str,
+) -> str:
+    """Render YAML snippet showing matrix updates.
+
+    For dry-run display only - actual write uses yaml.safe_load/dump round-trip.
+    """
+    lines = ["# Matrix updates:"]
+    for toggle_name, new_matrix in toggle_updates.items():
+        lines.append(f"toggles.{toggle_name}.severity_channels:")
+        for sev, sinks in new_matrix.items():
+            lines.append(f"    {sev}: {sinks}")
+    if min_severity_removals:
+        lines.append("# min_severity removed from:")
+        for name in min_severity_removals:
+            lines.append(f"  - {name}")
+    return "\n".join(lines)
+
+
+def apply_matrix_updates(
+    config: dict,
+    layout: str,
+    toggle_updates: dict[str, dict],
+) -> None:
+    """Apply matrix updates to config dict in-place.
+
+    Also removes min_severity field from updated toggles.
+    """
+    notifications = get_notifications_block(config, layout)
+    toggles = notifications.get("toggles", {})
+
+    for toggle_name, new_matrix in toggle_updates.items():
+        toggle = toggles.get(toggle_name)
+        if not isinstance(toggle, dict):
+            continue
+        toggle["severity_channels"] = new_matrix
+        # Remove min_severity - matrix is now the only gate
+        if "min_severity" in toggle:
+            del toggle["min_severity"]
 
 
 def detect_config_layout(config: dict) -> str:
@@ -428,9 +586,31 @@ def write_sinks_to_config(config_path: Path, sinks: dict, layout: str, backup_pa
     return True
 
 
+def write_full_config(config_path: Path, config: dict, layout: str, backup_path: Path) -> bool:
+    """Write full config using yaml round-trip (for matrix updates).
+
+    Unlike write_sinks_to_config which preserves comments, this does a full
+    dump. Used when we need to modify fields in-place (matrix updates).
+
+    Returns:
+        True on success, False on failure (backup restored)
+    """
+    import shutil
+
+    try:
+        with open(config_path, "w") as f:
+            yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to write config: {e}")
+        logger.info("Restoring from backup...")
+        shutil.copy2(backup_path, config_path)
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Migrate MeshAI config to use named sinks"
+        description="Migrate MeshAI config to use named sinks + matrix rewrite"
     )
     parser.add_argument(
         "--config",
@@ -442,6 +622,12 @@ def main():
         "--dry-run",
         action="store_true",
         help="Show what would be done without making changes",
+    )
+    parser.add_argument(
+        "--phase",
+        choices=["a", "b", "all"],
+        default="all",
+        help="Phase A: sinks only; Phase B: matrix rewrite; all: both (default)",
     )
     args = parser.parse_args()
 
@@ -455,23 +641,55 @@ def main():
     full_config, notifications, layout = load_notifications_config(config_path)
     logger.info(f"Detected config layout: {layout}")
 
-    # Check if sinks already exist
-    if notifications.get("sinks"):
-        logger.error("Sinks block already exists in config. Migration already complete.")
-        logger.info("Existing sinks: %s", list(notifications["sinks"].keys()))
-        sys.exit(1)
+    # ---------- Phase A: Synthesize sinks ----------
+    sinks = {}
+    hash_to_name = {}
 
-    # Synthesize sinks
-    logger.info("Synthesizing sinks from toggles and rules...")
-    sinks = synthesize_sinks(notifications)
+    if args.phase in ("a", "all"):
+        # Check if sinks already exist
+        if notifications.get("sinks"):
+            if args.phase == "a":
+                logger.error("Sinks block already exists. Phase A already complete.")
+                sys.exit(1)
+            else:
+                # Phase "all" with existing sinks: skip Phase A, proceed to B
+                logger.info("Sinks already exist; skipping Phase A synthesis")
+                # Build hash_to_name from existing sinks for Phase B
+                existing_sinks = notifications.get("sinks", {})
+                for sink_name, sink_config in existing_sinks.items():
+                    if isinstance(sink_config, dict):
+                        sink_hash = compute_sink_hash(sink_config)
+                        hash_to_name[sink_hash] = sink_name
+                sinks = existing_sinks
+        else:
+            logger.info("Synthesizing sinks from toggles and rules...")
+            sinks, hash_to_name = synthesize_sinks(notifications)
 
-    if not sinks:
-        logger.info("No sinks to synthesize (no inline transport configs found)")
-        sys.exit(0)
+            if not sinks:
+                logger.info("No sinks to synthesize (no inline transport configs found)")
+                if args.phase == "a":
+                    sys.exit(0)
+            else:
+                logger.info(f"Synthesized {len(sinks)} sink(s):")
+                for name, sink in sinks.items():
+                    logger.info(f"  {name}: {sink}")
 
-    logger.info(f"Synthesized {len(sinks)} sink(s):")
-    for name, sink in sinks.items():
-        logger.info(f"  {name}: {sink}")
+    # ---------- Phase B: Matrix rewrite ----------
+    toggle_updates = {}
+    all_changes = {}
+
+    if args.phase in ("b", "all") and hash_to_name:
+        logger.info("Migrating severity_channels matrices...")
+        toggle_updates, all_changes = migrate_all_matrices(notifications, hash_to_name)
+
+        if toggle_updates:
+            logger.info(f"Matrix updates for {len(toggle_updates)} toggle(s):")
+            for toggle_name, changes in all_changes.items():
+                logger.info(f"  {toggle_name}:")
+                for change in changes:
+                    logger.info(f"    {change}")
+        else:
+            logger.info("No matrix updates needed")
 
     # Determine where sinks will land
     if layout == "multifile":
@@ -479,24 +697,63 @@ def main():
     else:
         sinks_path = "notifications.sinks"
 
+    # ---------- Dry-run output ----------
     if args.dry_run:
         logger.info("DRY RUN - no changes made")
         print(f"\n--- Config layout: {layout} ---")
-        print(f"--- Sinks will be written to: {sinks_path} ---")
-        print("\n--- Text to append: ---")
-        print(render_sinks_yaml(sinks, layout))
+
+        if sinks and args.phase in ("a", "all") and not notifications.get("sinks"):
+            print(f"\n--- Phase A: Sinks will be written to: {sinks_path} ---")
+            print(render_sinks_yaml(sinks, layout))
+
+        if toggle_updates and args.phase in ("b", "all"):
+            print("\n--- Phase B: Matrix updates ---")
+            min_severity_removals = list(toggle_updates.keys())
+            print(render_matrix_updates_yaml(toggle_updates, min_severity_removals, layout))
+
         return
 
-    # Backup and write
+    # ---------- Backup ----------
     backup_path = backup_config(config_path)
     logger.info(f"Backed up config to {backup_path}")
 
-    success = write_sinks_to_config(config_path, sinks, layout, backup_path)
-    if not success:
-        logger.error("Migration failed - config restored from backup")
-        sys.exit(1)
+    # ---------- Apply changes ----------
+    # For Phase A with no Phase B changes, use append strategy (preserves comments)
+    # For Phase B or combined, use yaml round-trip (loses comments but handles in-place edits)
 
-    logger.info(f"Wrote sinks block to {config_path} ({sinks_path})")
+    if args.phase == "a" and sinks and not notifications.get("sinks"):
+        # Phase A only: use append strategy
+        success = write_sinks_to_config(config_path, sinks, layout, backup_path)
+        if not success:
+            logger.error("Phase A migration failed - config restored from backup")
+            sys.exit(1)
+        logger.info(f"Wrote sinks block to {config_path} ({sinks_path})")
+
+    elif toggle_updates or (sinks and not notifications.get("sinks")):
+        # Phase B or combined: use yaml round-trip
+        # Re-parse the config to modify in-place
+        with open(config_path, "r") as f:
+            config_to_modify = yaml.safe_load(f) or {}
+
+        modify_layout = detect_config_layout(config_to_modify)
+        modify_notifications = get_notifications_block(config_to_modify, modify_layout)
+
+        # Add sinks if needed
+        if sinks and not modify_notifications.get("sinks"):
+            modify_notifications["sinks"] = sinks
+            logger.info(f"Added sinks block ({len(sinks)} sink(s))")
+
+        # Apply matrix updates
+        if toggle_updates:
+            apply_matrix_updates(config_to_modify, modify_layout, toggle_updates)
+            logger.info(f"Applied matrix updates to {len(toggle_updates)} toggle(s)")
+
+        # Write the modified config
+        success = write_full_config(config_path, config_to_modify, modify_layout, backup_path)
+        if not success:
+            logger.error("Migration failed - config restored from backup")
+            sys.exit(1)
+
     logger.info("Migration complete!")
 
 

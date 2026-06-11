@@ -425,7 +425,7 @@ class TestMigrationSynthesis:
             }
         }
 
-        sinks = synthesize_sinks(notifications)
+        sinks, _ = synthesize_sinks(notifications)
 
         # Should only have one sink for channel 2
         assert len(sinks) == 1
@@ -443,7 +443,7 @@ class TestMigrationSynthesis:
             }
         }
 
-        sinks = synthesize_sinks(notifications)
+        sinks, _ = synthesize_sinks(notifications)
 
         # Should have three unique sinks
         assert len(sinks) == 3
@@ -670,7 +670,7 @@ other_section:
             _, notifications, layout = load_notifications_config(config_path)
             assert layout == "multifile"
 
-            sinks = synthesize_sinks(notifications)
+            sinks, _ = synthesize_sinks(notifications)
             rendered = render_sinks_yaml(sinks, layout)
 
             # The rendered YAML for multifile should not be indented
@@ -698,3 +698,215 @@ other_section:
         # Mixed types
         name = generate_sink_name("mesh_dm", {"node_ids": [987654321, "!xyz"]})
         assert name == "dm-98765432"
+
+
+class TestMatrixMigration:
+    """Tests for Phase B: matrix rewrite migration."""
+
+    def test_build_channel_type_to_sink_map(self):
+        """build_channel_type_to_sink_map correctly maps channel types to sink names."""
+        from meshai.scripts.migrate_config_routing import (
+            build_channel_type_to_sink_map,
+            compute_sink_hash,
+        )
+
+        # Build hash_to_name as synthesize_sinks would
+        hash_to_name = {
+            compute_sink_hash({"type": "mesh_broadcast", "channel": 2}): "mesh-ch2",
+            compute_sink_hash({"type": "mesh_dm", "node_ids": ["!abc123"]}): "dm-abc12345",
+        }
+
+        toggle = {
+            "broadcast_channel": 2,
+            "node_ids": ["!abc123"],
+        }
+
+        mapping = build_channel_type_to_sink_map(toggle, hash_to_name)
+
+        assert mapping["mesh_broadcast"] == "mesh-ch2"
+        assert mapping["mesh_dm"] == "dm-abc12345"
+
+    def test_migrate_toggle_matrix_converts_channel_types(self):
+        """migrate_toggle_matrix converts channel types to sink names."""
+        from meshai.scripts.migrate_config_routing import migrate_toggle_matrix
+
+        toggle = {
+            "severity_channels": {
+                "routine": ["mesh_broadcast"],
+                "priority": ["mesh_broadcast"],
+                "immediate": ["mesh_broadcast", "mesh_dm"],
+            },
+            "min_severity": "routine",
+        }
+        channel_to_sink = {
+            "mesh_broadcast": "mesh-ch2",
+            "mesh_dm": "dm-ops",
+        }
+
+        new_matrix, changes = migrate_toggle_matrix("test", toggle, channel_to_sink)
+
+        assert new_matrix["routine"] == ["mesh-ch2"]
+        assert new_matrix["priority"] == ["mesh-ch2"]
+        assert new_matrix["immediate"] == ["mesh-ch2", "dm-ops"]
+        assert len(changes) > 0
+
+    def test_migrate_toggle_matrix_blanks_below_min_severity(self):
+        """migrate_toggle_matrix blanks rows below min_severity threshold."""
+        from meshai.scripts.migrate_config_routing import migrate_toggle_matrix
+
+        toggle = {
+            "severity_channels": {
+                "routine": ["mesh_broadcast"],
+                "priority": ["mesh_broadcast"],
+                "immediate": ["mesh_broadcast"],
+            },
+            "min_severity": "priority",  # routine should be blanked
+        }
+        channel_to_sink = {"mesh_broadcast": "mesh-ch0"}
+
+        new_matrix, changes = migrate_toggle_matrix("test", toggle, channel_to_sink)
+
+        assert new_matrix["routine"] == [], "routine should be blanked (below priority)"
+        assert new_matrix["priority"] == ["mesh-ch0"]
+        assert new_matrix["immediate"] == ["mesh-ch0"]
+        assert any("blanked" in c for c in changes)
+
+    def test_migrate_toggle_matrix_removes_digest(self):
+        """migrate_toggle_matrix removes 'digest' pseudo-channel."""
+        from meshai.scripts.migrate_config_routing import migrate_toggle_matrix
+
+        toggle = {
+            "severity_channels": {
+                "routine": ["mesh_broadcast", "digest"],
+                "priority": ["mesh_broadcast", "digest"],
+                "immediate": ["mesh_broadcast"],
+            },
+            "min_severity": "routine",
+        }
+        channel_to_sink = {"mesh_broadcast": "mesh-ch0"}
+
+        new_matrix, changes = migrate_toggle_matrix("test", toggle, channel_to_sink)
+
+        # digest should be removed
+        assert "digest" not in new_matrix["routine"]
+        assert "digest" not in new_matrix["priority"]
+        assert any("digest" in c for c in changes)
+
+    def test_migrate_all_matrices_processes_all_toggles(self):
+        """migrate_all_matrices processes all toggles with inline transport."""
+        from meshai.scripts.migrate_config_routing import (
+            migrate_all_matrices,
+            compute_sink_hash,
+        )
+
+        notifications = {
+            "toggles": {
+                "fire": {
+                    "broadcast_channel": 1,
+                    "severity_channels": {
+                        "routine": [],
+                        "priority": ["mesh_broadcast"],
+                        "immediate": ["mesh_broadcast"],
+                    },
+                    "min_severity": "priority",
+                },
+                "weather": {
+                    "broadcast_channel": 2,
+                    "severity_channels": {
+                        "routine": ["mesh_broadcast"],
+                        "priority": ["mesh_broadcast"],
+                        "immediate": ["mesh_broadcast"],
+                    },
+                    "min_severity": "routine",
+                },
+            }
+        }
+
+        hash_to_name = {
+            compute_sink_hash({"type": "mesh_broadcast", "channel": 1}): "mesh-ch1",
+            compute_sink_hash({"type": "mesh_broadcast", "channel": 2}): "mesh-ch2",
+        }
+
+        toggle_updates, all_changes = migrate_all_matrices(notifications, hash_to_name)
+
+        # Both toggles should have updates
+        assert "fire" in toggle_updates
+        assert "weather" in toggle_updates
+
+        # Fire's matrix should use mesh-ch1
+        assert toggle_updates["fire"]["priority"] == ["mesh-ch1"]
+
+        # Weather's matrix should use mesh-ch2
+        assert toggle_updates["weather"]["routine"] == ["mesh-ch2"]
+
+    def test_apply_matrix_updates_modifies_config(self):
+        """apply_matrix_updates correctly modifies config in-place."""
+        from meshai.scripts.migrate_config_routing import apply_matrix_updates
+
+        config = {
+            "toggles": {
+                "fire": {
+                    "enabled": True,
+                    "min_severity": "priority",
+                    "severity_channels": {
+                        "routine": ["mesh_broadcast"],
+                        "priority": ["mesh_broadcast"],
+                        "immediate": ["mesh_broadcast"],
+                    },
+                }
+            }
+        }
+
+        toggle_updates = {
+            "fire": {
+                "routine": [],
+                "priority": ["mesh-ch1"],
+                "immediate": ["mesh-ch1"],
+            }
+        }
+
+        apply_matrix_updates(config, "multifile", toggle_updates)
+
+        # Check matrix was updated
+        assert config["toggles"]["fire"]["severity_channels"]["routine"] == []
+        assert config["toggles"]["fire"]["severity_channels"]["priority"] == ["mesh-ch1"]
+
+        # Check min_severity was removed
+        assert "min_severity" not in config["toggles"]["fire"]
+
+    def test_full_migration_synthesis_and_matrix(self):
+        """Full migration: synthesize sinks + rewrite matrices."""
+        from meshai.scripts.migrate_config_routing import (
+            synthesize_sinks,
+            migrate_all_matrices,
+            apply_matrix_updates,
+        )
+
+        notifications = {
+            "toggles": {
+                "fire": {
+                    "enabled": True,
+                    "broadcast_channel": 0,
+                    "min_severity": "priority",
+                    "severity_channels": {
+                        "routine": ["mesh_broadcast"],
+                        "priority": ["mesh_broadcast"],
+                        "immediate": ["mesh_broadcast"],
+                    },
+                },
+            }
+        }
+
+        # Phase A: synthesize sinks
+        sinks, hash_to_name = synthesize_sinks(notifications)
+        assert "mesh-ch0" in sinks
+
+        # Phase B: migrate matrices
+        toggle_updates, changes = migrate_all_matrices(notifications, hash_to_name)
+        assert "fire" in toggle_updates
+
+        # Routine should be blanked (below min_severity=priority)
+        assert toggle_updates["fire"]["routine"] == []
+        # Priority and immediate should have sink name
+        assert toggle_updates["fire"]["priority"] == ["mesh-ch0"]
+        assert toggle_updates["fire"]["immediate"] == ["mesh-ch0"]
