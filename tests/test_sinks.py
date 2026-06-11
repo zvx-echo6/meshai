@@ -466,7 +466,7 @@ class TestMigrationIdempotence:
             config_path = Path(f.name)
 
         try:
-            _, notifications = load_notifications_config(config_path)
+            _, notifications, _ = load_notifications_config(config_path)
             assert notifications.get("sinks") is not None
             # The main() function checks this and exits
         finally:
@@ -489,3 +489,212 @@ class TestMigrationIdempotence:
             os.unlink(config_path)
             if backup_path.exists():
                 os.unlink(backup_path)
+
+
+class TestWriteSinksToConfig:
+    """Tests for layout-aware, append-only sinks write."""
+
+    def test_write_sinks_multifile_layout(self):
+        """write_sinks_to_config handles multi-file layout correctly."""
+        from meshai.scripts.migrate_config_routing import (
+            write_sinks_to_config,
+            backup_config,
+            load_notifications_config,
+        )
+
+        # Create a multi-file config with comments
+        original_content = """# Notification config for MeshAI
+# This comment should be preserved
+
+toggles:
+  fire:
+    enabled: true
+    broadcast_channel: 1
+  weather:
+    enabled: true
+    broadcast_channel: 2
+
+rules: []
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(original_content)
+            config_path = Path(f.name)
+
+        backup_path = None
+        try:
+            backup_path = backup_config(config_path)
+            sinks = {
+                "mesh-ch1": {"type": "mesh_broadcast", "channel": 1},
+                "mesh-ch2": {"type": "mesh_broadcast", "channel": 2},
+            }
+
+            success = write_sinks_to_config(config_path, sinks, "multifile", backup_path)
+            assert success, "Write should succeed"
+
+            # Read back and verify
+            with open(config_path, "r") as f:
+                new_content = f.read()
+
+            # Comments should be preserved
+            assert "# Notification config for MeshAI" in new_content
+            assert "# This comment should be preserved" in new_content
+
+            # Original keys should be intact
+            _, notifications, layout = load_notifications_config(config_path)
+            assert layout == "multifile"
+            assert "toggles" in notifications
+            assert "rules" in notifications
+            assert "sinks" in notifications
+
+            # Sinks should be at root level (no notifications: wrapper created)
+            config = yaml.safe_load(new_content)
+            assert "notifications" not in config, "Should not create notifications: wrapper"
+            assert "sinks" in config, "Sinks should be at root"
+            assert set(config["sinks"].keys()) == {"mesh-ch1", "mesh-ch2"}
+        finally:
+            os.unlink(config_path)
+            if backup_path and backup_path.exists():
+                os.unlink(backup_path)
+
+    def test_write_sinks_monolithic_layout(self):
+        """write_sinks_to_config handles monolithic layout correctly."""
+        from meshai.scripts.migrate_config_routing import (
+            write_sinks_to_config,
+            backup_config,
+            load_notifications_config,
+        )
+
+        # Create a monolithic config
+        original_content = """# Main config file
+notifications:
+  enabled: true
+  toggles:
+    fire:
+      broadcast_channel: 1
+
+other_section:
+  key: value
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(original_content)
+            config_path = Path(f.name)
+
+        backup_path = None
+        try:
+            backup_path = backup_config(config_path)
+            sinks = {"mesh-ch1": {"type": "mesh_broadcast", "channel": 1}}
+
+            success = write_sinks_to_config(config_path, sinks, "monolithic", backup_path)
+            assert success, "Write should succeed"
+
+            # Read back and verify
+            _, notifications, layout = load_notifications_config(config_path)
+            assert layout == "monolithic"
+            assert "sinks" in notifications
+            assert "mesh-ch1" in notifications["sinks"]
+
+            # Other sections should be intact
+            with open(config_path, "r") as f:
+                config = yaml.safe_load(f)
+            assert "other_section" in config
+            assert config["other_section"]["key"] == "value"
+        finally:
+            os.unlink(config_path)
+            if backup_path and backup_path.exists():
+                os.unlink(backup_path)
+
+    def test_write_aborts_and_restores_on_bad_result(self):
+        """write_sinks_to_config restores backup if verification fails."""
+        from meshai.scripts.migrate_config_routing import (
+            backup_config,
+            verify_sinks_written,
+        )
+        import shutil
+
+        original_content = """toggles:
+  fire:
+    enabled: true
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(original_content)
+            config_path = Path(f.name)
+
+        backup_path = None
+        try:
+            backup_path = backup_config(config_path)
+
+            # Corrupt the file
+            with open(config_path, "w") as f:
+                f.write("invalid: yaml: content: [")
+
+            # Verify should fail
+            success, error = verify_sinks_written(
+                config_path,
+                {"mesh-ch1": {"type": "mesh_broadcast"}},
+                "multifile",
+                {"toggles"}
+            )
+            assert not success
+            assert "parse error" in error.lower() or "not found" in error.lower()
+
+            # Restore from backup
+            shutil.copy2(backup_path, config_path)
+
+            # Original content should be restored
+            with open(config_path, "r") as f:
+                restored = f.read()
+            assert "toggles:" in restored
+        finally:
+            os.unlink(config_path)
+            if backup_path and backup_path.exists():
+                os.unlink(backup_path)
+
+    def test_dry_run_reports_layout(self, capsys):
+        """--dry-run reports detected layout and write path."""
+        from meshai.scripts.migrate_config_routing import (
+            load_notifications_config,
+            synthesize_sinks,
+            render_sinks_yaml,
+        )
+
+        # Multi-file layout
+        multifile_content = """toggles:
+  fire:
+    broadcast_channel: 1
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(multifile_content)
+            config_path = Path(f.name)
+
+        try:
+            _, notifications, layout = load_notifications_config(config_path)
+            assert layout == "multifile"
+
+            sinks = synthesize_sinks(notifications)
+            rendered = render_sinks_yaml(sinks, layout)
+
+            # The rendered YAML for multifile should not be indented
+            assert rendered.startswith("sinks:")
+            assert "  mesh-ch1:" in rendered
+
+            # For monolithic, it should be indented
+            mono_rendered = render_sinks_yaml(sinks, "monolithic")
+            assert mono_rendered.startswith("  sinks:")
+        finally:
+            os.unlink(config_path)
+
+    def test_generate_sink_name_int_node_ids(self):
+        """generate_sink_name handles integer node IDs without crashing."""
+        from meshai.scripts.migrate_config_routing import generate_sink_name
+
+        # Integer node ID (no leading !)
+        name = generate_sink_name("mesh_dm", {"node_ids": [123456789]})
+        assert name == "dm-12345678"
+
+        # String node ID with !
+        name = generate_sink_name("mesh_dm", {"node_ids": ["!abcd1234"]})
+        assert name == "dm-abcd1234"
+
+        # Mixed types
+        name = generate_sink_name("mesh_dm", {"node_ids": [987654321, "!xyz"]})
+        assert name == "dm-98765432"
