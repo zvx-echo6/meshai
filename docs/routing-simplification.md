@@ -81,6 +81,7 @@ Every item re-checked against source.
 | B10 | **Two mesh formatting regimes.** Legacy: LLM-summarize >200 chars. Toggle: deterministic composer, 150-byte budget. Same radio, different text rules. | router.py:187-193 vs composer.py:31 |
 | B11 | **Three incompatible dedup keys** (legacy `(rule,cat,event_id|msg[:50])` in-memory; toggle `(source,event.id)` persisted; rules-path none). |
 | B12 | GUI copy bug: severity helper says "Warning" recommended — not a severity level in this system (routine/priority/immediate). Same line still has stale `text-slate-600`. | Notifications.tsx:605 |
+| B13 | **Guard-ordering trap.** In `_dispatch_toggles`, cooldown is armed (Section 2) and dedup recorded (Section 3) BEFORE the region filter, `min_severity` gate, and `severity_channels` matrix lookup. A below-threshold or wrong-region event consumes the cooldown window and writes a 7-day persisted dedup row, suppressing later events that WOULD deliver — including after the operator fixes config. | dispatcher.py Sections 2-3 vs region/severity/matrix checks |
 
 ---
 
@@ -121,6 +122,10 @@ notifications:
   wired to it honestly.
 - Migration: for each existing toggle, blank matrix rows below old `min_severity`,
   map `mesh_broadcast` → auto-created sink from its `broadcast_channel`, etc.
+- **Session 2 MUST** move the cooldown commit and dedup record to after the delivery
+  decision (region + matrix resolution). Matrix-only semantics inherit the suppression
+  trap otherwise: an event hitting an empty matrix row must not burn its dedup slot
+  or arm a cooldown. (See B13.)
 - **Status:** Not yet implemented.
 
 ### GUI changes (when both halves are complete)
@@ -164,3 +169,36 @@ else:
 ```
 
 *Recorded: 2026-06-10*
+
+### Amendment A2: Layout-aware append-only sinks write
+
+**Finding:** The original `write_sinks_to_config()` violated Amendment A1 — it
+unconditionally wrote `config["notifications"]["sinks"]`, creating a bogus
+`notifications:` wrapper in multi-file configs where the file root IS the
+notifications block. Additionally, the `yaml.safe_load` → `yaml.dump` round-trip
+destroyed comments and key ordering.
+
+**Fix (implemented on this branch):**
+1. **Shared layout detection.** `detect_config_layout(config)` returns `"monolithic"`,
+   `"multifile"`, or `"empty"`. Both `load_notifications_config()` and
+   `write_sinks_to_config()` use this helper — they cannot diverge.
+2. **Append-only write.** `render_sinks_yaml(sinks, layout)` produces the exact text
+   to append (indented for monolithic, root-level for multifile). The original file
+   content is preserved byte-for-byte; only the sinks block is appended.
+3. **Post-write verification.** After writing, `verify_sinks_written()` re-parses
+   the file and asserts: (a) valid YAML, (b) sinks accessible at expected path,
+   (c) original top-level keys intact. On failure, the backup is restored
+   automatically.
+4. **Dry-run transparency.** `--dry-run` now prints the detected layout, the path
+   where sinks will live (`root-level sinks:` vs `notifications.sinks`), and the
+   exact text that would be appended.
+
+**Code pattern:**
+```python
+layout = detect_config_layout(config)
+sinks_yaml = render_sinks_yaml(sinks, layout)
+new_content = original_content + "\n" + sinks_yaml
+# ... write, then verify_sinks_written() ...
+```
+
+*Recorded: 2026-06-11*
