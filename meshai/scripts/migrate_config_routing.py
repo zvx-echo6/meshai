@@ -54,7 +54,7 @@ def generate_sink_name(sink_type: str, sink_dict: dict) -> str:
     elif sink_type == "mesh_dm":
         node_ids = sink_dict.get("node_ids", [])
         if node_ids:
-            first_node = node_ids[0].lstrip("!")[:8]
+            first_node = str(node_ids[0]).lstrip("!")[:8]
             return f"dm-{first_node}"
         return "dm-unknown"
     elif sink_type == "email":
@@ -236,23 +236,44 @@ def synthesize_sinks(notifications: dict) -> dict:
     return sinks
 
 
-def load_notifications_config(config_path: Path) -> tuple[dict, dict]:
+def detect_config_layout(config: dict) -> str:
+    """Detect whether config is monolithic or multi-file layout.
+
+    Returns:
+        "monolithic" if config has a notifications: wrapper key
+        "multifile" if file root IS the notifications block (toggles/rules at root)
+        "empty" if neither pattern matches
+    """
+    if "notifications" in config:
+        return "monolithic"
+    elif "toggles" in config or "rules" in config:
+        return "multifile"
+    else:
+        return "empty"
+
+
+def get_notifications_block(config: dict, layout: str) -> dict:
+    """Extract notifications block based on detected layout."""
+    if layout == "monolithic":
+        return config.get("notifications", {})
+    elif layout == "multifile":
+        return config
+    else:
+        return {}
+
+
+def load_notifications_config(config_path: Path) -> tuple[dict, dict, str]:
     """Load notifications config from file.
 
     Returns:
-        (full_config_dict, notifications_dict)
+        (full_config_dict, notifications_dict, layout_type)
     """
     with open(config_path, "r") as f:
         config = yaml.safe_load(f) or {}
 
-    # Handle both monolithic (has notifications: key) and multi-file (IS notifications) layouts
-    if "notifications" in config:
-        notifications = config["notifications"]
-    elif "toggles" in config or "rules" in config:
-        notifications = config
-    else:
-        notifications = {}
-    return config, notifications
+    layout = detect_config_layout(config)
+    notifications = get_notifications_block(config, layout)
+    return config, notifications, layout
 
 
 def backup_config(config_path: Path) -> Path:
@@ -264,25 +285,147 @@ def backup_config(config_path: Path) -> Path:
     return backup_path
 
 
-def write_sinks_to_config(config_path: Path, sinks: dict):
-    """Write synthesized sinks block to the config file."""
+def render_sinks_yaml(sinks: dict, layout: str) -> str:
+    """Render sinks block as YAML text for appending/inserting.
+
+    For multifile layout: sinks at root level.
+    For monolithic layout: sinks indented under notifications (2-space indent).
+    """
+    sinks_yaml = yaml.dump({"sinks": sinks}, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+    if layout == "monolithic":
+        # Indent everything by 2 spaces to nest under notifications:
+        lines = sinks_yaml.split("\n")
+        indented_lines = ["  " + line if line.strip() else line for line in lines]
+        return "\n".join(indented_lines)
+    else:
+        # Multi-file: sinks at root level
+        return sinks_yaml
+
+
+def find_notifications_block_end(content: str) -> int:
+    """Find the line index where the notifications block ends in monolithic config.
+
+    Returns the index after the last line of notifications block content.
+    Notifications block ends when we hit a non-indented line (another top-level key)
+    or end of file.
+    """
+    lines = content.split("\n")
+    in_notifications = False
+    last_notifications_line = -1
+
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        # Check if this is the notifications: key
+        if line.startswith("notifications:") and not line[0].isspace():
+            in_notifications = True
+            last_notifications_line = i
+            continue
+
+        if in_notifications:
+            # Check if still inside notifications (indented)
+            if line[0].isspace() or not line.strip():
+                last_notifications_line = i
+            else:
+                # Hit another top-level key, notifications block ended
+                break
+
+    return last_notifications_line + 1 if last_notifications_line >= 0 else len(lines)
+
+
+def verify_sinks_written(config_path: Path, sinks: dict, layout: str, original_keys: set) -> tuple[bool, str]:
+    """Verify the written config is valid and sinks are accessible.
+
+    Returns:
+        (success, error_message)
+    """
+    try:
+        with open(config_path, "r") as f:
+            new_config = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        return False, f"YAML parse error: {e}"
+
+    if new_config is None:
+        return False, "Config parsed as empty"
+
+    # Check sinks are at the expected path
+    new_layout = detect_config_layout(new_config)
+    notifications = get_notifications_block(new_config, new_layout)
+
+    if "sinks" not in notifications:
+        return False, f"Sinks not found at expected path (layout: {new_layout})"
+
+    written_sinks = notifications["sinks"]
+    if set(written_sinks.keys()) != set(sinks.keys()):
+        return False, f"Sink names mismatch: expected {set(sinks.keys())}, got {set(written_sinks.keys())}"
+
+    # Verify original top-level keys are intact
+    new_top_keys = set(new_config.keys())
+    missing_keys = original_keys - new_top_keys - {"sinks"}  # sinks may be new at root
+    if missing_keys:
+        return False, f"Original keys lost: {missing_keys}"
+
+    return True, ""
+
+
+def write_sinks_to_config(config_path: Path, sinks: dict, layout: str, backup_path: Path) -> bool:
+    """Write synthesized sinks block to the config file.
+
+    Uses append/insert strategy to preserve comments and formatting:
+    - multifile: append sinks at end of file
+    - monolithic: insert sinks within notifications block
+
+    Verifies the result and restores from backup on failure.
+
+    Returns:
+        True on success, False on failure (backup restored)
+    """
+    import shutil
+
+    # Read original content
     with open(config_path, "r") as f:
-        content = f.read()
+        original_content = f.read()
 
-    # Parse YAML to find where to insert
-    # Insert sinks after notifications.rules or at end of notifications block
-    # This is a simplified approach - in production you'd want proper YAML manipulation
+    # Parse to get original top-level keys for verification
+    original_config = yaml.safe_load(original_content) or {}
+    original_keys = set(original_config.keys())
 
-    # For now, read as dict, add sinks, write back
-    config = yaml.safe_load(content) or {}
+    # Render sinks block
+    sinks_yaml = render_sinks_yaml(sinks, layout)
 
-    if "notifications" not in config:
-        config["notifications"] = {}
+    # Build new content based on layout
+    if layout == "multifile":
+        # Simple append at end
+        if not original_content.endswith("\n"):
+            original_content += "\n"
+        new_content = original_content + "\n" + sinks_yaml
+    else:
+        # Monolithic: insert within notifications block
+        lines = original_content.split("\n")
+        insert_point = find_notifications_block_end(original_content)
 
-    config["notifications"]["sinks"] = sinks
+        # Insert the indented sinks block
+        sinks_lines = sinks_yaml.rstrip("\n").split("\n")
+        new_lines = lines[:insert_point] + sinks_lines + lines[insert_point:]
+        new_content = "\n".join(new_lines)
 
+    # Write new content
     with open(config_path, "w") as f:
-        yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        f.write(new_content)
+
+    # Verify the result
+    success, error = verify_sinks_written(config_path, sinks, layout, original_keys)
+
+    if not success:
+        logger.error(f"Post-write verification failed: {error}")
+        logger.info("Restoring from backup...")
+        shutil.copy2(backup_path, config_path)
+        return False
+
+    return True
 
 
 def main():
@@ -309,7 +452,8 @@ def main():
         sys.exit(1)
 
     logger.info(f"Loading config from {config_path}")
-    full_config, notifications = load_notifications_config(config_path)
+    full_config, notifications, layout = load_notifications_config(config_path)
+    logger.info(f"Detected config layout: {layout}")
 
     # Check if sinks already exist
     if notifications.get("sinks"):
@@ -329,19 +473,30 @@ def main():
     for name, sink in sinks.items():
         logger.info(f"  {name}: {sink}")
 
+    # Determine where sinks will land
+    if layout == "multifile":
+        sinks_path = "root-level sinks:"
+    else:
+        sinks_path = "notifications.sinks"
+
     if args.dry_run:
         logger.info("DRY RUN - no changes made")
-        print("\n--- Would write sinks block: ---")
-        print(yaml.dump({"sinks": sinks}, default_flow_style=False))
+        print(f"\n--- Config layout: {layout} ---")
+        print(f"--- Sinks will be written to: {sinks_path} ---")
+        print("\n--- Text to append: ---")
+        print(render_sinks_yaml(sinks, layout))
         return
 
     # Backup and write
     backup_path = backup_config(config_path)
     logger.info(f"Backed up config to {backup_path}")
 
-    write_sinks_to_config(config_path, sinks)
-    logger.info(f"Wrote sinks block to {config_path}")
+    success = write_sinks_to_config(config_path, sinks, layout, backup_path)
+    if not success:
+        logger.error("Migration failed - config restored from backup")
+        sys.exit(1)
 
+    logger.info(f"Wrote sinks block to {config_path} ({sinks_path})")
     logger.info("Migration complete!")
 
 
