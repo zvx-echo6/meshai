@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Migration script for MeshAI routing revamp Phase A: synthesize sinks.
+"""Migration script for MeshAI routing simplification: synthesize sinks.
 
 This script reads existing notification toggles and rules, extracts their
 inline transport configurations, and synthesizes named sinks.
@@ -12,7 +12,7 @@ The migration:
 3. For each enabled rule with inline transport config, synthesizes a named sink
 4. Deduplicates identical transports into one sink
 5. Writes the sinks block to the config
-6. Does NOT remove inline fields (Phase B does that)
+6. Does NOT remove inline fields (done in a later step)
 
 Idempotent: refuses to run if a sinks block already exists.
 """
@@ -287,7 +287,7 @@ def write_sinks_to_config(config_path: Path, sinks: dict):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Migrate MeshAI config to use named sinks (Phase A)"
+        description="Migrate MeshAI config to use named sinks"
     )
     parser.add_argument(
         "--config",

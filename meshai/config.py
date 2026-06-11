@@ -503,8 +503,8 @@ class EnvironmentalConfig:
 class SinkConfig:
     """Named notification sink — transport defined once, referenced by name.
 
-    Phase A of routing revamp: transports defined once in sinks block,
-    referenced by name in toggles/rules (Phase B).
+    Routing simplification: transports defined once in sinks block,
+    referenced by name in toggles/rules. See docs/routing-simplification.md.
     """
 
     type: str = "mesh_broadcast"  # mesh_broadcast|mesh_dm|email|webhook

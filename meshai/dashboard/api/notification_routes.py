@@ -311,7 +311,7 @@ async def send_rule_live(request: Request, rule_index: int):
 
 
 # =============================================================================
-# SINKS ENDPOINTS (Phase A of routing revamp)
+# SINKS ENDPOINTS (routing simplification)
 # =============================================================================
 
 @router.get("/sinks")
@@ -319,7 +319,7 @@ async def get_sinks(request: Request):
     """Get configured notification sinks.
 
     Returns list of named sinks with their type and config.
-    Phase A: read-only list; Phase B adds edit endpoints.
+    Read-only list for now; edit endpoints added later.
     """
     config = getattr(request.app.state, "config", None)
     if not config or not hasattr(config, "notifications"):

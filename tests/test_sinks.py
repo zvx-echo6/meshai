@@ -1,4 +1,4 @@
-"""Tests for Phase A routing revamp: SinkConfig and sink utilities.
+"""Tests for routing simplification: SinkConfig and sink utilities.
 
 Tests cover:
 1. SinkConfig dataclass conversion from dict

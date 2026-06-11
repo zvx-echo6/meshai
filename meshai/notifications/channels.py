@@ -841,7 +841,7 @@ def create_channel_from_dict(config: dict, connector=None) -> NotificationChanne
 def create_channel_from_sink(sink: "SinkConfig", connector=None) -> NotificationChannel:
     """Create a channel instance from a SinkConfig dataclass.
 
-    Phase A of routing revamp: sinks are named transports defined once,
+    Routing simplification: sinks are named transports defined once,
     this factory creates the channel instance for delivery.
 
     Args:
