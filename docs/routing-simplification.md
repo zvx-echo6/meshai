@@ -202,3 +202,43 @@ new_content = original_content + "\n" + sinks_yaml
 ```
 
 *Recorded: 2026-06-11*
+
+### Amendment A3: Guard reorder (B13) + backwards compatibility
+
+**Finding (B13):** The previous `_dispatch_toggles` order armed cooldown and recorded dedup
+BEFORE the region filter, `min_severity` gate, and `severity_channels` matrix lookup.
+An event failing these later checks would still burn its cooldown window and dedup slot,
+suppressing later events that WOULD deliver.
+
+**Fix (implemented on this branch):**
+1. **Guard reorder.** New order: cold-start → staleness → region filter → matrix resolution
+   → IF empty sink list, return WITHOUT arming cooldown/dedup → cooldown → dedup → deliver.
+2. **Sink-name routing.** `severity_channels` values are now sink names resolved against
+   `config.notifications.sinks`. Matrix becomes the only severity gate (`min_severity` removed).
+3. **Backwards compatibility (TEMPORARY).** The dispatcher supports BOTH formats during migration:
+   - v0.7+ sink names: resolved against `sinks` config
+   - v0.5/v0.6 channel types (`mesh_broadcast`, `mesh_dm`, etc.): falls back to
+     `_toggle_to_rule` using inline transport config from the toggle
+   - **Deprecation warning:** When legacy fallback is exercised, logs a warning once per
+     toggle per boot: "DEPRECATED: toggle 'X' uses channel-type routing..."
+   - **Removal:** This fallback will be deleted in session 3. The migration script
+     rewrites all matrices to sink names, so the fallback is cold post-migration.
+
+**Code pattern (dispatcher):**
+```python
+for sink_name in sink_names:
+    sink = sinks_config.get(sink_name)
+    if sink is not None:
+        resolved_sinks.append((sink_name, sink, False))  # v0.7 sink
+    elif sink_name in LEGACY_CHANNEL_TYPES:
+        resolved_sinks.append((sink_name, sink_name, True))  # v0.5/v0.6 legacy
+    else:
+        logger.warning(f"unknown sink '{sink_name}'")
+```
+
+**Migration script extended:** Phase B adds matrix rewrite:
+- Converts channel types to sink names
+- Blanks matrix rows below old `min_severity`
+- Removes `min_severity` field from toggles
+
+*Recorded: 2026-06-11*
