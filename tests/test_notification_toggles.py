@@ -91,17 +91,20 @@ def test_region_matches_via_regions_list():
 
 
 def test_severity_threshold():
-    cfg = _cfg(min_severity="priority",
-               severity_channels={"routine": ["mesh_broadcast"], "priority": ["mesh_broadcast"],
+    # v0.7: min_severity is obsolete; the matrix IS the threshold.
+    # Empty row means no delivery for that severity.
+    cfg = _cfg(severity_channels={"routine": [],  # empty = no delivery
+                                  "priority": ["mesh_broadcast"],
                                   "immediate": ["mesh_broadcast"]})
-    assert _dispatch(cfg, _ev(severity="routine")) == []     # below threshold
+    assert _dispatch(cfg, _ev(severity="routine")) == []     # empty matrix row
     assert len(_dispatch(cfg, _ev(severity="priority"))) == 1
     assert len(_dispatch(cfg, _ev(severity="immediate"))) == 1
 
 
 def test_per_severity_channel_routing():
-    cfg = _cfg(min_severity="routine",
-               severity_channels={"priority": ["mesh_broadcast"],
+    # v0.7: min_severity removed; matrix defines routing for each severity
+    cfg = _cfg(severity_channels={"routine": [],  # no delivery for routine
+                                  "priority": ["mesh_broadcast"],
                                   "immediate": ["mesh_broadcast", "mesh_dm"]})
     assert len(_dispatch(cfg, _ev(severity="priority"))) == 1
     imm = _dispatch(cfg, _ev(severity="immediate"))
