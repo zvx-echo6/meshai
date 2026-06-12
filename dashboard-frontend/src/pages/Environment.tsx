@@ -74,6 +74,7 @@ interface AvalancheConfig {
 
 // Satpass adapter config shape
 interface SatpassConfig {
+ enabled: boolean
  observers: string[]
  min_elevation: number
  norad_ids: string[]
@@ -310,6 +311,7 @@ export default function Environment() {
  })
  const [swpcOriginal, setSwpcOriginal] = useState<string>("")
  const [satpassConfig, setSatpassConfig] = useState<SatpassConfig>({
+  enabled: false,
   observers: [],
   min_elevation: 30,
   norad_ids: [],
@@ -449,8 +451,11 @@ export default function Environment() {
     try {
      const satpassRes = await fetch("/api/adapter-config/satpass")
      if (satpassRes.ok) {
-      const satpassData = await satpassRes.json()
+      const satpassArr = await satpassRes.json()
+      const satpassData: Record<string, any> = {}
+      for (const r of satpassArr) satpassData[r.key] = r
       const cfg: SatpassConfig = {
+       enabled: satpassData.enabled?.value ?? false,
        observers: satpassData.observers?.value ?? [],
        min_elevation: satpassData.min_elevation?.value ?? 30,
        norad_ids: satpassData.norad_ids?.value ?? [],
@@ -642,6 +647,9 @@ const save = async () => {
    // Save satpass adapter config changes
    if (hasSatpassChanges) {
     const orig = JSON.parse(satpassOriginal) as SatpassConfig
+    if (satpassConfig.enabled !== orig.enabled) {
+     await saveAdapterConfig("satpass", "enabled", satpassConfig.enabled)
+    }
     if (JSON.stringify(satpassConfig.observers) !== JSON.stringify(orig.observers)) {
      await saveAdapterConfig("satpass", "observers", satpassConfig.observers)
     }
@@ -1209,8 +1217,8 @@ const save = async () => {
      <AdapterPanel
       title={META[activeAdapter].label}
       subtitle={META[activeAdapter].subtitle}
-      enabled={a[activeAdapter]?.enabled ?? false}
-      onEnabled={(v) => setAdapterField(activeAdapter, { enabled: v })}
+      enabled={activeAdapter === 'satpass' ? satpassConfig.enabled : (a[activeAdapter]?.enabled ?? false)}
+      onEnabled={(v) => activeAdapter === 'satpass' ? setSatpassConfig({ ...satpassConfig, enabled: v }) : setAdapterField(activeAdapter, { enabled: v })}
       feedSource={a[activeAdapter]?.feed_source ?? 'native'}
       onFeedSource={(v) => setAdapterField(activeAdapter, { feed_source: v })}
       hasCentral={META[activeAdapter].hasCentral}
