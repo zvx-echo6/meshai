@@ -97,35 +97,49 @@ async def render_digest(*, now: Optional[int] = None) -> tuple[str, str]:
 
     total = len(rows)
     top = rows[:2]
-    remaining = total - len(top)
 
     header = f"\U0001f525 Fire Digest \u2014 {total} active wildfire(s)"
 
     fire_lines: list[str] = []
     for row in top:
         name = row["incident_name"] or "(unnamed)"
-        anchor = f"{row['county']} Co" if row["county"] else row["state"] or ""
-        contained = (f"{int(row['current_contained_pct'])}% cont"
-                     if row["current_contained_pct"] is not None else "uncontained")
-        acres = (f"{int(row['current_acres']):,} ac"
-                 if row["current_acres"] else "size unknown")
-        fire_lines.append(f"{name}: {acres}, {contained}, {anchor}")
-
-    tail = ""
-    if remaining > 0:
-        tail = f"There are {remaining} additional wildfires. DM me for the full list."
+        county = row["county"]
+        state = row["state"]
+        if county and state:
+            fire_lines.append(f"{name} in {county} Co, {state}")
+        elif state:
+            fire_lines.append(f"{name} in {state}")
+        else:
+            fire_lines.append(name)
 
     # Assemble within ~200-byte LoRa budget; trim fire lines, never the tail
     shown: list[str] = []
     for line in fire_lines:
+        # Estimate tail for budget check
+        est_remaining = total - len(shown) - 1
+        if est_remaining == 1:
+            est_tail = "There is 1 additional wildfire. DM me for the full list."
+        elif est_remaining > 1:
+            est_tail = f"There are {est_remaining} additional wildfires. DM me for the full list."
+        else:
+            est_tail = ""
         parts = [header] + shown + [line]
-        if tail:
-            parts.append(tail)
+        if est_tail:
+            parts.append(est_tail)
         candidate = "\n".join(parts)
         if len(candidate.encode("utf-8")) <= 200:
             shown.append(line)
         else:
             break
+
+    # Compute tail AFTER budget loop with actual shown count
+    remaining = total - len(shown)
+    if remaining == 1:
+        tail = "There is 1 additional wildfire. DM me for the full list."
+    elif remaining > 1:
+        tail = f"There are {remaining} additional wildfires. DM me for the full list."
+    else:
+        tail = ""
 
     parts = [header] + shown
     if tail:
