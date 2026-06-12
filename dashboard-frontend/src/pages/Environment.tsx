@@ -78,6 +78,8 @@ interface SatpassConfig {
  observers: string[]
  min_elevation: number
  norad_ids: string[]
+ max_broadcasts_per_hour: number
+ dry_run: boolean
 }
 
 // SWPC adapter config shape
@@ -315,6 +317,8 @@ export default function Environment() {
   observers: [],
   min_elevation: 30,
   norad_ids: [],
+  max_broadcasts_per_hour: 4,
+  dry_run: true,
  })
  const [satpassOriginal, setSatpassOriginal] = useState<string>("")
 
@@ -459,6 +463,8 @@ export default function Environment() {
        observers: satpassData.observers?.value ?? [],
        min_elevation: satpassData.min_elevation?.value ?? 30,
        norad_ids: satpassData.norad_ids?.value ?? [],
+       max_broadcasts_per_hour: satpassData.max_broadcasts_per_hour?.value ?? 4,
+       dry_run: satpassData.dry_run?.value ?? true,
       }
       setSatpassConfig(cfg)
       setSatpassOriginal(JSON.stringify(cfg))
@@ -658,6 +664,12 @@ const save = async () => {
     }
     if (JSON.stringify(satpassConfig.norad_ids) !== JSON.stringify(orig.norad_ids)) {
      await saveAdapterConfig("satpass", "norad_ids", satpassConfig.norad_ids)
+    }
+    if (satpassConfig.max_broadcasts_per_hour !== orig.max_broadcasts_per_hour) {
+     await saveAdapterConfig("satpass", "max_broadcasts_per_hour", satpassConfig.max_broadcasts_per_hour)
+    }
+    if (satpassConfig.dry_run !== orig.dry_run) {
+     await saveAdapterConfig("satpass", "dry_run", satpassConfig.dry_run)
     }
     setSatpassOriginal(JSON.stringify(satpassConfig))
    }
@@ -1088,8 +1100,43 @@ const save = async () => {
      ))}
     </div>
    </>)
-   case 'satpass': return (
+   case 'satpass': {
+    const armedState = !satpassConfig.enabled
+     ? { label: 'OFF', color: 'text-[#777] bg-[#1a1a1a]', desc: '' }
+     : satpassConfig.dry_run
+      ? { label: 'DRY RUN', color: 'text-sky-400 bg-sky-400/10 border border-sky-400/30', desc: ' — logging only, nothing transmits' }
+      : { label: '⚠ LIVE', color: 'text-amber-400 bg-amber-500/20 border-2 border-amber-500 font-bold animate-pulse', desc: ' — transmitting to mesh' }
+    return (
     <div className="space-y-6">
+     {/* Armed-state banner */}
+     <div className={`px-4 py-2.5 text-sm rounded ${armedState.color}`}>
+      <span className="font-semibold">{armedState.label}</span>
+      {armedState.desc && <span className="font-normal">{armedState.desc}</span>}
+     </div>
+     {/* Safety controls */}
+     <div>
+      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">
+       Safety Controls
+      </div>
+      <div className="space-y-4">
+       <div className="flex items-center justify-between">
+        <div>
+         <span className="text-sm text-[#e0e0e0]">Dry run — log instead of transmit</span>
+         <p className="text-xs text-[#666]">When enabled, passes are logged but never broadcast to mesh</p>
+        </div>
+        <button
+         onClick={() => setSatpassConfig({ ...satpassConfig, dry_run: !satpassConfig.dry_run })}
+         className={`relative w-10 h-5 rounded-full transition-colors ${satpassConfig.dry_run ? 'bg-sky-500' : 'bg-[#333]'}`}
+        >
+         <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${satpassConfig.dry_run ? 'translate-x-5' : ''}`} />
+        </button>
+       </div>
+       <NumberInput label="Max broadcasts / hour" value={satpassConfig.max_broadcasts_per_hour}
+        onChange={(v) => setSatpassConfig({ ...satpassConfig, max_broadcasts_per_hour: v })}
+        min={1} max={60} helper="Rate cap — broadcasts exceeding this limit are dropped" />
+      </div>
+     </div>
+     {/* Pass filters */}
      <div>
       <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">
        Pass Filters
@@ -1105,9 +1152,9 @@ const save = async () => {
       helper="Observer names to include (empty = all)" />
      <ListInput label="NORAD IDs" value={satpassConfig.norad_ids}
       onChange={(v) => setSatpassConfig({ ...satpassConfig, norad_ids: v })}
-      helper="NORAD catalog IDs to track (empty = all)" />
+      helper="NORAD catalog IDs to broadcast (empty = broadcast nothing, opt-in only)" />
     </div>
-   )
+   )}
   }
  }
 
