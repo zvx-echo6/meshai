@@ -72,6 +72,13 @@ interface AvalancheConfig {
  min_danger_level: number
 }
 
+// Satpass adapter config shape
+interface SatpassConfig {
+ observers: string[]
+ min_elevation: number
+ norad_ids: string[]
+}
+
 // SWPC adapter config shape
 interface SwpcConfig {
  geomag_kp_floor: number
@@ -210,7 +217,7 @@ function AdapterPanel({ title, subtitle, enabled, onEnabled, feedSource, onFeedS
 }
 
 // ---------------------------------------------------------------- families
-type AdapterKey = 'nws' | 'fires' | 'firms' | 'swpc' | 'ducting' | 'traffic' | 'roads511' | 'wzdx' | 'usgs_quake' | 'usgs' | 'avalanche'
+type AdapterKey = 'nws' | 'fires' | 'firms' | 'swpc' | 'ducting' | 'traffic' | 'roads511' | 'wzdx' | 'usgs_quake' | 'usgs' | 'avalanche' | 'satpass'
 
 interface AdapterMeta { label: string; subtitle: string; health: string; hasCentral: boolean; nativeOnly: boolean; hasKey: boolean }
 
@@ -226,6 +233,7 @@ const META: Record<AdapterKey, AdapterMeta> = {
  usgs_quake: { label: 'USGS Earthquakes', subtitle: 'Seismic events from the USGS feed', health: 'usgs_quake', hasCentral: true, nativeOnly: false, hasKey: true },
  usgs: { label: 'USGS Stream Gauges', subtitle: 'River and stream water levels', health: 'usgs', hasCentral: true, nativeOnly: false, hasKey: true },
  avalanche: { label: 'Avalanche Advisories', subtitle: 'Backcountry avalanche danger ratings', health: 'avalanche', hasCentral: true, nativeOnly: false, hasKey: true },
+ satpass: { label: 'Satellite Passes', subtitle: 'Observer pass alerts via Central', health: 'satpass', hasCentral: true, nativeOnly: false, hasKey: true },
 }
 
 const FAMILIES: { key: string; label: string; icon: typeof Cloud; adapters: AdapterKey[] }[] = [
@@ -235,7 +243,7 @@ const FAMILIES: { key: string; label: string; icon: typeof Cloud; adapters: Adap
  { key: 'rf', label: 'RF Propagation', icon: Radio, adapters: ['swpc', 'ducting'] },
  { key: 'roads', label: 'Roads', icon: Car, adapters: ['traffic', 'roads511', 'wzdx'] },
  { key: 'geohazards', label: 'Geohazards', icon: Mountain, adapters: ['usgs_quake', 'usgs', 'avalanche'] },
- { key: 'tracking', label: 'Tracking', icon: Satellite, adapters: [] },
+ { key: 'tracking', label: 'Tracking', icon: Satellite, adapters: ['satpass'] },
  { key: 'mesh', label: 'Mesh Health', icon: Activity, adapters: [] },
 ]
 
@@ -301,6 +309,12 @@ export default function Environment() {
   proton_pfu_floor: 10.0,
  })
  const [swpcOriginal, setSwpcOriginal] = useState<string>("")
+ const [satpassConfig, setSatpassConfig] = useState<SatpassConfig>({
+  observers: [],
+  min_elevation: 30,
+  norad_ids: [],
+ })
+ const [satpassOriginal, setSatpassOriginal] = useState<string>("")
 
 
  useEffect(() => {
@@ -431,6 +445,21 @@ export default function Environment() {
      }
     } catch { /* adapter-config optional */ }
 
+    // Load adapter-config for satpass
+    try {
+     const satpassRes = await fetch("/api/adapter-config/satpass")
+     if (satpassRes.ok) {
+      const satpassData = await satpassRes.json()
+      const cfg: SatpassConfig = {
+       observers: satpassData.observers?.value ?? [],
+       min_elevation: satpassData.min_elevation?.value ?? 30,
+       norad_ids: satpassData.norad_ids?.value ?? [],
+      }
+      setSatpassConfig(cfg)
+      setSatpassOriginal(JSON.stringify(cfg))
+     }
+    } catch { /* adapter-config optional */ }
+
    } catch (e) {
     setError(e instanceof Error ? e.message : 'Failed to load config')
    } finally {
@@ -460,7 +489,8 @@ export default function Environment() {
  const hasNwsChanges = JSON.stringify(nwsConfig) !== nwsOriginal
  const hasAvalancheChanges = JSON.stringify(avalancheConfig) !== avalancheOriginal
  const hasSwpcChanges = JSON.stringify(swpcConfig) !== swpcOriginal
- const hasChanges = hasEnvChanges || hasWfigsChanges || hasFiresChanges || hasTomtomChanges || hasRoads511Changes || hasWzdxChanges || hasNwsChanges || hasAvalancheChanges || hasSwpcChanges
+ const hasSatpassChanges = JSON.stringify(satpassConfig) !== satpassOriginal
+ const hasChanges = hasEnvChanges || hasWfigsChanges || hasFiresChanges || hasTomtomChanges || hasRoads511Changes || hasWzdxChanges || hasNwsChanges || hasAvalancheChanges || hasSwpcChanges || hasSatpassChanges
 
  
  const saveAdapterConfig = async (adapterName: string, key: string, value: unknown) => {
@@ -609,6 +639,21 @@ const save = async () => {
     setSwpcOriginal(JSON.stringify(swpcConfig))
    }
 
+   // Save satpass adapter config changes
+   if (hasSatpassChanges) {
+    const orig = JSON.parse(satpassOriginal) as SatpassConfig
+    if (JSON.stringify(satpassConfig.observers) !== JSON.stringify(orig.observers)) {
+     await saveAdapterConfig("satpass", "observers", satpassConfig.observers)
+    }
+    if (satpassConfig.min_elevation !== orig.min_elevation) {
+     await saveAdapterConfig("satpass", "min_elevation", satpassConfig.min_elevation)
+    }
+    if (JSON.stringify(satpassConfig.norad_ids) !== JSON.stringify(orig.norad_ids)) {
+     await saveAdapterConfig("satpass", "norad_ids", satpassConfig.norad_ids)
+    }
+    setSatpassOriginal(JSON.stringify(satpassConfig))
+   }
+
    setSuccess('Config saved')
    setTimeout(() => setSuccess(null), 3000)
   } catch (e) {
@@ -628,6 +673,7 @@ const save = async () => {
   setNwsConfig(JSON.parse(nwsOriginal || JSON.stringify(nwsConfig)))
   setAvalancheConfig(JSON.parse(avalancheOriginal || JSON.stringify(avalancheConfig)))
   setSwpcConfig(JSON.parse(swpcOriginal || JSON.stringify(swpcConfig)))
+  setSatpassConfig(JSON.parse(satpassOriginal || JSON.stringify(satpassConfig)))
  }
  const restart = async () => {
   try { await fetch('/api/restart', { method: 'POST' }); setRestartRequired(false); setSuccess('Restart initiated') }
@@ -1034,6 +1080,26 @@ const save = async () => {
      ))}
     </div>
    </>)
+   case 'satpass': return (
+    <div className="space-y-6">
+     <div>
+      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">
+       Pass Filters
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+       <NumberInput label="Min Elevation (deg)" value={satpassConfig.min_elevation}
+        onChange={(v) => setSatpassConfig({ ...satpassConfig, min_elevation: v })}
+        min={0} max={90} helper="Minimum max elevation for a pass to be broadcast" />
+      </div>
+     </div>
+     <ListInput label="Observer Locations" value={satpassConfig.observers}
+      onChange={(v) => setSatpassConfig({ ...satpassConfig, observers: v })}
+      helper="Observer names to include (empty = all)" />
+     <ListInput label="NORAD IDs" value={satpassConfig.norad_ids}
+      onChange={(v) => setSatpassConfig({ ...satpassConfig, norad_ids: v })}
+      helper="NORAD catalog IDs to track (empty = all)" />
+    </div>
+   )
   }
  }
 
@@ -1109,14 +1175,6 @@ const save = async () => {
     </div>
    )}
 
-
-   {/* Tracking placeholder */}
-   {family === 'tracking' && (
-    <div className="flex flex-col items-center justify-center h-[40vh] text-center">
-     <Satellite size={32} className="text-[#666] mb-4" />
-     <p className="text-[#666] max-w-md">No adapters yet. ADS-B / AIS / satellite passes are planned for v0.5.</p>
-    </div>
-   )}
 
    {/* Mesh Health (no env adapters; central greyed for future migration) */}
    {family === 'mesh' && (
