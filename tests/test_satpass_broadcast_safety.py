@@ -451,3 +451,77 @@ class TestRegistryKeys:
         spec = REGISTRY[("satpass", "norad_ids")]
         assert "broadcast nothing" in spec["description"].lower() or \
                "opt-in" in spec["description"].lower()
+
+
+class TestNoradIdTypeCoercion:
+    """norad_ids may arrive as strings from the GUI or ints from code.
+    The handler must accept both shapes forever."""
+
+    def test_string_norad_ids_matches_int_wire(self):
+        """norad_ids=["25544"] must match wire norad_id 25544 (int)."""
+        from meshai.central.satpass_handler import handle_satpass
+        _clear_handler_flags()
+        _enable_satpass_db(norad_ids=["25544"], dry_run=False)
+
+        env = _envelope(norad_id=25544, max_el=80.0)
+        result = handle_satpass(env, "test.subject", data={})
+        assert result is not None, "string norad_id should match int wire"
+
+    def test_mixed_int_and_string_norad_ids(self):
+        """norad_ids=[25544, "22825"] must match both NORAD IDs."""
+        from meshai.central.satpass_handler import handle_satpass
+        _clear_handler_flags()
+        _enable_satpass_db(norad_ids=[25544, "22825"], dry_run=False)
+
+        # int in list, int on wire
+        env_iss = _envelope(norad_id=25544, max_el=65.0)
+        result_iss = handle_satpass(env_iss, "test.subject", data={})
+        assert result_iss is not None, "int norad_id in mixed list should match"
+
+        # string in list, int on wire
+        env_noaa = _envelope(norad_id=22825, sat_name="NOAA 15", max_el=65.0,
+                             aos="2026-06-12T05:32:00Z", los="2026-06-12T05:38:00Z")
+        result_noaa = handle_satpass(env_noaa, "test.subject", data={})
+        assert result_noaa is not None, "string norad_id in mixed list should match int wire"
+
+    def test_garbage_entries_skipped_without_crash(self):
+        """Non-numeric entries in norad_ids must be silently skipped."""
+        from meshai.central.satpass_handler import handle_satpass
+        _clear_handler_flags()
+        _enable_satpass_db(norad_ids=["25544", "not_a_number", "", None, "abc123"],
+                           dry_run=False)
+
+        env = _envelope(norad_id=25544, max_el=80.0)
+        # Must not raise, and the valid entry should still match
+        result = handle_satpass(env, "test.subject", data={})
+        assert result is not None, "valid entry should match despite garbage siblings"
+
+    def test_all_garbage_norad_ids_matches_nothing(self):
+        """If every entry is garbage, allow_set is empty and nothing matches."""
+        from meshai.central.satpass_handler import handle_satpass
+        _clear_handler_flags()
+        _enable_satpass_db(norad_ids=["abc", "", "xyz"], dry_run=False)
+
+        env = _envelope(norad_id=25544, max_el=80.0)
+        result = handle_satpass(env, "test.subject", data={})
+        assert result is None, "all-garbage norad_ids should match nothing"
+
+    def test_pure_int_norad_ids_still_works(self):
+        """norad_ids=[25544] (pure int) must continue to work."""
+        from meshai.central.satpass_handler import handle_satpass
+        _clear_handler_flags()
+        _enable_satpass_db(norad_ids=[25544], dry_run=False)
+
+        env = _envelope(norad_id=25544, max_el=80.0)
+        result = handle_satpass(env, "test.subject", data={})
+        assert result is not None, "pure int norad_id should still match"
+
+    def test_string_norad_id_rejects_non_matching(self):
+        """norad_ids=["25544"] must NOT match wire norad_id 99999."""
+        from meshai.central.satpass_handler import handle_satpass
+        _clear_handler_flags()
+        _enable_satpass_db(norad_ids=["25544"], dry_run=False)
+
+        env = _envelope(norad_id=99999, max_el=80.0)
+        result = handle_satpass(env, "test.subject", data={})
+        assert result is None, "non-matching norad_id should be rejected"

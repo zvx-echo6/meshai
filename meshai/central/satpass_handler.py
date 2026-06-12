@@ -277,13 +277,16 @@ def handle_satpass(envelope: dict, subject: str,
         return None
 
     # OPT-IN NORAD ID filter: empty list = broadcast NOTHING
-    norad_ids = getattr(cfg, "norad_ids", []) or []
-    if not norad_ids:
+    norad_ids_raw = getattr(cfg, "norad_ids", []) or []
+    if not norad_ids_raw:
         if not getattr(handle_satpass, "_no_norad_ids_logged", False):
             logger.info("satpass: no norad_ids configured; pass broadcasts disabled")
             handle_satpass._no_norad_ids_logged = True
         return None
-    if norad_id not in norad_ids:
+    # Coerce to int set — GUI may save as strings (["25544"]), wire
+    # delivers int.  Accept both shapes forever.
+    allow_set = {int(x) for x in norad_ids_raw if str(x).strip().isdigit()}
+    if norad_id not in allow_set:
         logger.debug("satpass_handler: norad_id %d not in configured list", norad_id)
         return None
 
