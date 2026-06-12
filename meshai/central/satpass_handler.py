@@ -115,8 +115,16 @@ def handle_satpass(envelope: dict, subject: str,
     inner = envelope.get("data") or {}
     adapter = inner.get("adapter") or ""
 
-    # Only handle sat_passes adapter
-    if adapter != "sat_passes":
+    # Only handle pass prediction adapters (wire names from Central)
+    if adapter not in ("n2yo_visualpasses", "satpass_predict"):
+        return None
+
+    # Enabled gate: silently drop when disabled, log once at INFO
+    cfg = adapter_config.satpass
+    if not getattr(cfg, "enabled", False):
+        if not getattr(handle_satpass, "_disabled_logged", False):
+            logger.info("satpass disabled; sat pass events dropped")
+            handle_satpass._disabled_logged = True
         return None
 
     d = inner.get("data") or {}
@@ -141,9 +149,6 @@ def handle_satpass(envelope: dict, subject: str,
     if aos_epoch is None:
         logger.debug("satpass_handler: could not parse aos time")
         return None
-
-    # Config filters
-    cfg = adapter_config.satpass
 
     # Observer filter (empty = all)
     observers = getattr(cfg, "observers", []) or []

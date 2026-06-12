@@ -34,6 +34,20 @@ import pytest
 from meshai.persistence import get_db
 
 
+def _enable_satpass():
+    """Set satpass.enabled=true for TLE handler tests."""
+    conn = get_db()
+    conn.execute(
+        "UPDATE adapter_config SET value_json='true' "
+        "WHERE adapter='satpass' AND key='enabled'"
+    )
+    try:
+        from meshai.adapter_config import invalidate_cache
+        invalidate_cache()
+    except Exception:
+        pass
+
+
 # Well-known ISS TLE (epoch ~2024-06-15)
 ISS_LINE1 = "1 25544U 98067A   24167.54791667  .00016717  00000-0  10270-3 0  9003"
 ISS_LINE2 = "2 25544  51.6400 187.5200 0001234  35.0000 325.0000 15.49920000    07"
@@ -56,6 +70,7 @@ class TestTLEUpsert:
     """T1: TLE upsert latest-wins on epoch."""
 
     def test_newer_epoch_updates(self):
+        _enable_satpass()
         from meshai.central.tle_handler import handle_tle
         conn = get_db()
         now = int(time.time())
@@ -67,7 +82,7 @@ class TestTLEUpsert:
         # Send newer TLE
         env = {
             "data": {
-                "adapter": "sat_tles",
+                "adapter": "celestrak_tle",
                 "data": {
                     "norad_id": 25544,
                     "satellite_name": "ISS (ZARYA)",
@@ -84,6 +99,7 @@ class TestTLEUpsert:
         assert row["line2"] == "NEW2"
 
     def test_older_epoch_skipped(self):
+        _enable_satpass()
         from meshai.central.tle_handler import handle_tle
         conn = get_db()
         now = int(time.time())
@@ -95,7 +111,7 @@ class TestTLEUpsert:
         # Send older TLE — should be skipped
         env = {
             "data": {
-                "adapter": "sat_tles",
+                "adapter": "celestrak_tle",
                 "data": {
                     "norad_id": 25544,
                     "satellite_name": "ISS (ZARYA)",
@@ -112,10 +128,11 @@ class TestTLEUpsert:
 
     def test_returns_none_always(self):
         """TLE handler is storage-only, never returns wire."""
+        _enable_satpass()
         from meshai.central.tle_handler import handle_tle
         env = {
             "data": {
-                "adapter": "sat_tles",
+                "adapter": "celestrak_tle",
                 "data": {
                     "norad_id": 99999,
                     "satellite_name": "TEST",

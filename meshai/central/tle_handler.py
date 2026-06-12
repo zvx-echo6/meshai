@@ -34,6 +34,17 @@ def handle_tle(envelope: dict, subject: str,
     inner = envelope.get("data") or {}
     adapter = inner.get("adapter") or ""
 
+    # Enabled gate: silently drop when disabled, log once at INFO
+    try:
+        from meshai.adapter_config import adapter_config
+        if not getattr(adapter_config.satpass, "enabled", False):
+            if not getattr(handle_tle, "_disabled_logged", False):
+                logger.info("satpass disabled; sat TLE events dropped")
+                handle_tle._disabled_logged = True
+            return None
+    except Exception:
+        pass  # adapter_config may not be initialised in tests
+
     # Accept both sat_tles and sat_passes adapter (Central may tag either)
     d = inner.get("data") or {}
 

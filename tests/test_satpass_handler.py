@@ -14,7 +14,7 @@ def _envelope(norad_id=25544, sat_name="ISS", observer="Boise",
         "source": "central",
         "id": f"pass-{norad_id}-{aos}",
         "data": {
-            "adapter": "sat_passes",
+            "adapter": "n2yo_visualpasses",
             "category": "sat.pass",
             "severity": 0,
             "data": {
@@ -44,11 +44,15 @@ def mock_db():
 def mock_adapter_config():
     """Mock adapter_config.satpass."""
     cfg = MagicMock()
+    cfg.enabled = True
     cfg.observers = []  # empty = all observers
     cfg.min_elevation = 30
     cfg.norad_ids = []  # empty = all satellites
     with patch("meshai.central.satpass_handler.adapter_config") as mock:
         mock.satpass = cfg
+        from meshai.central.satpass_handler import handle_satpass
+        if hasattr(handle_satpass, "_disabled_logged"):
+            del handle_satpass._disabled_logged
         yield cfg
 
 

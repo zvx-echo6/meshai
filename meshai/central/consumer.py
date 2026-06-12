@@ -214,9 +214,9 @@ CENTRAL_ADAPTER_TO_SOURCE: dict[str, str] = {
     "itd_511": "roads511",
     "avalanche_org": "avalanche",
     "firms": "firms",
-    "sat_passes": "satpass",
-    "sat_tles": "satpass",
-    "sat_tle": "satpass",
+    "celestrak_tle": "satpass",
+    "n2yo_visualpasses": "satpass",
+    "satpass_predict": "satpass",
 }
 
 # Central hierarchical category prefix -> meshai flat category.
@@ -546,10 +546,10 @@ class CentralConsumer:
                 # commit #5 (env_reporter). Closes the v0.5.13
                 # silent-drop on central.fire.hotspot.> (audit doc
                 # finding #2).
-                elif inner.get("adapter") in ("sat_tles", "sat_tle"):
+                elif inner.get("adapter") == "celestrak_tle":
                     from meshai.central.tle_handler import handle_tle
                     synthesized = handle_tle(envelope, subject, data=data) or None
-                elif inner.get("adapter") == "sat_passes":
+                elif inner.get("adapter") in ("n2yo_visualpasses", "satpass_predict"):
                     from meshai.central.satpass_handler import handle_satpass
                     synthesized = handle_satpass(envelope, subject, data=data) or None
                 elif inner.get("adapter") == "firms":
