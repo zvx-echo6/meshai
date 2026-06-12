@@ -117,5 +117,10 @@ def test_central_region_default_propagates_to_consumer_subjects():
     assert env.central.region == "us.id"        # spec default
     env.nws.feed_source = "central"
     so = CentralConsumer(env, None)._subject_owned()
-    assert list(so.keys()) == ["central.wx.alert.us.id.>"]
+    # satpass also defaults to feed_source='central', so it appears too
+    assert "central.wx.alert.us.id.>" in so
     assert so["central.wx.alert.us.id.>"] == {"nws"}
+    assert "central.sat.pass.us.id.>" in so
+    assert so["central.sat.pass.us.id.>"] == {"satpass"}
+    assert "central.sat.tle.>" in so
+    assert so["central.sat.tle.>"] == {"satpass"}

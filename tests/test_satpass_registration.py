@@ -115,3 +115,33 @@ def test_yaml_parsing_satpass():
     assert isinstance(env.satpass, SatpassConfig)
     assert env.satpass.enabled is True
     assert env.satpass.feed_source == "central"
+
+
+
+# -- _subjects_for() region rewrite table ------------------------------------
+
+def test_subjects_for_satpass_with_region():
+    """_subjects_for('satpass', 'us.id') must return region-scoped pass
+    subjects and global TLE subject."""
+    from meshai.central.consumer import _subjects_for
+    result = _subjects_for('satpass', 'us.id')
+    assert len(result) == 2, f'Expected 2 subjects, got {len(result)}: {result}'
+    assert result[0] == 'central.sat.pass.us.id.>'
+    assert result[1] == 'central.sat.tle.>'
+
+
+def test_subjects_for_satpass_no_region_falls_back():
+    """_subjects_for('satpass', None) must return bare-wildcard forms
+    from _SUBJECTS_BARE."""
+    from meshai.central.consumer import _subjects_for
+    result = _subjects_for('satpass', None)
+    assert len(result) == 2, f'Expected 2 subjects, got {len(result)}: {result}'
+    assert result[0] == 'central.sat.pass.>'
+    assert result[1] == 'central.sat.tle.>'
+
+
+def test_subjects_for_satpass_empty_region_falls_back():
+    """_subjects_for('satpass', '') must behave like None — bare wildcards."""
+    from meshai.central.consumer import _subjects_for
+    result = _subjects_for('satpass', '')
+    assert result == _subjects_for('satpass', None)

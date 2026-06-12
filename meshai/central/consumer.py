@@ -183,6 +183,12 @@ def _subjects_for(adapter: str, region: Optional[str]) -> list[str]:
         # on Central's scale, inverse of what the handler uses).
         # Off-season: June–Sep, CENTRAL_AVY will be empty — expected, not broken.
         "avalanche":  [f"central.avy.advisory.>"],
+        # satpass: pass alerts are region-scoped (Central publishes
+        # central.sat.pass.us.<state>.<observer_slug>, per quickstart §7);
+        # TLEs are global, no region token (central.sat.tle.<norad_id>, §4) --
+        # same no-region logic as swpc.
+        "satpass":    [f"central.sat.pass.{region}.>",
+                       "central.sat.tle.>"],
     }
     return list(table.get(adapter, []))
 
