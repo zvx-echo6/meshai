@@ -450,6 +450,16 @@ class FIRMSConfig(_SourcedFeed):
     proximity_km: float = 10.0  # km to match known fire
 
 
+
+
+@dataclass
+class SatpassConfig(_SourcedFeed):
+    """Satellite pass prediction settings (central-only feed)."""
+
+    enabled: bool = False
+    feed_source: str = "central"
+
+
 @dataclass
 class CentralConsumerConfig:
     """Connection settings for the Central NATS JetStream consumer (v0.4).
@@ -495,6 +505,7 @@ class EnvironmentalConfig:
     roads511: Roads511Config = field(default_factory=Roads511Config)
     wzdx: WZDxConfig = field(default_factory=WZDxConfig)
     firms: FIRMSConfig = field(default_factory=FIRMSConfig)
+    satpass: SatpassConfig = field(default_factory=SatpassConfig)
     central: CentralConsumerConfig = field(default_factory=CentralConsumerConfig)
     geocoder: GeocoderConfig = field(default_factory=GeocoderConfig)
 
@@ -831,6 +842,8 @@ def _dict_to_dataclass(cls, data: dict):
             kwargs[key] = _dict_to_dataclass(WZDxConfig, value)
         elif key == "firms" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(FIRMSConfig, value)
+        elif key == "satpass" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(SatpassConfig, value)
         elif key == "environmental" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(EnvironmentalConfig, value)
         elif key == "dashboard" and isinstance(value, dict):

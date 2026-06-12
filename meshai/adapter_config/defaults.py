@@ -595,9 +595,14 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     # =================================================================
     # SATPASS -- Satellite pass broadcasts
     # =================================================================
+    ("satpass", "enabled"): {
+        "default": False,
+        "type": "bool",
+        "description": "Enable satellite pass broadcasts from Central.",
+    },
     ("satpass", "observers"): {
         "default": [],
-        "type": "list",
+        "type": "json",
         "description": "Observer location names to include (empty = all).",
     },
     ("satpass", "min_elevation"): {
@@ -607,12 +612,12 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     },
     ("satpass", "norad_ids"): {
         "default": [],
-        "type": "list",
+        "type": "json",
         "description": "NORAD catalog IDs to include (empty = all).",
     },
     ("satpass", "command_norad_ids"): {
         "default": [25544],
-        "type": "list",
+        "type": "json",
         "description": "Default NORAD IDs for bare !satpass command (default: [25544] ISS).",
     },
 
