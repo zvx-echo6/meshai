@@ -163,16 +163,17 @@ class SatpassCommand(CommandHandler):
                 continue
 
             for p in passes:
-                aos_local = p.aos_time.astimezone(_TZ)
-                los_local = p.los_time.astimezone(_TZ)
-                tz_abbr = aos_local.strftime("%Z")
-                aos_str = aos_local.strftime("%H:%M")
-                los_str = los_local.strftime("%H:%M")
+                from meshai.central.satpass_handler import format_pass
                 az_aos = azimuth_to_compass(p.azimuth_at_aos)
                 az_los = azimuth_to_compass(p.azimuth_at_los)
-                line = (f"{tle['name']} {aos_str}\u2013{los_str} {tz_abbr} "
-                        f"max {int(p.max_elevation)}\u00B0 "
-                        f"{az_aos}\u2192{az_los}")
+                aos_epoch = int(p.aos_time.timestamp())
+                los_epoch = int(p.los_time.timestamp())
+                line = format_pass(
+                    sat_name=tle["name"], max_el=p.max_elevation,
+                    aos_epoch=aos_epoch, los_epoch=los_epoch,
+                    aos_compass=az_aos, los_compass=az_los,
+                    broadcast=False,
+                )
                 all_lines.append(line)
 
         if not all_lines:

@@ -6,7 +6,12 @@ Filter criteria:
     (a) Pass must be for an observer in adapter_config.satpass.observers
         (empty list = all observers)
     (b) Max elevation must meet adapter_config.satpass.min_elevation (default 30)
-    (c) Optional NORAD ID filter via adapter_config.satpass.norad_ids
+    (c) Opt-in NORAD ID filter via adapter_config.satpass.norad_ids
+        (empty list = broadcast NOTHING — opt-in only)
+
+Rate cap: adapter_config.satpass.max_broadcasts_per_hour (default 4).
+Dry-run: adapter_config.satpass.dry_run (default True) — logs wire text
+    at INFO with "DRY-RUN would air:" prefix, does not dispatch.
 
 Dedup bucketing: canonical event_id = {norad_id}:{observer}:{aos_bucket}
 where aos_bucket = floor(aos_epoch / 3600) -- one broadcast per satellite
@@ -17,10 +22,11 @@ Severity mapping:
     3 = priority  (>= 45 deg max elevation)
     <= 2 = routine
 
-Wire format (multi-line, LoRa-tight):
-    Line 1: satellite emoji {sat_name} Pass -- {max_el} deg max
-    Line 2: AOS {aos_time} . LOS {los_time}
-    Line 3: {observer} . {direction}
+Broadcast wire format (two lines, LoRa-tight):
+    Line 1: 🛰️ {name} {bucket}, {aos_compass}→{los_compass}
+    Line 2: {duration} minute window, {rise}–{set} {AM/PM} MDT
+DM wire format (compact, exact degrees):
+    {name} {HH:MM}–{HH:MM} {TZ} max {el}° {aos_compass}→{los_compass}
 """
 from __future__ import annotations
 
@@ -29,11 +35,15 @@ import logging
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from meshai.adapter_config import adapter_config
 from meshai.persistence import get_db
 
 logger = logging.getLogger(__name__)
+
+# Mountain time for broadcast display
+_TZ = ZoneInfo("America/Boise")
 
 
 def _now() -> int:
@@ -73,15 +83,107 @@ def _parse_iso_epoch(s) -> Optional[int]:
         return None
 
 
-def _format_time(epoch: Optional[int]) -> str:
-    """Format epoch to HH:MM local time string."""
+def _elevation_bucket(max_el: float) -> str:
+    """Map max elevation to human-readable bucket name."""
+    if max_el >= 60:
+        return "overhead"
+    if max_el >= 30:
+        return "high pass"
+    return "low pass"
+
+
+def _format_time_12h(epoch: Optional[int]) -> str:
+    """Format epoch to h:mm AM/PM in America/Boise."""
     if epoch is None:
         return "?"
     try:
-        dt = datetime.fromtimestamp(epoch)
+        dt = datetime.fromtimestamp(epoch, tz=_TZ)
+        # Use %-I for no-leading-zero hour on Linux, fall back to %I
+        try:
+            return dt.strftime("%-I:%M")
+        except ValueError:
+            return dt.strftime("%I:%M").lstrip("0")
+    except Exception:
+        return "?"
+
+
+def _format_ampm(epoch: Optional[int]) -> str:
+    """Return AM or PM for an epoch in America/Boise."""
+    if epoch is None:
+        return ""
+    try:
+        dt = datetime.fromtimestamp(epoch, tz=_TZ)
+        return dt.strftime("%p")
+    except Exception:
+        return ""
+
+
+def _format_time_24h(epoch: Optional[int]) -> str:
+    """Format epoch to HH:MM local time string (24h)."""
+    if epoch is None:
+        return "?"
+    try:
+        dt = datetime.fromtimestamp(epoch, tz=_TZ)
         return dt.strftime("%H:%M")
     except Exception:
         return "?"
+
+
+def _tz_abbr(epoch: Optional[int]) -> str:
+    """Return timezone abbreviation for an epoch in America/Boise."""
+    if epoch is None:
+        return "MDT"
+    try:
+        dt = datetime.fromtimestamp(epoch, tz=_TZ)
+        return dt.strftime("%Z")
+    except Exception:
+        return "MDT"
+
+
+def _azimuth_to_compass(az_deg: float) -> str:
+    """Convert azimuth in degrees to 8-point compass direction."""
+    az = az_deg % 360
+    dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+    idx = int((az + 22.5) / 45) % 8
+    return dirs[idx]
+
+
+def format_pass(*, sat_name: str, max_el: float,
+                aos_epoch: Optional[int], los_epoch: Optional[int],
+                aos_compass: str, los_compass: str,
+                broadcast: bool = True) -> str:
+    """Unified pass formatter with mode switch.
+
+    broadcast=True:  Two-line format with buckets, 12h times, LoRa budget.
+        🛰️ {name} {bucket}, {aos_compass}→{los_compass}
+        {duration} minute window, {rise}–{set} {AM/PM} {TZ}
+
+    broadcast=False: Compact DM format with exact degrees.
+        {name} {HH:MM}–{HH:MM} {TZ} max {el}° {aos_compass}→{los_compass}
+    """
+    if broadcast:
+        bucket = _elevation_bucket(max_el)
+        # Duration in whole minutes
+        if aos_epoch is not None and los_epoch is not None:
+            dur_min = max(1, round((los_epoch - aos_epoch) / 60))
+        else:
+            dur_min = 0
+        rise_str = _format_time_12h(aos_epoch)
+        set_str = _format_time_12h(los_epoch)
+        ampm = _format_ampm(los_epoch)
+        tz = _tz_abbr(aos_epoch)
+
+        line1 = f"\U0001F6F0\uFE0F {sat_name} {bucket}, {aos_compass}\u2192{los_compass}"
+        line2 = f"{dur_min} minute window, {rise_str}\u2013{set_str} {ampm} {tz}"
+        return f"{line1}\n{line2}"
+    else:
+        # DM format: compact with exact degrees
+        aos_str = _format_time_24h(aos_epoch)
+        los_str = _format_time_24h(los_epoch)
+        tz = _tz_abbr(aos_epoch)
+        return (f"{sat_name} {aos_str}\u2013{los_str} {tz} "
+                f"max {int(max_el)}\u00B0 "
+                f"{aos_compass}\u2192{los_compass}")
 
 
 def _map_severity(max_el: float) -> str:
@@ -100,6 +202,22 @@ def _canonical_id(norad_id: int, observer: str, aos_epoch: int) -> str:
     """
     bucket = aos_epoch // 3600
     return f"{norad_id}:{observer}:{bucket}"
+
+
+def _check_rate_cap(conn, now: int, max_per_hour: int) -> tuple[bool, int]:
+    """Check if broadcast rate cap has been reached.
+
+    Returns (allowed, suppressed_count) where suppressed_count is the
+    number of broadcasts already made in the current hour window.
+    """
+    hour_start = (now // 3600) * 3600
+    row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM satpass_events "
+        "WHERE last_broadcast_at >= ? AND last_broadcast_at IS NOT NULL",
+        (hour_start,),
+    ).fetchone()
+    count = row["cnt"] if row else 0
+    return (count < max_per_hour, count)
 
 
 def handle_satpass(envelope: dict, subject: str,
@@ -138,6 +256,8 @@ def handle_satpass(envelope: dict, subject: str,
     aos_iso = d.get("aos_time")
     los_iso = d.get("los_time")
     direction = d.get("azimuth_at_peak_compass") or ""
+    aos_compass = d.get("azimuth_at_aos_compass") or direction or ""
+    los_compass = d.get("azimuth_at_los_compass") or ""
 
     if norad_id is None or max_el is None:
         logger.debug("satpass_handler: missing norad_id or max_elevation_deg")
@@ -156,9 +276,14 @@ def handle_satpass(envelope: dict, subject: str,
         logger.debug("satpass_handler: observer %r not in configured list", observer)
         return None
 
-    # NORAD ID filter (empty = all)
+    # OPT-IN NORAD ID filter: empty list = broadcast NOTHING
     norad_ids = getattr(cfg, "norad_ids", []) or []
-    if norad_ids and norad_id not in norad_ids:
+    if not norad_ids:
+        if not getattr(handle_satpass, "_no_norad_ids_logged", False):
+            logger.info("satpass: no norad_ids configured; pass broadcasts disabled")
+            handle_satpass._no_norad_ids_logged = True
+        return None
+    if norad_id not in norad_ids:
         logger.debug("satpass_handler: norad_id %d not in configured list", norad_id)
         return None
 
@@ -197,40 +322,38 @@ def handle_satpass(envelope: dict, subject: str,
         subject=subject, handled=0,
         table_name="satpass_events", table_pk=event_id)
 
-    if row is None:
-        # First time seeing this pass bucket
-        _upsert_satpass(conn, event_id=event_id, norad_id=norad_id,
-                        sat_name=sat_name, observer=observer,
-                        max_elevation=max_el, aos_at=aos_epoch,
-                        los_at=los_epoch, payload_json=payload_json,
-                        first_seen_at=now, set_last_broadcast=False)
-        wire = _render(sat_name, max_el, aos_epoch, los_epoch, observer, direction)
-        _attach_commit(data, event_id=event_id, event_log_row_id=log_id)
-        return wire
+    if row is not None and row["last_broadcast_at"] is not None:
+        # Already broadcast this pass bucket
+        return None
 
-    if row["last_broadcast_at"] is None:
-        # Seen but not yet broadcast
-        wire = _render(sat_name, max_el, aos_epoch, los_epoch, observer, direction)
-        _attach_commit(data, event_id=event_id, event_log_row_id=log_id)
-        return wire
+    # Rate cap check
+    max_per_hour = int(getattr(cfg, "max_broadcasts_per_hour", 4))
+    allowed, count = _check_rate_cap(conn, now, max_per_hour)
+    if not allowed:
+        logger.info("satpass: rate cap reached, suppressing 1 passes")
+        return None
 
-    # Already broadcast this pass bucket
-    return None
+    # Build wire message
+    _upsert_satpass(conn, event_id=event_id, norad_id=norad_id,
+                    sat_name=sat_name, observer=observer,
+                    max_elevation=max_el, aos_at=aos_epoch,
+                    los_at=los_epoch, payload_json=payload_json,
+                    first_seen_at=now, set_last_broadcast=False)
+    wire = format_pass(
+        sat_name=sat_name, max_el=max_el,
+        aos_epoch=aos_epoch, los_epoch=los_epoch,
+        aos_compass=aos_compass, los_compass=los_compass,
+        broadcast=True,
+    )
 
+    # Dry-run gate: log but don't dispatch
+    dry_run = getattr(cfg, "dry_run", True)
+    if dry_run:
+        logger.info("DRY-RUN would air: %s", wire)
+        return None
 
-def _render(sat_name: str, max_el: float, aos_epoch: Optional[int],
-            los_epoch: Optional[int], observer: str, direction: str) -> str:
-    """Render wire format message."""
-    aos_str = _format_time(aos_epoch)
-    los_str = _format_time(los_epoch)
-
-    line1 = f"\U0001F6F0\uFE0F {sat_name} Pass \u2014 {int(max_el)}\u00B0 max"
-    line2 = f"AOS {aos_str} \u00B7 LOS {los_str}"
-    line3 = f"{observer}"
-    if direction:
-        line3 += f" \u00B7 {direction}"
-
-    return "\n".join([line1, line2, line3])
+    _attach_commit(data, event_id=event_id, event_log_row_id=log_id)
+    return wire
 
 
 def _upsert_satpass(conn, *, event_id, norad_id, sat_name, observer,

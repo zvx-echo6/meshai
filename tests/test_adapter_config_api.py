@@ -36,7 +36,7 @@ def test_list_returns_all_59_keys(client):
     # 14 adapters with at least one key (itd_511 has zero -- not in the
     # grouped dict because the SQL only returns rows that exist).
     total = sum(len(v) for v in body.values())
-    assert total == 90
+    assert total == 92
 
 
 def test_list_grouped_by_adapter(client):

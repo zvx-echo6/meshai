@@ -66,7 +66,7 @@ NOAA18_ENVELOPE = {
 }
 
 
-def _enable_satpass():
+def _enable_satpass(norad_ids=None):
     """Set satpass.enabled=true in the test DB."""
     from meshai.persistence import get_db
     from meshai.adapter_config import invalidate_cache
@@ -79,6 +79,19 @@ def _enable_satpass():
     conn.execute(
         "UPDATE adapter_config SET value_json='5' "
         "WHERE adapter='satpass' AND key='min_elevation'"
+    )
+    # Disable dry_run for tests that expect wire output
+    conn.execute(
+        "UPDATE adapter_config SET value_json='false' "
+        "WHERE adapter='satpass' AND key='dry_run'"
+    )
+    # Set norad_ids (must be non-empty for opt-in)
+    if norad_ids is None:
+        norad_ids = [28654]
+    conn.execute(
+        "UPDATE adapter_config SET value_json=? "
+        "WHERE adapter='satpass' AND key='norad_ids'",
+        (json.dumps(norad_ids),)
     )
     invalidate_cache()
 
@@ -93,6 +106,8 @@ def test_noaa18_envelope_produces_satpass_event():
     _enable_satpass()
     if hasattr(handle_satpass, "_disabled_logged"):
         del handle_satpass._disabled_logged
+    if hasattr(handle_satpass, "_no_norad_ids_logged"):
+        del handle_satpass._no_norad_ids_logged
 
     now = int(time.time())
     wire = handle_satpass(
@@ -123,12 +138,14 @@ def test_noaa18_envelope_produces_satpass_event():
 
 
 def test_noaa18_wire_message_format():
-    """Wire message includes satellite name, elevation, observer, direction."""
+    """Wire message includes satellite name, direction in new 2-line format."""
     from meshai.central.satpass_handler import handle_satpass
 
     _enable_satpass()
     if hasattr(handle_satpass, "_disabled_logged"):
         del handle_satpass._disabled_logged
+    if hasattr(handle_satpass, "_no_norad_ids_logged"):
+        del handle_satpass._no_norad_ids_logged
 
     wire = handle_satpass(
         NOAA18_ENVELOPE,
@@ -138,17 +155,17 @@ def test_noaa18_wire_message_format():
     )
     assert wire is not None
 
-    # Line 1: satellite name + elevation
-    assert "NOAA 18" in wire
-    assert "22" in wire  # int(22.69) = 22
+    lines = wire.split("\n")
+    assert len(lines) == 2, f"Expected 2 lines, got {len(lines)}: {wire!r}"
 
-    # Line 2: AOS/LOS times
-    assert "AOS" in wire
-    assert "LOS" in wire
+    # Line 1: satellite name + bucket + compass directions
+    assert "NOAA 18" in lines[0]
+    assert "low pass" in lines[0]  # 22.69 < 30 = low pass
+    assert "SE" in lines[0]  # aos_compass
+    assert "N" in lines[0]   # los_compass
 
-    # Line 3: observer + azimuth direction
-    assert "Filer" in wire
-    assert "ENE" in wire  # azimuth_at_peak_compass
+    # Line 2: duration + time window
+    assert "minute window" in lines[1]
 
 
 def test_missing_norad_id_rejected():
@@ -158,6 +175,8 @@ def test_missing_norad_id_rejected():
     _enable_satpass()
     if hasattr(handle_satpass, "_disabled_logged"):
         del handle_satpass._disabled_logged
+    if hasattr(handle_satpass, "_no_norad_ids_logged"):
+        del handle_satpass._no_norad_ids_logged
 
     # Deep copy and remove norad_id
     import copy
@@ -180,6 +199,8 @@ def test_missing_max_elevation_deg_rejected():
     _enable_satpass()
     if hasattr(handle_satpass, "_disabled_logged"):
         del handle_satpass._disabled_logged
+    if hasattr(handle_satpass, "_no_norad_ids_logged"):
+        del handle_satpass._no_norad_ids_logged
 
     import copy
     env = copy.deepcopy(NOAA18_ENVELOPE)
@@ -201,6 +222,8 @@ def test_observer_fallback_to_slug():
     _enable_satpass()
     if hasattr(handle_satpass, "_disabled_logged"):
         del handle_satpass._disabled_logged
+    if hasattr(handle_satpass, "_no_norad_ids_logged"):
+        del handle_satpass._no_norad_ids_logged
 
     import copy
     env = copy.deepcopy(NOAA18_ENVELOPE)
@@ -214,7 +237,15 @@ def test_observer_fallback_to_slug():
         now=int(time.time()),
     )
     assert wire is not None
-    assert "filer" in wire
+    # Observer name stored in DB, not in broadcast wire format
+    from meshai.persistence import get_db
+    conn = get_db()
+    row = conn.execute(
+        "SELECT observer FROM satpass_events WHERE norad_id=28654"
+    ).fetchone()
+    assert row is not None
+    assert row["observer"] == "filer"
+
 
 
 # ── Consumer category mapping ──────────────────────────────────────

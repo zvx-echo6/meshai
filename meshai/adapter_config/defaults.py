@@ -613,12 +613,22 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     ("satpass", "norad_ids"): {
         "default": [],
         "type": "json",
-        "description": "NORAD catalog IDs to include (empty = all).",
+        "description": "NORAD catalog IDs to broadcast (empty = broadcast nothing, opt-in only).",
     },
     ("satpass", "command_norad_ids"): {
         "default": [25544],
         "type": "json",
         "description": "Default NORAD IDs for bare !satpass command (default: [25544] ISS).",
+    },
+    ("satpass", "max_broadcasts_per_hour"): {
+        "default": 4,
+        "type": "int",
+        "description": "Maximum satellite pass broadcasts per hour. Excess qualifying passes are logged and suppressed.",
+    },
+    ("satpass", "dry_run"): {
+        "default": True,
+        "type": "bool",
+        "description": "Dry-run mode: log wire text at INFO with DRY-RUN prefix instead of dispatching. Default true so satpass re-enables inert.",
     },
 
     # =================================================================

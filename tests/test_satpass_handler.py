@@ -6,7 +6,8 @@ from unittest.mock import MagicMock, patch
 
 def _envelope(norad_id=25544, sat_name="ISS", observer="Boise",
               max_el=75.0, aos="2026-06-12T03:32:00Z",
-              los="2026-06-12T03:38:00Z", direction="NW-SE"):
+              los="2026-06-12T03:38:00Z", direction="NW-SE",
+              aos_compass="SW", los_compass="NE"):
     """Build a CloudEvents envelope for a satellite pass."""
     return {
         "specversion": "1.0",
@@ -25,6 +26,8 @@ def _envelope(norad_id=25544, sat_name="ISS", observer="Boise",
                 "aos_time": aos,
                 "los_time": los,
                 "azimuth_at_peak_compass": direction,
+                "azimuth_at_aos_compass": aos_compass,
+                "azimuth_at_los_compass": los_compass,
             }
         }
     }
@@ -47,12 +50,16 @@ def mock_adapter_config():
     cfg.enabled = True
     cfg.observers = []  # empty = all observers
     cfg.min_elevation = 30
-    cfg.norad_ids = []  # empty = all satellites
+    cfg.norad_ids = [25544]  # must be non-empty for opt-in
+    cfg.dry_run = False
+    cfg.max_broadcasts_per_hour = 4
     with patch("meshai.central.satpass_handler.adapter_config") as mock:
         mock.satpass = cfg
         from meshai.central.satpass_handler import handle_satpass
         if hasattr(handle_satpass, "_disabled_logged"):
             del handle_satpass._disabled_logged
+        if hasattr(handle_satpass, "_no_norad_ids_logged"):
+            del handle_satpass._no_norad_ids_logged
         yield cfg
 
 
@@ -67,9 +74,7 @@ class TestSatpassHandler:
         result = handle_satpass(env, "central.sat.pass.iss", data={}, now=1718163120)
 
         assert result is not None
-        assert "ISS Pass" in result
-        assert "75" in result
-        assert "Boise" in result
+        assert "ISS" in result
 
     def test_low_elevation_pass_filtered(self, mock_db, mock_adapter_config):
         """A pass below min_elevation should be filtered."""
@@ -129,19 +134,20 @@ class TestSatpassHandler:
         assert result2 is None
 
     def test_wire_format(self, mock_db, mock_adapter_config):
-        """Wire format should have 3 lines with correct info."""
+        """Wire format should have 2 lines with correct info."""
         from meshai.central.satpass_handler import handle_satpass
 
-        env = _envelope(sat_name="ISS", max_el=75, observer="Boise", direction="NW-SE")
+        env = _envelope(sat_name="ISS", max_el=75, observer="Boise",
+                        direction="NW-SE", aos_compass="SW", los_compass="NE")
         result = handle_satpass(env, "central.sat.pass.iss", data={}, now=1718163120)
 
         lines = result.split("\n")
-        assert len(lines) == 3
-        assert "ISS Pass" in lines[0]
-        assert "75" in lines[0]
-        assert "AOS" in lines[1]
-        assert "LOS" in lines[1]
-        assert "Boise" in lines[2]
+        assert len(lines) == 2
+        assert "ISS" in lines[0]
+        assert "overhead" in lines[0]
+        assert "SW" in lines[0]
+        assert "NE" in lines[0]
+        assert "minute window" in lines[1]
 
     def test_commit_callback_attached(self, mock_db, mock_adapter_config):
         """Broadcast should attach commit callback."""
