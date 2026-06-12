@@ -95,8 +95,11 @@ class EnvReporter:
         lines: list[str] = ["ENVIRONMENTAL CONTEXT (compiled from local SQLite tables):"]
 
         if self._adapter_included("wfigs"):
-            n_fires = self._scalar(conn, "SELECT COUNT(*) FROM fires WHERE last_event_at >= ?",
-                                     (now - 7 * 86400,))
+            n_fires = self._scalar(conn,
+                "SELECT COUNT(*) FROM fires WHERE last_event_at >= ? "
+                "AND tombstoned_at IS NULL "
+                "AND (current_contained_pct IS NULL OR current_contained_pct < 100)",
+                (now - 7 * 86400,))
             if n_fires:
                 lines.append(f"  Active fires (WFIGS, last 7d): {n_fires}")
 

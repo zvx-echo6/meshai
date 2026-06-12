@@ -100,10 +100,11 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
 
     if kind in ("wfigs_tombstone", "wfigs_perimeter"):
         source = "wfigs_incidents" if kind == "wfigs_tombstone" else "wfigs_perimeters"
-        _log_event(conn, now=now, source=source, category=category,
-                    severity_word=severity_word, irwin_id=irwin_id,
-                    subject=subject, handled=0,
-                    table_name=None, table_pk=irwin_id)
+        log_id = _log_event_returning_id(
+            conn, now=now, source=source, category=category,
+            severity_word=severity_word, irwin_id=irwin_id,
+            subject=subject, handled=0,
+            table_name=None, table_pk=irwin_id)
         # v0.6-tail item 4: tombstone branch stamps fires.tombstoned_at so
         # the ReminderScheduler stops re-broadcasting the closed fire.
         # Only the tombstone kind closes the fire; perimeter polls don t.
@@ -147,7 +148,14 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
                 wire = "\n".join(lines)
                 if isinstance(data, dict):
                     data["category"] = "wildfire_closed"
-                    data["_severity_override"] = "routine"
+                    data["_severity_override"] = "immediate"
+                _attach_commit_handles(
+                    data, irwin_id=irwin_id,
+                    acres=fire_row["current_acres"],
+                    contained_pct=fire_row["current_contained_pct"],
+                    event_log_row_id=log_id)
+                if isinstance(data, dict):
+                    data["_dedup_suffix"] = "closed"
                 return wire
 
         return None
