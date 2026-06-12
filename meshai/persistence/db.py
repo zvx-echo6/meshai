@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = "/data/meshai.sqlite"
 MESHAI_DB_PATH_ENV = "MESHAI_DB_PATH"
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 SCHEMA_META_TABLE = "schema_meta"
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 

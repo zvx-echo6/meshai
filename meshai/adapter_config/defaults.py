@@ -610,6 +610,11 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "type": "list",
         "description": "NORAD catalog IDs to include (empty = all).",
     },
+    ("satpass", "command_norad_ids"): {
+        "default": [25544],
+        "type": "list",
+        "description": "Default NORAD IDs for bare !satpass command (default: [25544] ISS).",
+    },
 
     # =================================================================
     # DASHBOARD -- UI-only settings persisted for the operator
