@@ -15,16 +15,16 @@ def _envelope(norad_id=25544, sat_name="ISS", observer="Boise",
         "id": f"pass-{norad_id}-{aos}",
         "data": {
             "adapter": "n2yo_visualpasses",
-            "category": "sat.pass",
+            "category": "pass.n2yo_visualpasses",
             "severity": 0,
             "data": {
                 "norad_id": norad_id,
-                "sat_name": sat_name,
-                "observer": observer,
-                "max_elevation": max_el,
-                "aos": aos,
-                "los": los,
-                "direction": direction,
+                "satellite_name": sat_name,
+                "observer_name": observer,
+                "max_elevation_deg": max_el,
+                "aos_time": aos,
+                "los_time": los,
+                "azimuth_at_peak_compass": direction,
             }
         }
     }

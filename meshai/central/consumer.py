@@ -246,6 +246,7 @@ _CATEGORY_MAP: list[tuple[str, str]] = [
     ("incident", "road_incident"),
     ("closure", "road_closure"),
     ("traffic.", "traffic_congestion"),
+    ("pass.", "sat_pass"),
     ("sat.", "sat_pass"),
 ]
 
@@ -272,6 +273,7 @@ _SUBJECT_DOMAIN_CATEGORY = {
     "traffic": "traffic_congestion",
     "traffic_flow": "traffic_flow",
     "traffic_cameras": "traffic_camera",
+    "sat": "sat_pass",
 }
 
 

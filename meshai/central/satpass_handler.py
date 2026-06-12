@@ -132,15 +132,15 @@ def handle_satpass(envelope: dict, subject: str,
 
     # Extract pass data
     norad_id = _coerce_int(d.get("norad_id") or d.get("satid"))
-    sat_name = d.get("sat_name") or d.get("name") or f"SAT-{norad_id}"
-    observer = d.get("observer") or d.get("location") or "unknown"
-    max_el = _coerce_float(d.get("max_elevation") or d.get("maxEl"))
-    aos_iso = d.get("aos") or d.get("rise_time")
-    los_iso = d.get("los") or d.get("set_time")
-    direction = d.get("direction") or d.get("pass_type") or ""
+    sat_name = d.get("satellite_name") or f"SAT-{norad_id}"
+    observer = d.get("observer_name") or d.get("observer_slug") or "unknown"
+    max_el = _coerce_float(d.get("max_elevation_deg"))
+    aos_iso = d.get("aos_time")
+    los_iso = d.get("los_time")
+    direction = d.get("azimuth_at_peak_compass") or ""
 
     if norad_id is None or max_el is None:
-        logger.debug("satpass_handler: missing norad_id or max_elevation")
+        logger.debug("satpass_handler: missing norad_id or max_elevation_deg")
         return None
 
     aos_epoch = _parse_iso_epoch(aos_iso)
