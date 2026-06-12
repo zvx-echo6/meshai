@@ -1,8 +1,8 @@
-"""Tests for the hybrid recent+largest fire context in build_fires_detail.
+"""Tests for recency-only fire ordering in build_fires_detail.
 
-Validates that the env_reporter now surfaces small fresh fires alongside
-large historic ones, excludes tombstoned fires, deduplicates, and respects
-the block character cap.
+Validates that the env_reporter surfaces fires ordered strictly by
+last_event_at descending, excludes 100%-contained and tombstoned fires,
+and respects the block character cap.
 """
 from __future__ import annotations
 
@@ -64,51 +64,56 @@ def _seed_scenario(conn):
                county="Lincoln", state="ID")
 
 
-class TestFireRecencyHybrid:
-    """T1-T5: hybrid recent+largest query tests."""
+class TestFireRecencyOnly:
+    """T1-T5: recency-only ordering + contained exclusion."""
 
-    def test_t1_fresh_tiny_fires_appear(self, reporter):
-        """T1: Both fresh tiny fires appear in build_fires_detail output."""
+    def test_t1_output_strictly_recency_ordered(self, reporter):
+        """All listed fires appear in last_event_at descending order."""
         conn = get_db()
         _seed_scenario(conn)
         text = reporter.build_fires_detail()
-        assert "Bingham Co. Assist 3" in text, (
-            "Fresh tiny fire 'Bingham Co. Assist 3' missing from output")
-        assert "IA 1" in text, (
-            "Fresh tiny fire 'IA 1' missing from output")
+        # Fresh fires (1h, 2h ago) must appear before older fires (3-6d)
+        pos_fresh1 = text.index("Bingham Co. Assist 3")
+        pos_fresh2 = text.index("IA 1")
+        assert pos_fresh1 < pos_fresh2, (
+            "Most recent fire should appear before second most recent")
+        # Any old fire that appears must come after both fresh fires
+        for i in range(5, 11):  # only non-contained old fires
+            name = f"Old Fire {i}"
+            if name in text:
+                pos_old = text.index(name)
+                assert pos_fresh2 < pos_old, (
+                    f"Fresh fires should appear before '{name}'")
 
-    def test_t2_largest_non_tombstoned_appears(self, reporter):
-        """T2: The largest non-tombstoned fire appears (hybrid keeps big fires)."""
+    def test_t2_contained_100_excluded(self, reporter):
+        """Fires with current_contained_pct == 100 are excluded."""
         conn = get_db()
         _seed_scenario(conn)
         text = reporter.build_fires_detail()
-        # Old Fire 10 has acres=14050, the largest non-tombstoned
-        assert "Old Fire 10" in text, (
-            "Largest non-tombstoned fire 'Old Fire 10' missing from output")
+        # Old fires 0-4 have contained=100
+        for i in range(5):
+            assert f"Old Fire {i}:" not in text, (
+                f"100%-contained 'Old Fire {i}' should be excluded")
+
+    def test_t2b_null_containment_included(self, reporter):
+        """Fires with NULL containment (uncontained) are included."""
+        conn = get_db()
+        _seed_scenario(conn)
+        text = reporter.build_fires_detail()
+        assert "Bingham Co. Assist 3" in text
+        assert "IA 1" in text
 
     def test_t3_tombstoned_excluded(self, reporter):
-        """T3: The tombstoned fire does NOT appear."""
+        """Tombstoned fires do not appear."""
         conn = get_db()
         _seed_scenario(conn)
         text = reporter.build_fires_detail()
-        assert "Tombstoned Blaze" not in text, (
-            "Tombstoned fire should be excluded")
+        assert "Tombstoned Blaze" not in text
 
-    def test_t4_no_duplicates(self, reporter):
-        """T4: No incident is listed twice (dedup by irwin_id)."""
-        conn = get_db()
-        _seed_scenario(conn)
-        text = reporter.build_fires_detail()
-        # Each fire name should appear at most once in the output.
-        for name in ("Bingham Co. Assist 3", "IA 1", "Old Fire 10"):
-            count = text.count(name)
-            assert count <= 1, f"'{name}' appears {count} times (expected <=1)"
-
-    def test_t5_respects_block_cap(self, reporter):
-        """T5: Output respects _block_cap() even with long names."""
+    def test_t4_respects_block_cap(self, reporter):
+        """Output respects _block_cap() even with long names."""
         conn = get_db()
         now = int(time.time())
-        # Seed fires with very long names to exceed cap
         for i in range(12):
             long_name = f"Extremely Long Incident Name For Testing Purposes Number {i:02d} " + "X" * 100
             _seed_fire(conn, irwin_id=f"LONG-{i:02d}", name=long_name,

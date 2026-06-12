@@ -179,34 +179,17 @@ class EnvReporter:
             _cols = ("irwin_id, incident_name, current_acres, "
                      "current_contained_pct, lat, lon, county, state, "
                      "declared_at, last_event_at")
-            _where = "last_event_at >= ? AND tombstoned_at IS NULL"
-            # Query R: most-recent fires first.
-            recent = conn.execute(
+            _where = ("last_event_at >= ? AND tombstoned_at IS NULL "
+                      "AND (current_contained_pct IS NULL OR current_contained_pct < 100)")
+            rows = conn.execute(
                 f"SELECT {_cols} FROM fires WHERE {_where} "
-                "ORDER BY last_event_at DESC LIMIT 6",
-                (_cutoff,),
+                "ORDER BY last_event_at DESC LIMIT ?",
+                (_cutoff, limit),
             ).fetchall()
-            # Query L: largest fires first.
-            largest = conn.execute(
-                f"SELECT {_cols} FROM fires WHERE {_where} "
-                "ORDER BY current_acres DESC NULLS LAST LIMIT 6",
-                (_cutoff,),
-            ).fetchall()
-            # Merge: all of R in order, then L rows not already present.
-            seen_ids: set[str] = set()
-            merged: list[sqlite3.Row] = []
-            for r in recent:
-                if r["irwin_id"] not in seen_ids:
-                    seen_ids.add(r["irwin_id"])
-                    merged.append(r)
-            for r in largest:
-                if r["irwin_id"] not in seen_ids:
-                    seen_ids.add(r["irwin_id"])
-                    merged.append(r)
 
-            if merged:
-                lines.append("ACTIVE WILDFIRES (WFIGS, last 7d, most recent first, then largest):")
-                for r in merged:
+            if rows:
+                lines.append("ACTIVE WILDFIRES (WFIGS, last 7d, most recent first):")
+                for r in rows:
                     name = r["incident_name"] or "(unnamed)"
                     acres = "?" if r["current_acres"] is None else f"{int(r['current_acres']):,} ac"
                     cont = "?" if r["current_contained_pct"] is None else f"{r['current_contained_pct']}%"
