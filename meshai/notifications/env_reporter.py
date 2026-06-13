@@ -95,8 +95,11 @@ class EnvReporter:
         lines: list[str] = ["ENVIRONMENTAL CONTEXT (compiled from local SQLite tables):"]
 
         if self._adapter_included("wfigs"):
-            n_fires = self._scalar(conn, "SELECT COUNT(*) FROM fires WHERE last_event_at >= ?",
-                                     (now - 7 * 86400,))
+            n_fires = self._scalar(conn,
+                "SELECT COUNT(*) FROM fires WHERE last_event_at >= ? "
+                "AND tombstoned_at IS NULL "
+                "AND (current_contained_pct IS NULL OR current_contained_pct < 100)",
+                (now - 7 * 86400,))
             if n_fires:
                 lines.append(f"  Active fires (WFIGS, last 7d): {n_fires}")
 
@@ -175,15 +178,20 @@ class EnvReporter:
         lines: list[str] = []
 
         if self._adapter_included("wfigs"):
+            _cutoff = now - 7 * 86400
+            _cols = ("irwin_id, incident_name, current_acres, "
+                     "current_contained_pct, lat, lon, county, state, "
+                     "declared_at, last_event_at")
+            _where = ("last_event_at >= ? AND tombstoned_at IS NULL "
+                      "AND (current_contained_pct IS NULL OR current_contained_pct < 100)")
             rows = conn.execute(
-                "SELECT incident_name, current_acres, current_contained_pct, "
-                "lat, lon, county, state, declared_at "
-                "FROM fires WHERE last_event_at >= ? "
-                "ORDER BY current_acres DESC NULLS LAST LIMIT ?",
-                (now - 7 * 86400, limit),
+                f"SELECT {_cols} FROM fires WHERE {_where} "
+                "ORDER BY last_event_at DESC LIMIT ?",
+                (_cutoff, limit),
             ).fetchall()
+
             if rows:
-                lines.append("ACTIVE WILDFIRES (WFIGS, last 7d):")
+                lines.append("ACTIVE WILDFIRES (WFIGS, last 7d, most recent first):")
                 for r in rows:
                     name = r["incident_name"] or "(unnamed)"
                     acres = "?" if r["current_acres"] is None else f"{int(r['current_acres']):,} ac"

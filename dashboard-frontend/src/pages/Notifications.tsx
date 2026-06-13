@@ -4,7 +4,7 @@ import {
   Check, X, Eye as EyeIcon, EyeOff, Send, Clock, Zap,
   Calendar, AlertTriangle, Copy, AlertCircle, Layers,
   Wifi, WifiOff, Mail, Globe, Radio, MessageSquare,
-  Activity, Cloud, Flame, Car, Snowflake, Mountain, MapPin
+  Activity, Cloud, Flame, Car, Snowflake, Mountain, MapPin, Satellite
 } from 'lucide-react'
 import ChannelPicker from '@/components/ChannelPicker'
 import NodePicker from '@/components/NodePicker'
@@ -1422,6 +1422,7 @@ const TOGGLE_FAMILY_META: { key: string; label: string; Icon: typeof Activity }[
   { key: 'rf_propagation', label: 'RF Propagation', Icon: Radio },
   { key: 'roads', label: 'Roads', Icon: Car },
   { key: 'avalanche', label: 'Avalanche', Icon: Snowflake },
+  { key: 'satpass', label: 'Satellite Passes', Icon: Satellite },
   { key: 'seismic', label: 'Seismic', Icon: Mountain },
   { key: 'tracking', label: 'Tracking', Icon: MapPin },
 ]

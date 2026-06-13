@@ -272,6 +272,11 @@ def create_dispatcher(
         fire_cmd = FireCommand(env_store)
         dispatcher.register(fire_cmd)
 
+        # Register satellite pass prediction command
+        from .satpass_cmd import SatpassCommand
+        satpass_cmd = SatpassCommand()
+        dispatcher.register(satpass_cmd)
+
         # Register avalanche command
         from .avy_cmd import AvalancheCommand
         avy_cmd = AvalancheCommand(env_store)

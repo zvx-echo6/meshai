@@ -72,6 +72,16 @@ interface AvalancheConfig {
  min_danger_level: number
 }
 
+// Satpass adapter config shape
+interface SatpassConfig {
+ enabled: boolean
+ observers: string[]
+ min_elevation: number
+ norad_ids: string[]
+ max_broadcasts_per_hour: number
+ dry_run: boolean
+}
+
 // SWPC adapter config shape
 interface SwpcConfig {
  geomag_kp_floor: number
@@ -210,7 +220,7 @@ function AdapterPanel({ title, subtitle, enabled, onEnabled, feedSource, onFeedS
 }
 
 // ---------------------------------------------------------------- families
-type AdapterKey = 'nws' | 'fires' | 'firms' | 'swpc' | 'ducting' | 'traffic' | 'roads511' | 'wzdx' | 'usgs_quake' | 'usgs' | 'avalanche'
+type AdapterKey = 'nws' | 'fires' | 'firms' | 'swpc' | 'ducting' | 'traffic' | 'roads511' | 'wzdx' | 'usgs_quake' | 'usgs' | 'avalanche' | 'satpass'
 
 interface AdapterMeta { label: string; subtitle: string; health: string; hasCentral: boolean; nativeOnly: boolean; hasKey: boolean }
 
@@ -226,6 +236,7 @@ const META: Record<AdapterKey, AdapterMeta> = {
  usgs_quake: { label: 'USGS Earthquakes', subtitle: 'Seismic events from the USGS feed', health: 'usgs_quake', hasCentral: true, nativeOnly: false, hasKey: true },
  usgs: { label: 'USGS Stream Gauges', subtitle: 'River and stream water levels', health: 'usgs', hasCentral: true, nativeOnly: false, hasKey: true },
  avalanche: { label: 'Avalanche Advisories', subtitle: 'Backcountry avalanche danger ratings', health: 'avalanche', hasCentral: true, nativeOnly: false, hasKey: true },
+ satpass: { label: 'Satellite Passes', subtitle: 'Observer pass alerts via Central', health: 'satpass', hasCentral: true, nativeOnly: false, hasKey: true },
 }
 
 const FAMILIES: { key: string; label: string; icon: typeof Cloud; adapters: AdapterKey[] }[] = [
@@ -235,7 +246,7 @@ const FAMILIES: { key: string; label: string; icon: typeof Cloud; adapters: Adap
  { key: 'rf', label: 'RF Propagation', icon: Radio, adapters: ['swpc', 'ducting'] },
  { key: 'roads', label: 'Roads', icon: Car, adapters: ['traffic', 'roads511', 'wzdx'] },
  { key: 'geohazards', label: 'Geohazards', icon: Mountain, adapters: ['usgs_quake', 'usgs', 'avalanche'] },
- { key: 'tracking', label: 'Tracking', icon: Satellite, adapters: [] },
+ { key: 'tracking', label: 'Tracking', icon: Satellite, adapters: ['satpass'] },
  { key: 'mesh', label: 'Mesh Health', icon: Activity, adapters: [] },
 ]
 
@@ -301,6 +312,15 @@ export default function Environment() {
   proton_pfu_floor: 10.0,
  })
  const [swpcOriginal, setSwpcOriginal] = useState<string>("")
+ const [satpassConfig, setSatpassConfig] = useState<SatpassConfig>({
+  enabled: false,
+  observers: [],
+  min_elevation: 30,
+  norad_ids: [],
+  max_broadcasts_per_hour: 4,
+  dry_run: true,
+ })
+ const [satpassOriginal, setSatpassOriginal] = useState<string>("")
 
 
  useEffect(() => {
@@ -431,6 +451,26 @@ export default function Environment() {
      }
     } catch { /* adapter-config optional */ }
 
+    // Load adapter-config for satpass
+    try {
+     const satpassRes = await fetch("/api/adapter-config/satpass")
+     if (satpassRes.ok) {
+      const satpassArr = await satpassRes.json()
+      const satpassData: Record<string, any> = {}
+      for (const r of satpassArr) satpassData[r.key] = r
+      const cfg: SatpassConfig = {
+       enabled: satpassData.enabled?.value ?? false,
+       observers: satpassData.observers?.value ?? [],
+       min_elevation: satpassData.min_elevation?.value ?? 30,
+       norad_ids: satpassData.norad_ids?.value ?? [],
+       max_broadcasts_per_hour: satpassData.max_broadcasts_per_hour?.value ?? 4,
+       dry_run: satpassData.dry_run?.value ?? true,
+      }
+      setSatpassConfig(cfg)
+      setSatpassOriginal(JSON.stringify(cfg))
+     }
+    } catch { /* adapter-config optional */ }
+
    } catch (e) {
     setError(e instanceof Error ? e.message : 'Failed to load config')
    } finally {
@@ -460,7 +500,8 @@ export default function Environment() {
  const hasNwsChanges = JSON.stringify(nwsConfig) !== nwsOriginal
  const hasAvalancheChanges = JSON.stringify(avalancheConfig) !== avalancheOriginal
  const hasSwpcChanges = JSON.stringify(swpcConfig) !== swpcOriginal
- const hasChanges = hasEnvChanges || hasWfigsChanges || hasFiresChanges || hasTomtomChanges || hasRoads511Changes || hasWzdxChanges || hasNwsChanges || hasAvalancheChanges || hasSwpcChanges
+ const hasSatpassChanges = JSON.stringify(satpassConfig) !== satpassOriginal
+ const hasChanges = hasEnvChanges || hasWfigsChanges || hasFiresChanges || hasTomtomChanges || hasRoads511Changes || hasWzdxChanges || hasNwsChanges || hasAvalancheChanges || hasSwpcChanges || hasSatpassChanges
 
  
  const saveAdapterConfig = async (adapterName: string, key: string, value: unknown) => {
@@ -609,6 +650,30 @@ const save = async () => {
     setSwpcOriginal(JSON.stringify(swpcConfig))
    }
 
+   // Save satpass adapter config changes
+   if (hasSatpassChanges) {
+    const orig = JSON.parse(satpassOriginal) as SatpassConfig
+    if (satpassConfig.enabled !== orig.enabled) {
+     await saveAdapterConfig("satpass", "enabled", satpassConfig.enabled)
+    }
+    if (JSON.stringify(satpassConfig.observers) !== JSON.stringify(orig.observers)) {
+     await saveAdapterConfig("satpass", "observers", satpassConfig.observers)
+    }
+    if (satpassConfig.min_elevation !== orig.min_elevation) {
+     await saveAdapterConfig("satpass", "min_elevation", satpassConfig.min_elevation)
+    }
+    if (JSON.stringify(satpassConfig.norad_ids) !== JSON.stringify(orig.norad_ids)) {
+     await saveAdapterConfig("satpass", "norad_ids", satpassConfig.norad_ids)
+    }
+    if (satpassConfig.max_broadcasts_per_hour !== orig.max_broadcasts_per_hour) {
+     await saveAdapterConfig("satpass", "max_broadcasts_per_hour", satpassConfig.max_broadcasts_per_hour)
+    }
+    if (satpassConfig.dry_run !== orig.dry_run) {
+     await saveAdapterConfig("satpass", "dry_run", satpassConfig.dry_run)
+    }
+    setSatpassOriginal(JSON.stringify(satpassConfig))
+   }
+
    setSuccess('Config saved')
    setTimeout(() => setSuccess(null), 3000)
   } catch (e) {
@@ -628,6 +693,7 @@ const save = async () => {
   setNwsConfig(JSON.parse(nwsOriginal || JSON.stringify(nwsConfig)))
   setAvalancheConfig(JSON.parse(avalancheOriginal || JSON.stringify(avalancheConfig)))
   setSwpcConfig(JSON.parse(swpcOriginal || JSON.stringify(swpcConfig)))
+  setSatpassConfig(JSON.parse(satpassOriginal || JSON.stringify(satpassConfig)))
  }
  const restart = async () => {
   try { await fetch('/api/restart', { method: 'POST' }); setRestartRequired(false); setSuccess('Restart initiated') }
@@ -1034,6 +1100,61 @@ const save = async () => {
      ))}
     </div>
    </>)
+   case 'satpass': {
+    const armedState = !satpassConfig.enabled
+     ? { label: 'OFF', color: 'text-[#777] bg-[#1a1a1a]', desc: '' }
+     : satpassConfig.dry_run
+      ? { label: 'DRY RUN', color: 'text-sky-400 bg-sky-400/10 border border-sky-400/30', desc: ' — logging only, nothing transmits' }
+      : { label: '⚠ LIVE', color: 'text-amber-400 bg-amber-500/20 border-2 border-amber-500 font-bold animate-pulse', desc: ' — transmitting to mesh' }
+    return (
+    <div className="space-y-6">
+     {/* Armed-state banner */}
+     <div className={`px-4 py-2.5 text-sm rounded ${armedState.color}`}>
+      <span className="font-semibold">{armedState.label}</span>
+      {armedState.desc && <span className="font-normal">{armedState.desc}</span>}
+     </div>
+     {/* Safety controls */}
+     <div>
+      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">
+       Safety Controls
+      </div>
+      <div className="space-y-4">
+       <div className="flex items-center justify-between">
+        <div>
+         <span className="text-sm text-[#e0e0e0]">Dry run — log instead of transmit</span>
+         <p className="text-xs text-[#666]">When enabled, passes are logged but never broadcast to mesh</p>
+        </div>
+        <button
+         onClick={() => setSatpassConfig({ ...satpassConfig, dry_run: !satpassConfig.dry_run })}
+         className={`relative w-10 h-5 rounded-full transition-colors ${satpassConfig.dry_run ? 'bg-sky-500' : 'bg-[#333]'}`}
+        >
+         <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${satpassConfig.dry_run ? 'translate-x-5' : ''}`} />
+        </button>
+       </div>
+       <NumberInput label="Max broadcasts / hour" value={satpassConfig.max_broadcasts_per_hour}
+        onChange={(v) => setSatpassConfig({ ...satpassConfig, max_broadcasts_per_hour: v })}
+        min={1} max={60} helper="Rate cap — broadcasts exceeding this limit are dropped" />
+      </div>
+     </div>
+     {/* Pass filters */}
+     <div>
+      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">
+       Pass Filters
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+       <NumberInput label="Min Elevation (deg)" value={satpassConfig.min_elevation}
+        onChange={(v) => setSatpassConfig({ ...satpassConfig, min_elevation: v })}
+        min={0} max={90} helper="Minimum max elevation for a pass to be broadcast" />
+      </div>
+     </div>
+     <ListInput label="Observer Locations" value={satpassConfig.observers}
+      onChange={(v) => setSatpassConfig({ ...satpassConfig, observers: v })}
+      helper="Observer names to include (empty = all)" />
+     <ListInput label="NORAD IDs" value={satpassConfig.norad_ids}
+      onChange={(v) => setSatpassConfig({ ...satpassConfig, norad_ids: v })}
+      helper="NORAD catalog IDs to broadcast (empty = broadcast nothing, opt-in only)" />
+    </div>
+   )}
   }
  }
 
@@ -1110,14 +1231,6 @@ const save = async () => {
    )}
 
 
-   {/* Tracking placeholder */}
-   {family === 'tracking' && (
-    <div className="flex flex-col items-center justify-center h-[40vh] text-center">
-     <Satellite size={32} className="text-[#666] mb-4" />
-     <p className="text-[#666] max-w-md">No adapters yet. ADS-B / AIS / satellite passes are planned for v0.5.</p>
-    </div>
-   )}
-
    {/* Mesh Health (no env adapters; central greyed for future migration) */}
    {family === 'mesh' && (
     <div className="border border-border p-4 space-y-3">
@@ -1151,8 +1264,8 @@ const save = async () => {
      <AdapterPanel
       title={META[activeAdapter].label}
       subtitle={META[activeAdapter].subtitle}
-      enabled={a[activeAdapter]?.enabled ?? false}
-      onEnabled={(v) => setAdapterField(activeAdapter, { enabled: v })}
+      enabled={activeAdapter === 'satpass' ? satpassConfig.enabled : (a[activeAdapter]?.enabled ?? false)}
+      onEnabled={(v) => activeAdapter === 'satpass' ? setSatpassConfig({ ...satpassConfig, enabled: v }) : setAdapterField(activeAdapter, { enabled: v })}
       feedSource={a[activeAdapter]?.feed_source ?? 'native'}
       onFeedSource={(v) => setAdapterField(activeAdapter, { feed_source: v })}
       hasCentral={META[activeAdapter].hasCentral}

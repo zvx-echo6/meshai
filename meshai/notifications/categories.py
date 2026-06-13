@@ -51,6 +51,7 @@ _TOGGLE_PREFIX_FALLBACK = [
     ("solar_radiation", "rf_propagation"),
     ("rf_", "rf_propagation"),
     ("avalanche", "avalanche"),
+    ("sat", "satpass"),
 ]
 
 
@@ -523,6 +524,14 @@ ALERT_CATEGORIES = {
         "default_severity": "routine",
         "example_message": "⛷ Avalanche Danger CONSIDERABLE: Sawtooth Zone — dangerous conditions on steep slopes.",
         "toggle": "avalanche",
+    },
+    # Satellite passes
+    "sat_pass": {
+        "name": "Satellite Pass",
+        "description": "Notable satellite pass visible from your location (ISS, amateur sats)",
+        "default_severity": "routine",
+        "example_message": "🛰️ ISS Pass — 75° max\nAOS 19:32 · LOS 19:38\nBoise · NW→SE",
+        "toggle": "satpass",
     },
 }
 

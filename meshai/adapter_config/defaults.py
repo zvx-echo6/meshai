@@ -591,6 +591,46 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "description": "Minimum danger level to broadcast (3=Considerable, 4=High, 5=Extreme).",
     },
 
+
+    # =================================================================
+    # SATPASS -- Satellite pass broadcasts
+    # =================================================================
+    ("satpass", "enabled"): {
+        "default": False,
+        "type": "bool",
+        "description": "Enable satellite pass broadcasts from Central.",
+    },
+    ("satpass", "observers"): {
+        "default": [],
+        "type": "json",
+        "description": "Observer location names to include (empty = all).",
+    },
+    ("satpass", "min_elevation"): {
+        "default": 30,
+        "type": "int",
+        "description": "Minimum max elevation (degrees) to broadcast a pass.",
+    },
+    ("satpass", "norad_ids"): {
+        "default": [],
+        "type": "json",
+        "description": "NORAD catalog IDs to broadcast (empty = broadcast nothing, opt-in only).",
+    },
+    ("satpass", "command_norad_ids"): {
+        "default": [25544],
+        "type": "json",
+        "description": "Default NORAD IDs for bare !satpass command (default: [25544] ISS).",
+    },
+    ("satpass", "max_broadcasts_per_hour"): {
+        "default": 4,
+        "type": "int",
+        "description": "Maximum satellite pass broadcasts per hour. Excess qualifying passes are logged and suppressed.",
+    },
+    ("satpass", "dry_run"): {
+        "default": True,
+        "type": "bool",
+        "description": "Dry-run mode: log wire text at INFO with DRY-RUN prefix instead of dispatching. Default true so satpass re-enables inert.",
+    },
+
     # =================================================================
     # DASHBOARD -- UI-only settings persisted for the operator
     # =================================================================
@@ -733,6 +773,11 @@ ADAPTER_META: dict[str, dict[str, Any]] = {
         "display_name": "Dashboard UI settings",
         "include_in_llm_context": False,
         "description": "Operator UI preferences persisted to adapter_config (region selectors, display options).",
+    },
+    "satpass": {
+        "display_name": "Satellite passes",
+        "include_in_llm_context": True,
+        "description": "Regional satellite pass broadcasts (ISS, amateur radio sats).",
     },
 }
 

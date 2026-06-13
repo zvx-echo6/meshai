@@ -82,43 +82,69 @@ async def render_digest(*, now: Optional[int] = None) -> tuple[str, str]:
     now = now if now is not None else int(time.time())
     conn = get_db()
 
+    cutoff = now - 7 * 86400
     rows = conn.execute(
         "SELECT incident_name, current_acres, current_contained_pct, county, state "
-        "FROM fires WHERE tombstoned_at IS NULL "
+        "FROM fires WHERE last_event_at >= ? "
+        "AND tombstoned_at IS NULL "
         "AND (current_contained_pct IS NULL OR current_contained_pct < 100) "
-        "AND last_event_at > strftime('%s', 'now', '-7 days') "
-        "ORDER BY current_acres DESC NULLS LAST LIMIT 20"
+        "ORDER BY last_event_at DESC",
+        (cutoff,),
     ).fetchall()
 
     if not rows:
         return "", "no_fires"
 
-    n = len(rows)
-    header = f"\U0001f525 Fire Digest \u2014 {n} active wildfire(s) in Idaho"
+    total = len(rows)
+    top = rows[:2]
+
+    header = f"\U0001f525 Fire Digest \u2014 {total} active wildfire(s)"
 
     fire_lines: list[str] = []
-    for row in rows:
+    for row in top:
         name = row["incident_name"] or "(unnamed)"
-        anchor = f"{row['county']} Co" if row["county"] else row["state"] or ""
-        contained = f"{int(row['current_contained_pct'])}% cont" if row["current_contained_pct"] is not None else "uncontained"
-        acres = f"{int(row['current_acres']):,} ac" if row["current_acres"] else "size unknown"
-        fire_lines.append(f"{name}: {acres}, {contained}, {anchor}")
+        county = row["county"]
+        state = row["state"]
+        if county and state:
+            fire_lines.append(f"{name} in {county} Co, {state}")
+        elif state:
+            fire_lines.append(f"{name} in {state}")
+        else:
+            fire_lines.append(name)
 
-    # 220-byte budget: greedily fit lines
+    # Assemble within ~200-byte LoRa budget; trim fire lines, never the tail
     shown: list[str] = []
     for line in fire_lines:
-        remaining = n - len(shown) - 1
-        overflow = f"\n+ {remaining} more" if remaining > 0 else ""
-        candidate = "\n".join([header] + shown + [line]) + overflow
-        if len(candidate.encode("utf-8")) <= 220:
+        # Estimate tail for budget check
+        est_remaining = total - len(shown) - 1
+        if est_remaining == 1:
+            est_tail = "There is 1 additional wildfire. DM me for the full list."
+        elif est_remaining > 1:
+            est_tail = f"There are {est_remaining} additional wildfires. DM me for the full list."
+        else:
+            est_tail = ""
+        parts = [header] + shown + [line]
+        if est_tail:
+            parts.append(est_tail)
+        candidate = "\n".join(parts)
+        if len(candidate.encode("utf-8")) <= 200:
             shown.append(line)
         else:
             break
-    remaining = n - len(shown)
-    lines = [header] + shown
-    if remaining > 0:
-        lines.append(f"+ {remaining} more")
-    wire = "\n".join(lines)
+
+    # Compute tail AFTER budget loop with actual shown count
+    remaining = total - len(shown)
+    if remaining == 1:
+        tail = "There is 1 additional wildfire. DM me for the full list."
+    elif remaining > 1:
+        tail = f"There are {remaining} additional wildfires. DM me for the full list."
+    else:
+        tail = ""
+
+    parts = [header] + shown
+    if tail:
+        parts.append(tail)
+    wire = "\n".join(parts)
 
     return wire, "deterministic"
 
