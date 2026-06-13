@@ -255,9 +255,16 @@ def handle_satpass(envelope: dict, subject: str,
     max_el = _coerce_float(d.get("max_elevation_deg"))
     aos_iso = d.get("aos_time")
     los_iso = d.get("los_time")
-    direction = d.get("azimuth_at_peak_compass") or ""
-    aos_compass = d.get("azimuth_at_aos_compass") or direction or ""
-    los_compass = d.get("azimuth_at_los_compass") or ""
+    # Compass directions: prefer precomputed _compass strings (n2yo path),
+    # fall back to converting raw azimuth degrees (satpass_predict path).
+    aos_compass = d.get("azimuth_at_aos_compass") or (
+        _azimuth_to_compass(d["azimuth_at_aos"]) if d.get("azimuth_at_aos") is not None else "")
+    los_compass = d.get("azimuth_at_los_compass") or (
+        _azimuth_to_compass(d["azimuth_at_los"]) if d.get("azimuth_at_los") is not None else "")
+    direction = d.get("azimuth_at_peak_compass") or (
+        _azimuth_to_compass(d["azimuth_at_peak"]) if d.get("azimuth_at_peak") is not None else "")
+    # Use peak direction as fallback for aos_compass only if aos is still empty
+    aos_compass = aos_compass or direction or ""
 
     if norad_id is None or max_el is None:
         logger.debug("satpass_handler: missing norad_id or max_elevation_deg")
