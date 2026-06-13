@@ -109,7 +109,7 @@ def test_noaa18_envelope_produces_satpass_event():
     if hasattr(handle_satpass, "_no_norad_ids_logged"):
         del handle_satpass._no_norad_ids_logged
 
-    now = int(time.time())
+    now = 1781065800  # before NOAA18 envelope los_time
     wire = handle_satpass(
         NOAA18_ENVELOPE,
         "central.sat.pass.us.id.filer",
@@ -151,7 +151,7 @@ def test_noaa18_wire_message_format():
         NOAA18_ENVELOPE,
         "central.sat.pass.us.id.filer",
         data={},
-        now=int(time.time()),
+        now=1781065800,  # before NOAA18 envelope los_time
     )
     assert wire is not None
 
@@ -187,7 +187,7 @@ def test_missing_norad_id_rejected():
         env,
         "central.sat.pass.us.id.filer",
         data={},
-        now=int(time.time()),
+        now=1781065800,  # before NOAA18 envelope los_time
     )
     assert wire is None, "handler should reject envelope without norad_id"
 
@@ -210,7 +210,7 @@ def test_missing_max_elevation_deg_rejected():
         env,
         "central.sat.pass.us.id.filer",
         data={},
-        now=int(time.time()),
+        now=1781065800,  # before NOAA18 envelope los_time
     )
     assert wire is None, "handler should reject envelope without max_elevation_deg"
 
@@ -234,7 +234,7 @@ def test_observer_fallback_to_slug():
         env,
         "central.sat.pass.us.id.filer",
         data={},
-        now=int(time.time()),
+        now=1781065800,  # before NOAA18 envelope los_time
     )
     assert wire is not None
     # Observer name stored in DB, not in broadcast wire format

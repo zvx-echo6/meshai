@@ -464,7 +464,7 @@ class TestNoradIdTypeCoercion:
         _enable_satpass_db(norad_ids=["25544"], dry_run=False)
 
         env = _envelope(norad_id=25544, max_el=80.0)
-        result = handle_satpass(env, "test.subject", data={})
+        result = handle_satpass(env, "test.subject", data={}, now=1781235000)
         assert result is not None, "string norad_id should match int wire"
 
     def test_mixed_int_and_string_norad_ids(self):
@@ -475,13 +475,13 @@ class TestNoradIdTypeCoercion:
 
         # int in list, int on wire
         env_iss = _envelope(norad_id=25544, max_el=65.0)
-        result_iss = handle_satpass(env_iss, "test.subject", data={})
+        result_iss = handle_satpass(env_iss, "test.subject", data={}, now=1781235000)
         assert result_iss is not None, "int norad_id in mixed list should match"
 
         # string in list, int on wire
         env_noaa = _envelope(norad_id=22825, sat_name="NOAA 15", max_el=65.0,
                              aos="2026-06-12T05:32:00Z", los="2026-06-12T05:38:00Z")
-        result_noaa = handle_satpass(env_noaa, "test.subject", data={})
+        result_noaa = handle_satpass(env_noaa, "test.subject", data={}, now=1781235000)
         assert result_noaa is not None, "string norad_id in mixed list should match int wire"
 
     def test_garbage_entries_skipped_without_crash(self):
@@ -493,7 +493,7 @@ class TestNoradIdTypeCoercion:
 
         env = _envelope(norad_id=25544, max_el=80.0)
         # Must not raise, and the valid entry should still match
-        result = handle_satpass(env, "test.subject", data={})
+        result = handle_satpass(env, "test.subject", data={}, now=1781235000)
         assert result is not None, "valid entry should match despite garbage siblings"
 
     def test_all_garbage_norad_ids_matches_nothing(self):
@@ -503,7 +503,7 @@ class TestNoradIdTypeCoercion:
         _enable_satpass_db(norad_ids=["abc", "", "xyz"], dry_run=False)
 
         env = _envelope(norad_id=25544, max_el=80.0)
-        result = handle_satpass(env, "test.subject", data={})
+        result = handle_satpass(env, "test.subject", data={}, now=1781235000)
         assert result is None, "all-garbage norad_ids should match nothing"
 
     def test_pure_int_norad_ids_still_works(self):
@@ -513,7 +513,7 @@ class TestNoradIdTypeCoercion:
         _enable_satpass_db(norad_ids=[25544], dry_run=False)
 
         env = _envelope(norad_id=25544, max_el=80.0)
-        result = handle_satpass(env, "test.subject", data={})
+        result = handle_satpass(env, "test.subject", data={}, now=1781235000)
         assert result is not None, "pure int norad_id should still match"
 
     def test_string_norad_id_rejects_non_matching(self):
@@ -523,5 +523,89 @@ class TestNoradIdTypeCoercion:
         _enable_satpass_db(norad_ids=["25544"], dry_run=False)
 
         env = _envelope(norad_id=99999, max_el=80.0)
-        result = handle_satpass(env, "test.subject", data={})
+        result = handle_satpass(env, "test.subject", data={}, now=1781235000)
         assert result is None, "non-matching norad_id should be rejected"
+
+
+class TestStalenessGuard:
+    """Reject passes whose window already ended; allow ongoing/future/None."""
+
+    def test_past_pass_rejected(self):
+        """Pass with los 10 min in the past produces no wire, no broadcast mark."""
+        from meshai.central.satpass_handler import handle_satpass
+        from meshai.persistence import get_db
+        _clear_handler_flags()
+        _enable_satpass_db(norad_ids=[25544], dry_run=False)
+
+        now = 1718200000
+        aos = "2026-06-12T02:00:00Z"  # well in the past
+        los_epoch = now - 600  # 10 min ago
+        los = datetime.fromtimestamp(los_epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        env = _envelope(norad_id=25544, max_el=80.0, aos=aos, los=los)
+        result = handle_satpass(env, "test.subject", data={}, now=now)
+        assert result is None, "past pass should produce no wire"
+
+        # Verify no broadcast mark in DB
+        conn = get_db()
+        row = conn.execute(
+            "SELECT last_broadcast_at FROM satpass_events WHERE norad_id=25544"
+        ).fetchone()
+        assert row is None or row["last_broadcast_at"] is None, \
+            "past pass should not create a broadcast-marked DB row"
+
+    def test_ongoing_pass_broadcasts(self):
+        """Ongoing pass (aos -2 min, los +5 min) must produce wire."""
+        from meshai.central.satpass_handler import handle_satpass
+        _clear_handler_flags()
+        _enable_satpass_db(norad_ids=[25544], dry_run=False)
+
+        now = 1718200000
+        aos_epoch = now - 120  # started 2 min ago
+        los_epoch = now + 300  # ends in 5 min
+        aos = datetime.fromtimestamp(aos_epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        los = datetime.fromtimestamp(los_epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        env = _envelope(norad_id=25544, max_el=70.0, aos=aos, los=los)
+        result = handle_satpass(env, "test.subject", data={}, now=now)
+        assert result is not None, "ongoing pass (los in future) should broadcast"
+
+    def test_future_pass_broadcasts(self):
+        """Future pass (aos and los both in future) must produce wire."""
+        from meshai.central.satpass_handler import handle_satpass
+        _clear_handler_flags()
+        _enable_satpass_db(norad_ids=[25544], dry_run=False)
+
+        now = 1718200000
+        aos_epoch = now + 600   # starts in 10 min
+        los_epoch = now + 1200  # ends in 20 min
+        aos = datetime.fromtimestamp(aos_epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        los = datetime.fromtimestamp(los_epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        env = _envelope(norad_id=25544, max_el=55.0, aos=aos, los=los)
+        result = handle_satpass(env, "test.subject", data={}, now=now)
+        assert result is not None, "future pass should broadcast"
+
+    def test_none_los_falls_through(self):
+        """los_epoch=None must not be rejected by staleness guard."""
+        from meshai.central.satpass_handler import handle_satpass
+        _clear_handler_flags()
+        _enable_satpass_db(norad_ids=[25544], dry_run=False)
+
+        now = 1718200000
+        aos_epoch = now + 600
+        aos = datetime.fromtimestamp(aos_epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # Build envelope with no los_time
+        env = _envelope(norad_id=25544, max_el=60.0, aos=aos, los="")
+        # Patch los to None by removing los_time from inner data
+        env["data"]["data"]["los_time"] = None
+
+        result = handle_satpass(env, "test.subject", data={}, now=now)
+        # Should not be rejected by staleness guard — falls through to
+        # normal handling (wire produced or other filter applies)
+        # We just verify it does NOT crash and is not rejected as stale
+        # It may still produce wire or be filtered by something else,
+        # but the staleness guard specifically must not block it.
+        # Since all other filters pass, wire should be produced.
+        assert result is not None, "None los_epoch should fall through staleness guard"

@@ -270,6 +270,12 @@ def handle_satpass(envelope: dict, subject: str,
         logger.debug("satpass_handler: could not parse aos time")
         return None
 
+    # Staleness guard: reject passes whose window already ended
+    if los_epoch is not None and los_epoch < now:
+        logger.debug("satpass_handler: pass already ended (los %d < now %d), skipping",
+                     los_epoch, now)
+        return None
+
     # Observer filter (empty = all)
     observers = getattr(cfg, "observers", []) or []
     if observers and observer not in observers:
