@@ -13,9 +13,9 @@ Rate cap: adapter_config.satpass.max_broadcasts_per_hour (default 4).
 Dry-run: adapter_config.satpass.dry_run (default True) — logs wire text
     at INFO with "DRY-RUN would air:" prefix, does not dispatch.
 
-Dedup bucketing: canonical event_id = {norad_id}:{observer}:{aos_bucket}
+Dedup bucketing: canonical event_id = {norad_id}:{aos_bucket}
 where aos_bucket = floor(aos_epoch / 3600) -- one broadcast per satellite
-per observer per hour window.
+per hour window, consolidated across all observers.
 
 Severity mapping:
     4 = immediate (>= 60 deg max elevation)
@@ -23,8 +23,12 @@ Severity mapping:
     <= 2 = routine
 
 Broadcast wire format (two lines, LoRa-tight):
-    Line 1: 🛰️ {name} {bucket}, {aos_compass}→{los_compass}
-    Line 2: {duration} minute window, {rise}–{set} {AM/PM} MDT
+    Consolidated (multi-observer):
+        Line 1: 🛰️ {name} {bucket}, {aos_compass}→{los_compass}
+        Line 2: {duration} min window, {rise}–{set} {AM/PM} MDT ({entry_obs}→{exit_obs})
+    Single observer:
+        Line 1: 🛰️ {name} {bucket}, {aos_compass}→{los_compass}
+        Line 2: {duration} min window, {rise}–{set} {AM/PM} MDT
 DM wire format (compact, exact degrees):
     {name} {HH:MM}–{HH:MM} {TZ} max {el}° {aos_compass}→{los_compass}
 """
@@ -44,6 +48,17 @@ logger = logging.getLogger(__name__)
 
 # Mountain time for broadcast display
 _TZ = ZoneInfo("America/Boise")
+
+# Module-level signal: consolidation IDs that need timer scheduling.
+# Consumer polls this after each satpass _normalize() call.
+_pending_consolidation_ids: set[str] = set()
+
+
+def drain_pending_consolidation_ids() -> set[str]:
+    """Atomically drain and return all pending consolidation IDs."""
+    ids = _pending_consolidation_ids.copy()
+    _pending_consolidation_ids.clear()
+    return ids
 
 
 def _now() -> int:
@@ -151,12 +166,16 @@ def _azimuth_to_compass(az_deg: float) -> str:
 def format_pass(*, sat_name: str, max_el: float,
                 aos_epoch: Optional[int], los_epoch: Optional[int],
                 aos_compass: str, los_compass: str,
-                broadcast: bool = True) -> str:
+                broadcast: bool = True,
+                entry_observer: Optional[str] = None,
+                exit_observer: Optional[str] = None) -> str:
     """Unified pass formatter with mode switch.
 
     broadcast=True:  Two-line format with buckets, 12h times, LoRa budget.
         🛰️ {name} {bucket}, {aos_compass}→{los_compass}
-        {duration} minute window, {rise}–{set} {AM/PM} {TZ}
+        {duration} min window, {rise}–{set} {AM/PM} {TZ}
+        If entry_observer != exit_observer:
+            {duration} min window, {rise}–{set} {AM/PM} {TZ} ({entry}→{exit})
 
     broadcast=False: Compact DM format with exact degrees.
         {name} {HH:MM}–{HH:MM} {TZ} max {el}° {aos_compass}→{los_compass}
@@ -174,7 +193,13 @@ def format_pass(*, sat_name: str, max_el: float,
         tz = _tz_abbr(aos_epoch)
 
         line1 = f"\U0001F6F0\uFE0F {sat_name} {bucket}, {aos_compass}\u2192{los_compass}"
-        line2 = f"{dur_min} minute window, {rise_str}\u2013{set_str} {ampm} {tz}"
+
+        # Consolidated parenthetical if multi-observer
+        if entry_observer and exit_observer and entry_observer != exit_observer:
+            line2 = f"{dur_min} min window, {rise_str}\u2013{set_str} {ampm} {tz} ({entry_observer}\u2192{exit_observer})"
+        else:
+            line2 = f"{dur_min} min window, {rise_str}\u2013{set_str} {ampm} {tz}"
+
         return f"{line1}\n{line2}"
     else:
         # DM format: compact with exact degrees
@@ -195,13 +220,10 @@ def _map_severity(max_el: float) -> str:
     return "routine"
 
 
-def _canonical_id(norad_id: int, observer: str, aos_epoch: int) -> str:
-    """Generate dedup-bucketed canonical event ID.
-
-    Bucket = floor(aos_epoch / 3600) -- one broadcast per sat/observer/hour.
-    """
+def _canonical_id(norad_id: int, aos_epoch: int) -> str:
+    """Generate consolidated canonical event ID (observer-independent)."""
     bucket = aos_epoch // 3600
-    return f"{norad_id}:{observer}:{bucket}"
+    return f"{norad_id}:{bucket}"
 
 
 def _check_rate_cap(conn, now: int, max_per_hour: int) -> tuple[bool, int]:
@@ -220,12 +242,21 @@ def _check_rate_cap(conn, now: int, max_per_hour: int) -> tuple[bool, int]:
     return (count < max_per_hour, count)
 
 
+def _cleanup_pending(conn, consolidated_id: str) -> None:
+    """Remove all pending rows for a consolidated ID."""
+    conn.execute("DELETE FROM satpass_pending WHERE consolidated_id=?",
+                 (consolidated_id,))
+
+
 def handle_satpass(envelope: dict, subject: str,
                    data: Optional[dict] = None,
                    now: Optional[int] = None) -> Optional[str]:
     """Process a satellite pass event from Central.
 
-    Returns wire message string if pass should be broadcast, None otherwise.
+    Per-observer arrivals are accumulated into satpass_pending table.
+    Returns None (suppressing immediate broadcast).
+    Consolidation ID is added to _pending_consolidation_ids for consumer
+    to schedule a 5s timer.
     """
     if not isinstance(envelope, dict):
         return None
@@ -309,8 +340,8 @@ def handle_satpass(envelope: dict, subject: str,
         logger.debug("satpass_handler: max_el %.1f below floor %.1f", max_el, min_el)
         return None
 
-    # Generate canonical dedup ID
-    event_id = _canonical_id(norad_id, observer, aos_epoch)
+    # Generate consolidated canonical ID (observer-independent)
+    consolidated_id = _canonical_id(norad_id, aos_epoch)
     severity_word = _map_severity(max_el)
     category_raw = inner.get("category") or "sat.pass"
 
@@ -320,56 +351,119 @@ def handle_satpass(envelope: dict, subject: str,
         logger.exception("satpass_handler: persistence unavailable")
         return None
 
-    # Check for existing broadcast
-    row = conn.execute(
-        "SELECT last_broadcast_at FROM satpass_events WHERE event_id=?",
-        (event_id,)).fetchone()
-
-    payload_json = None
-    try:
-        payload_json = json.dumps(d, default=str)[:8000]
-    except Exception:
-        pass
-
-    # Log the event
-    log_id = _log_event_returning_id(
+    # Log the per-observer event arrival
+    _log_event_returning_id(
         conn, now=now, source="satpass", category=category_raw,
-        severity_word=severity_word, event_id_external=event_id,
+        severity_word=severity_word, event_id_external=consolidated_id,
         subject=subject, handled=0,
-        table_name="satpass_events", table_pk=event_id)
+        table_name="satpass_pending", table_pk=f"{consolidated_id}:{observer}")
 
-    if row is not None and row["last_broadcast_at"] is not None:
-        # Already broadcast this pass bucket
+    # Accumulate into pending table
+    conn.execute(
+        "INSERT OR REPLACE INTO satpass_pending("
+        "consolidated_id, observer, sat_name, norad_id, max_elevation, "
+        "aos_at, los_at, aos_compass, los_compass, received_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (consolidated_id, observer, sat_name, norad_id, max_el,
+         aos_epoch, los_epoch, aos_compass, los_compass, now))
+
+    # Signal consumer to schedule consolidation timer
+    _pending_consolidation_ids.add(consolidated_id)
+
+    # Suppress immediate broadcast
+    return None
+
+
+def consolidate_satpass_pending(consolidated_id: str) -> tuple[str, dict] | None:
+    """Called by consumer when 5s consolidation timer fires.
+
+    Returns (wire_string, data_dict) or None if suppressed.
+    """
+    try:
+        conn = get_db()
+    except Exception:
+        logger.exception("satpass consolidation: persistence unavailable")
         return None
 
-    # Rate cap check
+    rows = conn.execute(
+        "SELECT * FROM satpass_pending WHERE consolidated_id=?",
+        (consolidated_id,)).fetchall()
+    if not rows:
+        return None
+
+    cfg = adapter_config.satpass
+    now = _now()
+
+    # Consolidate observers
+    sorted_by_aos = sorted(rows, key=lambda r: r["aos_at"])
+    sorted_by_los = sorted(rows, key=lambda r: r["los_at"])
+    entry = sorted_by_aos[0]    # earliest AOS
+    exit_ = sorted_by_los[-1]   # latest LOS
+    best = max(rows, key=lambda r: r["max_elevation"])
+
+    norad_id = best["norad_id"]
+    sat_name = best["sat_name"]
+    max_el = best["max_elevation"]
+    aos_epoch = entry["aos_at"]
+    los_epoch = exit_["los_at"]
+    aos_compass = entry["aos_compass"]
+    los_compass = exit_["los_compass"]
+    entry_obs = entry["observer"]
+    exit_obs = exit_["observer"]
+
+    # Dedup against satpass_events
+    existing = conn.execute(
+        "SELECT last_broadcast_at FROM satpass_events WHERE event_id=?",
+        (consolidated_id,)).fetchone()
+    if existing and existing["last_broadcast_at"] is not None:
+        _cleanup_pending(conn, consolidated_id)
+        return None
+
+    # Rate cap
     max_per_hour = int(getattr(cfg, "max_broadcasts_per_hour", 4))
     allowed, count = _check_rate_cap(conn, now, max_per_hour)
     if not allowed:
-        logger.info("satpass: rate cap reached, suppressing 1 passes")
+        logger.info("satpass: rate cap reached (%d/%d), suppressing consolidated pass %s",
+                     count, max_per_hour, consolidated_id)
+        _cleanup_pending(conn, consolidated_id)
         return None
 
-    # Build wire message
-    _upsert_satpass(conn, event_id=event_id, norad_id=norad_id,
-                    sat_name=sat_name, observer=observer,
-                    max_elevation=max_el, aos_at=aos_epoch,
-                    los_at=los_epoch, payload_json=payload_json,
-                    first_seen_at=now, set_last_broadcast=False)
-    wire = format_pass(
-        sat_name=sat_name, max_el=max_el,
-        aos_epoch=aos_epoch, los_epoch=los_epoch,
-        aos_compass=aos_compass, los_compass=los_compass,
-        broadcast=True,
-    )
+    # Build consolidated wire
+    if len(rows) > 1 and entry_obs != exit_obs:
+        wire = format_pass(sat_name=sat_name, max_el=max_el,
+                          aos_epoch=aos_epoch, los_epoch=los_epoch,
+                          aos_compass=aos_compass, los_compass=los_compass,
+                          entry_observer=entry_obs, exit_observer=exit_obs)
+    else:
+        wire = format_pass(sat_name=sat_name, max_el=max_el,
+                          aos_epoch=aos_epoch, los_epoch=los_epoch,
+                          aos_compass=aos_compass, los_compass=los_compass)
 
-    # Dry-run gate: log but don't dispatch
+    # Dry-run gate
     dry_run = getattr(cfg, "dry_run", True)
     if dry_run:
-        logger.info("DRY-RUN would air: %s", wire)
+        logger.info("DRY-RUN would air (consolidated, %d observers): %s",
+                     len(rows), wire)
+        _cleanup_pending(conn, consolidated_id)
         return None
 
-    _attach_commit(data, event_id=event_id, event_log_row_id=log_id)
-    return wire
+    # Upsert consolidated record into satpass_events
+    observer_list = ",".join(r["observer"] for r in sorted_by_aos)
+    _upsert_satpass(conn, event_id=consolidated_id, norad_id=norad_id,
+                    sat_name=sat_name, observer=observer_list,
+                    max_elevation=max_el, aos_at=aos_epoch,
+                    los_at=los_epoch, payload_json=None,
+                    first_seen_at=now, set_last_broadcast=False)
+
+    # Clean up pending rows
+    _cleanup_pending(conn, consolidated_id)
+
+    # Prepare data dict with callbacks
+    severity_word = _map_severity(max_el)
+    data = {"_meshai_precomposed": True, "_severity_override": severity_word}
+    _attach_commit(data, event_id=consolidated_id, event_log_row_id=None)
+
+    return wire, data
 
 
 def _upsert_satpass(conn, *, event_id, norad_id, sat_name, observer,
@@ -449,4 +543,20 @@ CREATE TABLE IF NOT EXISTS satpass_events (
 CREATE INDEX IF NOT EXISTS idx_satpass_norad ON satpass_events(norad_id);
 CREATE INDEX IF NOT EXISTS idx_satpass_observer ON satpass_events(observer);
 CREATE INDEX IF NOT EXISTS idx_satpass_aos ON satpass_events(aos_at);
+"""
+
+SCHEMA_SATPASS_PENDING = """
+CREATE TABLE IF NOT EXISTS satpass_pending (
+    consolidated_id TEXT NOT NULL,
+    observer        TEXT NOT NULL,
+    sat_name        TEXT,
+    norad_id        INTEGER,
+    max_elevation   REAL,
+    aos_at          INTEGER,
+    los_at          INTEGER,
+    aos_compass     TEXT,
+    los_compass     TEXT,
+    received_at     INTEGER,
+    PRIMARY KEY (consolidated_id, observer)
+);
 """

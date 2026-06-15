@@ -343,6 +343,8 @@ class CentralConsumer:
         self._drain_timeout: float = 30.0  # seconds before auto-exit
         self._drain_msg_count: int = 0  # messages processed during drain
         self._pacer = None  # FirePacer, injected from main.py
+        # Satpass consolidation: pending 5s timers keyed by consolidated_id.
+        self._pending_satpass_timers: dict[str, object] = {}
 
     # ---- subject derivation ----
     def _region(self) -> str:
@@ -653,6 +655,12 @@ class CentralConsumer:
             logger.exception("CentralConsumer: bad JSON on %s", subject)
             return None
         event = self._normalize(subject, envelope)
+
+        # Satpass consolidation: check for pending consolidation IDs
+        # regardless of whether _normalize returned an event (satpass
+        # handler always returns None, signaling via module-level set).
+        self._check_satpass_consolidation()
+
         if event is None:
             return None
         if owned is not None and event.source not in owned:
@@ -674,6 +682,51 @@ class CentralConsumer:
             else:
                 self._bus.emit(event)
         return event
+
+    def _check_satpass_consolidation(self) -> None:
+        """Poll the satpass handler's consolidation signal and schedule timers."""
+        try:
+            from meshai.central.satpass_handler import drain_pending_consolidation_ids
+            ids = drain_pending_consolidation_ids()
+        except Exception:
+            return
+        for cid in ids:
+            if cid not in self._pending_satpass_timers:
+                try:
+                    loop = asyncio.get_event_loop()
+                    handle = loop.call_later(
+                        5.0, self._satpass_consolidation_fire, cid)
+                    self._pending_satpass_timers[cid] = handle
+                    logger.debug("satpass: scheduled 5s consolidation timer for %s", cid)
+                except Exception:
+                    logger.exception("satpass: failed to schedule timer for %s", cid)
+
+    def _satpass_consolidation_fire(self, consolidated_id: str) -> None:
+        """Timer callback: consolidate pending observers and emit."""
+        self._pending_satpass_timers.pop(consolidated_id, None)
+        try:
+            from meshai.central.satpass_handler import consolidate_satpass_pending
+            result = consolidate_satpass_pending(consolidated_id)
+            if result is None:
+                return
+            wire, data = result
+
+            event = Event(
+                id=consolidated_id,
+                source="satpass",
+                category="sat_pass",
+                severity=data.get("_severity_override", "routine"),
+                title=wire.split("\n")[0] if wire else "",
+                summary=wire,
+                data=data,
+                timestamp=time.time(),
+            )
+
+            if self._bus is not None:
+                self._bus.emit(event)
+                logger.info("satpass: emitted consolidated broadcast for %s", consolidated_id)
+        except Exception:
+            logger.exception("satpass consolidation failed for %s", consolidated_id)
 
     async def _on_message(self, msg, owned=None) -> None:
         """JetStream callback: normalize + emit, then ack.
