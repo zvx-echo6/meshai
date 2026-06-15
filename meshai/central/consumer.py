@@ -332,6 +332,13 @@ class CentralConsumer:
         self._nc = None
         self._js = None
         self._subs: list = []
+        # Drain mode: suppress bus.emit() during backlog catch-up.
+        # After all pending messages are consumed, _drain_complete() runs
+        # a decision pass over accumulated fire IrwinIDs and emits at most
+        # one event per fire through the pacer.
+        self._draining: bool = False
+        self._drain_irwin_ids: set = set()
+        self._pacer = None  # FirePacer, injected from main.py
 
     # ---- subject derivation ----
     def _region(self) -> str:
@@ -630,6 +637,11 @@ class CentralConsumer:
 
         owned: set of meshai source names this subscription may emit (sub-adapter
         routing for shared subjects); None = no filtering.
+
+        During drain mode (_draining=True), bus.emit() is suppressed. Fire
+        IrwinIDs are tracked in _drain_irwin_ids for the post-drain decision
+        pass. All handler DB writes still happen inside _normalize() before
+        this point.
         """
         try:
             envelope = json.loads(raw)
@@ -643,24 +655,49 @@ class CentralConsumer:
             logger.debug("CentralConsumer: dropping %s source=%s -- not owned by "
                          "subscription %s", subject, event.source, sorted(owned))
             return None
-        if self._bus is not None:
-            self._bus.emit(event)
+
+        if self._draining:
+            # Track fire IrwinIDs touched during drain for decision pass
+            irwin_id = (event.data or {}).get("_cooldown_suffix", "")
+            if irwin_id and event.source in ("fires", "wfigs"):
+                self._drain_irwin_ids.add(irwin_id)
+        elif self._bus is not None:
+            # Normal mode: route fire events through pacer, others direct
+            if (self._pacer is not None
+                    and event.source in ("fires", "wfigs")
+                    and (event.data or {}).get("_severity_override") == "priority"):
+                self._pacer.enqueue(event)
+            else:
+                self._bus.emit(event)
         return event
 
     async def _on_message(self, msg, owned=None) -> None:
-        """JetStream callback: normalize + emit, then ack."""
+        """JetStream callback: normalize + emit, then ack.
+
+        During drain mode, checks msg.metadata.num_pending after each
+        message. When pending hits 0, the backlog is consumed and
+        _drain_complete() runs the fire decision pass.
+        """
         try:
             self._handle(msg.subject, msg.data, owned)
         except Exception:
             logger.exception("CentralConsumer: handler failed on %s",
                              getattr(msg, "subject", "?"))
-        finally:
+        # Check drain completion BEFORE ack so the decision pass runs
+        # while we still hold the message (prevents interleaving).
+        if self._draining:
+            try:
+                meta = await msg.metadata()
+                if meta is not None and getattr(meta, "num_pending", None) == 0:
+                    self._drain_complete()
+            except Exception:
+                logger.exception("drain: metadata check failed")
+        try:
             ack = getattr(msg, "ack", None)
             if ack is not None:
-                try:
-                    await ack()
-                except Exception:
-                    pass
+                await ack()
+        except Exception:
+            pass
 
     # ---- lifecycle ----
     async def start(self) -> None:
@@ -674,6 +711,14 @@ class CentralConsumer:
                            "environmental.central.enabled is false; not subscribing: %s",
                            sorted(subject_owned))
             return
+
+        # Enter drain mode: suppress bus.emit() until the backlog from
+        # LAST_PER_SUBJECT delivery is fully consumed. The first _on_message
+        # callback processes through drain mode; when num_pending hits 0,
+        # _drain_complete() runs the fire decision pass.
+        self._draining = True
+        self._drain_irwin_ids.clear()
+        logger.info("CentralConsumer: entering drain mode")
 
         region = self._region()
         logger.info("CentralConsumer: connecting region=%r subjects=%s",
@@ -690,7 +735,112 @@ class CentralConsumer:
                 subj, durable=durable, cb=self._make_cb(owned), config=consumer_config())
             self._subs.append(sub)
             logger.info("CentralConsumer subscribed %s owned-sources=%s", subj, sorted(owned))
-        logger.info("CentralConsumer started; %d subjects subscribed", len(subject_owned))
+        logger.info("CentralConsumer started; %d subjects subscribed (drain mode active)",
+                    len(subject_owned))
+
+    # ---- drain mode decision pass ----
+
+    def _drain_complete(self) -> None:
+        """Post-drain decision pass: one broadcast per fire, based on final DB state.
+
+        Runs synchronously (no awaits) to prevent _on_message interleaving.
+        For each IrwinID touched during drain, reads the fires row and
+        decides: NEW, UPDATE, CLOSURE, or SILENCE. Events route through
+        the pacer (<=1/min) instead of direct bus.emit().
+        """
+        self._draining = False
+        if not self._drain_irwin_ids:
+            logger.info("drain complete: 0 fires touched")
+            return
+
+        from meshai.persistence import get_db
+        from meshai.central.wfigs_handler import (
+            _render, _location_anchor, _attach_commit_handles,
+        )
+        from meshai.notifications.events import make_event
+
+        conn = get_db()
+        emitted = 0
+        silenced = 0
+
+        for irwin_id in self._drain_irwin_ids:
+            row = conn.execute(
+                "SELECT irwin_id, incident_name, incident_type, "
+                "current_acres, current_contained_pct, "
+                "lat, lon, county, state, landclass, "
+                "declared_at, tombstoned_at, last_broadcast_at, "
+                "last_broadcast_acres, last_broadcast_contained, "
+                "fire_cause, unique_fire_id, geocoder_city "
+                "FROM fires WHERE irwin_id = ?", (irwin_id,)
+            ).fetchone()
+
+            if row is None:
+                continue
+
+            tombstoned = row["tombstoned_at"] is not None
+            announced = row["last_broadcast_at"] is not None
+
+            # Decision table (meshai-fire-fix-plan.md §3):
+            # Case 3: Never announced + already closed -> SILENCE
+            if not announced and tombstoned:
+                silenced += 1
+                continue
+
+            wire = None
+            category = "wildfire_incident"
+
+            if announced and tombstoned:
+                # Case 4: Announced before + closed during gap -> CLOSURE
+                wire = _build_closure_wire(row)
+                category = "wildfire_closed"
+            elif not announced and not tombstoned:
+                # Case 2: Never announced + still active -> NEW
+                wire = _render(_row_to_normalized(row), prefix="New")
+                category = "wildfire_declared"
+            else:
+                # Case 1: Announced before + grew during gap -> UPDATE
+                # Check if anything actually changed
+                if (row["current_acres"] == row["last_broadcast_acres"]
+                        and row["current_contained_pct"] == row["last_broadcast_contained"]):
+                    silenced += 1
+                    continue
+                wire = _render(
+                    _row_to_normalized(row), prefix="Update",
+                    last_bcast_acres=row["last_broadcast_acres"],
+                    last_bcast_contained=row["last_broadcast_contained"],
+                )
+
+            if wire is None:
+                silenced += 1
+                continue
+
+            # Build Event
+            data = {"_meshai_precomposed": True, "_severity_override": "priority"}
+            _attach_commit_handles(
+                data, irwin_id=irwin_id,
+                acres=row["current_acres"],
+                contained_pct=row["current_contained_pct"],
+            )
+            data["_cooldown_suffix"] = irwin_id
+            data["_dedup_suffix"] = (
+                f"{row['current_acres']}|{row['current_contained_pct']}|drain"
+            )
+
+            event = make_event(
+                source="fires", category=category, severity="priority",
+                title=wire, lat=row["lat"], lon=row["lon"],
+                group_key=irwin_id, inhibit_keys=[irwin_id], data=data,
+            )
+
+            # Route through pacer (<=1/min), fall back to direct emit
+            if self._pacer is not None:
+                self._pacer.enqueue(event)
+            elif self._bus is not None:
+                self._bus.emit(event)
+            emitted += 1
+
+        self._drain_irwin_ids.clear()
+        logger.info("drain complete: %d fires emitted, %d silenced", emitted, silenced)
 
     async def stop(self) -> None:
         if self._nc is not None:
@@ -705,3 +855,56 @@ class CentralConsumer:
             self._nc = None
             self._js = None
             self._subs = []
+
+
+# ---------- drain-mode helpers (module-level) -----------------------------
+
+
+def _row_to_normalized(row) -> dict:
+    """Map a fires DB row (sqlite3.Row) to the normalized dict _render() expects.
+
+    sqlite3.Row supports bracket access and .keys() but not .get() on
+    Python < 3.13. Use _safe_get() for optional columns.
+    """
+    keys = set(row.keys())
+    return {
+        "incident_name": row["incident_name"],
+        "acres": row["current_acres"],
+        "contained_pct": row["current_contained_pct"],
+        "fire_cause": row["fire_cause"] if "fire_cause" in keys else None,
+        "unique_fire_id": row["unique_fire_id"] if "unique_fire_id" in keys else None,
+        "declared_at_epoch": row["declared_at"],
+        "lat": row["lat"],
+        "lon": row["lon"],
+        "county": row["county"],
+        "state": row["state"],
+        "landclass": row["landclass"] if "landclass" in keys else None,
+        "geocoder_city": row["geocoder_city"] if "geocoder_city" in keys else None,
+    }
+
+
+def _build_closure_wire(row) -> str:
+    """Build a closure wire string from a fires DB row.
+
+    Replicates the tombstone wire format from wfigs_handler.py.
+    """
+    from meshai.central.wfigs_handler import _location_anchor
+
+    name = row["incident_name"] or "(unnamed fire)"
+    parts = []
+    if row["current_acres"] is not None:
+        parts.append(f"{int(row['current_acres']):,} ac")
+    if row["current_contained_pct"] is not None:
+        parts.append(f"{int(row['current_contained_pct'])}% contained")
+    # Location anchor from row fields
+    loc_dict = {
+        "lat": row["lat"], "lon": row["lon"],
+        "county": row["county"], "state": row["state"],
+    }
+    anchor = _location_anchor(loc_dict)
+    if anchor and anchor != "(location unknown)":
+        parts.append(anchor)
+    lines = [f"\u2705 {name} \u2014 contained & closed"]
+    if parts:
+        lines.append(" | ".join(parts))
+    return "\n".join(lines)

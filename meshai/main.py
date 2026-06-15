@@ -51,6 +51,7 @@ class MeshAI:
         self._pipeline_scheduler = None  # DigestScheduler from start_pipeline()
         self.env_store = None  # Environmental feeds store
         self._central_consumer = None  # Central NATS consumer (v0.4)
+        self._fire_pacer = None  # FirePacer for rate-limited fire broadcasts
         self._last_sub_check: float = 0.0
         self.router: Optional[MessageRouter] = None
         self.responder: Optional[Responder] = None
@@ -101,8 +102,15 @@ class MeshAI:
             self._pipeline_scheduler = await start_pipeline(self.event_bus, self.config)
             logger.info("Notification pipeline started")
 
+            # Fire pacer: rate-limits fire broadcasts to <=1/min during both
+            # drain catch-up and normal operation.
+            from .notifications.pipeline.pacer import FirePacer
+            self._fire_pacer = FirePacer(bus=self.event_bus, interval_seconds=60.0)
+            await self._fire_pacer.start()
+
             from .central.consumer import CentralConsumer
             self._central_consumer = CentralConsumer(self.config.environmental, self.event_bus)
+            self._central_consumer._pacer = self._fire_pacer
             await self._central_consumer.start()
 
         logger.info("MeshAI started successfully")
@@ -214,6 +222,9 @@ class MeshAI:
 
         if self._central_consumer is not None:
             await self._central_consumer.stop()
+
+        if self._fire_pacer is not None:
+            await self._fire_pacer.stop()
 
         if self.connector:
             self.connector.disconnect()
