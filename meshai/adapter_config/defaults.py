@@ -630,6 +630,11 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "type": "bool",
         "description": "Dry-run mode: log wire text at INFO with DRY-RUN prefix instead of dispatching. Default true so satpass re-enables inert.",
     },
+    ("satpass", "max_aos_horizon_hours"): {
+        "default": 24,
+        "type": "int",
+        "description": "Maximum hours ahead for AOS. Passes with AOS further in the future are rejected as stale predictions. 0 disables.",
+    },
 
     # =================================================================
     # DASHBOARD -- UI-only settings persisted for the operator

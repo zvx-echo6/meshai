@@ -314,6 +314,14 @@ def handle_satpass(envelope: dict, subject: str,
                      los_epoch, now)
         return None
 
+    # AOS horizon guard: reject passes too far in the future (likely stale prediction)
+    max_horizon_h = float(getattr(cfg, "max_aos_horizon_hours", 24))
+    if max_horizon_h > 0 and aos_epoch > now + max_horizon_h * 3600:
+        logger.debug(
+            "satpass_handler: AOS %d is %.1fh away, beyond %gh horizon; skipping",
+            aos_epoch, (aos_epoch - now) / 3600, max_horizon_h)
+        return None
+
     # Observer filter (empty = all)
     observers = getattr(cfg, "observers", []) or []
     if observers and observer not in observers:
