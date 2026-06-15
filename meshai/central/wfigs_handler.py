@@ -148,7 +148,7 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
                 wire = "\n".join(lines)
                 if isinstance(data, dict):
                     data["category"] = "wildfire_closed"
-                    data["_severity_override"] = "immediate"
+                    data["_severity_override"] = "priority"
                 _attach_commit_handles(
                     data, irwin_id=irwin_id,
                     acres=fire_row["current_acres"],
@@ -207,9 +207,10 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
         # from acres/containment updates (wildfire_incident).
         if isinstance(data, dict):
             data["category"] = "wildfire_declared"
-        # v0.6-3c: severity override for fire broadcasts
+        # v0.6-3c: severity override for fire broadcasts (downgraded from
+        # immediate to priority to prevent cooldown/grouper bypass)
         if isinstance(data, dict):
-            data["_severity_override"] = "immediate"
+            data["_severity_override"] = "priority"
         _attach_commit_handles(data, irwin_id=irwin_id,
                                  acres=acres, contained_pct=contained_pct,
                                  event_log_row_id=log_id)
@@ -230,9 +231,10 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
         # handler call ran but no actual broadcast went out.
         if isinstance(data, dict):
             data["category"] = "wildfire_declared"
-        # v0.6-3c: severity override for fire broadcasts
+        # v0.6-3c: severity override for fire broadcasts (downgraded from
+        # immediate to priority to prevent cooldown/grouper bypass)
         if isinstance(data, dict):
-            data["_severity_override"] = "immediate"
+            data["_severity_override"] = "priority"
         _attach_commit_handles(data, irwin_id=irwin_id,
                                  acres=acres, contained_pct=contained_pct,
                                  event_log_row_id=log_id)
@@ -274,9 +276,10 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
         wire = _render(normalized, prefix="Update",
                         last_bcast_acres=last_bcast_acres,
                         last_bcast_contained=last_bcast_contained)
-        # v0.6-3c: severity override for fire updates
+        # v0.6-3c: severity override for fire updates (downgraded from
+        # immediate to priority to prevent cooldown/grouper bypass)
         if isinstance(data, dict):
-            data["_severity_override"] = "immediate"
+            data["_severity_override"] = "priority"
         _attach_commit_handles(data, irwin_id=irwin_id,
                                  acres=acres, contained_pct=contained_pct,
                                  event_log_row_id=log_id)
