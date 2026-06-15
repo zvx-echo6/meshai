@@ -338,6 +338,9 @@ class CentralConsumer:
         # one event per fire through the pacer.
         self._draining: bool = False
         self._drain_irwin_ids: set = set()
+        self._drain_start: float = 0.0  # monotonic time drain started
+        self._drain_timeout: float = 30.0  # seconds before auto-exit
+        self._drain_msg_count: int = 0  # messages processed during drain
         self._pacer = None  # FirePacer, injected from main.py
 
     # ---- subject derivation ----
@@ -686,6 +689,7 @@ class CentralConsumer:
         # Check drain completion BEFORE ack so the decision pass runs
         # while we still hold the message (prevents interleaving).
         if self._draining:
+            self._drain_msg_count += 1
             try:
                 meta = msg.metadata
                 if meta is not None and getattr(meta, "num_pending", None) == 0:
@@ -715,10 +719,14 @@ class CentralConsumer:
         # Enter drain mode: suppress bus.emit() until the backlog from
         # LAST_PER_SUBJECT delivery is fully consumed. The first _on_message
         # callback processes through drain mode; when num_pending hits 0,
-        # _drain_complete() runs the fire decision pass.
+        # _drain_complete() runs the fire decision pass. A timeout auto-exits
+        # drain if no messages arrive (empty backlog scenario).
         self._draining = True
         self._drain_irwin_ids.clear()
-        logger.info("CentralConsumer: entering drain mode")
+        self._drain_msg_count = 0
+        self._drain_start = time.monotonic()
+        logger.info("CentralConsumer: entering drain mode (timeout=%.0fs)",
+                    self._drain_timeout)
 
         region = self._region()
         logger.info("CentralConsumer: connecting region=%r subjects=%s",
@@ -738,7 +746,22 @@ class CentralConsumer:
         logger.info("CentralConsumer started; %d subjects subscribed (drain mode active)",
                     len(subject_owned))
 
-    # ---- drain mode decision pass ----
+        # Schedule drain timeout: if no messages trigger drain completion
+        # within the window (e.g. empty backlog), auto-exit drain mode.
+        asyncio.get_event_loop().call_later(
+            self._drain_timeout, self._drain_timeout_check)
+
+    # ---- drain mode ----
+
+    def _drain_timeout_check(self) -> None:
+        """Called by call_later after drain_timeout seconds. If still draining,
+        auto-exit. This handles the empty-backlog case where no messages arrive
+        to trigger num_pending == 0."""
+        if not self._draining:
+            return
+        logger.info("drain: timeout after %.0fs (%d msgs processed) — auto-completing",
+                    time.monotonic() - self._drain_start, self._drain_msg_count)
+        self._drain_complete()
 
     def _drain_complete(self) -> None:
         """Post-drain decision pass: one broadcast per fire, based on final DB state.
