@@ -11,6 +11,7 @@ Wire format (see Central CONSUMER-INTEGRATION guide, confirmed in v0.4 Phase A):
     -> Event["data"] (upstream payload, verbatim, incl `_enriched`)
 """
 
+import asyncio
 import json
 import logging
 import re
