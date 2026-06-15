@@ -687,7 +687,7 @@ class CentralConsumer:
         # while we still hold the message (prevents interleaving).
         if self._draining:
             try:
-                meta = await msg.metadata()
+                meta = msg.metadata
                 if meta is not None and getattr(meta, "num_pending", None) == 0:
                     self._drain_complete()
             except Exception:
