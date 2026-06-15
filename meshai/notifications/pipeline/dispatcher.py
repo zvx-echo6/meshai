@@ -379,15 +379,14 @@ class Dispatcher:
             return
 
         # ---------- Section 3 — per-toggle cooldown (check only) ----------
-        # Immediate-severity events bypass cooldown entirely — they are
-        # already rate-controlled by source handler change detection.
+        # All severities (including immediate) obey cooldown. Fire rate
+        # control was previously bypassed for immediate; the drain-mode
+        # pacer handles reconnect bursts, and this cooldown handles
+        # normal live operation (≤1 per cooldown window per toggle/key).
         # v0.6-4 (B13 fix): this section only CHECKS the cooldown. Arming
         # it is deferred to Section 6 and happens only after a delivery
         # actually succeeded.
-        if getattr(event, "severity", None) == "immediate":
-            cooldown_s = 0
-        else:
-            cooldown_s = int(getattr(tog, "cooldown_seconds", 300) or 0)
+        cooldown_s = int(getattr(tog, "cooldown_seconds", 300) or 0)
         ck = None
         if cooldown_s > 0:
             suffix = (event.data or {}).get("_cooldown_suffix", "")
