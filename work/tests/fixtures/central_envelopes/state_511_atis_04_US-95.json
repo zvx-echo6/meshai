@@ -1,0 +1,60 @@
+{
+  "id": "ID:Construction:33897",
+  "source": "central.echo6.co",
+  "type": "central.work_zone.state_511_atis.v1",
+  "time": "2026-05-28T14:38:00+00:00",
+  "datacontenttype": "application/json",
+  "centralschemaversion": "1.0",
+  "centralcategory": "work_zone.state_511_atis",
+  "centralseverity": 1,
+  "specversion": "1.0",
+  "data": {
+    "id": "ID:Construction:33897",
+    "adapter": "state_511_atis",
+    "category": "work_zone.state_511_atis",
+    "time": "2026-05-28T14:38:00Z",
+    "expires": "2026-06-02T17:00:00Z",
+    "severity": 1,
+    "geo": {
+      "centroid": [
+        -116.411904551719,
+        48.5439764820932
+      ],
+      "bbox": null,
+      "regions": [
+        "US-ID"
+      ],
+      "primary_region": "US-ID",
+      "geometry": null
+    },
+    "data": {
+      "roadway_name": "US-95",
+      "description": "Utility work on US-95 Southbound near MM (495). 6/2/2026 9:00 AM to 6/2/2026 5:00 PM Tue: Active all day Activities: Use Caution.",
+      "event_sub_type": "utilityWork",
+      "direction": "South",
+      "location_description": "Dusty Ln",
+      "county": "Boundary",
+      "state": "Idaho",
+      "start_date": "6/2/26, 9:00 AM",
+      "last_updated": "5/28/26, 2:38 PM",
+      "is_full_closure": false,
+      "layer": "Construction",
+      "state_code": "ID",
+      "latitude": 48.5439764820932,
+      "longitude": -116.411904551719,
+      "_enriched": {
+        "geocoder": {
+          "name": null,
+          "city": "Naples",
+          "county": "Boundary",
+          "state": "ID",
+          "country": "United States",
+          "postal_code": "83847",
+          "timezone": "America/Los_Angeles",
+          "landclass": null,
+          "elevation_m": 659.62890625
+        }
+      }
+    }
+  }
+}

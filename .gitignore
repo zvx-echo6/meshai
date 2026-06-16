@@ -20,8 +20,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -50,13 +50,17 @@ config.yaml
 *.db
 *.sqlite
 *.sqlite3
-data/
+/data/
 *.log
 
 # Secrets
 .env
 *.pem
 *.key
+
+# Frontend build output (built in Docker via multi-stage)
+meshai/dashboard/static/
+
 
 # OS
 .DS_Store

@@ -1,0 +1,60 @@
+{
+  "id": "ID:Construction:33281",
+  "source": "central.echo6.co",
+  "type": "central.work_zone.state_511_atis.v1",
+  "time": "2026-05-29T08:03:00+00:00",
+  "datacontenttype": "application/json",
+  "centralschemaversion": "1.0",
+  "centralcategory": "work_zone.state_511_atis",
+  "centralseverity": 1,
+  "specversion": "1.0",
+  "data": {
+    "id": "ID:Construction:33281",
+    "adapter": "state_511_atis",
+    "category": "work_zone.state_511_atis",
+    "time": "2026-05-29T08:03:00Z",
+    "expires": "2026-06-03T17:00:00Z",
+    "severity": 1,
+    "geo": {
+      "centroid": [
+        -112.388532253628,
+        43.1524044098836
+      ],
+      "bbox": null,
+      "regions": [
+        "US-ID"
+      ],
+      "primary_region": "US-ID",
+      "geometry": null
+    },
+    "data": {
+      "roadway_name": "I-15",
+      "description": "Bridge construction on I-15 Northbound from MM (89) to MM (93). 1 Right lane closed. 6/1/2026 7:00 AM to 6/3/2026 5:00 PM Mon: Paused all day, Tue, Wed: 7:00 AM - 5:00 PM Speed Restriction: 65mph Activities: Mandatory Speed Limit in Force, Use Caution.<div class='cellSpacer'><i><b>Comments:</b></i> North Bound right lane closed with speed reduction to 65 mph.\n</div>",
+      "event_sub_type": "bridgeConstruction",
+      "direction": "North",
+      "location_description": "I-15-BL | Snake River",
+      "county": "Bingham",
+      "state": "Idaho",
+      "start_date": "6/1/26, 7:00 AM",
+      "last_updated": "5/29/26, 8:03 AM",
+      "is_full_closure": false,
+      "layer": "Construction",
+      "state_code": "ID",
+      "latitude": 43.1524044098836,
+      "longitude": -112.388532253628,
+      "_enriched": {
+        "geocoder": {
+          "name": "North Treaty Highway",
+          "city": null,
+          "county": "Bingham",
+          "state": "Idaho",
+          "country": "United States",
+          "postal_code": null,
+          "timezone": "America/Boise",
+          "landclass": "Fort Hall Reservation",
+          "elevation_m": 1367.98828125
+        }
+      }
+    }
+  }
+}

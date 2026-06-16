@@ -56,6 +56,9 @@ Dockerfile*
 docker-compose*.yml
 .docker/
 
+# Frontend (npm ci installs fresh in build stage)
+dashboard-frontend/node_modules/
+
 # Misc
 .DS_Store
 *.log

@@ -1,0 +1,60 @@
+{
+  "id": "ID:Construction:32196",
+  "source": "central.echo6.co",
+  "type": "central.work_zone.state_511_atis.v1",
+  "time": "2026-05-11T15:13:00+00:00",
+  "datacontenttype": "application/json",
+  "centralschemaversion": "1.0",
+  "centralcategory": "work_zone.state_511_atis",
+  "centralseverity": 1,
+  "specversion": "1.0",
+  "data": {
+    "id": "ID:Construction:32196",
+    "adapter": "state_511_atis",
+    "category": "work_zone.state_511_atis",
+    "time": "2026-05-11T15:13:00Z",
+    "expires": "2026-06-02T16:00:00Z",
+    "severity": 1,
+    "geo": {
+      "centroid": [
+        -116.89192200007,
+        48.1805200000001
+      ],
+      "bbox": null,
+      "regions": [
+        "US-ID"
+      ],
+      "primary_region": "US-ID",
+      "geometry": null
+    },
+    "data": {
+      "roadway_name": "US-2",
+      "description": "Minor Road construction on US-2 Eastbound from Keyser Ln to N Riley Creek Rd. 6/1/2026 6:30 AM to 6/2/2026 4:00 PM Mon: 5:00 AM - 3:00 PM, Tue: 5:30 AM - 3:00 PM Activities: Reduced to Single Lane, Alternating Direction of Travel. Expect Delays: Under 15 minutes<div class='cellSpacer'><i><b>Comments:</b></i> road work flaggers in area</div>",
+      "event_sub_type": "roadConstruction",
+      "direction": "East",
+      "location_description": "Keyser Ln | N Riley Creek Rd",
+      "county": "Bonner",
+      "state": "Idaho",
+      "start_date": "6/1/26, 6:30 AM",
+      "last_updated": "5/11/26, 3:13 PM",
+      "is_full_closure": false,
+      "layer": "Construction",
+      "state_code": "ID",
+      "latitude": 48.1805200000001,
+      "longitude": -116.89192200007,
+      "_enriched": {
+        "geocoder": {
+          "name": "Priest River Park",
+          "city": null,
+          "county": "Bonner",
+          "state": "Idaho",
+          "country": "United States",
+          "postal_code": null,
+          "timezone": "America/Los_Angeles",
+          "landclass": null,
+          "elevation_m": 633.83984375
+        }
+      }
+    }
+  }
+}
