@@ -163,6 +163,27 @@ def _azimuth_to_compass(az_deg: float) -> str:
     return dirs[idx]
 
 
+def _date_label(epoch: Optional[int]) -> str:
+    """Return a date qualifier for passes not happening today.
+
+    Returns '' for today, 'tomorrow' for tomorrow, or 'Mon Jun 17'
+    for anything further out.
+    """
+    if epoch is None:
+        return ""
+    try:
+        now_local = datetime.now(tz=_TZ)
+        pass_local = datetime.fromtimestamp(epoch, tz=_TZ)
+        delta_days = (pass_local.date() - now_local.date()).days
+        if delta_days == 0:
+            return ""
+        if delta_days == 1:
+            return " tomorrow"
+        return pass_local.strftime(" %a %b %-d")
+    except Exception:
+        return ""
+
+
 def format_pass(*, sat_name: str, max_el: float,
                 aos_epoch: Optional[int], los_epoch: Optional[int],
                 aos_compass: str, los_compass: str,
@@ -173,9 +194,7 @@ def format_pass(*, sat_name: str, max_el: float,
 
     broadcast=True:  Two-line format with buckets, 12h times, LoRa budget.
         🛰️ {name} {bucket}, {aos_compass}→{los_compass}
-        {duration} min window, {rise}–{set} {AM/PM} {TZ}
-        If entry_observer != exit_observer:
-            {duration} min window, {rise}–{set} {AM/PM} {TZ} ({entry}→{exit})
+        {duration} min window, {rise}–{set} {AM/PM} {TZ} [tomorrow] [(region)]
 
     broadcast=False: Compact DM format with exact degrees.
         {name} {HH:MM}–{HH:MM} {TZ} max {el}° {aos_compass}→{los_compass}
@@ -191,14 +210,20 @@ def format_pass(*, sat_name: str, max_el: float,
         set_str = _format_time_12h(los_epoch)
         ampm = _format_ampm(los_epoch)
         tz = _tz_abbr(aos_epoch)
+        date_lbl = _date_label(aos_epoch)
 
         line1 = f"\U0001F6F0\uFE0F {sat_name} {bucket}, {aos_compass}\u2192{los_compass}"
 
-        # Consolidated parenthetical if multi-observer
+        # Build time portion
+        time_part = f"{dur_min} min window, {rise_str}\u2013{set_str} {ampm} {tz}{date_lbl}"
+
+        # Region parenthetical: multi-observer sweep or single-observer location
         if entry_observer and exit_observer and entry_observer != exit_observer:
-            line2 = f"{dur_min} min window, {rise_str}\u2013{set_str} {ampm} {tz} ({entry_observer}\u2192{exit_observer})"
+            line2 = f"{time_part} ({entry_observer}\u2192{exit_observer})"
+        elif entry_observer:
+            line2 = f"{time_part} ({entry_observer})"
         else:
-            line2 = f"{dur_min} min window, {rise_str}\u2013{set_str} {ampm} {tz}"
+            line2 = time_part
 
         return f"{line1}\n{line2}"
     else:
@@ -436,16 +461,11 @@ def consolidate_satpass_pending(consolidated_id: str) -> tuple[str, dict] | None
         _cleanup_pending(conn, consolidated_id)
         return None
 
-    # Build consolidated wire
-    if len(rows) > 1 and entry_obs != exit_obs:
-        wire = format_pass(sat_name=sat_name, max_el=max_el,
-                          aos_epoch=aos_epoch, los_epoch=los_epoch,
-                          aos_compass=aos_compass, los_compass=los_compass,
-                          entry_observer=entry_obs, exit_observer=exit_obs)
-    else:
-        wire = format_pass(sat_name=sat_name, max_el=max_el,
-                          aos_epoch=aos_epoch, los_epoch=los_epoch,
-                          aos_compass=aos_compass, los_compass=los_compass)
+    # Build consolidated wire — always pass observer names for region context
+    wire = format_pass(sat_name=sat_name, max_el=max_el,
+                      aos_epoch=aos_epoch, los_epoch=los_epoch,
+                      aos_compass=aos_compass, los_compass=los_compass,
+                      entry_observer=entry_obs, exit_observer=exit_obs)
 
     # Dry-run gate
     dry_run = getattr(cfg, "dry_run", True)
