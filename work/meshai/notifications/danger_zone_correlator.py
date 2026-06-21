@@ -23,7 +23,6 @@ from meshai.notifications import categories
 from meshai.notifications.events import make_event, make_payload_from_event
 from meshai.notifications import channels
 from meshai.config import NotificationRuleConfig
-from meshai.notifications.pipeline.dispatcher import Dispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -128,9 +127,11 @@ class DangerZoneCorrelator:
         if sub is None or not sub.enabled:
             return
 
-        # min_severity gate (use Dispatcher's rank table).
-        rank = Dispatcher.SEVERITY_RANK
-        if rank.get(event.severity, 0) < rank.get(sub.min_severity, 0):
+        # Snow is tabled pending a snowfall + elevation pipeline: a generic
+        # winter-weather warning over a whole zone is not a per-node hazard
+        # without elevation/snowfall modeling. Skip snow entirely; general
+        # (non-snow) weather still correlates. (snow config kept for schema/GUI.)
+        if fam == "snow":
             return
 
         # Fire radius + acres; non-fire is a point hazard at the event location.
@@ -151,10 +152,7 @@ class DangerZoneCorrelator:
 
         # Snapshot nodes BEFORE any async scheduling.
         try:
-            nodes = self.data_store.get_nodes_by_roles(
-                set(cfg.monitor_roles),
-                cfg.position_max_age_hours * 3600,
-            )
+            nodes = self.data_store.get_nodes_by_roles(set(cfg.monitor_roles))
         except Exception:
             logger.exception("danger_zone: get_nodes_by_roles failed")
             return

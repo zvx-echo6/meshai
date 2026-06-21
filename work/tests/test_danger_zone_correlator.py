@@ -48,21 +48,18 @@ class StubConnector:
 class FakeDataStore:
     """Minimal stand-in exposing get_nodes_by_roles with the SAME filter
     semantics as the real MeshDataStore.get_nodes_by_roles (role membership +
-    fresh last_heard + non-None position), so freshness/role tests exercise
-    real filtering rather than a hand-fed list."""
+    non-None position only; no freshness filter), so role tests exercise real
+    filtering rather than a hand-fed list."""
 
     def __init__(self, nodes):
         self._nodes = list(nodes)
 
-    def get_nodes_by_roles(self, roles, max_age_s):
-        cutoff = time.time() - max_age_s
+    def get_nodes_by_roles(self, roles):
         return [
             n for n in list(self._nodes)
             if n.role in roles
             and n.latitude is not None
             and n.longitude is not None
-            and n.last_heard
-            and n.last_heard >= cutoff
         ]
 
 
@@ -80,7 +77,7 @@ def _node(*, node_num, role="ROUTER", lat=42.0, lon=-114.0,
 
 def _config(*, enabled=True, dry_run=False, delivery_type="mesh_dm",
             node_ids=("!aaaa0001",), cooldown_minutes=360,
-            position_max_age_hours=72, default_buffer_mi=5.0,
+            default_buffer_mi=5.0,
             **family_overrides):
     """Build a Config whose danger_zones is configured per test.
 
@@ -93,7 +90,6 @@ def _config(*, enabled=True, dry_run=False, delivery_type="mesh_dm",
         delivery_type=delivery_type,
         node_ids=list(node_ids),
         cooldown_minutes=cooldown_minutes,
-        position_max_age_hours=position_max_age_hours,
         default_buffer_mi=default_buffer_mi,
         monitor_roles=["ROUTER", "ROUTER_LATE", "CLIENT_BASE"],
         **family_overrides,
@@ -192,27 +188,6 @@ async def test_client_node_not_flagged_but_client_base_is():
 
 
 # ---------------------------------------------------------------------------
-# 4. Freshness
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_stale_node_skipped():
-    """A node whose last_heard is older than position_max_age_hours is
-    skipped (not scanned)."""
-    conn = StubConnector()
-    stale = _node(node_num=301, lat=42.0, lon=-114.0,
-                  last_heard=time.time() - 100 * 3600)  # 100h old
-    ds = FakeDataStore([stale])
-    cfg = _config(dry_run=False, position_max_age_hours=72)
-    corr = DangerZoneCorrelator(cfg, ds, conn)
-
-    corr.handle(_avalanche_event(42.0, -114.0))
-    await asyncio.sleep(0)
-    assert conn.calls == []
-
-
-# ---------------------------------------------------------------------------
 # 5. Cooldown
 # ---------------------------------------------------------------------------
 
@@ -279,39 +254,8 @@ async def test_disabled_does_nothing():
 
 
 # ---------------------------------------------------------------------------
-# 7. min_severity / family disabled
+# 7. family disabled
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_below_min_severity_not_flagged():
-    """An event below the family's min_severity -> no flag."""
-    conn = StubConnector()
-    node = _node(node_num=601, lat=42.0, lon=-114.0)
-    ds = FakeDataStore([node])
-    # avalanche min_severity=immediate; event is only 'priority' -> gated out.
-    cfg = _config(dry_run=False,
-                  avalanche=DangerZoneHazardConfig(min_severity="immediate"))
-    corr = DangerZoneCorrelator(cfg, ds, conn)
-
-    corr.handle(_avalanche_event(42.0, -114.0, severity="priority"))
-    await asyncio.sleep(0)
-    assert conn.calls == []
-
-
-@pytest.mark.asyncio
-async def test_min_severity_met_is_flagged():
-    """Sanity counterpart: an event AT min_severity passes the gate."""
-    conn = StubConnector()
-    node = _node(node_num=602, lat=42.0, lon=-114.0)
-    ds = FakeDataStore([node])
-    cfg = _config(dry_run=False,
-                  avalanche=DangerZoneHazardConfig(min_severity="priority"))
-    corr = DangerZoneCorrelator(cfg, ds, conn)
-
-    corr.handle(_avalanche_event(42.0, -114.0, severity="priority"))
-    await asyncio.sleep(0)
-    assert len(conn.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -341,12 +285,60 @@ async def test_seismic_event_routes_and_flags():
     node = _node(node_num=701, lat=42.0, lon=-114.0)
     ds = FakeDataStore([node])
     cfg = _config(dry_run=False,
-                  seismic=DangerZoneHazardConfig(min_severity="routine"))
+                  seismic=DangerZoneHazardConfig(enabled=True))
     corr = DangerZoneCorrelator(cfg, ds, conn)
 
     ev = make_event(source="usgs", category="earthquake_event",
                     severity="priority", title="M5.1 quake",
                     summary="M5.1 quake", lat=42.0, lon=-114.0)
     corr.handle(ev)
+    await asyncio.sleep(0)
+    assert len(conn.calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# 8. Snow is tabled -- skipped even when the snow family is enabled; general
+#    (non-snow) weather still correlates.
+# ---------------------------------------------------------------------------
+
+
+def _weather_event(lat, lon, *, event_type, severity="priority", title="Weather"):
+    """A weather hazard. event_type drives snow-vs-general classification."""
+    return make_event(
+        source="nws", category="weather_warning", severity=severity,
+        title=title, summary=title, lat=lat, lon=lon,
+        data={"event_type": event_type},
+    )
+
+
+@pytest.mark.asyncio
+async def test_snow_event_is_skipped_even_when_enabled():
+    """A snow-classified weather event is SKIPPED (no send) even with the snow
+    family enabled and a co-located node."""
+    conn = StubConnector()
+    node = _node(node_num=801, lat=42.0, lon=-114.0)
+    ds = FakeDataStore([node])
+    cfg = _config(dry_run=False,
+                  snow=DangerZoneHazardConfig(enabled=True),
+                  weather=DangerZoneHazardConfig(enabled=True))
+    corr = DangerZoneCorrelator(cfg, ds, conn)
+
+    corr.handle(_weather_event(42.0, -114.0, event_type="Winter Storm Warning"))
+    await asyncio.sleep(0)
+    assert conn.calls == [], "snow events must be skipped (tabled)"
+    # Correlator must not even record a cooldown for a skipped snow event.
+    assert corr._last == {}
+
+
+@pytest.mark.asyncio
+async def test_non_snow_weather_still_correlates():
+    """A general (non-snow) weather event still flags a co-located node."""
+    conn = StubConnector()
+    node = _node(node_num=802, lat=42.0, lon=-114.0)
+    ds = FakeDataStore([node])
+    cfg = _config(dry_run=False, weather=DangerZoneHazardConfig(enabled=True))
+    corr = DangerZoneCorrelator(cfg, ds, conn)
+
+    corr.handle(_weather_event(42.0, -114.0, event_type="Severe Thunderstorm Warning"))
     await asyncio.sleep(0)
     assert len(conn.calls) == 1

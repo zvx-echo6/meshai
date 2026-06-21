@@ -679,7 +679,6 @@ _DZ_VALID_ROLES = frozenset({
     "CLIENT", "CLIENT_MUTE", "TRACKER", "TAK",
 })
 
-_DZ_VALID_SEVERITIES = frozenset({"routine", "priority", "immediate"})
 _DZ_VALID_DELIVERY = frozenset({
     "mesh_broadcast", "mesh_dm", "email", "webhook", "none",
 })
@@ -695,7 +694,6 @@ class DangerZoneHazardConfig:
 
     enabled: bool = True
     buffer_mi: float = 5.0
-    min_severity: str = "priority"  # routine|priority|immediate
     min_acres: float = 0.0  # fire-only; ignored by other families
 
 
@@ -711,7 +709,6 @@ class DangerZonesConfig:
     dry_run: bool = True
     monitor_roles: list[str] = field(
         default_factory=lambda: ["ROUTER", "ROUTER_LATE", "CLIENT_BASE"])
-    position_max_age_hours: int = 72
     default_buffer_mi: float = 5.0
     cooldown_minutes: int = 360
 
@@ -753,18 +750,6 @@ class DangerZonesConfig:
                 raise ValueError(
                     f"danger_zones parent family {fam!r} is not a valid toggle "
                     f"({sorted(VALID_TOGGLES)})")
-
-        if self.position_max_age_hours <= 0:
-            raise ValueError(
-                "danger_zones.position_max_age_hours must be > 0, got "
-                f"{self.position_max_age_hours}")
-
-        for fam in ("fire", "weather", "snow", "flood", "avalanche", "seismic"):
-            sub = getattr(self, fam)
-            if sub.min_severity not in _DZ_VALID_SEVERITIES:
-                raise ValueError(
-                    f"danger_zones.{fam}.min_severity must be one of "
-                    f"{sorted(_DZ_VALID_SEVERITIES)}, got {sub.min_severity!r}")
 
 
 @dataclass

@@ -2220,12 +2220,6 @@ export default function Notifications() {
 
 const DZ_MONITOR_ROLES = ['CLIENT_BASE', 'ROUTER', 'ROUTER_LATE'] as const
 
-const DZ_SEVERITY_OPTIONS = [
-  { value: 'routine', label: 'Routine' },
-  { value: 'priority', label: 'Priority' },
-  { value: 'immediate', label: 'Immediate' },
-]
-
 const DZ_DELIVERY_OPTIONS = [
   { value: 'mesh_dm', label: 'Mesh DM (unicast to nodes)' },
   { value: 'mesh_broadcast', label: 'Mesh Broadcast (channel)' },
@@ -2241,10 +2235,11 @@ const DZ_FAMILIES: {
   description: string
   Icon: typeof Activity
   showAcres?: boolean
+  tabled?: boolean
 }[] = [
   { key: 'fire', label: 'Fire', description: 'Active wildfires (radius from fire perimeter).', Icon: Flame, showAcres: true },
   { key: 'weather', label: 'Weather', description: 'Severe weather warnings near a node.', Icon: Cloud },
-  { key: 'snow', label: 'Snow (sub-gate of Weather)', description: 'Snow-category weather events.', Icon: Snowflake },
+  { key: 'snow', label: 'Snow (sub-gate of Weather)', description: 'Snow-category weather events.', Icon: Snowflake, tabled: true },
   { key: 'flood', label: 'Flood (sub-gate of Seismic)', description: 'Stream/flood gauge events.', Icon: Activity },
   { key: 'avalanche', label: 'Avalanche', description: 'Avalanche advisories near a node.', Icon: Mountain },
   { key: 'seismic', label: 'Seismic', description: 'Earthquakes and seismic events near a node.', Icon: Mountain },
@@ -2253,7 +2248,6 @@ const DZ_FAMILIES: {
 interface DangerZoneHazardConfig {
   enabled: boolean
   buffer_mi: number
-  min_severity: string
   min_acres: number
 }
 
@@ -2261,7 +2255,6 @@ interface DangerZonesConfig {
   enabled: boolean
   dry_run: boolean
   monitor_roles: string[]
-  position_max_age_hours: number
   default_buffer_mi: number
   cooldown_minutes: number
   fire: DangerZoneHazardConfig
@@ -2278,7 +2271,7 @@ interface DangerZonesConfig {
 }
 
 function dzDefaultHazard(): DangerZoneHazardConfig {
-  return { enabled: false, buffer_mi: 5.0, min_severity: 'priority', min_acres: 0 }
+  return { enabled: false, buffer_mi: 5.0, min_acres: 0 }
 }
 
 // New-object default. NOTE: delivery_type defaults to mesh_dm (do NOT copy the
@@ -2288,7 +2281,6 @@ function dzDefault(): DangerZonesConfig {
     enabled: false,
     dry_run: true,
     monitor_roles: ['ROUTER', 'ROUTER_LATE', 'CLIENT_BASE'],
-    position_max_age_hours: 72,
     default_buffer_mi: 5.0,
     cooldown_minutes: 360,
     fire: dzDefaultHazard(),
@@ -2337,27 +2329,33 @@ function DZSelect({ label, value, onChange, options, info = '' }: {
 // AlertRuleToggle itself lives in Config.tsx and is NOT exported, so this is a
 // local equivalent purpose-built for the per-family hazard config.
 function DZFamilyRow({ meta, cfg, onChange }: {
-  meta: { key: string; label: string; description: string; Icon: typeof Activity; showAcres?: boolean }
+  meta: { key: string; label: string; description: string; Icon: typeof Activity; showAcres?: boolean; tabled?: boolean }
   cfg: DangerZoneHazardConfig
   onChange: (c: DangerZoneHazardConfig) => void
 }) {
   const { Icon } = meta
   return (
-    <div className="border border-[#1e2a3a] p-3 space-y-2">
+    <div className={`border border-[#1e2a3a] p-3 space-y-2 ${meta.tabled ? 'opacity-50' : ''}`}>
       <div className="flex items-center justify-between">
         <div className="flex items-start gap-2 flex-1">
           <Icon size={15} className="text-slate-400 mt-0.5 flex-shrink-0" />
           <div className="flex-1">
             <span className="text-sm text-slate-300">{meta.label}</span>
             <p className="text-xs text-slate-600">{meta.description}</p>
+            {meta.tabled && (
+              <span className="inline-block mt-1 px-2 py-0.5 text-[10px] uppercase tracking-wide rounded bg-slate-700 text-slate-300">
+                Tabled — needs snowfall + elevation pipeline
+              </span>
+            )}
           </div>
         </div>
         <button
           type="button"
-          onClick={() => onChange({ ...cfg, enabled: !cfg.enabled })}
+          disabled={meta.tabled}
+          onClick={() => { if (!meta.tabled) onChange({ ...cfg, enabled: !cfg.enabled }) }}
           className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ml-3 ${
             cfg.enabled ? 'bg-accent' : 'bg-[#1e2a3a]'
-          }`}
+          } ${meta.tabled ? 'cursor-not-allowed' : ''}`}
         >
           <span
             className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform ${
@@ -2366,20 +2364,14 @@ function DZFamilyRow({ meta, cfg, onChange }: {
           />
         </button>
       </div>
-      {cfg.enabled && (
-        <div className={`grid gap-3 pt-2 border-t border-[#1e2a3a] ${meta.showAcres ? 'grid-cols-3' : 'grid-cols-2'}`}>
+      {cfg.enabled && !meta.tabled && (
+        <div className={`grid gap-3 pt-2 border-t border-[#1e2a3a] ${meta.showAcres ? 'grid-cols-2' : 'grid-cols-1'}`}>
           <NumberInput
             label="Buffer (mi)"
             value={cfg.buffer_mi ?? 0}
             onChange={(v) => onChange({ ...cfg, buffer_mi: v })}
             min={0}
             step={0.5}
-          />
-          <DZSelect
-            label="Min Severity"
-            value={cfg.min_severity || 'priority'}
-            onChange={(v) => onChange({ ...cfg, min_severity: v })}
-            options={DZ_SEVERITY_OPTIONS}
           />
           {meta.showAcres && (
             <NumberInput
@@ -2532,7 +2524,7 @@ function DangerZonesPanel() {
               <div className="space-y-2">
                 <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
                   Monitored Roles
-                  <InfoButton info="Which Meshtastic node roles to correlate against hazards. Only nodes with a fresh GPS position (see Position Max Age) are scanned." />
+                  <InfoButton info="Which Meshtastic node roles to correlate against hazards. Only nodes that have a GPS position are scanned." />
                 </label>
                 <div className="flex flex-wrap gap-2">
                   {DZ_MONITOR_ROLES.map(role => {
@@ -2554,14 +2546,7 @@ function DangerZonesPanel() {
               </div>
 
               {/* Global numeric settings */}
-              <div className="grid grid-cols-3 gap-4">
-                <NumberInput
-                  label="Position Max Age (hrs)"
-                  value={cfg.position_max_age_hours}
-                  onChange={(v) => upd({ position_max_age_hours: v })}
-                  min={1}
-                  helper="Skip nodes whose last position is older than this"
-                />
+              <div className="grid grid-cols-2 gap-4">
                 <NumberInput
                   label="Default Buffer (mi)"
                   value={cfg.default_buffer_mi}
