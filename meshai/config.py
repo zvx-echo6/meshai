@@ -29,6 +29,10 @@ class ConnectionConfig:
     serial_port: str = "/dev/ttyUSB0"
     tcp_host: str = "192.168.1.100"
     tcp_port: int = 4403
+    reconnect: bool = True
+    reconnect_initial_delay: float = 2.0
+    reconnect_max_delay: float = 60.0
+    reconnect_health_interval: float = 30.0
 
 
 @dataclass

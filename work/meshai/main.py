@@ -56,6 +56,7 @@ class MeshAI:
         self.router: Optional[MessageRouter] = None
         self.responder: Optional[Responder] = None
         self._running = False
+        self._supervisor_task = None  # watchdog (connection supervisor)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._last_cleanup: float = 0.0
         self._last_health_compute: float = 0.0
@@ -79,6 +80,14 @@ class MeshAI:
 
         self._running = True
         self._loop = asyncio.get_event_loop()
+        # --- connection supervisor (watchdog): single source of truth for link
+        # state + the only reconnect driver. Reconnects IN-PLACE so the container
+        # never needs to restart. ---
+        if getattr(self.config.connection, "reconnect", True):
+            self.connector._wake = asyncio.Event()
+            self.connector.write_link_status("up")  # we just connected ok
+            self._supervisor_task = asyncio.create_task(self._connection_supervisor())
+            logger.info("Connection supervisor (watchdog) started")
         self._last_cleanup = time.time()
         self._last_health_compute = 0.0
 
@@ -211,6 +220,55 @@ class MeshAI:
                     self.context.prune()
                 self._last_cleanup = time.time()
 
+    async def _connection_supervisor(self) -> None:
+        """Watchdog: SINGLE source of truth for /tmp/meshai.link and the ONLY
+        reconnect driver. Woken by connector._wake (connection.lost) or a
+        health-interval timeout. Probe is socket-based (see connector.active_probe).
+        """
+        c = self.connector
+        hi = getattr(self.config.connection, "reconnect_health_interval", 30.0)
+        alive_idle = 2.0 * hi
+        probe_wait = 5.0
+        wake = c._wake
+        logger.info("watchdog loop running (health_interval=%.0fs)", hi)
+        while self._running:
+            try:
+                try:
+                    await asyncio.wait_for(wake.wait(), timeout=hi)
+                except asyncio.TimeoutError:
+                    pass
+                wake.clear()
+                if not self._running:
+                    break
+
+                idle = time.monotonic() - c.last_rx
+                alive = (not c.link_suspect) and (idle < alive_idle) and c.interface_open()
+                if alive:
+                    c.clear_suspect()
+                    c.write_link_status("up")
+                    continue
+
+                # Not trivially alive -> ACTIVE PROBE (blocking -> thread)
+                logger.info("watchdog: link check (suspect=%s, idle=%.1fs) -> probing",
+                            c.link_suspect, idle)
+                probe_alive = await asyncio.to_thread(c.active_probe, probe_wait)
+                if probe_alive:
+                    c.clear_suspect()
+                    c.write_link_status("up")
+                    continue
+
+                # DEAD -> write down, reconnect in place (blocking -> thread)
+                logger.warning("watchdog: link DOWN -> reconnecting")
+                c.write_link_status("down")
+                await asyncio.to_thread(c.reconnect)
+                c.write_link_status("up")
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("watchdog cycle error (continuing)")
+                await asyncio.sleep(1.0)
+        logger.info("watchdog loop exited")
+
     async def stop(self) -> None:
         """Stop the bot."""
         logger.info("Stopping MeshAI...")
@@ -225,6 +283,13 @@ class MeshAI:
 
         if self._fire_pacer is not None:
             await self._fire_pacer.stop()
+
+        if self._supervisor_task is not None:
+            self._supervisor_task.cancel()
+            try:
+                await self._supervisor_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
         if self.connector:
             self.connector.disconnect()

@@ -56,6 +56,7 @@ class MeshAI:
         self.router: Optional[MessageRouter] = None
         self.responder: Optional[Responder] = None
         self._running = False
+        self._supervisor_task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._last_cleanup: float = 0.0
         self._last_health_compute: float = 0.0
@@ -81,6 +82,12 @@ class MeshAI:
         self._loop = asyncio.get_event_loop()
         self._last_cleanup = time.time()
         self._last_health_compute = 0.0
+
+        # Supervised auto-reconnect: long-lived task that re-establishes the
+        # mesh link with exponential backoff whenever it drops (e.g. a
+        # meshmonitor restart briefly killing :4404). Started after
+        # connect() + set_message_callback() so _connection_lost_event exists.
+        self._supervisor_task = asyncio.create_task(self._connection_supervisor())
 
         # Write PID file
         self._write_pid()
@@ -211,10 +218,53 @@ class MeshAI:
                     self.context.prune()
                 self._last_cleanup = time.time()
 
+    async def _connection_supervisor(self) -> None:
+        cfg = self.config.connection
+        if not getattr(cfg, "reconnect", True):
+            return
+        connector = self.connector
+        ev = connector._connection_lost_event
+        loop = asyncio.get_event_loop()
+        while self._running:
+            try:
+                await asyncio.wait_for(ev.wait(), timeout=cfg.reconnect_health_interval)
+            except asyncio.TimeoutError:
+                pass  # periodic safety check even if no event fired
+            if not self._running:
+                break
+            if connector.connected:
+                # Reconcile link file: a spurious/late connection.lost (e.g. the
+                # meshtastic lib's own reader firing after our reconnect already
+                # succeeded) may have written link=down even though the socket is
+                # live. Re-assert up so the healthcheck reflects reality.
+                connector._write_link_status(True)
+                ev.clear()
+                continue
+            logger.warning("Mesh link is down — starting reconnect with backoff")
+            delay = cfg.reconnect_initial_delay
+            while self._running and not connector.connected:
+                try:
+                    await loop.run_in_executor(None, connector.reconnect)
+                except Exception as e:
+                    logger.error(f"Reconnect attempt failed: {e}; retrying in {delay:.0f}s")
+                if connector.connected:
+                    logger.info("Mesh link reconnected successfully")
+                    ev.clear()
+                    break
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, cfg.reconnect_max_delay)
+
     async def stop(self) -> None:
         """Stop the bot."""
         logger.info("Stopping MeshAI...")
         self._running = False
+
+        if getattr(self, "_supervisor_task", None) is not None:
+            self._supervisor_task.cancel()
+            try:
+                await self._supervisor_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
         if self._pipeline_scheduler is not None:
             from .notifications.pipeline import stop_pipeline

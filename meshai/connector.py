@@ -48,6 +48,8 @@ class MeshConnector:
         self._connected = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._lock = threading.Lock()
+        self._connection_lost_event = None   # asyncio.Event, created in set_message_callback
+        self._link_status_path = "/tmp/meshai.link"
 
     @property
     def connected(self) -> bool:
@@ -58,6 +60,35 @@ class MeshConnector:
     def my_node_id(self) -> Optional[str]:
         """Get our node's ID."""
         return self._my_node_id
+
+    def _write_link_status(self, up: bool) -> None:
+        try:
+            with open(self._link_status_path, "w") as f:
+                f.write("up" if up else "down")
+        except Exception:
+            pass
+
+    def _signal_reconnect(self) -> None:
+        if self._loop is not None and self._connection_lost_event is not None:
+            try:
+                self._loop.call_soon_threadsafe(self._connection_lost_event.set)
+            except Exception:
+                pass
+
+    def _on_connection_lost(self, interface=None, *args, **kwargs) -> None:
+        if not self._connected:
+            return
+        logger.warning("Meshtastic connection lost — scheduling reconnect")
+        self._connected = False
+        self._write_link_status(False)
+        self._signal_reconnect()
+
+    def reconnect(self) -> bool:
+        """Blocking tear-down + re-establish. Call via run_in_executor. Raises on failure."""
+        with self._lock:
+            self.disconnect()
+            self.connect()
+            return self.connected
 
     def connect(self) -> None:
         """Establish connection to Meshtastic node."""
@@ -86,8 +117,12 @@ class MeshConnector:
             # Subscribe to messages
             pub.subscribe(self._on_receive, "meshtastic.receive.text")
             pub.subscribe(self._on_node_update, "meshtastic.node.updated")
+            pub.subscribe(self._on_connection_lost, "meshtastic.connection.lost")
 
             self._connected = True
+            self._write_link_status(True)
+            if self._connection_lost_event is not None:
+                self._connection_lost_event.clear()
 
         except Exception as e:
             logger.error(f"Failed to connect: {e}")
@@ -100,6 +135,7 @@ class MeshConnector:
             try:
                 pub.unsubscribe(self._on_receive, "meshtastic.receive.text")
                 pub.unsubscribe(self._on_node_update, "meshtastic.node.updated")
+                pub.unsubscribe(self._on_connection_lost, "meshtastic.connection.lost")
             except Exception:
                 pass
 
@@ -110,6 +146,7 @@ class MeshConnector:
 
             self._interface = None
             self._connected = False
+            self._write_link_status(False)
             logger.info("Disconnected from Meshtastic node")
 
     def set_message_callback(
@@ -123,6 +160,7 @@ class MeshConnector:
         """
         self._message_callback = callback
         self._loop = loop
+        self._connection_lost_event = asyncio.Event()
 
     def _cache_node_info(self) -> None:
         """Cache node names and positions from node database."""
@@ -257,6 +295,9 @@ class MeshConnector:
 
         except Exception as e:
             logger.error(f"Failed to send message: {e}")
+            self._connected = False
+            self._write_link_status(False)
+            self._signal_reconnect()
             return False
 
     def get_node_position(self, node_id: str) -> Optional[tuple[float, float]]:
@@ -355,5 +396,7 @@ class MeshConnector:
 
         except Exception as e:
             logger.error(f"Failed to send message: {e}")
+            self._connected = False
+            self._write_link_status(False)
+            self._signal_reconnect()
             return False
-

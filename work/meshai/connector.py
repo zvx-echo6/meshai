@@ -2,7 +2,9 @@
 
 import asyncio
 import logging
+import socket
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -48,6 +50,12 @@ class MeshConnector:
         self._connected = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._lock = threading.Lock()
+        # --- watchdog link-state (watchdog is the SINGLE source of truth) ---
+        self._last_rx: float = time.monotonic()
+        self._link_suspect: bool = False
+        self._wake: Optional[asyncio.Event] = None  # created by main once loop exists
+        self._link_path = "/tmp/meshai.link"
+        self._reconnect_lock = threading.Lock()
 
     @property
     def connected(self) -> bool:
@@ -86,6 +94,9 @@ class MeshConnector:
             # Subscribe to messages
             pub.subscribe(self._on_receive, "meshtastic.receive.text")
             pub.subscribe(self._on_node_update, "meshtastic.node.updated")
+            pub.subscribe(self._on_any_rx, "meshtastic.receive")
+            pub.subscribe(self._on_connection_lost, "meshtastic.connection.lost")
+            self._last_rx = time.monotonic()
 
             self._connected = True
 
@@ -100,6 +111,8 @@ class MeshConnector:
             try:
                 pub.unsubscribe(self._on_receive, "meshtastic.receive.text")
                 pub.unsubscribe(self._on_node_update, "meshtastic.node.updated")
+                pub.unsubscribe(self._on_any_rx, "meshtastic.receive")
+                pub.unsubscribe(self._on_connection_lost, "meshtastic.connection.lost")
             except Exception:
                 pass
 
@@ -145,6 +158,7 @@ class MeshConnector:
 
     def _on_node_update(self, node, interface) -> None:
         """Handle node info updates."""
+        self._last_rx = time.monotonic()
         node_id = f"!{node['num']:08x}"
 
         with self._lock:
@@ -162,6 +176,7 @@ class MeshConnector:
 
     def _on_receive(self, packet, interface) -> None:
         """Handle incoming text message."""
+        self._last_rx = time.monotonic()
         if not self._message_callback or not self._loop:
             return
 
@@ -206,6 +221,121 @@ class MeshConnector:
 
         except Exception as e:
             logger.error(f"Error processing received message: {e}")
+
+    # --- watchdog: receive ANY packet bumps last_rx (liveness) ---
+    def _on_any_rx(self, packet=None, interface=None, *args, **kwargs):
+        self._last_rx = time.monotonic()
+
+    # --- watchdog: connection.lost ONLY flags suspect + wakes watchdog.
+    # Strict pubsub arg-spec passes interface= -> signature MUST accept it.
+    # Does NOT write link state, NOT toggle _connected, NOT reconnect.
+    def _on_connection_lost(self, interface=None, *args, **kwargs):
+        self._link_suspect = True
+        logger.warning("connection.lost fired -> link suspect (waking watchdog)")
+        if self._wake is not None and self._loop is not None:
+            try:
+                self._loop.call_soon_threadsafe(self._wake.set)
+            except Exception:
+                pass
+
+    @property
+    def last_rx(self) -> float:
+        return self._last_rx
+
+    @property
+    def link_suspect(self) -> bool:
+        return self._link_suspect
+
+    def clear_suspect(self) -> None:
+        self._link_suspect = False
+
+    def write_link_status(self, status: str) -> None:
+        """SINGLE writer of the link-state file. Called ONLY by the watchdog."""
+        try:
+            with open(self._link_path, "w") as f:
+                f.write(status)
+        except Exception as e:
+            logger.warning(f"Failed to write link status: {e}")
+
+    # --- watchdog: socket-based liveness (getMyNodeInfo is NOT trusted; it
+    # returns cached data on a dead link -> false-alive). Verified meshtastic 2.7.9.
+    def socket_state(self) -> str:
+        """'open', or 'dead' from isConnected + non-blocking MSG_PEEK."""
+        iface = self._interface
+        if iface is None:
+            return "dead"
+        ev = getattr(iface, "isConnected", None)
+        if ev is not None and hasattr(ev, "is_set") and not ev.is_set():
+            return "dead"
+        sock = getattr(iface, "socket", None)
+        if sock is None:
+            return "dead"
+        try:
+            data = sock.recv(1, socket.MSG_DONTWAIT | socket.MSG_PEEK)
+            return "open" if data else "dead"
+        except BlockingIOError:
+            return "open"
+        except (OSError, AttributeError):
+            return "dead"
+
+    def interface_open(self) -> bool:
+        return self.socket_state() == "open"
+
+    def active_probe(self, probe_wait: float = 5.0) -> bool:
+        """sendHeartbeat then watch for genuine life. BLOCKING -> call via to_thread.
+        ALIVE = last_rx advances OR socket stays verifiably open. Never trusts getMyNodeInfo."""
+        if self.socket_state() == "dead":
+            logger.info("probe: DEAD (socket closed / isConnected cleared)")
+            return False
+        rx_before = self._last_rx
+        try:
+            self._interface.sendHeartbeat()
+        except Exception as e:
+            logger.info(f"probe: sendHeartbeat raised {e!r} -> link dead")
+            return False
+        deadline = time.monotonic() + probe_wait
+        while time.monotonic() < deadline:
+            if self._last_rx > rx_before:
+                logger.info("probe: ALIVE (last_rx advanced)")
+                return True
+            if self.socket_state() == "dead":
+                logger.info("probe: DEAD (socket went dead during probe)")
+                return False
+            time.sleep(0.25)
+        if self.socket_state() == "open":
+            logger.info("probe: ALIVE (socket verifiably open)")
+            return True
+        logger.info("probe: DEAD (no rx advance, socket not open)")
+        return False
+
+    def reconnect(self) -> None:
+        """Tear down old interface + build a fresh one under the reconnect lock,
+        exponential backoff forever. BLOCKING -> call via to_thread. Does NOT
+        write link state (watchdog owns that)."""
+        initial = getattr(self.config, "reconnect_initial_delay", 2.0)
+        maxd = getattr(self.config, "reconnect_max_delay", 60.0)
+        with self._reconnect_lock:
+            backoff = initial
+            attempt = 0
+            while True:
+                attempt += 1
+                logger.warning(f"reconnect attempt {attempt}...")
+                # tear down old interface (also stops the lib's internal threads)
+                try:
+                    self.disconnect()
+                except Exception as e:
+                    logger.warning(f"  teardown warn: {e!r}")
+                # build fresh
+                try:
+                    self.connect()
+                    self._last_rx = time.monotonic()
+                    self._link_suspect = False
+                    logger.info(f"reconnected as node {self._my_node_id} (attempt {attempt})")
+                    return
+                except Exception as e:
+                    logger.warning(f"  reconnect attempt {attempt} failed: {e!r}; sleeping {backoff:.0f}s")
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, maxd)
 
     def send_message(
         self,
