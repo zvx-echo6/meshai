@@ -54,6 +54,7 @@ SECTION_TO_FILE: dict[str, str] = {
     "notifications": "notifications.yaml",
     "llm": "llm.yaml",
     "dashboard": "dashboard.yaml",
+    "danger_zones": "danger_zones.yaml",
 }
 
 # Fields that should be written to local.yaml instead of domain files
@@ -79,6 +80,7 @@ SECRET_FIELDS: set[str] = {
     "environmental.firms.map_key",
     "notifications.rules.*.smtp_password",
     "notifications.toggles.*.smtp_password",
+    "danger_zones.webhook_url",
 }
 
 # Secret env var names expected in .env

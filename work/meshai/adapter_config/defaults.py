@@ -66,6 +66,11 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "type": "int",
         "description": "Staleness gate for wfigs events (0 = disabled). Fire events are always relevant regardless of age.",
     },
+    ("wfigs", "max_declare_age_seconds"): {
+        "default": 1209600,   # 14 days
+        "type": "int",
+        "description": "Suppress first-announce ('New') for fires whose declared_at is older than this (closed/stale-fire resurrection guard). 0 = disabled. Does NOT affect Updates.",
+    },
 
     # =================================================================
     # NWS -- 3 settings (severity gate, tombstone msgTypes, suffix-promote toggle)

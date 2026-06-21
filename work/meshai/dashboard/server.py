@@ -121,6 +121,7 @@ async def start_dashboard(meshai_instance: "MeshAI") -> DashboardBroadcaster:
     app.state.notification_router = getattr(meshai_instance, "notification_router", None)
     app.state.connector = meshai_instance.connector
     app.state.bus = getattr(meshai_instance, "event_bus", None)
+    app.state.danger_correlator = getattr(meshai_instance, "danger_correlator", None)
 
     # Create broadcaster and attach to app state
     broadcaster = DashboardBroadcaster()

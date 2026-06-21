@@ -511,6 +511,17 @@ class MeshAI:
                 logger.debug('dashboard app.state stash skipped')
             logger.info("Notification pipeline EventBus initialized")
 
+            # v0.8 danger_zones correlator: subscribe to the EventBus to flag
+            # infra nodes inside a hazard's threat radius. Guarded — needs both
+            # the bus and a data_store. Reads config.danger_zones fresh per call.
+            self.danger_correlator = None
+            if self.event_bus is not None and self.data_store is not None:
+                from .notifications.danger_zone_correlator import DangerZoneCorrelator
+                self.danger_correlator = DangerZoneCorrelator(
+                    self.config, self.data_store, self.connector)
+                self.event_bus.subscribe(self.danger_correlator.handle)
+                logger.info("Danger-zone correlator subscribed to EventBus")
+
         # Environmental feeds
         env_cfg = self.config.environmental
         if env_cfg.enabled:

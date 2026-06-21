@@ -667,6 +667,106 @@ class DashboardConfig:
     port: int = 8080
     host: str = "0.0.0.0"
 
+# v0.8 danger_zones: infrastructure-node hazard correlation. A standalone,
+# isolated config section (its own dataclass tree + danger_zones.yaml + its own
+# GET/PUT) so it never touches the complex notifications dataclass.
+
+# Hardcoded Meshtastic role-name vocabulary (mirror of
+# mesh_data_store.MESHTASTIC_ROLE_MAP values). Defined locally to avoid an
+# import cycle (config.py must not import mesh_data_store).
+_DZ_VALID_ROLES = frozenset({
+    "ROUTER", "ROUTER_LATE", "CLIENT_BASE", "ROUTER_CLIENT", "REPEATER",
+    "CLIENT", "CLIENT_MUTE", "TRACKER", "TAK",
+})
+
+_DZ_VALID_SEVERITIES = frozenset({"routine", "priority", "immediate"})
+_DZ_VALID_DELIVERY = frozenset({
+    "mesh_broadcast", "mesh_dm", "email", "webhook", "none",
+})
+# Hazard families that map onto categories.VALID_TOGGLES. snow is a sub-gate of
+# weather and flood a sub-gate of seismic (resolved in the correlator), so they
+# are NOT validated against VALID_TOGGLES.
+_DZ_PARENT_FAMILIES = ("fire", "weather", "avalanche", "seismic")
+
+
+@dataclass
+class DangerZoneHazardConfig:
+    """Per-hazard-family danger-zone tuning (distances in MILES)."""
+
+    enabled: bool = True
+    buffer_mi: float = 5.0
+    min_severity: str = "priority"  # routine|priority|immediate
+    min_acres: float = 0.0  # fire-only; ignored by other families
+
+
+@dataclass
+class DangerZonesConfig:
+    """Infrastructure-node hazard danger-zone subsystem settings.
+
+    Requires notifications.enabled (the EventBus only exists under that guard).
+    Ships disabled; enabling without turning off dry_run is log-only (no RF).
+    """
+
+    enabled: bool = False
+    dry_run: bool = True
+    monitor_roles: list[str] = field(
+        default_factory=lambda: ["ROUTER", "ROUTER_LATE", "CLIENT_BASE"])
+    position_max_age_hours: int = 72
+    default_buffer_mi: float = 5.0
+    cooldown_minutes: int = 360
+
+    # Per-family sub-configs. snow->weather, flood->seismic resolved in the
+    # correlator; both still exposed here for distinct GUI tuning.
+    fire: DangerZoneHazardConfig = field(default_factory=DangerZoneHazardConfig)
+    weather: DangerZoneHazardConfig = field(default_factory=DangerZoneHazardConfig)
+    snow: DangerZoneHazardConfig = field(default_factory=DangerZoneHazardConfig)
+    flood: DangerZoneHazardConfig = field(default_factory=DangerZoneHazardConfig)
+    avalanche: DangerZoneHazardConfig = field(default_factory=DangerZoneHazardConfig)
+    seismic: DangerZoneHazardConfig = field(default_factory=DangerZoneHazardConfig)
+
+    # Delivery
+    delivery_type: str = "mesh_dm"  # mesh_broadcast|mesh_dm|email|webhook|none
+    node_ids: list = field(default_factory=list)
+    broadcast_channel: Optional[int] = None
+    webhook_url: str = ""
+    webhook_headers: dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        # Lazy import: categories.py imports only `typing`, so no cycle; kept
+        # function-local per plan to stay defensive against future imports.
+        from meshai.notifications.categories import VALID_TOGGLES
+
+        if self.delivery_type not in _DZ_VALID_DELIVERY:
+            raise ValueError(
+                f"danger_zones.delivery_type must be one of "
+                f"{sorted(_DZ_VALID_DELIVERY)}, got {self.delivery_type!r}")
+
+        for role in self.monitor_roles:
+            if role not in _DZ_VALID_ROLES:
+                raise ValueError(
+                    f"danger_zones.monitor_roles contains invalid role {role!r}; "
+                    f"valid roles: {sorted(_DZ_VALID_ROLES)}")
+
+        # Parent families must exist in the canonical toggle vocabulary.
+        for fam in _DZ_PARENT_FAMILIES:
+            if fam not in VALID_TOGGLES:
+                raise ValueError(
+                    f"danger_zones parent family {fam!r} is not a valid toggle "
+                    f"({sorted(VALID_TOGGLES)})")
+
+        if self.position_max_age_hours <= 0:
+            raise ValueError(
+                "danger_zones.position_max_age_hours must be > 0, got "
+                f"{self.position_max_age_hours}")
+
+        for fam in ("fire", "weather", "snow", "flood", "avalanche", "seismic"):
+            sub = getattr(self, fam)
+            if sub.min_severity not in _DZ_VALID_SEVERITIES:
+                raise ValueError(
+                    f"danger_zones.{fam}.min_severity must be one of "
+                    f"{sorted(_DZ_VALID_SEVERITIES)}, got {sub.min_severity!r}")
+
+
 @dataclass
 class Config:
     """Main configuration container."""
@@ -690,6 +790,7 @@ class Config:
     environmental: EnvironmentalConfig = field(default_factory=EnvironmentalConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
+    danger_zones: DangerZonesConfig = field(default_factory=DangerZonesConfig)
 
     _config_path: Optional[Path] = field(default=None, repr=False)
 

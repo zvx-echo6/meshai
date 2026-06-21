@@ -835,9 +835,14 @@ class CentralConsumer:
             logger.info("drain complete: 0 fires touched")
             return
 
+        # Step 3 age-gate: `now` is otherwise undefined in this method (`time`
+        # is imported at module level). Used by the first-announce age gate.
+        now = int(time.time())
+
         from meshai.persistence import get_db
         from meshai.central.wfigs_handler import (
             _render, _location_anchor, _attach_commit_handles,
+            _fire_too_old_to_announce,
         )
         from meshai.notifications.events import make_event
 
@@ -877,6 +882,11 @@ class CentralConsumer:
                 category = "wildfire_closed"
             elif not announced and not tombstoned:
                 # Case 2: Never announced + still active -> NEW
+                # Step 3 age-gate: suppress first-announce for fires whose
+                # declared_at is too old (closed/stale-fire resurrection guard).
+                if _fire_too_old_to_announce(row["declared_at"], now):
+                    silenced += 1
+                    continue
                 wire = _render(_row_to_normalized(row), prefix="New")
                 category = "wildfire_declared"
             else:

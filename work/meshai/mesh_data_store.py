@@ -2116,6 +2116,24 @@ class MeshDataStore:
         infra_roles = {"ROUTER", "ROUTER_CLIENT", "ROUTER_LATE", "REPEATER"}
         return [n for n in self._nodes.values() if n.role in infra_roles]
 
+    def get_nodes_by_roles(self, roles: set[str], max_age_s: float) -> list[UnifiedNode]:
+        """Return a SNAPSHOT of nodes whose role is in `roles`, that have a
+        non-None GPS position, and whose last_heard is within `max_age_s`.
+
+        Used by the danger-zone correlator. CLIENT_BASE-inclusive (do NOT
+        reuse get_infrastructure_nodes, which excludes CLIENT_BASE). Returns a
+        new list so callers can iterate safely across async scheduling.
+        """
+        cutoff = time.time() - max_age_s
+        return [
+            n for n in list(self._nodes.values())
+            if n.role in roles
+            and n.latitude is not None
+            and n.longitude is not None
+            and n.last_heard
+            and n.last_heard >= cutoff
+        ]
+
     def get_low_battery_nodes(self, threshold: float = 30.0) -> list[UnifiedNode]:
         """Get nodes with low battery."""
         return [

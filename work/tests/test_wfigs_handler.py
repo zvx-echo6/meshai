@@ -322,10 +322,15 @@ def test_g_new_irwin_inserts_and_broadcasts(mem_db, no_photon):
 # (h) known IRWIN no-change -> drop silently, last_broadcast_* unchanged
 # ============================================================================
 def test_h_known_irwin_no_change_drops(mem_db, no_photon):
-    env = _make_active_envelope(geocoder_city="Burley")
     # Use wall-clock-adjacent timestamps so _cleanup_stale_fires doesn't
-    # delete the row (it uses real time.time() internally).
+    # delete the row (it uses real time.time() with a 7d cutoff internally).
+    # Anchor the fire's discovery date 2d before that `now` so it stays
+    # inside the 14d fire age-gate -- otherwise the static fixture date
+    # (2026-06-03) is now stale vs wall-clock and the first-sight "New"
+    # broadcast this test depends on would be (correctly) suppressed.
     first_now = int(time.time())
+    env = _make_active_envelope(geocoder_city="Burley",
+                                 fire_discovery_dt_ms=(first_now - 2 * 86400) * 1000)
     data0 = {}
     handle_wfigs(cn.normalize(env), env, env["subject"],
                   data=data0, now=first_now)
@@ -359,16 +364,24 @@ def test_h_known_irwin_no_change_drops(mem_db, no_photon):
 # (i) known IRWIN acres up but <8h elapsed -> drop, last_broadcast_* unchanged
 # ============================================================================
 def test_i_known_irwin_change_inside_cooldown_drops(mem_db, no_photon):
-    env_initial = _make_active_envelope(geocoder_city="Burley")
-    data0 = {}
+    # Wall-clock `now` so _cleanup_stale_fires (real time.time(), 7d cutoff)
+    # keeps the row; anchor discovery 2d earlier so the fire stays inside
+    # the 14d fire age-gate (the static fixture date is now stale vs
+    # wall-clock and would suppress the first-sight "New" broadcast).
     _base = int(time.time())
+    env_initial = _make_active_envelope(
+        geocoder_city="Burley",
+        fire_discovery_dt_ms=(_base - 2 * 86400) * 1000)
+    data0 = {}
     handle_wfigs(cn.normalize(env_initial), env_initial,
                   env_initial["subject"], data=data0, now=_base)
     data0["_on_broadcast_committed"](float(_base))
 
-    # Bigger fire, but only 4h later -- inside cooldown.
-    env_grown = _make_active_envelope(geocoder_city="Burley",
-                                        daily_acres=3000.0, pct_contained=23)
+    # Bigger fire, but only 4h later -- inside cooldown. Same discovery
+    # date as the initial envelope (same fire, still inside the age-gate).
+    env_grown = _make_active_envelope(
+        geocoder_city="Burley", daily_acres=3000.0, pct_contained=23,
+        fire_discovery_dt_ms=(_base - 2 * 86400) * 1000)
     later = _base + 4 * 3600
     out = handle_wfigs(cn.normalize(env_grown), env_grown,
                         env_grown["subject"], now=later)

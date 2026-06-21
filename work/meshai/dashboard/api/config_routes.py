@@ -53,6 +53,7 @@ VALID_SECTIONS = {
     "mesh_sources",
     "mesh_intelligence",
     "dashboard",
+    "danger_zones",
 }
 
 

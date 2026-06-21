@@ -64,6 +64,19 @@ def _now() -> int:
     return int(time.time())
 
 
+def _fire_too_old_to_announce(declared_at_epoch, now) -> bool:
+    """Stale/closed-fire resurrection guard for first-announce ("New") only.
+
+    Re-reads the knob INSIDE the call (cache-backed + GUI-invalidated, so a
+    dashboard edit takes effect on the next poll cycle). Fails OPEN (announces)
+    when the gate is disabled or the fire has no discovery date.
+    """
+    max_age = int(adapter_config.wfigs.max_declare_age_seconds)
+    if max_age <= 0 or declared_at_epoch is None:
+        return False   # disabled, or no discovery date -> fail OPEN (announce)
+    return (now - int(declared_at_epoch)) >= max_age
+
+
 # ---------- public entry --------------------------------------------------
 
 
@@ -201,6 +214,10 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
                 None, None, None,  # last_broadcast_* explicitly NULL
             ),
         )
+        # Step 3 age-gate: keep the INSERT (so genuine future Updates work) but
+        # suppress the "New" broadcast for fires whose declared_at is too old.
+        if _fire_too_old_to_announce(normalized.get("declared_at_epoch"), now):
+            return None
         wire = _render(normalized, prefix="New")
         # v0.7-fire-tracker-1: tag first-sight broadcasts with the new
         # wildfire_declared category so the dispatcher rules them apart
@@ -225,6 +242,10 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
             (acres, contained_pct, normalized.get("lat"),
              normalized.get("lon"), now, irwin_id),
         )
+        # Step 3 age-gate: keep the UPDATE but suppress the "New" broadcast for
+        # fires whose declared_at is too old (closed/stale-fire resurrection).
+        if _fire_too_old_to_announce(normalized.get("declared_at_epoch"), now):
+            return None
         wire = _render(normalized, prefix="New")
         # v0.7-fire-tracker-1: case-(ii) is also first-sight as far as
         # broadcast history goes -- the row exists because some prior
