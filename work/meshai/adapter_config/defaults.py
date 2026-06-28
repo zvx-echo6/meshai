@@ -78,7 +78,7 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     ("nws", "broadcast_severities"): {
         "default": ["Extreme", "Severe"],   # nws_handler.py:43
         "type": "json",
-        "description": "CAP severity strings allowed onto the mesh.",
+        "description": "CAP severity strings allowed onto the mesh. [DEPRECATED — no longer enforced; NWS breadth is governed by the per-toggle dispatcher severity threshold]",
     },
     ("nws", "tombstone_msgtypes"): {
         "default": ["Cancel", "Expire"],    # nws_handler.py:46
@@ -88,7 +88,7 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     ("nws", "warning_suffix_promotes"): {
         "default": True,                    # nws_handler.py:172
         "type": "bool",
-        "description": "Promote category-name-ending-in-_warning to Severe when CAP severity is missing.",
+        "description": "Promote category-name-ending-in-_warning to Severe when CAP severity is missing. [DEPRECATED — no longer enforced; NWS breadth is governed by the per-toggle dispatcher severity threshold]",
     },
 
     # =================================================================

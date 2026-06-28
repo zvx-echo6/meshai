@@ -73,26 +73,31 @@ def test_extreme_emergency_broadcasts(mem_db):
     assert wire.startswith("🌪️")
 
 
-def test_special_weather_statement_skipped(mem_db):
+def test_special_weather_statement_passes_through(mem_db):
+    # GATE A removed: Minor/SWS is no longer dropped on CAP severity alone.
     env = _nws_env(severity_str="Minor", event="Special Weather Statement",
                     category="wx.alert.special_weather_statement")
     data = {}
     wire = handle_nws(env, env["subject"], data=data, now=1_000_000)
-    assert wire is None
+    assert wire is not None, "SWS should now pass through (GATE A removed)"
+    assert "Special Weather Statement" in wire
+    # Row inserted in nws_alerts (not a warning category → no override).
     n_rows = mem_db.execute("SELECT COUNT(*) AS n FROM nws_alerts").fetchone()["n"]
-    assert n_rows == 0
-    n_log = mem_db.execute(
-        "SELECT COUNT(*) AS n FROM event_log WHERE source='nws' AND handled=0"
-    ).fetchone()["n"]
-    assert n_log == 1
+    assert n_rows == 1
+    # _severity_override should NOT be set for a non-warning category.
+    assert data.get("_severity_override") is None
 
 
-def test_watch_severity_moderate_skipped(mem_db):
+def test_watch_severity_moderate_passes_through(mem_db):
+    # GATE A removed: Moderate watches now pass through; dispatcher threshold governs.
     env = _nws_env(severity_str="Moderate", event="Severe Thunderstorm Watch",
                     category="wx.alert.severe_thunderstorm_watch")
     data = {}
     wire = handle_nws(env, env["subject"], data=data, now=1_000_000)
-    assert wire is None
+    assert wire is not None, "Moderate watch should now pass through (GATE A removed)"
+    assert "Severe Thunderstorm Watch" in wire
+    # Watches end in _watch, not _warning — no severity override.
+    assert data.get("_severity_override") is None
 
 
 # ---- emoji map ----
@@ -199,3 +204,38 @@ def test_wire_includes_event_and_headline(mem_db):
     wire = handle_nws(env, env["subject"], data={}, now=1_000_000)
     assert "Severe Thunderstorm Warning" in wire
     assert "Twin Falls County" in wire
+
+# ---- warning → immediate promotion (Step 2) ----
+
+
+def test_warning_category_sets_severity_override_immediate(mem_db):
+    """A *_warning category sets data[_severity_override]='immediate'."""
+    env = _nws_env(severity_str="Severe", event="Severe Thunderstorm Warning",
+                    category="wx.alert.severe_thunderstorm_warning")
+    data = {}
+    wire = handle_nws(env, env["subject"], data=data, now=1_000_000)
+    assert wire is not None
+    assert data.get("_severity_override") == "immediate"
+
+
+def test_tornado_warning_dotted_category_sets_severity_override(mem_db):
+    """A category ending in .warning also sets _severity_override='immediate'."""
+    env = _nws_env(severity_str="Extreme", event="Tornado Warning",
+                    category="wx.alert.tornado_warning")
+    # Override the data.data.severity to use dotted-style category check
+    env["data"]["category"] = "wx.alert.tornado.warning"
+    env["data"]["data"]["severity"] = "Extreme"
+    data = {}
+    wire = handle_nws(env, env["subject"], data=data, now=2_000_000)
+    assert wire is not None
+    assert data.get("_severity_override") == "immediate"
+
+
+def test_non_warning_category_no_severity_override(mem_db):
+    """A non-warning category (watch, advisory, statement) leaves no override."""
+    env = _nws_env(severity_str="Severe", event="Severe Thunderstorm Watch",
+                    category="wx.alert.severe_thunderstorm_watch")
+    data = {}
+    wire = handle_nws(env, env["subject"], data=data, now=3_000_000)
+    assert wire is not None
+    assert "_severity_override" not in data

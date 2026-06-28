@@ -240,20 +240,17 @@ def handle_nws(envelope: dict, subject: str,
                     table_name="nws_alerts", table_pk=cap_id)
         return None
 
-    # Severity gate (CAP string from data.severity, fall back to category
-    # heuristic for envelopes that lack the field).
-    cap_sev = d.get("severity")
-    if cap_sev not in set(adapter_config.nws.broadcast_severities):
-        # Heuristic: category like wx.alert.severe_thunderstorm_warning ->
-        # treat as Severe even when CAP severity field is missing.
-        # v0.6-3b: gated by adapter_config.nws.warning_suffix_promotes.
-        if (not bool(adapter_config.nws.warning_suffix_promotes)) or not (
-                category_raw.endswith("_warning") or category_raw.endswith(".warning")):
-            _log_event(conn, now=now, source="nws", category=category_raw,
-                        severity_word=severity_word, event_id_external=cap_id,
-                        subject=subject, handled=0,
-                        table_name="nws_alerts", table_pk=cap_id)
-            return None
+    # CAP-severity pre-filter (GATE A) removed. All NWS alerts now flow into
+    # the notification pipeline; breadth is governed solely by the per-toggle
+    # dispatcher severity threshold.
+
+    # Warning → immediate promotion: deterministically sets _severity_override
+    # so a wrong or missing CAP severity field cannot under-rank a real warning.
+    # Mirrors the wfigs_handler pattern. Applied before all broadcast-return
+    # paths so it covers new alert, cold-start race, and dedup-window re-bcast.
+    if isinstance(data, dict) and (
+            category_raw.endswith("_warning") or category_raw.endswith(".warning")):
+        data["_severity_override"] = "immediate"
 
     # Per-CAP-id dedup.
     log_id = _log_event_returning_id(
