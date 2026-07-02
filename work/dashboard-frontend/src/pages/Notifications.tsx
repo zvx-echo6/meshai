@@ -46,7 +46,7 @@ interface NotificationToggle {
   regions: string[]
   severity_channels: Record<string, string[]>
   broadcast_channel: number | null
-  meshcore_channel?: number | null
+  meshcore_channel?: string | null
   node_ids: string[]
   smtp_host: string
   smtp_port: number
@@ -1615,14 +1615,13 @@ function MasterToggles({ toggles, onChange }: {
                   <div className="space-y-1">
                     <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">MeshCore channel</label>
                     <input
-                      type="number"
+                      type="text"
                       value={t.meshcore_channel != null ? t.meshcore_channel : ''}
-                      onChange={(e) => upd(key, { meshcore_channel: e.target.value === '' ? null : Number(e.target.value) })}
-                      min={0}
+                      onChange={(e) => upd(key, { meshcore_channel: e.target.value === '' ? null : e.target.value })}
                       placeholder=""
                       className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 font-mono focus:outline-none focus:border-accent"
                     />
-                    <p className="text-xs text-slate-600">blank = this family is not broadcast on MeshCore.</p>
+                    <p className="text-xs text-slate-600">MeshCore channel name on your companion (e.g. AIDA); blank = not broadcast on MeshCore.</p>
                   </div>
                   <ListInput label="DM node IDs" value={t.node_ids || []} onChange={(v) => upd(key, { node_ids: v })} placeholder="!nodeid" />
                   <ListInput label="Email recipients" value={t.recipients || []} onChange={(v) => upd(key, { recipients: v })} placeholder="ops@example.com" />

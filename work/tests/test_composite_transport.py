@@ -221,7 +221,7 @@ class TestBroadcast:
         mt = FakeChild("meshtastic")
         mc = FakeChild("meshcore")
         comp = CompositeTransport([mt, mc])
-        result = comp.send_message("hello mesh", meshcore_channel=0)
+        result = comp.send_message("hello mesh", meshcore_channel="AIDA")
         assert result is True
         assert len(mt.send_calls) == 1
         assert len(mc.send_calls) == 1
@@ -239,22 +239,22 @@ class TestBroadcast:
         assert len(mc.send_calls) == 0  # MeshCore was skipped
 
     def test_broadcast_meshcore_uses_meshcore_channel(self) -> None:
-        """MeshCore child receives meshcore_channel, Meshtastic receives channel."""
+        """MeshCore child receives meshcore_channel NAME, Meshtastic receives channel."""
         mt = FakeChild("meshtastic")
         mc = FakeChild("meshcore")
         comp = CompositeTransport([mt, mc])
-        result = comp.send_message("hello", channel=1, meshcore_channel=3)
+        result = comp.send_message("hello", channel=1, meshcore_channel="Fire")
         assert result is True
         assert len(mt.send_calls) == 1
         assert len(mc.send_calls) == 1
-        assert mt.send_calls[0]["channel"] == 1   # Meshtastic gets `channel`
-        assert mc.send_calls[0]["channel"] == 3   # MeshCore gets `meshcore_channel`
+        assert mt.send_calls[0]["channel"] == 1        # Meshtastic gets `channel`
+        assert mc.send_calls[0]["channel"] == "Fire"   # MeshCore gets `meshcore_channel` name
 
     def test_broadcast_meshtastic_only_when_no_meshcore_child(self) -> None:
         """When there is no MeshCore child, meshcore_channel is irrelevant."""
         mt = FakeChild("meshtastic")
         comp = CompositeTransport([mt])
-        result = comp.send_message("hello", channel=2, meshcore_channel=5)
+        result = comp.send_message("hello", channel=2, meshcore_channel="Fire")
         assert result is True
         assert len(mt.send_calls) == 1
         assert mt.send_calls[0]["channel"] == 2
@@ -264,7 +264,7 @@ class TestBroadcast:
         mt = FakeChild("meshtastic", connected_val=False)
         mc = FakeChild("meshcore")
         comp = CompositeTransport([mt, mc])
-        result = comp.send_message("hi", meshcore_channel=0)
+        result = comp.send_message("hi", meshcore_channel="AIDA")
         assert result is True
         assert len(mt.send_calls) == 0
         assert len(mc.send_calls) == 1
@@ -275,7 +275,7 @@ class TestBroadcast:
         mt.send_message = MagicMock(return_value=False)
         mc = FakeChild("meshcore")
         comp = CompositeTransport([mt, mc])
-        result = comp.send_message("test", meshcore_channel=0)
+        result = comp.send_message("test", meshcore_channel="AIDA")
         assert result is True
 
 

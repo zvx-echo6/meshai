@@ -355,7 +355,7 @@ class MeshtasticTransport(MeshTransport):
         destination: Optional[str] = None,
         channel: int = 0,
         transport: Optional[str] = None,  # routing hint — accepted and IGNORED by single-transport impl
-        meshcore_channel: Optional[int] = None,  # per-family MeshCore channel — accepted and IGNORED here
+        meshcore_channel: Optional[str] = None,  # per-family MeshCore channel — accepted and IGNORED here
     ) -> bool:
         """Send a text message.
 
@@ -364,7 +364,7 @@ class MeshtasticTransport(MeshTransport):
             destination: Node ID for DM, or None for broadcast
             channel: Channel index to send on
             transport: Optional routing hint (for CompositeTransport); ignored here.
-            meshcore_channel: Per-family MeshCore channel index; ignored by Meshtastic.
+            meshcore_channel: Per-family MeshCore channel name; ignored by Meshtastic.
 
         Returns:
             True if send was initiated successfully

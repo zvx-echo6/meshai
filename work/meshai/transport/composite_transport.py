@@ -196,7 +196,7 @@ class CompositeTransport(MeshTransport):
         destination: Optional[str] = None,
         channel: int = 0,
         transport: Optional[str] = None,
-        meshcore_channel: Optional[int] = None,
+        meshcore_channel: Optional[str] = None,
     ) -> bool:
         """Send a message, routing based on destination + hint.
 
@@ -233,14 +233,15 @@ class CompositeTransport(MeshTransport):
         # --- Rule 3: unhinted DM ---
         return self._send_unhinted(text, destination, channel)
 
-    def _broadcast(self, text: str, channel: int, meshcore_channel: Optional[int] = None) -> bool:
+    def _broadcast(self, text: str, channel: int, meshcore_channel: Optional[str] = None) -> bool:
         """Fan text out to connected children with per-transport channel routing.
 
         For the Meshtastic child, ``channel`` (Meshtastic channel index) is used.
         For the MeshCore child:
-          - ``meshcore_channel`` set → use that channel index on MeshCore.
+          - ``meshcore_channel`` set → route that channel NAME to MeshCore,
+            which resolves it to a companion slot at send time.
           - ``meshcore_channel`` is None → skip the MeshCore child entirely
-            (family not configured for MeshCore; no fallback to global index).
+            (family not configured for MeshCore; no fallback to a default).
 
         Returns True if at least one child succeeded.
         """

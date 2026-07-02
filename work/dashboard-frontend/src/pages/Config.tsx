@@ -26,7 +26,6 @@ interface ConnectionConfig {
   transport?: string
   meshcore_host?: string
   meshcore_port?: number
-  meshcore_channel_index?: number
 }
 
 interface ResponseConfig {

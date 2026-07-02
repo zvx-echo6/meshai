@@ -37,7 +37,7 @@ class MeshTransport(abc.ABC):
         destination: Optional[str] = None,
         channel: int = 0,
         transport: Optional[str] = None,
-        meshcore_channel: Optional[int] = None,
+        meshcore_channel: Optional[str] = None,
     ) -> bool:
         """Send a text message.
 
@@ -49,9 +49,9 @@ class MeshTransport(abc.ABC):
                        select the child mesh that originated an inbound DM).
                        Single-transport implementations accept and IGNORE this
                        parameter; it is always None in non-composite callers.
-            meshcore_channel: Per-family MeshCore channel index for broadcasts.
-                       MeshtasticTransport ignores this; MeshCoreTransport uses
-                       it in place of the global meshcore_channel_index when set.
+            meshcore_channel: Per-family MeshCore channel NAME for broadcasts.
+                       MeshtasticTransport ignores this; MeshCoreTransport
+                       resolves the name to a companion slot at send time.
                        CompositeTransport uses it to route each child correctly.
                        None = do not broadcast on MeshCore for this family.
 

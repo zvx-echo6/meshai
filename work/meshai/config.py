@@ -41,7 +41,6 @@ class ConnectionConfig:
     # --- MeshCore transport settings (used when transport="meshcore") ---
     meshcore_host: str = "100.64.0.9"          # pyMC companion frame server host
     meshcore_port: int = 5050                   # pyMC companion frame server port
-    meshcore_channel_index: int = 0             # default channel index for broadcasts
     meshcore_auto_reconnect: bool = True        # enable meshcore lib auto-reconnect
     meshcore_max_reconnect_attempts: int = 5    # max reconnect attempts (0 = unlimited)
 
@@ -555,6 +554,8 @@ class NotificationRuleConfig:
 
     # Mesh broadcast fields
     broadcast_channel: int = 0
+    # Per-family MeshCore channel NAME on the companion; None = not broadcast on MeshCore.
+    meshcore_channel: Optional[str] = None
 
     # Mesh DM fields
     node_ids: list = field(default_factory=list)
@@ -596,6 +597,8 @@ class NotificationToggle:
     cooldown_seconds: int = 0      # per (toggle, category, region) throttle window; 0 = disabled
     # per-channel delivery config (mirrors NotificationRuleConfig channel fields)
     broadcast_channel: Optional[int] = None
+    # Per-family MeshCore channel NAME on the companion; None = not broadcast on MeshCore.
+    meshcore_channel: Optional[str] = None
     node_ids: list = field(default_factory=list)
     smtp_host: str = ""
     smtp_port: int = 587
