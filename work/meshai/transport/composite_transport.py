@@ -51,10 +51,11 @@ class CompositeTransport(MeshTransport):
     filtering is per-child in the inbound wrapper).
     """
 
-    def __init__(self, children: List[MeshTransport]) -> None:
+    def __init__(self, children: List[MeshTransport], config=None) -> None:
         if not children:
             raise ValueError("CompositeTransport requires at least one child")
         self._children = list(children)
+        self._config = config  # ConnectionConfig; used for the universal mesh_max_chars budget
         # Build a stable name → child mapping for O(1) routing-hint lookup.
         self._by_name: dict[str, MeshTransport] = {
             _child_name(c): c for c in self._children
@@ -173,16 +174,17 @@ class CompositeTransport(MeshTransport):
 
     @property
     def max_chars(self) -> int:
-        """Return the minimum max_chars across all children.
+        """Return the universal mesh message budget from config.
 
-        The tightest budget (MeshCore 140) governs so broadcasts — which
-        fan out to all children — always fit every mesh.
+        Sourced directly from ``config.mesh_max_chars`` (default 140) — the
+        single fixed constant that governs all transports regardless of which
+        radios are connected.  MeshCore is the LCD, so 140 is the right value
+        for every path.
         """
-        connected = [c for c in self._children if c.connected]
-        if connected:
-            return min(c.max_chars for c in connected)
-        # Fallback to overall minimum if no child is connected yet.
-        return min(c.max_chars for c in self._children)
+        if self._config is not None:
+            return self._config.mesh_max_chars
+        # Fallback for tests that build CompositeTransport without a config.
+        return 140
 
     # ------------------------------------------------------------------
     # Message I/O

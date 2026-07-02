@@ -76,7 +76,7 @@ def test_adapter_config_seeds_digest_keys():
     assert rows[("fires", "digest_enabled")] == "true"
     assert rows[("fires", "digest_schedule")] == '["06:00", "18:00"]'
     assert rows[("fires", "digest_timezone")] == '"America/Boise"'
-    assert rows[("fires", "digest_max_chars")] == "200"
+    assert rows[("fires", "digest_max_chars")] == "140"
 
 
 # ===========================================================================
@@ -107,7 +107,7 @@ def test_render_digest_terse_fallback_when_no_llm():
     assert source == "deterministic"
     assert wire
     assert "Cache Peak" in wire
-    assert len(wire) <= 200
+    assert len(wire) <= 140
 
 
 def test_render_digest_uses_llm_when_available():

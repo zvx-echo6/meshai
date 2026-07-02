@@ -199,7 +199,7 @@ class MeshCoreTransport(MeshTransport):
 
         Args:
             text: Message text (caller is responsible for length limits; see
-                  ``meshcore_max_chars`` config field for the future chunker).
+                  ``mesh_max_chars`` config field).
             destination: hex pubkey string for a DM, or None for channel send.
             channel: Channel index for channel sends (0 = default).
             transport: Optional routing hint (for CompositeTransport); ignored here.
@@ -369,7 +369,7 @@ class MeshCoreTransport(MeshTransport):
 
     @property
     def max_chars(self) -> int:
-        return getattr(self.config, "meshcore_max_chars", 140)
+        return self.config.mesh_max_chars
 
     def get_node_name(self, node_id: str) -> str:
         """Resolve a pubkey prefix to a contact display name, or return node_id."""

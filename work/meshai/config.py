@@ -36,12 +36,12 @@ class ConnectionConfig:
     reconnect_health_interval: float = 30.0
     # --- transport selection (Phase 1 seam; MeshCore support is Phase 2) ---
     transport: str = "meshtastic"  # "meshtastic" | "meshcore" | "both"
-    meshtastic_max_chars: int = 200  # default Meshtastic packet budget
+    # Universal mesh message budget (MeshCore LCD → 140 for all transports).
+    mesh_max_chars: int = 140
     # --- MeshCore transport settings (used when transport="meshcore") ---
     meshcore_host: str = "100.64.0.9"          # pyMC companion frame server host
     meshcore_port: int = 5050                   # pyMC companion frame server port
     meshcore_channel_index: int = 0             # default channel index for broadcasts
-    meshcore_max_chars: int = 140               # placeholder max chars (Phase 3 chunker)
     meshcore_auto_reconnect: bool = True        # enable meshcore lib auto-reconnect
     meshcore_max_reconnect_attempts: int = 5    # max reconnect attempts (0 = unlimited)
 

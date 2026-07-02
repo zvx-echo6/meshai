@@ -39,7 +39,7 @@ def build_transport(config) -> MeshTransport:
         return CompositeTransport([
             MeshtasticTransport(config),
             MeshCoreTransport(config),
-        ])
+        ], config=config)
 
     raise ValueError(
         f"Unknown transport {transport_name!r}. "

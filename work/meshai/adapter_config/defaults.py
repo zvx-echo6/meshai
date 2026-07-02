@@ -413,7 +413,7 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     # digest_max_chars: mesh wire cap. The LLM is told to fit under this.
     # Reuses the response.max_length chunking if the LLM ignores the cap.
     ("fires", "digest_max_chars"): {
-        "default": 200,
+        "default": 140,
         "type": "int",
         "description": "Hard cap on the digest wire string length (chars). The LLM prompt asks to fit; the chunker enforces.",
     },

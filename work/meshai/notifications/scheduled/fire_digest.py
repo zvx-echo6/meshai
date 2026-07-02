@@ -112,7 +112,8 @@ async def render_digest(*, now: Optional[int] = None) -> tuple[str, str]:
         else:
             fire_lines.append(name)
 
-    # Assemble within ~200-byte LoRa budget; trim fire lines, never the tail
+    # Assemble within the universal mesh budget; trim fire lines, never the tail
+    budget = int(adapter_config.fires.digest_max_chars)
     shown: list[str] = []
     for line in fire_lines:
         # Estimate tail for budget check
@@ -127,7 +128,7 @@ async def render_digest(*, now: Optional[int] = None) -> tuple[str, str]:
         if est_tail:
             parts.append(est_tail)
         candidate = "\n".join(parts)
-        if len(candidate.encode("utf-8")) <= 200:
+        if len(candidate.encode("utf-8")) <= budget:
             shown.append(line)
         else:
             break

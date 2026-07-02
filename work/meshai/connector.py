@@ -77,7 +77,7 @@ class MeshtasticTransport(MeshTransport):
 
     @property
     def max_chars(self) -> int:
-        return getattr(self.config, "meshtastic_max_chars", 200)
+        return self.config.mesh_max_chars
 
     def connect(self) -> None:
         """Establish connection to Meshtastic node."""

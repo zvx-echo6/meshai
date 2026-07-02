@@ -132,17 +132,30 @@ class TestFactory:
 # ---------------------------------------------------------------------------
 
 class TestMaxChars:
-    def test_min_of_children(self) -> None:
-        """max_chars == min(child.max_chars) — MeshCore 140 wins over MT 200."""
+    def test_fixed_universal_budget_no_config(self) -> None:
+        """Without a config, CompositeTransport falls back to the 140 constant."""
         mt = FakeChild("meshtastic", max_chars_val=200)
         mc = FakeChild("meshcore", max_chars_val=140)
         comp = CompositeTransport([mt, mc])
         assert comp.max_chars == 140
 
-    def test_single_child(self) -> None:
+    def test_fixed_universal_budget_from_config(self) -> None:
+        """With a config, CompositeTransport reads mesh_max_chars directly."""
+        from meshai.config import ConnectionConfig
+        cfg = ConnectionConfig(transport="both", mesh_max_chars=140)
+        mt = FakeChild("meshtastic", max_chars_val=200)
+        mc = FakeChild("meshcore", max_chars_val=140)
+        comp = CompositeTransport([mt, mc], config=cfg)
+        assert comp.max_chars == 140
+
+    def test_fixed_universal_budget_ignores_child_values(self) -> None:
+        """CompositeTransport must NOT take min(children); it sources config."""
+        from meshai.config import ConnectionConfig
+        cfg = ConnectionConfig(transport="both", mesh_max_chars=140)
+        # Even if a child would report 230, the composite must return 140.
         child = FakeChild("meshtastic", max_chars_val=230)
-        comp = CompositeTransport([child])
-        assert comp.max_chars == 230
+        comp = CompositeTransport([child], config=cfg)
+        assert comp.max_chars == 140
 
 
 # ---------------------------------------------------------------------------
