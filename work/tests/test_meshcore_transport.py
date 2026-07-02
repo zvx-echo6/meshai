@@ -202,8 +202,9 @@ class TestSendMessageChannel:
         # _mc is None, no loop started
         assert t.send_message("test") is False
 
-    def test_uses_config_channel_index_when_channel_zero(self):
-        cfg = _mc_config(meshcore_channel_index=3)
+    def _transport_with_configured_index(self, index):
+        """Build a MeshCoreTransport whose config sets meshcore_channel_index."""
+        cfg = _mc_config(meshcore_channel_index=index)
         t = MeshCoreTransport(cfg)
         ok = MagicMock()
         ok.is_error.return_value = False
@@ -217,9 +218,32 @@ class TestSendMessageChannel:
         thread = threading.Thread(target=loop.run_forever, daemon=True)
         thread.start()
         t._loop_thread = thread
+        return t, mc
+
+    def test_uses_config_channel_index_when_channel_zero(self):
+        t, mc = self._transport_with_configured_index(3)
         try:
             t.send_message("hi", channel=0)
-            # channel=0 is falsy → falls back to meshcore_channel_index=3
+            # channel=0 must not be treated as falsy-fallthrough: broadcasts
+            # always use the configured meshcore_channel_index=3.
+            mc.commands.send_chan_msg.assert_awaited_once_with(3, "hi")
+        finally:
+            _cleanup(t)
+
+    def test_uses_config_channel_index_when_channel_default(self):
+        t, mc = self._transport_with_configured_index(3)
+        try:
+            t.send_message("hi")  # default channel param
+            mc.commands.send_chan_msg.assert_awaited_once_with(3, "hi")
+        finally:
+            _cleanup(t)
+
+    def test_ignores_meshtastic_channel_index(self):
+        # channel=8 carries Meshtastic channel-index semantics that do NOT map
+        # to MeshCore's channel table; the configured index (3) is authoritative.
+        t, mc = self._transport_with_configured_index(3)
+        try:
+            t.send_message("hi", channel=8)
             mc.commands.send_chan_msg.assert_awaited_once_with(3, "hi")
         finally:
             _cleanup(t)

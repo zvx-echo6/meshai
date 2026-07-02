@@ -206,14 +206,20 @@ class MeshCoreTransport(MeshTransport):
             logger.error("MeshCoreTransport: cannot send, not connected")
             return False
 
-        chan_idx = channel or getattr(self.config, "meshcore_channel_index", 0)
-
         try:
             if destination:
                 result = self._run_coro(
                     self._mc.commands.send_msg(destination, text)
                 )
             else:
+                # Channel-index semantics do NOT cross transports: the passed
+                # `channel` carries Meshtastic channel-index semantics (e.g.
+                # index 8) that have no relationship to MeshCore's separate
+                # channel table. The configured MeshCore channel is therefore
+                # authoritative for broadcasts, so we ignore `channel` here
+                # (this also avoids an explicit channel=0 being treated as
+                # falsy).
+                chan_idx = getattr(self.config, "meshcore_channel_index", 0)
                 result = self._run_coro(
                     self._mc.commands.send_chan_msg(chan_idx, text)
                 )
