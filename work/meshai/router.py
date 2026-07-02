@@ -925,7 +925,7 @@ class MessageRouter:
         # Chunk the response with sentence awareness
         messages, remaining = chunk_response(
             response,
-            max_chars=self.config.response.max_length,
+            max_chars=min(self.config.response.max_length, self.connector.max_chars),
             max_messages=self.config.response.max_messages,
         )
 

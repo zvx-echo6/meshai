@@ -77,6 +77,12 @@ class MeshTransport(abc.ABC):
     def connected(self) -> bool:
         """True when the transport has an active connection."""
 
+    @property
+    @abc.abstractmethod
+    def max_chars(self) -> int:
+        """Maximum characters per mesh packet for the active transport."""
+        ...
+
     @abc.abstractmethod
     def get_node_name(self, node_id: str) -> str:
         """Return the cached display name for *node_id*, or *node_id* itself."""

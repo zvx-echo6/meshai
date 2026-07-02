@@ -31,6 +31,7 @@ from typing import Any
 from meshai.adapter_config._accessor import (
     adapter_config,
     invalidate_cache,
+    set_runtime_override,
 )
 from meshai.adapter_config.defaults import (
     REGISTRY,
@@ -42,6 +43,7 @@ from meshai.adapter_config.defaults import (
 __all__ = [
     "adapter_config",
     "invalidate_cache",
+    "set_runtime_override",
     "seed_defaults",
     "prune_orphans",
     "REGISTRY",
