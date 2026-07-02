@@ -83,8 +83,13 @@ class MeshAI:
         self._loop = asyncio.get_event_loop()
         # --- connection supervisor (watchdog): single source of truth for link
         # state + the only reconnect driver. Reconnects IN-PLACE so the container
-        # never needs to restart. ---
-        if getattr(self.config.connection, "reconnect", True):
+        # never needs to restart.
+        # Guard: watchdog is Meshtastic-specific — MeshCoreTransport manages its
+        # own reconnect via the meshcore lib's auto_reconnect parameter. ---
+        if (
+            getattr(self.config.connection, "reconnect", True)
+            and isinstance(self.connector, MeshConnector)
+        ):
             self.connector._wake = asyncio.Event()
             self.connector.write_link_status("up")  # we just connected ok
             self._supervisor_task = asyncio.create_task(self._connection_supervisor())

@@ -26,10 +26,15 @@ def build_transport(config) -> MeshTransport:
         from meshai.connector import MeshtasticTransport
         return MeshtasticTransport(config)
 
-    if transport_name in ("meshcore", "both"):
+    if transport_name == "meshcore":
+        # Function-local import keeps the module importable without the meshcore
+        # lib installed (lazy import pattern mirrors the meshtastic case).
+        from meshai.transport.meshcore_transport import MeshCoreTransport
+        return MeshCoreTransport(config)
+
+    if transport_name == "both":
         raise NotImplementedError(
-            f"Transport {transport_name!r} is not yet implemented. "
-            "This is a Phase 1 seam; MeshCore support lands in a later phase."
+            "Transport 'both' is not yet implemented (Phase 4 seam)."
         )
 
     raise ValueError(

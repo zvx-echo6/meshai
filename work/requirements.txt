@@ -1,4 +1,5 @@
 meshtastic>=2.3.0
+meshcore>=2.3.7
 pyyaml>=6.0
 aiosqlite>=0.19.0
 openai>=1.0.0
