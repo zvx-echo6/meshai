@@ -70,10 +70,14 @@ class TestBuildTransport:
         transport = build_transport(cfg)
         assert isinstance(transport, MeshtasticTransport)
 
-    def test_meshcore_raises_not_implemented(self):
+    def test_meshcore_returns_meshcore_transport(self):
+        # Phase 2: meshcore is now implemented; build_transport returns a
+        # MeshCoreTransport instance (MeshTransport subclass).
+        from meshai.transport.meshcore_transport import MeshCoreTransport
         cfg = self._config_with("meshcore")
-        with pytest.raises(NotImplementedError):
-            build_transport(cfg)
+        transport = build_transport(cfg)
+        assert isinstance(transport, MeshCoreTransport)
+        assert isinstance(transport, MeshTransport)
 
     def test_both_raises_not_implemented(self):
         cfg = self._config_with("both")
