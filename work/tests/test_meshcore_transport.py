@@ -99,7 +99,6 @@ def _mc_config(**overrides):
         transport="meshcore",
         meshcore_host="127.0.0.1",
         meshcore_port=5050,
-        meshcore_channel_index=0,
     )
     for k, v in overrides.items():
         setattr(cfg, k, v)
@@ -117,6 +116,7 @@ def _transport_with_mock_mc(mc_overrides=None):
 
     mc = MagicMock()
     mc.get_contact_by_key_prefix.return_value = None
+    _install_channel_table(mc)
     if mc_overrides:
         for k, v in mc_overrides.items():
             setattr(mc, k, v)
@@ -156,6 +156,31 @@ def _make_channel_event(text="chan msg", channel_idx=2, **extra):
     return e
 
 
+# Default fake companion channel table: NAME -> slot.  Slots not present here
+# report an empty channel_name, so _enumerate_channels stops after the empty run.
+_FAKE_CHANNEL_TABLE = {2: "AIDA", 3: "Fire"}
+
+
+def _install_channel_table(mc, table=None):
+    """Wire ``mc.commands.get_channel`` to enumerate a fake channel table.
+
+    ``table`` maps slot index -> channel name.  get_channel(idx) returns a
+    non-error event whose payload carries ``channel_name``/``channel_idx``
+    exactly like the real firmware; unlisted slots report an empty name so
+    _enumerate_channels ends on the contiguous-empty run.
+    """
+    if table is None:
+        table = _FAKE_CHANNEL_TABLE
+
+    async def _get_channel(idx):
+        e = MagicMock()
+        e.is_error.return_value = False
+        e.payload = {"channel_name": table.get(idx, ""), "channel_idx": idx}
+        return e
+
+    mc.commands.get_channel = _get_channel
+
+
 # ---------------------------------------------------------------------------
 # 1. Factory / subclass tests
 # ---------------------------------------------------------------------------
@@ -176,25 +201,25 @@ class TestBuildTransport:
 
 class TestSendMessageChannel:
     def test_returns_true_on_non_error_event(self):
-        """With meshcore_channel set, send_chan_msg is called and True returned."""
+        """With a resolvable channel name, send_chan_msg is called and True returned."""
         t, mc, _ = _transport_with_mock_mc()
         try:
             ok = MagicMock()
             ok.is_error.return_value = False
             mc.commands.send_chan_msg = AsyncMock(return_value=ok)
-            assert t.send_message("hello", meshcore_channel=0) is True
+            assert t.send_message("hello", meshcore_channel="AIDA") is True
             mc.commands.send_chan_msg.assert_awaited_once()
         finally:
             _cleanup(t)
 
     def test_returns_false_on_error_event(self):
-        """With meshcore_channel set, an error result returns False."""
+        """With a resolvable channel name, an error result returns False."""
         t, mc, _ = _transport_with_mock_mc()
         try:
             err = MagicMock()
             err.is_error.return_value = True
             mc.commands.send_chan_msg = AsyncMock(return_value=err)
-            assert t.send_message("hello", meshcore_channel=0) is False
+            assert t.send_message("hello", meshcore_channel="AIDA") is False
         finally:
             _cleanup(t)
 
@@ -202,7 +227,7 @@ class TestSendMessageChannel:
         cfg = _mc_config()
         t = MeshCoreTransport(cfg)
         # _mc is None, no loop started — fails before channel check.
-        assert t.send_message("test", meshcore_channel=0) is False
+        assert t.send_message("test", meshcore_channel="AIDA") is False
 
     def test_meshcore_channel_none_skips_broadcast(self):
         """meshcore_channel=None → silent no-op (True) without calling send_chan_msg."""
@@ -227,7 +252,8 @@ class TestSendMessageChannel:
             _cleanup(t)
 
     def _transport_with_mock_send_chan_msg(self):
-        """Build a MeshCoreTransport with a mock mc and async send_chan_msg."""
+        """Build a MeshCoreTransport with a mock mc, a fake channel table, and
+        an async send_chan_msg recorder."""
         cfg = _mc_config()
         t = MeshCoreTransport(cfg)
         ok = MagicMock()
@@ -235,6 +261,7 @@ class TestSendMessageChannel:
 
         loop = asyncio.new_event_loop()
         mc = MagicMock()
+        _install_channel_table(mc)  # {"AIDA": 2, "Fire": 3}
         mc.commands.send_chan_msg = AsyncMock(return_value=ok)
         t._mc = mc
         t._connected = True
@@ -244,30 +271,43 @@ class TestSendMessageChannel:
         t._loop_thread = thread
         return t, mc
 
-    def test_uses_meshcore_channel_for_broadcast(self):
-        """meshcore_channel=3 → send_chan_msg(3, text)."""
+    def test_resolves_name_to_slot_for_broadcast(self):
+        """meshcore_channel='AIDA' → resolves to slot 2 → send_chan_msg(2, text)."""
         t, mc = self._transport_with_mock_send_chan_msg()
         try:
-            t.send_message("hi", meshcore_channel=3)
+            assert t.send_message("hi", meshcore_channel="AIDA") is True
+            mc.commands.send_chan_msg.assert_awaited_once_with(2, "hi")
+        finally:
+            _cleanup(t)
+
+    def test_resolves_second_named_channel(self):
+        """meshcore_channel='Fire' → resolves to slot 3 → send_chan_msg(3, text)."""
+        t, mc = self._transport_with_mock_send_chan_msg()
+        try:
+            assert t.send_message("hi", meshcore_channel="Fire") is True
             mc.commands.send_chan_msg.assert_awaited_once_with(3, "hi")
         finally:
             _cleanup(t)
 
-    def test_ignores_meshtastic_channel_uses_meshcore_channel(self):
-        """channel=8 (Meshtastic) is irrelevant; meshcore_channel=3 is authoritative."""
+    def test_ignores_meshtastic_channel_uses_meshcore_name(self):
+        """channel=8 (Meshtastic) is irrelevant; the MeshCore NAME is authoritative."""
         t, mc = self._transport_with_mock_send_chan_msg()
         try:
-            t.send_message("hi", channel=8, meshcore_channel=3)
+            t.send_message("hi", channel=8, meshcore_channel="Fire")
             mc.commands.send_chan_msg.assert_awaited_once_with(3, "hi")
         finally:
             _cleanup(t)
 
-    def test_meshcore_channel_zero_is_valid(self):
-        """meshcore_channel=0 is a valid channel (not falsy-skipped)."""
+    def test_unknown_name_warns_and_never_sends(self, caplog):
+        """An unresolved channel name → no send_chan_msg, returns False, warns."""
+        import logging
         t, mc = self._transport_with_mock_send_chan_msg()
         try:
-            t.send_message("hi", meshcore_channel=0)
-            mc.commands.send_chan_msg.assert_awaited_once_with(0, "hi")
+            with caplog.at_level(logging.WARNING):
+                result = t.send_message("hi", meshcore_channel="Nonexistent")
+            assert result is False
+            mc.commands.send_chan_msg.assert_not_awaited()
+            assert any("Nonexistent" in r.getMessage() for r in caplog.records)
         finally:
             _cleanup(t)
 

@@ -102,7 +102,6 @@ def _mc_config(**overrides):
         transport="meshcore",
         meshcore_host="127.0.0.1",
         meshcore_port=5050,
-        meshcore_channel_index=0,
     )
     for k, v in overrides.items():
         setattr(cfg, k, v)
@@ -178,7 +177,6 @@ class TestTransportMaxChars:
             tcp_port=4403,
             meshcore_host="127.0.0.1",
             meshcore_port=5050,
-            meshcore_channel_index=0,
         )
         comp = build_transport(cfg_both)
         assert isinstance(comp, CompositeTransport)

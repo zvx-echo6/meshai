@@ -51,6 +51,9 @@ class MeshCoreTransport(MeshTransport):
         self._message_callback: Optional[Callable] = None
         self._callback_loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_ready: threading.Event = threading.Event()
+        # Companion channel table: channel NAME -> slot index, built at
+        # connect time by _enumerate_channels().  Empty until connected.
+        self._chan_name_to_idx: dict[str, int] = {}
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -77,6 +80,63 @@ class MeshCoreTransport(MeshTransport):
             self._loop_thread.join(timeout=5.0)
         self._loop = None
         self._loop_thread = None
+
+    # ------------------------------------------------------------------
+    # Channel table enumeration
+    # ------------------------------------------------------------------
+
+    def _enumerate_channels(self) -> None:
+        """Build ``self._chan_name_to_idx`` from the companion's channel table.
+
+        MeshCore channels are {name, PSK} pairs living in numbered slots (up
+        to 40+, unlike Meshtastic's 0-7).  We ask the companion for each slot
+        in turn via ``get_channel(idx)`` and record NAME → slot for every
+        named (non-empty) slot, so send_message can resolve a per-family
+        channel NAME to the right slot at send time.
+
+        Robustness:
+          - Any error yields an empty (or partial) map — never raises out.
+          - Enumeration stops on the first error/None result (end of table)
+            or after 3 consecutive empty slots (contiguous provisioning),
+            with a hard cap of 40 slots.
+        """
+        self._chan_name_to_idx = {}
+        try:
+            empty_run = 0
+            for idx in range(40):
+                try:
+                    event = self._run_coro(self._mc.commands.get_channel(idx))
+                except Exception as exc:
+                    logger.debug(
+                        "MeshCore: get_channel(%d) failed, ending enumeration: %s",
+                        idx, exc,
+                    )
+                    break
+                # Falsy / None / ERROR event → end of enumeration.
+                if not event:
+                    break
+                is_err = getattr(event, "is_error", None)
+                if callable(is_err) and event.is_error():
+                    break
+                payload = event.payload or {}
+                name = payload.get("channel_name", "")
+                slot = payload.get("channel_idx", idx)
+                if not name:
+                    # Empty/unset slot; stop after a contiguous run of empties.
+                    empty_run += 1
+                    if empty_run >= 3:
+                        break
+                    continue
+                # Named slot: exact, case-sensitive (firmware name is already
+                # null-truncated / utf-8-decoded — do NOT trim or lowercase).
+                self._chan_name_to_idx[name] = slot
+                empty_run = 0
+        except Exception as exc:
+            logger.warning("MeshCore: channel enumeration error: %s", exc)
+            self._chan_name_to_idx = {}
+        logger.info(
+            "MeshCore: enumerated %d named channel(s)", len(self._chan_name_to_idx)
+        )
 
     # ------------------------------------------------------------------
     # Internal coroutines (run on the dedicated loop)
@@ -166,6 +226,10 @@ class MeshCoreTransport(MeshTransport):
         # Subscribe to inbound events on the dedicated loop.
         self._run_coro(self._setup_subscriptions())
 
+        # Build the channel NAME → slot map from the live companion table so
+        # per-family broadcasts can resolve their channel name to a slot.
+        self._enumerate_channels()
+
         logger.info(
             "MeshCoreTransport: connected as %s (pubkey %s)",
             self._self_info.get("name", "unknown"),
@@ -194,7 +258,7 @@ class MeshCoreTransport(MeshTransport):
         destination: Optional[str] = None,
         channel: int = 0,
         transport: Optional[str] = None,  # routing hint — accepted and IGNORED by single-transport impl
-        meshcore_channel: Optional[int] = None,
+        meshcore_channel: Optional[str] = None,
     ) -> bool:
         """Send a message via MeshCore.
 
@@ -204,10 +268,11 @@ class MeshCoreTransport(MeshTransport):
             destination: hex pubkey string for a DM, or None for channel send.
             channel: Channel index for channel sends (Meshtastic semantics; ignored here).
             transport: Optional routing hint (for CompositeTransport); ignored here.
-            meshcore_channel: Per-family MeshCore channel index for broadcasts.
-                When provided, overrides the global meshcore_channel_index.
+            meshcore_channel: Per-family MeshCore channel NAME for broadcasts.
+                Resolved to a companion slot via the live channel table.
                 When None on a broadcast, the send is skipped (family not
                 configured for MeshCore — no fallback, no default).
+                An unknown name is never blind-sent: it warns and returns False.
 
         Returns:
             True if the send succeeded (not an error event).
@@ -231,7 +296,7 @@ class MeshCoreTransport(MeshTransport):
                 # index 8) that have no relationship to MeshCore's separate
                 # channel table.
                 #
-                # Per-family routing: use meshcore_channel when provided.
+                # Per-family routing: meshcore_channel is a channel NAME.
                 # If meshcore_channel is None, this family is not configured
                 # for MeshCore → silent no-op (return True).
                 if meshcore_channel is None:
@@ -239,8 +304,22 @@ class MeshCoreTransport(MeshTransport):
                         "MeshCoreTransport: meshcore_channel=None, skipping broadcast"
                     )
                     return True
+                # Resolve NAME → slot against the live companion channel table.
+                idx = self._chan_name_to_idx.get(meshcore_channel)
+                if idx is None:
+                    # One lazy re-enumeration in case the table changed since
+                    # connect (e.g. a channel was provisioned after startup).
+                    self._enumerate_channels()
+                    idx = self._chan_name_to_idx.get(meshcore_channel)
+                if idx is None:
+                    # Never blind-send to a guessed slot.
+                    logger.warning(
+                        "MeshCore channel '%s' not on companion; skipping",
+                        meshcore_channel,
+                    )
+                    return False
                 result = self._run_coro(
-                    self._mc.commands.send_chan_msg(meshcore_channel, text)
+                    self._mc.commands.send_chan_msg(idx, text)
                 )
             success = not result.is_error()
             if not success:
