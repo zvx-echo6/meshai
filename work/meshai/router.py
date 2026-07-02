@@ -13,7 +13,7 @@ from .config import Config
 from .connector import MeshConnector, MeshMessage
 from .context import MeshContext
 from .history import ConversationHistory
-from .chunker import chunk_response, ContinuationState
+from .chunker import chunk_response, cap_reply_chunks, MAX_REPLY_PACKETS, ContinuationState
 
 logger = logging.getLogger(__name__)
 
@@ -889,6 +889,13 @@ class MessageRouter:
                 if env_summary:
                     system_prompt += "\n\n" + env_summary
 
+        # Terse-reply guidance for slow LoRa links (always appended last for
+        # interactive replies so it isn't buried by mesh-data blocks).
+        system_prompt += (
+            "\n\nYou're replying over a slow LoRa mesh. "
+            "Answer in 1-2 short messages. Be terse and direct; omit preamble and filler."
+        )
+
         # DEBUG: Log system prompt status
         logger.debug(f"System prompt length: {len(system_prompt)} chars")
 
@@ -928,6 +935,12 @@ class MessageRouter:
             max_chars=min(self.config.response.max_length, self.connector.max_chars),
             max_messages=self.config.response.max_messages,
         )
+
+        # Hard cap: LLM interactive replies must not exceed MAX_REPLY_PACKETS.
+        # This is a safety ceiling on top of config.response.max_messages so
+        # LoRa airtime is protected even if config grows the message budget.
+        # Broadcast/notification chunking is NOT affected by this cap.
+        messages = cap_reply_chunks(messages, MAX_REPLY_PACKETS, self.connector.max_chars)
 
         # Store remaining content for continuation
         if remaining:
