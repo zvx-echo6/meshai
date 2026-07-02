@@ -196,14 +196,18 @@ class CompositeTransport(MeshTransport):
         destination: Optional[str] = None,
         channel: int = 0,
         transport: Optional[str] = None,
+        meshcore_channel: Optional[int] = None,
     ) -> bool:
         """Send a message, routing based on destination + hint.
 
         Routing rules
         -------------
         1. **Broadcast** (``destination is None``):
-           Fan out to ALL connected children.  Return True if at least one
-           child succeeded; log per-child failures.
+           Fan out to connected children with per-transport channel selection:
+           - Meshtastic child receives ``channel`` (Meshtastic channel index).
+           - MeshCore child receives ``meshcore_channel``; if that is None the
+             MeshCore child is silently skipped (family not configured for MeshCore).
+           Return True if at least one child succeeded; log per-child failures.
 
         2. **DM with routing hint** (``destination`` set AND ``transport`` given):
            Send ONLY via the child whose name == ``transport``.  This is the
@@ -220,7 +224,7 @@ class CompositeTransport(MeshTransport):
         """
         if destination is None:
             # --- Rule 1: broadcast ---
-            return self._broadcast(text, channel)
+            return self._broadcast(text, channel, meshcore_channel=meshcore_channel)
 
         if transport is not None:
             # --- Rule 2: hinted DM ---
@@ -229,8 +233,17 @@ class CompositeTransport(MeshTransport):
         # --- Rule 3: unhinted DM ---
         return self._send_unhinted(text, destination, channel)
 
-    def _broadcast(self, text: str, channel: int) -> bool:
-        """Fan text out to all connected children; return True if any succeed."""
+    def _broadcast(self, text: str, channel: int, meshcore_channel: Optional[int] = None) -> bool:
+        """Fan text out to connected children with per-transport channel routing.
+
+        For the Meshtastic child, ``channel`` (Meshtastic channel index) is used.
+        For the MeshCore child:
+          - ``meshcore_channel`` set → use that channel index on MeshCore.
+          - ``meshcore_channel`` is None → skip the MeshCore child entirely
+            (family not configured for MeshCore; no fallback to global index).
+
+        Returns True if at least one child succeeded.
+        """
         any_ok = False
         for child in self._children:
             name = _child_name(child)
@@ -239,8 +252,17 @@ class CompositeTransport(MeshTransport):
                     "CompositeTransport: skipping broadcast to %r (not connected)", name
                 )
                 continue
+            # Per-family MeshCore routing: skip MeshCore child when unset.
+            if name == "meshcore" and meshcore_channel is None:
+                logger.debug(
+                    "CompositeTransport: skipping meshcore broadcast "
+                    "(meshcore_channel=None for this family)"
+                )
+                continue
+            # Route each child on its own channel semantics.
+            child_channel = meshcore_channel if name == "meshcore" else channel
             try:
-                ok = child.send_message(text, destination=None, channel=channel)
+                ok = child.send_message(text, destination=None, channel=child_channel)
                 if ok:
                     any_ok = True
                 else:

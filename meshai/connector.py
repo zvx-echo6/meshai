@@ -250,6 +250,7 @@ class MeshConnector:
         text: str,
         destination: Optional[str] = None,
         channel: int = 0,
+        meshcore_channel: Optional[int] = None,  # accepted and ignored; routing for MeshCoreTransport
     ) -> bool:
         """Send a text message.
 
@@ -257,6 +258,8 @@ class MeshConnector:
             text: Message text to send
             destination: Node ID for DM, or None for broadcast
             channel: Channel index to send on
+            meshcore_channel: Per-family MeshCore channel index (ignored here; used by
+                MeshCoreTransport / CompositeTransport when transport=both).
 
         Returns:
             True if send was initiated successfully

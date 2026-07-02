@@ -217,31 +217,65 @@ class TestLifecycle:
 
 class TestBroadcast:
     def test_broadcast_sends_to_all(self) -> None:
+        """With meshcore_channel set, broadcast fans to both children."""
         mt = FakeChild("meshtastic")
         mc = FakeChild("meshcore")
         comp = CompositeTransport([mt, mc])
-        result = comp.send_message("hello mesh")
+        result = comp.send_message("hello mesh", meshcore_channel=0)
         assert result is True
         assert len(mt.send_calls) == 1
         assert len(mc.send_calls) == 1
         assert mt.send_calls[0]["destination"] is None
         assert mc.send_calls[0]["destination"] is None
 
+    def test_broadcast_meshcore_skipped_when_channel_none(self) -> None:
+        """meshcore_channel=None → MeshCore child silently skipped; Meshtastic still gets it."""
+        mt = FakeChild("meshtastic")
+        mc = FakeChild("meshcore")
+        comp = CompositeTransport([mt, mc])
+        result = comp.send_message("hello mesh", meshcore_channel=None)
+        assert result is True  # Meshtastic succeeded
+        assert len(mt.send_calls) == 1
+        assert len(mc.send_calls) == 0  # MeshCore was skipped
+
+    def test_broadcast_meshcore_uses_meshcore_channel(self) -> None:
+        """MeshCore child receives meshcore_channel, Meshtastic receives channel."""
+        mt = FakeChild("meshtastic")
+        mc = FakeChild("meshcore")
+        comp = CompositeTransport([mt, mc])
+        result = comp.send_message("hello", channel=1, meshcore_channel=3)
+        assert result is True
+        assert len(mt.send_calls) == 1
+        assert len(mc.send_calls) == 1
+        assert mt.send_calls[0]["channel"] == 1   # Meshtastic gets `channel`
+        assert mc.send_calls[0]["channel"] == 3   # MeshCore gets `meshcore_channel`
+
+    def test_broadcast_meshtastic_only_when_no_meshcore_child(self) -> None:
+        """When there is no MeshCore child, meshcore_channel is irrelevant."""
+        mt = FakeChild("meshtastic")
+        comp = CompositeTransport([mt])
+        result = comp.send_message("hello", channel=2, meshcore_channel=5)
+        assert result is True
+        assert len(mt.send_calls) == 1
+        assert mt.send_calls[0]["channel"] == 2
+
     def test_broadcast_skips_disconnected_child(self) -> None:
+        """Disconnected Meshtastic child is skipped; MeshCore (with channel set) is sent."""
         mt = FakeChild("meshtastic", connected_val=False)
         mc = FakeChild("meshcore")
         comp = CompositeTransport([mt, mc])
-        result = comp.send_message("hi")
+        result = comp.send_message("hi", meshcore_channel=0)
         assert result is True
         assert len(mt.send_calls) == 0
         assert len(mc.send_calls) == 1
 
     def test_broadcast_true_if_at_least_one_ok(self) -> None:
+        """True if any child succeeds; Meshtastic failing + MeshCore succeeding → True."""
         mt = FakeChild("meshtastic")
         mt.send_message = MagicMock(return_value=False)
         mc = FakeChild("meshcore")
         comp = CompositeTransport([mt, mc])
-        result = comp.send_message("test")
+        result = comp.send_message("test", meshcore_channel=0)
         assert result is True
 
 

@@ -544,6 +544,9 @@ class NotificationRuleConfig:
 
     # Mesh broadcast fields
     broadcast_channel: int = 0
+    # MeshCore channel index for this rule; independent of broadcast_channel.
+    # None = rule does NOT broadcast on MeshCore (no fallback, no default).
+    meshcore_channel: Optional[int] = None
 
     # Mesh DM fields
     node_ids: list = field(default_factory=list)
@@ -585,6 +588,9 @@ class NotificationToggle:
     cooldown_seconds: int = 0      # per (toggle, category, region) throttle window; 0 = disabled
     # per-channel delivery config (mirrors NotificationRuleConfig channel fields)
     broadcast_channel: Optional[int] = None
+    # MeshCore channel index for this family; independent of broadcast_channel.
+    # None = family does NOT broadcast on MeshCore (no fallback, no default).
+    meshcore_channel: Optional[int] = None
     node_ids: list = field(default_factory=list)
     smtp_host: str = ""
     smtp_port: int = 587
