@@ -24,6 +24,7 @@ fires New:; revisions UPSERT but don't re-broadcast (v0.5.9 no-Update rule).
 """
 from __future__ import annotations
 from meshai.adapter_config import adapter_config
+from meshai.central.budget import budget_for, fit_to_budget
 
 import logging
 import math
@@ -194,7 +195,9 @@ def _render(*, mag, place, depth_km, lat, lon, tsunami, is_update=False) -> str:
     # Line 3: tsunami warning (only when present)
     line3 = "\U0001f6a8 TSUNAMI WARNING" if tsunami else None
 
-    return "\n".join(l for l in [line1, line2, line3] if l)
+    msg = "\n".join(l for l in [line1, line2, line3] if l)
+    # Safety cap: fit the broadcast string to the mesh packet budget.
+    return fit_to_budget(msg, budget_for("usgs_quake"))
 
 
 def _attach_commit(data: Optional[dict], *, event_id: str,

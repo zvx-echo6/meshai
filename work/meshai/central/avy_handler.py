@@ -39,10 +39,12 @@ Future: retraction broadcast ("AVY advisory lifted") could be added here.
 """
 
 import logging
+import re
 import time
 from typing import Any, Optional
 
 from meshai.adapter_config import adapter_config
+from meshai.central.budget import budget_for, fit_to_budget
 from meshai.persistence import get_db
 
 logger = logging.getLogger(__name__)
@@ -141,10 +143,17 @@ def _render(*, danger_level: int, danger_name: str, zone_name: str,
     prefix = "WARNING:" if danger_level >= 4 else "Watch:"
 
     line1 = f"{emoji} AVY {prefix} {zone_name} \u2014 {danger_name} ({danger_level})"
-    line2 = travel[:120] if travel else None
+    # Travel advice: FIRST SENTENCE only (up to and including the first
+    # sentence terminator), instead of a fixed character slice.
+    line2 = None
+    if travel and travel.strip():
+        t = travel.strip()
+        m = re.search(r"[.!?]", t)
+        line2 = t[: m.end()] if m else t
     line3 = f"{center_id} \u00b7 valid today" if center_id else "valid today"
 
-    return "\n".join(l for l in [line1, line2, line3] if l)
+    msg = "\n".join(l for l in [line1, line2, line3] if l)
+    return fit_to_budget(msg, budget_for("avalanche"))
 
 
 def _attach_commit(data: Optional[dict], *, log_id: Optional[int]) -> None:

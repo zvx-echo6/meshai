@@ -32,6 +32,7 @@ still labels itself New:.
 
 from __future__ import annotations
 from meshai.adapter_config import adapter_config
+from meshai.central.budget import budget_for, fit_to_budget
 
 import logging
 import re
@@ -781,13 +782,18 @@ def _log_event_returning_id(conn, *, now, source, category, severity_word,
 
 
 def _render(n: dict) -> str:
-    """Multi-line wire string.
+    """Budget-fitted multi-line wire string.
 
-    Line 1: {emoji} {display} — Near {city}, {state}
-    Line 2: {road} {direction_long} | MP {mile_marker} OR {from} → {to}
-    Line 3: {lanes_affected} | {delay} min delay | {length}
-    Line 3b: {comment} (additional context, if non-duplicate and <=140 chars)
-    Line 4: Cause: {cause}
+    Line 1: {emoji} {display} — Near {city}, {state}          (critical, kept full)
+    Line 2: {road} {direction_long} [· MP {mile}] · {lanes}   (critical, kept full)
+    Line 3: {narrative/comment}                               (trimmed from END to fit)
+
+    Direction words (Northbound/etc.) and the word "milepost" are NEVER
+    abbreviated. The whole message is fit to the per-adapter packet budget;
+    word-boundary trimming guarantees the narrative's direction words and
+    "milepost" are never chopped mid-word. The separate delay / length / Cause
+    lines were dropped in the budget-fit rework -- the narrative is the trailing
+    trimmed content.
     """
     sub_type = n.get("sub_type") or "incident"
     emoji = _SUB_TYPE_EMOJI.get(sub_type, "⚠️")
@@ -804,66 +810,43 @@ def _render(n: dict) -> str:
         anchor_part = state or ""
     line1 = f"{emoji} {display} — {anchor_part}".rstrip(" —")
 
-    # Line 2: road + direction + mile_marker OR from/to segment (TomTom case)
+    # Line 2: road + direction (+ MP) + lane-status joined by " · ".
+    # Direction is expanded to the full word; abbreviations are never emitted.
     road = n.get("road")
     direction = n.get("direction")
     dir_long = _DIRECTION_LONG.get(direction, direction) if direction else None
     mile = n.get("mile_marker")
     from_loc = n.get("from_loc")
     to_loc = n.get("to_loc")
-    parts = []
+    seg: list[str] = []
     if road and dir_long:
-        parts.append(f"{road} {dir_long}")
+        seg.append(f"{road} {dir_long}")
     elif road:
-        parts.append(road)
+        seg.append(road)
     elif from_loc and to_loc:
-        parts.append(f"{from_loc} → {to_loc}")
+        seg.append(f"{from_loc} → {to_loc}")
     elif from_loc:
-        parts.append(from_loc)
+        seg.append(from_loc)
     if mile is not None:
-        parts.append(f"MP {mile}")
-    line2 = " | ".join(parts) if parts else ""
-
-    # Line 3: lanes_affected (omit if empty/No Data)
+        seg.append(f"MP {mile}")
     lanes = n.get("lanes_affected")
-    line3 = lanes if lanes and lanes.strip().lower() not in ("no data", "") else ""
+    if lanes and lanes.strip().lower() not in ("no data", ""):
+        seg.append(lanes.strip())
+    line2 = " · ".join(seg)
 
-    # Line 4: cause (omit if Incident which is the default)
-    cause = n.get("cause")
-    line4 = f"Cause: {cause}" if cause and cause != "Incident" else ""
+    # Critical head: header + road·lane line, kept verbatim.
+    msg = "\n".join(l for l in (line1, line2) if l)
 
-    # Length (meters from TomTom) formatted as human-readable
-    length_m = n.get("length")
-    length_str = ""
-    if isinstance(length_m, (int, float)) and length_m > 0:
-        if length_m >= 1609:
-            length_str = f"{length_m / 1609:.1f} mi"
-        else:
-            length_str = f"{int(length_m)}m"
-
-    # Optional delay line for tomtom-enriched events
-    delay_minutes = n.get("delay_minutes")
-    delay_line = f"{delay_minutes} min delay" if delay_minutes else ""
-
-    # Combine length, delay, and lanes on line 3
-    extras = [x for x in (delay_line, length_str) if x]
-    if line3 and extras:
-        line3 = f"{line3} | " + " | ".join(extras)
-    elif extras:
-        line3 = " | ".join(extras)
-
-    # Line 3b: comment field, if it contains additional context not already in line 3
+    # Trailing narrative/comment: appended, then the WHOLE message is trimmed
+    # from the end to the packet budget (word-boundary safe).
     comment = n.get("comment")
-    line3b = ""
     if comment and comment.strip():
-        # Skip if comment is just a duplicate of lanes_affected or description
         comment_normalized = comment.strip().lower()
         lanes_normalized = (lanes or "").strip().lower()
-        if comment_normalized != lanes_normalized and len(comment) <= 140:
-            line3b = comment.strip()
+        if comment_normalized != lanes_normalized:
+            msg = f"{msg}\n{comment.strip()}" if msg else comment.strip()
 
-    lines = [l for l in (line1, line2, line3, line3b, line4) if l]
-    return "\n".join(lines)
+    return fit_to_budget(msg, budget_for("incident"))
 
 
 def _location_anchor(n: dict) -> str:

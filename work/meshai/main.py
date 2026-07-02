@@ -397,11 +397,14 @@ class MeshAI:
         # Transport connector (factory selects backend from config.connection.transport)
         self.connector = build_transport(self.config.connection)
 
-        # Fit the NWS one-packet formatter to the active mesh transport's budget
-        # (Meshtastic default 200 -> unchanged). Durable across adapter_config cache
-        # invalidation via the runtime-override store.
+        # Fit every broadcast handler's one-packet formatter to the active mesh
+        # transport's budget (LoRa max_chars, 140). Durable across adapter_config
+        # cache invalidation via the runtime-override store. The adapter names here
+        # MUST match the adapter_config section each handler reads its budget from
+        # (see meshai.central.budget.budget_for calls in the handlers).
         from meshai.adapter_config import set_runtime_override
-        set_runtime_override("nws", "single_packet_max_chars", self.connector.max_chars)
+        for _adapter in ("nws", "incident", "wfigs", "avalanche", "satpass", "usgs_quake"):
+            set_runtime_override(_adapter, "single_packet_max_chars", self.connector.max_chars)
 
         # Passive mesh context buffer
         ctx_cfg = self.config.context

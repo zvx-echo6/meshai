@@ -33,6 +33,7 @@ import pytest
 
 from meshai.central.incident_handler import (
     handle_incident,
+    _render as _incident_render,
 )
 from meshai.persistence import close_thread_connection, init_db
 from meshai.persistence import db as persistence_db
@@ -216,7 +217,10 @@ def test_a_tomtom_icon_renders(mem_db, no_photon, icon, expected_emoji, expected
     assert wire.startswith(f"{expected_emoji} {expected_phrase}")
     assert "Near Boise, ID" in wire
     assert "I-84" in wire
-    assert "5 min delay" in wire
+    # Budget-fit rework: the separate "N min delay" line was dropped; the road
+    # segment carries road (+ direction/lanes), and the message fits 140.
+    assert "min delay" not in wire
+    assert len(wire) <= 140
 
 
 # ============================================================================
@@ -774,3 +778,51 @@ def test_w_itd_511_future_scheduled_dropped_via_start_epoch(mem_db, no_photon):
     now = 2_000_000_000
     wire = handle_incident(env, env["subject"], data={}, now=now)
     assert wire is None
+
+
+# ============================================================================
+# Budget-fit worst case: longest plausible traffic payload must fit 140 chars
+# with critical fields (type, location, road, FULL direction word, lane
+# status, trimmed narrative with intact direction word + "milepost") present.
+# ============================================================================
+
+
+def test_incident_worst_case_fits_140():
+    n = {
+        "sub_type": "accident",
+        "geocoder_city": None,
+        "county": "Minidoka",
+        "state": "ID",
+        "road": "SH-27",
+        "direction": "north",          # abbreviation/short form -> MUST expand
+        "mile_marker": None,
+        "lanes_affected": "1 Right lane blocked",
+        "comment": (
+            "Southbound right lane at milepost 24 and westbound onramp to I-84 "
+            "blocked due to a multi-vehicle collision, expect major delays "
+            "through the evening commute and seek alternate routes tonight"
+        ),
+    }
+    wire = _incident_render(n)
+
+    # (a) fits one mesh packet
+    assert len(wire) <= 140, f"{len(wire)} chars:\n{wire!r}"
+
+    # (b) critical fields present
+    assert wire.startswith("🚨 Crash")                 # type
+    assert "Near Minidoka Co, ID" in wire              # location
+    assert "SH-27" in wire                             # road
+    assert "Northbound" in wire                        # FULL direction (expanded)
+    assert "1 Right lane blocked" in wire              # lane status
+    assert "SH-27 Northbound · 1 Right lane blocked" in wire  # road·lane line
+
+    # (c) direction is NEVER abbreviated anywhere in the wire
+    for abbr in (" NB", " N ", "Sbound", "N/B"):
+        assert abbr not in wire
+
+    # (d) narrative present and word-boundary trimmed (no mid-word chop): the
+    # intact direction word "Southbound" and the intact word "milepost" survive.
+    assert "Southbound" in wire
+    assert "milepost" in wire
+    # trimmed from the END -> ends with the ellipsis, not raw text
+    assert wire.endswith("…")

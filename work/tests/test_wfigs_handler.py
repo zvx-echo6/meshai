@@ -23,6 +23,7 @@ from meshai import central_normalizer as cn
 from meshai.central.wfigs_handler import (
     WFIGS_BROADCAST_COOLDOWN_S,
     handle_wfigs,
+    _render as _wfigs_render,
 )
 from meshai.persistence import close_thread_connection, init_db
 from meshai.persistence import db as persistence_db
@@ -283,7 +284,10 @@ def test_g_new_irwin_inserts_and_broadcasts(mem_db, no_photon):
     assert wire.startswith("🔥 Cache Peak Fire — New")
     assert "Burley" in wire
     assert "1,847 ac" in wire
-    assert "23% contained" in wire
+    assert "containment 23%" in wire
+    # Budget-fit rework: no unique-fire-id line, no bold markdown.
+    assert "ID:" not in wire
+    assert "**" not in wire
 
     # v0.5.8b: handler INSERTs the fires row with last_broadcast_*=NULL,
     # then attaches a commit callback. The dispatcher fires the callback
@@ -416,7 +420,7 @@ def test_j_known_irwin_change_after_cooldown_broadcasts(mem_db, no_photon):
     assert out is not None
     assert out.startswith("🔥 Cache Peak Fire — Update")
     assert "3,000 ac" in out
-    assert "35% contained" in out
+    assert "containment 35%" in out
 
     # Simulate dispatcher commit.
     data2["_on_broadcast_committed"](float(later))
@@ -615,3 +619,70 @@ def test_h_handler_attaches_audit_descriptor_and_callback(mem_db, no_photon):
     assert callable(data["_on_broadcast_committed"])
     assert data["_broadcast_audit"]["table"] == "fires"
     assert data["_broadcast_audit"]["pk"] == _IRWIN_B
+
+
+# ============================================================================
+# Budget-fit worst case: longest plausible fire payload fits 140 chars, with
+# no `ID:` line, no `**` markdown, and discovery rendered DATE-ONLY.
+# ============================================================================
+
+
+def test_wfigs_worst_case_fits_140():
+    n = {
+        "incident_name": "East Fork Salmon River Complex Lightning Fire",
+        "acres": 128456,
+        "contained_pct": 42,
+        "fire_cause": "Lightning",
+        "unique_fire_id": "2026-IDSCF-000987",
+        # Jun 18 2026 ~14:30 local
+        "declared_at_epoch": 1_781_204_400,
+        "geocoder_city": "Near Clayton, ID",
+    }
+    wire = _wfigs_render(n, prefix="Update", last_bcast_acres=100000)
+
+    assert len(wire) <= 140, f"{len(wire)} chars:\n{wire!r}"
+    # critical fields
+    assert "East Fork Salmon River Complex Lightning Fire" in wire  # name
+    assert "128,456 ac" in wire                                     # acreage
+    assert "containment 42%" in wire                                # containment
+    assert "Near Clayton, ID" in wire                              # location
+    assert "Cause: Lightning" in wire                              # cause
+    # format rules
+    assert "ID:" not in wire, "unique-fire-id line must be dropped"
+    assert "**" not in wire, "no bold markdown"
+
+
+def test_wfigs_discovery_is_date_only():
+    n = {
+        "incident_name": "Short Fire",
+        "acres": 100,
+        "contained_pct": 0,
+        "fire_cause": "Human",
+        "unique_fire_id": "2026-X",
+        "declared_at_epoch": 1_781_204_400,  # renders Jun 11 in the handler's UTC-6
+        "geocoder_city": "Boise",
+    }
+    wire = _wfigs_render(n, prefix="New")
+    assert "Discovered Jun 11" in wire
+    # no time-of-day (colon in an H:MM would appear as ":3" etc.)
+    assert "2:30" not in wire and "PM" not in wire and "AM" not in wire
+    assert "ID:" not in wire
+
+
+# ============================================================================
+# Fire-digest kill-switch does NOT touch the per-fire wfigs path: a new-fire
+# envelope still produces a broadcast even though digest broadcast is disabled.
+# ============================================================================
+
+
+def test_per_fire_wfigs_broadcasts_while_digest_disabled(mem_db, no_photon):
+    from meshai.adapter_config import adapter_config
+    # Default posture: the twice-daily digest broadcast is OFF.
+    assert bool(adapter_config.fires.digest_broadcast_enabled) is False
+    # ... yet a new per-fire wfigs alert still broadcasts.
+    env = _make_active_envelope(geocoder_city="Burley")
+    data = {}
+    wire = handle_wfigs(cn.normalize(env), env, env["subject"],
+                        data=data, now=6_000_000)
+    assert wire is not None
+    assert wire.startswith("🔥 Cache Peak Fire — New")

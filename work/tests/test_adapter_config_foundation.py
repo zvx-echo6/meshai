@@ -75,7 +75,7 @@ def test_adapter_config_type_check_constrains_vocabulary(fresh_db):
 
 def test_registry_at_59_entries():
     """v0.6-3a.1 trim: 43 CONFIG-only keys (was 77 in v0.6-3a draft)."""
-    assert len(REGISTRY) == 92, (
+    assert len(REGISTRY) == 96, (
         f"REGISTRY drift guard; got {len(REGISTRY)}. "
         f"If a sentence template / emoji / heuristic snuck in, it belongs in CODE not config."
     )

@@ -42,6 +42,7 @@ from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from meshai.adapter_config import adapter_config
+from meshai.central.budget import budget_for, fit_to_budget
 from meshai.persistence import get_db
 
 logger = logging.getLogger(__name__)
@@ -225,7 +226,8 @@ def format_pass(*, sat_name: str, max_el: float,
         else:
             line2 = time_part
 
-        return f"{line1}\n{line2}"
+        # Safety cap: fit the broadcast string to the mesh packet budget.
+        return fit_to_budget(f"{line1}\n{line2}", budget_for("satpass"))
     else:
         # DM format: compact with exact degrees
         aos_str = _format_time_24h(aos_epoch)

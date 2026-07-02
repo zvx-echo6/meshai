@@ -29,6 +29,7 @@ inside that connection's autocommit mode.
 
 from __future__ import annotations
 from meshai.adapter_config import adapter_config
+from meshai.central.budget import budget_for, fit_to_budget
 
 import logging
 import time
@@ -429,57 +430,42 @@ def _render(n: dict, *, prefix: str = "",
     # Line 1: header
     lines.append(f"🔥 {name} \u2014 {prefix}")
 
-    # Line 2: size / contained with delta + bold
+    # Line 2: size / containment with delta (plain text -- no bold markdown).
     acres_str = f"{int(acres):,} ac" if acres is not None else "size unknown"
     delta_str = ""
     if prefix == "Update" and last_bcast_acres is not None and acres is not None and acres > last_bcast_acres:
         delta_str = f" (+{int(acres - last_bcast_acres):,})"
-    contained_str = f"{int(contained_pct)}% contained" if contained_pct is not None else "containment unknown"
+    contained_str = f"containment {int(contained_pct)}%" if contained_pct is not None else "containment unknown"
+    lines.append(f"{acres_str}{delta_str} · {contained_str}")
 
-    acres_changed = (prefix == "Update" and last_bcast_acres is not None
-                     and acres is not None and acres > last_bcast_acres)
-    contained_changed = (prefix == "Update" and last_bcast_contained is not None
-                         and contained_pct is not None and contained_pct > last_bcast_contained)
-
-    if acres_changed and contained_changed:
-        size_line = f"**{acres_str}{delta_str} | {contained_str}**"
-    elif acres_changed:
-        size_line = f"**{acres_str}{delta_str}** | {contained_str}"
-    elif contained_changed:
-        size_line = f"{acres_str} | **{contained_str}**"
-    else:
-        size_line = f"{acres_str} | {contained_str}"
-    lines.append(size_line)
-
-    # Line 3: movement or plain anchor
+    # Line 3: movement or plain anchor (no bold markdown).
     if (isinstance(movement, dict)
             and movement.get("direction") and movement.get("speed_mph") is not None):
-        lines.append(f"**Moving {movement['direction']} {movement['speed_mph']:.1f} mi/h | {anchor}**")
+        lines.append(f"Moving {movement['direction']} {movement['speed_mph']:.1f} mi/h · {anchor}")
     else:
         lines.append(f"{anchor}")
 
-    # Line 4: cause / discovered
+    # Line 4: cause / discovered (DATE ONLY -- no time-of-day). "Discovered <date>".
     cause_part = cause if cause else None
     disc_part = None
     if declared_at_epoch is not None:
         try:
             dt = _dt.datetime.fromtimestamp(declared_at_epoch,
                                             tz=_dt.timezone(_dt.timedelta(hours=-6)))
-            disc_part = dt.strftime("%b %d %-I:%M %p")
+            disc_part = dt.strftime("%b %-d")
         except Exception:
             pass
     if cause_part and disc_part:
-        lines.append(f"Cause: {cause_part} | Discovered: {disc_part}")
+        lines.append(f"Cause: {cause_part} · Discovered {disc_part}")
     elif cause_part:
         lines.append(f"Cause: {cause_part}")
     elif disc_part:
-        lines.append(f"Discovered: {disc_part}")
+        lines.append(f"Discovered {disc_part}")
 
-    # Line 5: unique fire ID
-    if unique_fire_id:
-        lines.append(f"ID: {unique_fire_id}")
+    # NOTE: the trailing `ID: {unique_fire_id}` line was dropped in the
+    # budget-fit rework -- the unique fire id is not mesh-actionable.
 
-    return "\n".join(lines)
+    return fit_to_budget("\n".join(lines), budget_for("wfigs"))
 
 
 def _location_anchor(n: dict) -> str:
