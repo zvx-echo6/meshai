@@ -47,6 +47,7 @@ class MeshCoreTransport(MeshTransport):
         self._self_info: dict = {}
         self._message_callback: Optional[Callable] = None
         self._callback_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop_ready: threading.Event = threading.Event()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -124,12 +125,20 @@ class MeshCoreTransport(MeshTransport):
 
         # Start the dedicated event loop in a daemon thread.
         self._loop = asyncio.new_event_loop()
+        self._loop_ready.clear()
+
+        def _run_loop() -> None:
+            asyncio.set_event_loop(self._loop)
+            self._loop.call_soon(self._loop_ready.set)
+            self._loop.run_forever()
+
         self._loop_thread = threading.Thread(
-            target=self._loop.run_forever,
+            target=_run_loop,
             name="meshcore-loop",
             daemon=True,
         )
         self._loop_thread.start()
+        self._loop_ready.wait(timeout=5.0)
 
         try:
             mc = self._run_coro(
