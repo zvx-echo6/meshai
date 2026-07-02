@@ -176,35 +176,59 @@ class TestBuildTransport:
 
 class TestSendMessageChannel:
     def test_returns_true_on_non_error_event(self):
+        """With meshcore_channel set, send_chan_msg is called and True returned."""
         t, mc, _ = _transport_with_mock_mc()
         try:
             ok = MagicMock()
             ok.is_error.return_value = False
             mc.commands.send_chan_msg = AsyncMock(return_value=ok)
-            assert t.send_message("hello") is True
+            assert t.send_message("hello", meshcore_channel=0) is True
             mc.commands.send_chan_msg.assert_awaited_once()
         finally:
             _cleanup(t)
 
     def test_returns_false_on_error_event(self):
+        """With meshcore_channel set, an error result returns False."""
         t, mc, _ = _transport_with_mock_mc()
         try:
             err = MagicMock()
             err.is_error.return_value = True
             mc.commands.send_chan_msg = AsyncMock(return_value=err)
-            assert t.send_message("hello") is False
+            assert t.send_message("hello", meshcore_channel=0) is False
         finally:
             _cleanup(t)
 
     def test_returns_false_when_not_connected(self):
         cfg = _mc_config()
         t = MeshCoreTransport(cfg)
-        # _mc is None, no loop started
-        assert t.send_message("test") is False
+        # _mc is None, no loop started — fails before channel check.
+        assert t.send_message("test", meshcore_channel=0) is False
 
-    def _transport_with_configured_index(self, index):
-        """Build a MeshCoreTransport whose config sets meshcore_channel_index."""
-        cfg = _mc_config(meshcore_channel_index=index)
+    def test_meshcore_channel_none_skips_broadcast(self):
+        """meshcore_channel=None → silent no-op (True) without calling send_chan_msg."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            mc.commands.send_chan_msg = AsyncMock()
+            result = t.send_message("hello", meshcore_channel=None)
+            assert result is True  # no-op success
+            mc.commands.send_chan_msg.assert_not_awaited()
+        finally:
+            _cleanup(t)
+
+    def test_meshcore_channel_default_skips_broadcast(self):
+        """Default meshcore_channel=None (no arg) → silent no-op."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            mc.commands.send_chan_msg = AsyncMock()
+            result = t.send_message("hello")  # no meshcore_channel arg
+            assert result is True
+            mc.commands.send_chan_msg.assert_not_awaited()
+        finally:
+            _cleanup(t)
+
+    def _transport_with_mock_send_chan_msg(self):
+        """Build a MeshCoreTransport with a mock mc and async send_chan_msg."""
+        cfg = _mc_config()
         t = MeshCoreTransport(cfg)
         ok = MagicMock()
         ok.is_error.return_value = False
@@ -220,31 +244,30 @@ class TestSendMessageChannel:
         t._loop_thread = thread
         return t, mc
 
-    def test_uses_config_channel_index_when_channel_zero(self):
-        t, mc = self._transport_with_configured_index(3)
+    def test_uses_meshcore_channel_for_broadcast(self):
+        """meshcore_channel=3 → send_chan_msg(3, text)."""
+        t, mc = self._transport_with_mock_send_chan_msg()
         try:
-            t.send_message("hi", channel=0)
-            # channel=0 must not be treated as falsy-fallthrough: broadcasts
-            # always use the configured meshcore_channel_index=3.
+            t.send_message("hi", meshcore_channel=3)
             mc.commands.send_chan_msg.assert_awaited_once_with(3, "hi")
         finally:
             _cleanup(t)
 
-    def test_uses_config_channel_index_when_channel_default(self):
-        t, mc = self._transport_with_configured_index(3)
+    def test_ignores_meshtastic_channel_uses_meshcore_channel(self):
+        """channel=8 (Meshtastic) is irrelevant; meshcore_channel=3 is authoritative."""
+        t, mc = self._transport_with_mock_send_chan_msg()
         try:
-            t.send_message("hi")  # default channel param
+            t.send_message("hi", channel=8, meshcore_channel=3)
             mc.commands.send_chan_msg.assert_awaited_once_with(3, "hi")
         finally:
             _cleanup(t)
 
-    def test_ignores_meshtastic_channel_index(self):
-        # channel=8 carries Meshtastic channel-index semantics that do NOT map
-        # to MeshCore's channel table; the configured index (3) is authoritative.
-        t, mc = self._transport_with_configured_index(3)
+    def test_meshcore_channel_zero_is_valid(self):
+        """meshcore_channel=0 is a valid channel (not falsy-skipped)."""
+        t, mc = self._transport_with_mock_send_chan_msg()
         try:
-            t.send_message("hi", channel=8)
-            mc.commands.send_chan_msg.assert_awaited_once_with(3, "hi")
+            t.send_message("hi", meshcore_channel=0)
+            mc.commands.send_chan_msg.assert_awaited_once_with(0, "hi")
         finally:
             _cleanup(t)
 

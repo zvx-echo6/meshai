@@ -60,9 +60,17 @@ class MeshBroadcastChannel(NotificationChannel):
 
     channel_type = "mesh_broadcast"
 
-    def __init__(self, connector: "MeshConnector", channel_index: int = 0):
+    def __init__(
+        self,
+        connector: "MeshConnector",
+        channel_index: int = 0,
+        meshcore_channel: Optional[int] = None,
+    ):
         self._connector = connector
         self._channel = channel_index
+        # MeshCore channel index; None = do not broadcast on MeshCore for this family.
+        # The transport layer (CompositeTransport / MeshCoreTransport) enforces the skip.
+        self._meshcore_channel = meshcore_channel
         self._renderer = MeshRenderer()
 
     async def deliver(self, alert: "NotificationPayload", rule: "NotificationRuleConfig") -> bool:
@@ -78,6 +86,7 @@ class MeshBroadcastChannel(NotificationChannel):
                     text=alert.message or "",
                     destination=None,
                     channel=self._channel,
+                    meshcore_channel=self._meshcore_channel,
                 )
                 logger.info("Broadcast pre-chunked alert to channel %d", self._channel)
                 return True
@@ -89,6 +98,7 @@ class MeshBroadcastChannel(NotificationChannel):
                     text=chunk,
                     destination=None,
                     channel=self._channel,
+                    meshcore_channel=self._meshcore_channel,
                 )
             logger.info("Broadcast %d chunk(s) to channel %d", len(chunks), self._channel)
             return True
@@ -778,6 +788,7 @@ def create_channel(rule: "NotificationRuleConfig", connector=None) -> Notificati
         return MeshBroadcastChannel(
             connector=connector,
             channel_index=rule.broadcast_channel,
+            meshcore_channel=getattr(rule, "meshcore_channel", None),
         )
     elif delivery_type == "mesh_dm":
         return MeshDMChannel(

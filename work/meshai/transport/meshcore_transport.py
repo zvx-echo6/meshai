@@ -194,6 +194,7 @@ class MeshCoreTransport(MeshTransport):
         destination: Optional[str] = None,
         channel: int = 0,
         transport: Optional[str] = None,  # routing hint — accepted and IGNORED by single-transport impl
+        meshcore_channel: Optional[int] = None,
     ) -> bool:
         """Send a message via MeshCore.
 
@@ -201,11 +202,17 @@ class MeshCoreTransport(MeshTransport):
             text: Message text (caller is responsible for length limits; see
                   ``mesh_max_chars`` config field).
             destination: hex pubkey string for a DM, or None for channel send.
-            channel: Channel index for channel sends (0 = default).
+            channel: Channel index for channel sends (Meshtastic semantics; ignored here).
             transport: Optional routing hint (for CompositeTransport); ignored here.
+            meshcore_channel: Per-family MeshCore channel index for broadcasts.
+                When provided, overrides the global meshcore_channel_index.
+                When None on a broadcast, the send is skipped (family not
+                configured for MeshCore — no fallback, no default).
 
         Returns:
             True if the send succeeded (not an error event).
+            True also for a no-op skip (meshcore_channel=None on broadcast) so
+            the caller (CompositeTransport) doesn't treat a silent skip as failure.
         """
         if self._mc is None:
             logger.error("MeshCoreTransport: cannot send, not connected")
@@ -213,20 +220,27 @@ class MeshCoreTransport(MeshTransport):
 
         try:
             if destination:
+                # DM: meshcore_channel is irrelevant; route by pubkey.
                 result = self._run_coro(
                     self._mc.commands.send_msg(destination, text)
                 )
             else:
+                # Channel broadcast.
                 # Channel-index semantics do NOT cross transports: the passed
                 # `channel` carries Meshtastic channel-index semantics (e.g.
                 # index 8) that have no relationship to MeshCore's separate
-                # channel table. The configured MeshCore channel is therefore
-                # authoritative for broadcasts, so we ignore `channel` here
-                # (this also avoids an explicit channel=0 being treated as
-                # falsy).
-                chan_idx = getattr(self.config, "meshcore_channel_index", 0)
+                # channel table.
+                #
+                # Per-family routing: use meshcore_channel when provided.
+                # If meshcore_channel is None, this family is not configured
+                # for MeshCore → silent no-op (return True).
+                if meshcore_channel is None:
+                    logger.debug(
+                        "MeshCoreTransport: meshcore_channel=None, skipping broadcast"
+                    )
+                    return True
                 result = self._run_coro(
-                    self._mc.commands.send_chan_msg(chan_idx, text)
+                    self._mc.commands.send_chan_msg(meshcore_channel, text)
                 )
             success = not result.is_error()
             if not success:

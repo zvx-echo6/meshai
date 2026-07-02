@@ -660,6 +660,8 @@ class Dispatcher:
             name=f"toggle:{getattr(tog, 'name', '')}",
             enabled=True, trigger_type="condition", delivery_type=ch_type,
             broadcast_channel=(getattr(tog, "broadcast_channel", None) or 0),
+            # meshcore_channel is carried independently; None = skip MeshCore for this family.
+            meshcore_channel=getattr(tog, "meshcore_channel", None),
             node_ids=list(getattr(tog, "node_ids", []) or []),
             smtp_host=getattr(tog, "smtp_host", ""), smtp_port=getattr(tog, "smtp_port", 587),
             smtp_user=getattr(tog, "smtp_user", ""), smtp_password=getattr(tog, "smtp_password", ""),
