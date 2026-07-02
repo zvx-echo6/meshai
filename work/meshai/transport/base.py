@@ -36,6 +36,7 @@ class MeshTransport(abc.ABC):
         text: str,
         destination: Optional[str] = None,
         channel: int = 0,
+        transport: Optional[str] = None,
     ) -> bool:
         """Send a text message.
 
@@ -43,6 +44,10 @@ class MeshTransport(abc.ABC):
             text: Message text to send.
             destination: Node ID for a DM, or None for broadcast.
             channel: Channel index to send on.
+            transport: Optional routing hint (used by CompositeTransport to
+                       select the child mesh that originated an inbound DM).
+                       Single-transport implementations accept and IGNORE this
+                       parameter; it is always None in non-composite callers.
 
         Returns:
             True if send was initiated successfully.

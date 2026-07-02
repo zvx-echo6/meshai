@@ -38,6 +38,9 @@ class MeshCoreTransport(MeshTransport):
     class, so there is zero cost to existing meshtastic deployments.
     """
 
+    # Name tag used by CompositeTransport for routing hints.
+    transport_name: str = "meshcore"
+
     def __init__(self, config) -> None:
         self.config = config
         self._mc = None                          # meshcore.MeshCore instance
@@ -190,14 +193,16 @@ class MeshCoreTransport(MeshTransport):
         text: str,
         destination: Optional[str] = None,
         channel: int = 0,
+        transport: Optional[str] = None,  # routing hint — accepted and IGNORED by single-transport impl
     ) -> bool:
         """Send a message via MeshCore.
 
         Args:
             text: Message text (caller is responsible for length limits; see
-                  ``meshcore_max_chars`` config field for the future chunker).
+                  ``mesh_max_chars`` config field).
             destination: hex pubkey string for a DM, or None for channel send.
             channel: Channel index for channel sends (0 = default).
+            transport: Optional routing hint (for CompositeTransport); ignored here.
 
         Returns:
             True if the send succeeded (not an error event).
@@ -364,7 +369,7 @@ class MeshCoreTransport(MeshTransport):
 
     @property
     def max_chars(self) -> int:
-        return getattr(self.config, "meshcore_max_chars", 140)
+        return self.config.mesh_max_chars
 
     def get_node_name(self, node_id: str) -> str:
         """Resolve a pubkey prefix to a contact display name, or return node_id."""

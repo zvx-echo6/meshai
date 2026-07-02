@@ -79,10 +79,13 @@ class TestBuildTransport:
         assert isinstance(transport, MeshCoreTransport)
         assert isinstance(transport, MeshTransport)
 
-    def test_both_raises_not_implemented(self):
+    def test_both_returns_composite(self):
+        """Phase 4: transport='both' now returns a CompositeTransport (seam filled)."""
+        from meshai.transport.composite_transport import CompositeTransport
         cfg = self._config_with("both")
-        with pytest.raises(NotImplementedError):
-            build_transport(cfg)
+        t = build_transport(cfg)
+        assert isinstance(t, CompositeTransport)
+        assert len(t.children) == 2
 
     def test_unknown_transport_raises_value_error(self):
         cfg = self._config_with("unknown_transport_xyz")

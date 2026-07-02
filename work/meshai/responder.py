@@ -23,8 +23,21 @@ class Responder:
         messages: list[str] | str,
         destination: Optional[str] = None,
         channel: int = 0,
+        transport: Optional[str] = None,
     ) -> bool:
-        """Send response messages with randomized delay pacing."""
+        """Send response messages with randomized delay pacing.
+
+        Args:
+            messages: One or more message strings to send.
+            destination: Node ID for a DM, or None for broadcast.
+            channel: Channel index to send on.
+            transport: Optional routing hint threaded from the originating
+                       MeshMessage.  Passed through to connector.send_message
+                       so CompositeTransport can route DM replies back over
+                       the mesh they arrived on.  Single-transport connectors
+                       accept and ignore it; defaults to None so all existing
+                       call sites are unaffected.
+        """
         if isinstance(messages, str):
             messages = [messages]
 
@@ -42,6 +55,7 @@ class Responder:
                 text=msg,
                 destination=destination,
                 channel=channel,
+                transport=transport,
             )
             if not sent:
                 logger.error(f"Failed to send message {i+1}/{len(messages)}")

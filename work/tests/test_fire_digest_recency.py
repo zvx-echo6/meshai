@@ -2,7 +2,7 @@
 
 Validates recency ordering, contained/tombstoned exclusion, the
 "Name in County Co, ST" line format, correct tail count after budget
-trimming, singular/plural grammar, and the 200-byte LoRa budget.
+trimming, singular/plural grammar, and the 140-byte universal mesh budget.
 """
 from __future__ import annotations
 
@@ -62,28 +62,34 @@ class TestFireDigestRecency:
     """Deterministic fire digest renderer tests."""
 
     def test_top_2_listed_in_recency_order(self):
-        """The 2 most recent active fires are listed in order."""
+        """The most recent active fire is listed first.
+
+        With the universal 140-byte budget, the header + 1 fire line + tail
+        fits; the second fire line does not.  Alpha (most recent) must appear;
+        Bravo belongs to the tail count.
+        """
         conn = get_db()
         now = int(time.time())
         _seed_scenario(conn)
         from meshai.notifications.scheduled.fire_digest import render_digest
         wire, source = asyncio.run(render_digest(now=now))
         assert source == "deterministic"
+        # Most recent fire must appear in the wire body.
         assert "Alpha Fire" in wire
-        assert "Bravo Fire" in wire
-        pos_alpha = wire.index("Alpha Fire")
-        pos_bravo = wire.index("Bravo Fire")
-        assert pos_alpha < pos_bravo, "Alpha Fire (most recent) should appear before Bravo Fire"
+        # Bravo does not fit within 140 bytes alongside the header + tail.
+        assert "Bravo Fire" not in wire
 
     def test_line_format_name_in_county_co_state(self):
-        """Fire lines render as 'Name in County Co, ST'."""
+        """Fire lines render as 'Name in County Co, ST'.
+
+        Only the most recent fire fits within the 140-byte budget.
+        """
         conn = get_db()
         now = int(time.time())
         _seed_scenario(conn)
         from meshai.notifications.scheduled.fire_digest import render_digest
         wire, _ = asyncio.run(render_digest(now=now))
         assert "Alpha Fire in Ada Co, ID" in wire
-        assert "Bravo Fire in Boise Co, ID" in wire
 
     def test_missing_county_renders_name_in_state(self):
         """Fire with no county renders as 'Name in ST'."""
@@ -123,17 +129,25 @@ class TestFireDigestRecency:
         """N == 1 renders 'There is 1 additional wildfire.'."""
         conn = get_db()
         now = int(time.time())
-        _seed_scenario(conn)
+        # 3 fires; short names + no county → lines are short enough that
+        # 2 fit within the 140-byte budget, leaving 1 in the tail.
+        for irwin, name, offset in [
+            ("SG-01", "A", 3600),
+            ("SG-02", "B", 7200),
+            ("SG-03", "C", 10800),
+        ]:
+            _seed_fire(conn, irwin_id=irwin, name=name, acres=100,
+                       contained=None, last_event_at=now - offset,
+                       county=None, state="ID")
         from meshai.notifications.scheduled.fire_digest import render_digest
         wire, _ = asyncio.run(render_digest(now=now))
-        # 3 active total, 2 shown, 1 remaining
+        # 3 active total, 2 shown (budget), 1 remaining
         assert "There is 1 additional wildfire. DM me for the full list." in wire
 
     def test_n_plural_grammar(self):
         """N > 1 renders 'There are N additional wildfires.'."""
         conn = get_db()
         now = int(time.time())
-        day = 86400
         for i in range(4):
             _seed_fire(conn, irwin_id=f"PL-{i:02d}", name=f"Fire {i}",
                        acres=100 + i, contained=None,
@@ -141,8 +155,9 @@ class TestFireDigestRecency:
                        county="Ada", state="ID")
         from meshai.notifications.scheduled.fire_digest import render_digest
         wire, _ = asyncio.run(render_digest(now=now))
-        # 4 active, 2 shown, 2 remaining
-        assert "There are 2 additional wildfires. DM me for the full list." in wire
+        # 4 active; "Fire N in Ada Co, ID" lines total ~142 bytes for 2 lines +
+        # header + tail → only 1 line fits in the 140-byte budget → 3 remaining.
+        assert "There are 3 additional wildfires. DM me for the full list." in wire
 
     def test_n_zero_omits_sentence(self):
         """When N == 0, the tail sentence is omitted entirely."""
@@ -186,7 +201,7 @@ class TestFireDigestRecency:
         wire, source = asyncio.run(render_digest(now=now))
         assert source == "deterministic"
         byte_len = len(wire.encode("utf-8"))
-        assert byte_len <= 200, f"Wire is {byte_len} bytes, exceeds 200"
+        assert byte_len <= 140, f"Wire is {byte_len} bytes, exceeds 140"
         # If both long lines fit, remaining = 1; if only one fits, remaining = 2
         # Either way the tail count must match (total - shown)
         lines = wire.split("\n")
@@ -205,7 +220,7 @@ class TestFireDigestRecency:
         from meshai.notifications.scheduled.fire_digest import render_digest
         wire, _ = asyncio.run(render_digest(now=now))
         byte_len = len(wire.encode("utf-8"))
-        assert byte_len <= 200, f"Digest is {byte_len} bytes, exceeds 200-byte budget"
+        assert byte_len <= 140, f"Digest is {byte_len} bytes, exceeds 140-byte budget"
 
     def test_no_fires_returns_empty(self):
         """No active fires -> empty wire, 'no_fires' source."""
