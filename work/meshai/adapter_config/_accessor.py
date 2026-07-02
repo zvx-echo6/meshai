@@ -36,6 +36,16 @@ logger = logging.getLogger(__name__)
 _CACHE_LOCK = threading.Lock()
 _cache: dict[tuple[str, str], Any] = {}
 
+# Runtime-override store: values injected here survive cache invalidation.
+# Keyed by the same (adapter, key) tuple as _cache.  Never cleared by
+# invalidate_cache(); cleared only by explicit deletion or process exit.
+_overrides: dict[tuple[str, str], Any] = {}
+
+
+def set_runtime_override(adapter: str, key: str, value: Any) -> None:
+    """Persist a runtime-derived adapter_config value that survives cache invalidation."""
+    _overrides[(adapter, key)] = value
+
 
 def invalidate_cache() -> None:
     """Drop every cached value. Called by the REST API on PUT/reset."""
@@ -143,8 +153,11 @@ class AdapterConfig:
 
 
 def _resolve(adapter: str, key: str) -> Any:
-    """Read pipeline: cache -> DB -> registry."""
+    """Read pipeline: overrides -> cache -> DB -> registry."""
     cache_key = (adapter, key)
+    override = _overrides.get(cache_key, _SENTINEL)
+    if override is not _SENTINEL:
+        return override
     cached = _cache.get(cache_key, _SENTINEL)
     if cached is not _SENTINEL:
         return cached

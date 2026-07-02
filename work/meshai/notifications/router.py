@@ -185,12 +185,13 @@ class NotificationRouter:
                 delivery_alert = alert
                 message = alert.get("message", "")
                 if channel.channel_type in ("mesh_broadcast", "mesh_dm"):
-                    if len(message) > 200:
+                    _budget = getattr(self._connector, "max_chars", 200)
+                    if len(message) > _budget:
                         if self._summarizer:
-                            summary = await self._summarizer.summarize(message, max_chars=195)
+                            summary = await self._summarizer.summarize(message, max_chars=_budget - 5)
                             delivery_alert = {**alert, "message": summary}
                         else:
-                            delivery_alert = {**alert, "message": message[:195] + "..."}
+                            delivery_alert = {**alert, "message": message[:_budget - 5] + "..."}
 
                 # Convert dict to NotificationPayload for channel interface
                 payload = NotificationPayload(

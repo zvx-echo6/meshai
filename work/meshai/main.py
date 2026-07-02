@@ -381,6 +381,12 @@ class MeshAI:
         # Transport connector (factory selects backend from config.connection.transport)
         self.connector = build_transport(self.config.connection)
 
+        # Fit the NWS one-packet formatter to the active mesh transport's budget
+        # (Meshtastic default 200 -> unchanged). Durable across adapter_config cache
+        # invalidation via the runtime-override store.
+        from meshai.adapter_config import set_runtime_override
+        set_runtime_override("nws", "single_packet_max_chars", self.connector.max_chars)
+
         # Passive mesh context buffer
         ctx_cfg = self.config.context
         if ctx_cfg.enabled:
@@ -666,7 +672,7 @@ class MeshAI:
                     from .chunker import chunk_response
                     messages, remaining = chunk_response(
                         result.response,
-                        max_chars=self.config.response.max_length,
+                        max_chars=min(self.config.response.max_length, self.connector.max_chars),
                         max_messages=self.config.response.max_messages,
                     )
                     if remaining:

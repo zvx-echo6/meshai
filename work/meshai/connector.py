@@ -72,6 +72,10 @@ class MeshtasticTransport(MeshTransport):
         """Get our node's ID."""
         return self._my_node_id
 
+    @property
+    def max_chars(self) -> int:
+        return getattr(self.config, "meshtastic_max_chars", 200)
+
     def connect(self) -> None:
         """Establish connection to Meshtastic node."""
         logger.info(f"Connecting to Meshtastic node via {self.config.type}...")

@@ -362,6 +362,10 @@ class MeshCoreTransport(MeshTransport):
         """True when the transport has an active connection."""
         return self._connected and self._mc is not None
 
+    @property
+    def max_chars(self) -> int:
+        return getattr(self.config, "meshcore_max_chars", 140)
+
     def get_node_name(self, node_id: str) -> str:
         """Resolve a pubkey prefix to a contact display name, or return node_id."""
         if self._mc is None:

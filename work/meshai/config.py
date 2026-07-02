@@ -36,6 +36,7 @@ class ConnectionConfig:
     reconnect_health_interval: float = 30.0
     # --- transport selection (Phase 1 seam; MeshCore support is Phase 2) ---
     transport: str = "meshtastic"  # "meshtastic" | "meshcore" | "both"
+    meshtastic_max_chars: int = 200  # default Meshtastic packet budget
     # --- MeshCore transport settings (used when transport="meshcore") ---
     meshcore_host: str = "100.64.0.9"          # pyMC companion frame server host
     meshcore_port: int = 5050                   # pyMC companion frame server port

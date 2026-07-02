@@ -63,7 +63,8 @@ class MeshBroadcastChannel(NotificationChannel):
     def __init__(self, connector: "MeshConnector", channel_index: int = 0):
         self._connector = connector
         self._channel = channel_index
-        self._renderer = MeshRenderer()
+        _mc = getattr(connector, "max_chars", 200)
+        self._renderer = MeshRenderer(char_limit=_mc if isinstance(_mc, int) else 200)
 
     async def deliver(self, alert: "NotificationPayload", rule: "NotificationRuleConfig") -> bool:
         """Send alert to mesh channel."""
@@ -174,7 +175,8 @@ class MeshDMChannel(NotificationChannel):
     def __init__(self, connector: "MeshConnector", node_ids: list[str]):
         self._connector = connector
         self._node_ids = node_ids
-        self._renderer = MeshRenderer()
+        _mc = getattr(connector, "max_chars", 200)
+        self._renderer = MeshRenderer(char_limit=_mc if isinstance(_mc, int) else 200)
 
     async def deliver(self, alert: "NotificationPayload", rule: "NotificationRuleConfig") -> bool:
         """Send alert via DM to configured nodes."""

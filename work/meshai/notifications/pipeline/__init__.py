@@ -74,6 +74,7 @@ def build_pipeline(config, llm_backend, connector=None) -> EventBus:
     accumulator = DigestAccumulator(
         llm_backend=llm_backend,
         include_toggles=include_toggles,
+        mesh_char_limit=connector.max_chars if connector is not None else 200,
     )
 
     # Tee closure: events go to BOTH dispatcher and accumulator
