@@ -28,6 +28,7 @@ Emoji by event_type prefix (substring match, case-insensitive):
 """
 from __future__ import annotations
 from meshai.adapter_config import adapter_config
+from meshai.central.budget import budget_for, fit_to_budget
 
 import logging
 import re
@@ -320,6 +321,59 @@ def handle_nws(envelope: dict, subject: str,
     return None
 
 
+# Hail descriptor -> diameter in inches (NWS convention).
+_HAIL_DESCRIPTORS = {
+    "pea": 0.25, "half inch": 0.50, "penny": 0.75, "nickel": 0.88,
+    "quarter": 1.00, "half dollar": 1.25, "ping pong": 1.50, "ping-pong": 1.50,
+    "golf ball": 1.75, "golf": 1.75, "hen egg": 2.00, "tennis ball": 2.50,
+    "baseball": 2.75, "softball": 4.00,
+}
+
+
+def _tighten_wind(wind: str) -> str:
+    """'60 MPH' -> '60mph winds' (no space before mph, no 'wind gusts' filler)."""
+    w = (wind or "").strip().lower().replace(" mph", "mph")
+    if not w:
+        return ""
+    if not w.endswith("mph"):
+        w = f"{w}mph"
+    return f"{w} winds"
+
+
+def _fmt_hail(hail: str) -> str:
+    """Numeric or descriptor hail size -> '1\" hail'. Descriptor maps per NWS."""
+    s = (hail or "").strip()
+    if not s:
+        return ""
+    val = None
+    low = s.lower()
+    for k, v in _HAIL_DESCRIPTORS.items():
+        if k in low:
+            val = v
+            break
+    if val is None:
+        try:
+            val = float(re.sub(r"[^0-9.]", "", s))
+        except (ValueError, TypeError):
+            return ""
+    txt = f"{val:.2f}".rstrip("0").rstrip(".")
+    return f'{txt}" hail'
+
+
+def _collapse_certainty(text: str) -> str:
+    """'Radar confirmed'/'Radar indicated' -> 'radar'; 'Observed' -> 'observed'."""
+    low = (text or "").strip().lower()
+    if low in ("radar confirmed", "radar indicated"):
+        return "radar"
+    if low == "observed":
+        return "observed"
+    if low == "likely":
+        return "likely"
+    if low == "on ground":
+        return "on ground"
+    return (text or "").strip()
+
+
 def _render(*, event_type, area_desc, geocoder_city, county, state,
              expires_epoch, lat, lon, now, prefix: str = "", d: dict = None) -> str:
     d = d or {}
@@ -359,23 +413,34 @@ def _render(*, event_type, area_desc, geocoder_city, county, state,
         line2 = ""
 
     # Line 3: hazard + certainty/threat (SAME-code branched)
+    # Line 3: TIGHTENED hazard wording. Filler dropped; wind as '60mph winds',
+    # hail as numeric inches ('1" hail'); certainty collapsed to radar/observed;
+    # hazard groups and certainty joined by " · ".
     certainty = (d.get("certainty") or "").strip()
     line3 = ""
     if same_code == "TOR":
         detection = (params.get("tornadoDetection") or [""])[0]
-        status = "On ground" if detection == "OBSERVED" else "Radar indicated"
+        status = "on ground" if detection == "OBSERVED" else "radar"
         threat = (params.get("tornadoDamageThreat") or [""])[0]
-        threat_seg = f" | {threat.title()} damage threat" if threat else ""
-        line3 = f"{status}{threat_seg}"
+        threat_seg = f" · {threat.lower()} damage" if threat else ""
+        line3 = f"tornado {status}{threat_seg}"
     elif same_code == "SVR":
         wind = (params.get("maxWindGust") or [""])[0]
         hail = (params.get("maxHailSize") or [""])[0]
         bits = []
-        if wind and wind not in ("0 MPH", ""): bits.append(f"{wind.lower()} winds")
-        if hail and hail not in ("0.00", "0", ""): bits.append(f"{hail} in hail")
+        if wind and wind not in ("0 MPH", ""):
+            w = _tighten_wind(wind)
+            if w:
+                bits.append(w)
+        if hail and hail not in ("0.00", "0", ""):
+            h = _fmt_hail(hail)
+            if h:
+                bits.append(h)
         hazard = ", ".join(bits)
-        confirm = "Radar confirmed" if certainty == "Observed" else "Radar indicated"
-        line3 = f"{hazard} | {confirm}" if hazard else confirm
+        # SVR is radar-based: "Observed" certainty => "Radar confirmed" => "radar".
+        confirm = _collapse_certainty(
+            "Radar confirmed" if certainty == "Observed" else "Radar indicated")
+        line3 = f"{hazard} · {confirm}" if hazard else confirm
     elif same_code in ("FFW", "FLW"):
         hazard_text = desc.get("hazard") or ""
         # First sentence only
@@ -384,14 +449,14 @@ def _render(*, event_type, area_desc, geocoder_city, county, state,
         # Infer flood cause from description
         desc_lower = (d.get("description") or "").lower()
         flood_cause = ""
-        for keyword, label in [("thunderstorm", "Thunderstorms"),
-                                ("dam", "Dam failure"),
-                                ("snowmelt", "Snowmelt"),
-                                ("ice jam", "Ice jam")]:
+        for keyword, label in [("thunderstorm", "thunderstorms"),
+                                ("dam", "dam failure"),
+                                ("snowmelt", "snowmelt"),
+                                ("ice jam", "ice jam")]:
             if keyword in desc_lower:
                 flood_cause = label
                 break
-        cause_seg = f" | {flood_cause}" if flood_cause else ""
+        cause_seg = f" · {flood_cause}" if flood_cause else ""
         line3 = f"{hazard_text}{cause_seg}" if hazard_text else flood_cause
     else:
         # SPS, WSW, etc.: first hazard sentence + certainty if Observed/Likely
@@ -400,7 +465,7 @@ def _render(*, event_type, area_desc, geocoder_city, county, state,
             hazard_text = hazard_text.split(". ")[0]
         cert_seg = ""
         if certainty in ("Observed", "Likely"):
-            cert_seg = f" | {certainty}"
+            cert_seg = f" · {_collapse_certainty(certainty)}"
         line3 = f"{hazard_text}{cert_seg}" if hazard_text else ""
 
     # Line 4: motion + locations (path-sampled if the full town list won't fit).
@@ -423,7 +488,7 @@ def _render(*, event_type, area_desc, geocoder_city, county, state,
             return motion
         return locs or ""
 
-    PACKET_LIMIT = int(getattr(adapter_config.nws, "single_packet_max_chars", 200))
+    PACKET_LIMIT = budget_for("nws")
 
     # Prefer the FULL town list; use it verbatim if the whole message fits.
     full_locs = ", ".join(towns)
@@ -451,9 +516,7 @@ def _render(*, event_type, area_desc, geocoder_city, county, state,
 
     # Final hard-cap safety net for the pathological case (extremely long town
     # names overflow even the first->middle->last sample plus the other lines).
-    if len(msg) > PACKET_LIMIT:
-        msg = msg[:PACKET_LIMIT - 1].rstrip() + "…"
-    return msg
+    return fit_to_budget(msg, PACKET_LIMIT)
 
 
 def _category_to_event_type(category_raw: str) -> str:

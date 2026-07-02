@@ -171,3 +171,24 @@ class TestSatpassHandler:
         result = handle_satpass(env, "central.sat.pass.iss", data={}, now=1718163120)
 
         assert result is None
+
+
+# ============================================================================
+# Budget-fit SAFETY CAP: a pathologically long satellite name must not push
+# the broadcast string past 140 chars. Calls format_pass directly (bypasses
+# the broken consolidation path).
+# ============================================================================
+
+def test_format_pass_worst_case_fits_140():
+    from meshai.central.satpass_handler import format_pass
+    wire = format_pass(
+        sat_name=("NOAA-19 EXPERIMENTAL SUPER LONG SATELLITE DESIGNATION "
+                  "PAYLOAD REVISION X PROTOTYPE FLIGHT MODEL SERIAL 00042"),
+        max_el=78.0,
+        aos_epoch=1719900000, los_epoch=1719900780,
+        aos_compass="NNW", los_compass="SSE",
+        entry_observer="Treasure Valley Observatory West Ridge Site",
+        exit_observer="Magic Valley Observatory East Rim Station",
+        broadcast=True,
+    )
+    assert len(wire) <= 140, f"{len(wire)} chars:\n{wire!r}"

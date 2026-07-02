@@ -397,6 +397,15 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "type": "bool",
         "description": "Whether the fire-digest scheduler broadcasts at the configured slots. Off => no broadcasts even if all other config is valid.",
     },
+    # digest_broadcast_enabled: independent kill-switch on the actual mesh
+    # emission. Disabled by default so the scheduler keeps running (building /
+    # recording digests) without putting the twice-daily digest on the mesh.
+    # Per-fire wfigs alerts are unaffected.
+    ("fires", "digest_broadcast_enabled"): {
+        "default": False,
+        "type": "bool",
+        "description": "Emit the twice-daily fire-digest broadcast. Disabled by default; per-fire wfigs alerts are unaffected.",
+    },
     # digest_schedule: list of HH:MM strings, local-time per digest_timezone.
     # Mirrors band_conditions_schedule shape so operators can reason
     # about the two side-by-side.
@@ -587,9 +596,9 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "description": "Maximum characters for the area field on line 2 of NWS wire. Truncates at last word boundary.",
     },
     ("nws", "single_packet_max_chars"): {
-        "default": 200,
+        "default": 140,
         "type": "int",
-        "description": "Maximum characters for a single NWS mesh packet. Budget enforced after all fields are assembled; only the locations town-list is trimmed to fit.",
+        "description": "Maximum characters for a single NWS mesh packet. Budget enforced after all fields are assembled; only the locations town-list is trimmed to fit. main.py overrides this to the live transport max_chars at runtime.",
     },
 
     # =================================================================

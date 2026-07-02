@@ -194,3 +194,49 @@ def test_missing_event_id_returns_none(adapter):
 def test_does_not_raise_on_corrupted_dict(adapter):
     """Corrupted dict returns None without raising."""
     assert adapter.to_event({"garbage": True}) is None
+
+
+# ============================================================================
+# Central avy_handler._render (mesh broadcast wire) -- budget-fit format.
+#   advice -> FIRST SENTENCE only; zone/level/source kept FULL; fits 140.
+# ============================================================================
+
+from meshai.central.avy_handler import _render as _avy_render
+
+
+def test_avy_render_advice_first_sentence_only():
+    wire = _avy_render(
+        danger_level=4, danger_name="High",
+        zone_name="Western Mountains",
+        center_id="SNFAC",
+        travel=("Avoid all avalanche terrain today. Natural and human-triggered "
+                "avalanches are likely on steep slopes."),
+    )
+    # first sentence retained (with its period), the rest dropped
+    assert "Avoid all avalanche terrain today." in wire
+    assert "Natural and human-triggered" not in wire
+    # zone / level / source kept FULL (never abbreviated)
+    assert "Western Mountains" in wire
+    assert "High (4)" in wire
+    assert "SNFAC" in wire
+
+
+def test_avy_render_worst_case_fits_140():
+    # Long multi-sentence advice paragraph -- only the first sentence is kept,
+    # which lets the full zone / level / source survive under the 140 budget.
+    wire = _avy_render(
+        danger_level=5, danger_name="Extreme",
+        zone_name="Western Mountains",
+        center_id="Sawtooth Avalanche Center",
+        travel=("Avoid all avalanche terrain today! Very dangerous conditions "
+                "exist across all elevations and aspects with widespread natural "
+                "avalanche activity likely through the afternoon and overnight."),
+    )
+    assert len(wire) <= 140, f"{len(wire)} chars:\n{wire!r}"
+    # zone, level, source, and the first-sentence advice all present
+    assert "Western Mountains" in wire
+    assert "Extreme (5)" in wire
+    assert "Sawtooth Avalanche Center" in wire
+    assert "Avoid all avalanche terrain today!" in wire
+    # first sentence terminates at the '!' -> the rest is gone
+    assert "Very dangerous conditions" not in wire

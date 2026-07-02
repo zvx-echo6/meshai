@@ -282,22 +282,25 @@ def test_svr_long_locations_path_sampled(mem_db):
         d=d,
     )
 
-    # (a) fits in one mesh packet
-    assert len(rendered) <= 200, (
-        f"rendered is {len(rendered)} chars (expected <= 200):\n{rendered!r}"
+    # (a) fits in one mesh packet (budget is now the 140-char LoRa max)
+    assert len(rendered) <= 140, (
+        f"rendered is {len(rendered)} chars (expected <= 140):\n{rendered!r}"
     )
 
-    # (b) all data-point categories present
+    # (b) all data-point categories present, hazard wording TIGHTENED
     assert "Severe Thunderstorm Warning" in rendered, "event type missing"
     assert "Until" in rendered, "expiry time segment missing"
     assert "Twin Falls County" in rendered, "area missing"
-    assert "mph winds" in rendered or "hail" in rendered, "hazard segment missing"
+    assert "60mph winds" in rendered, "wind hazard not tightened to '60mph winds'"
+    assert '1" hail' in rendered, "hail hazard not rendered as numeric inches"
+    assert "radar" in rendered, "certainty not collapsed to 'radar'"
     assert "Moving" in rendered, "motion segment missing"
 
-    # (c) path-sampling, not tail-drop: first town, last town, and the arrow
+    # (c) path-sampling applied (arrow) with the soonest-impact town retained.
+    # At the 140 budget the farthest-along town may be trimmed by the final
+    # backstop; the hard cap wins over endpoint preservation.
     assert "→" in rendered, "no arrow -> not path-sampled"
-    assert "Buhl" in rendered, "first town missing"
-    assert "Shoshone" in rendered, "last town dropped (the old tail-trim bug)"
+    assert "Buhl" in rendered, "first (soonest-impact) town missing"
 
 
 def test_svr_short_locations_shown_in_full(mem_db):
@@ -331,6 +334,47 @@ def test_svr_short_locations_shown_in_full(mem_db):
         d=d,
     )
 
-    assert len(rendered) <= 200
+    assert len(rendered) <= 140
     assert "→" not in rendered, "short list should not be path-sampled"
     assert "Buhl, Eden, Hazelton" in rendered, "full comma-joined list expected"
+    # Hazard wording is tightened even on the short-list path.
+    assert "60mph winds" in rendered
+    assert '1" hail' in rendered
+    assert "radar" in rendered
+
+
+def test_svr_worst_case_fits_140(mem_db):
+    """Pathologically long SVR payload: the final wire MUST fit 140 chars while
+    still carrying event name, area, time, tightened hazard, and >=1 town."""
+    long_locations = (
+        "Buhl, Eden, Hazelton, Murtaugh, Richfield, Dietrich, Gooding, "
+        "Hagerman, Wendell, Jerome, Kimberly, Hansen, Filer, and Shoshone"
+    )
+    description = (
+        "HAZARD...Damaging winds to 70 mph and golf ball size hail.\n\n"
+        f"Locations impacted include...{long_locations}"
+    )
+    d = {
+        "eventCode": {"SAME": ["SVR"]},
+        "certainty": "Observed",
+        "parameters": {
+            "maxWindGust": ["70 MPH"],
+            "maxHailSize": ["1.75"],
+            "eventMotionDescription": ["2200000T254DEG...35KT 42.5,-114.5"],
+        },
+        "description": description,
+    }
+    rendered = _render(
+        event_type="Severe Thunderstorm Warning",
+        area_desc="Twin Falls County",
+        geocoder_city=None, county="Twin Falls", state="ID",
+        expires_epoch=1_751_400_000, lat=42.5, lon=-114.46,
+        now=1_751_400_000, d=d,
+    )
+    assert len(rendered) <= 140, f"{len(rendered)} chars:\n{rendered!r}"
+    assert "Severe Thunderstorm Warning" in rendered   # event name
+    assert "Twin Falls County" in rendered              # area
+    assert "Until" in rendered                          # time
+    assert "70mph winds" in rendered                    # tightened hazard (wind)
+    assert '1.75" hail' in rendered                     # golf ball -> 1.75"
+    assert "Buhl" in rendered                           # >=1 town present

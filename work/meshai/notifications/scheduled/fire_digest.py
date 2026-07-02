@@ -258,8 +258,23 @@ class FireDigestScheduler:
         tomorrow = now_dt + timedelta(days=1)
         return _slot_epoch(tomorrow, schedule[0], self._tz_name()), schedule[0]
 
+    def _broadcast_enabled(self) -> bool:
+        try:
+            return bool(adapter_config.fires.digest_broadcast_enabled)
+        except Exception:
+            return False
+
     async def fire_slot(self, slot_epoch_s: int, hh_mm: str) -> bool:
         """Build + broadcast for the given slot. Returns True on broadcast."""
+        # Kill-switch on the actual mesh emission. Disabled by default: the
+        # scheduler wiring stays intact (so flipping the flag to True cleanly
+        # re-enables it) but nothing is dispatched. Per-fire wfigs alerts are a
+        # separate path and are unaffected.
+        if not self._broadcast_enabled():
+            self._logger.info(
+                "fire-digest: broadcast disabled "
+                "(fires.digest_broadcast_enabled=False); skipping slot %s", hh_mm)
+            return False
         wire, source = await render_digest(now=int(self._clock()))
         if source == "no_fires":
             self._logger.info(

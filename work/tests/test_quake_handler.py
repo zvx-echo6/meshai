@@ -173,3 +173,21 @@ def test_commit_callback_updates_last_broadcast(mem_db):
         "SELECT last_broadcast_at FROM quake_events WHERE event_id='cb1'"
     ).fetchone()
     assert post["last_broadcast_at"] == 1_000_001
+
+
+# ============================================================================
+# Budget-fit SAFETY CAP: a freak-long USGS place string must still fit 140.
+# ============================================================================
+
+from meshai.central.quake_handler import _render as _quake_render
+
+
+def test_quake_render_worst_case_fits_140():
+    place = ("293 km SSW of a pathologically long place description island "
+             "region in the remote northern pacific ocean near absolutely nowhere "
+             "at all off the coast of the far edge of the map")
+    wire = _quake_render(mag=7.9, place=place, depth_km=12, lat=44.123,
+                         lon=-114.987, tsunami=True, is_update=False)
+    assert len(wire) <= 140, f"{len(wire)} chars:\n{wire!r}"
+    # magnitude survives on the (critical) first line
+    assert "M7.9" in wire
