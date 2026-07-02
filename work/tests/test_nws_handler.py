@@ -1,7 +1,7 @@
 """Tests for v0.5.10 NWS handler."""
 import pytest
 
-from meshai.central.nws_handler import handle_nws, _emoji_for_event
+from meshai.central.nws_handler import handle_nws, _emoji_for_event, _render
 from meshai.persistence import close_thread_connection, init_db
 from meshai.persistence import db as persistence_db
 
@@ -239,3 +239,98 @@ def test_non_warning_category_no_severity_override(mem_db):
     wire = handle_nws(env, env["subject"], data=data, now=3_000_000)
     assert wire is not None
     assert "_severity_override" not in data
+
+
+# ---- packet-budget enforcement ----
+
+
+def test_svr_long_locations_path_sampled(mem_db):
+    """SVR with a long town list: render must fit in 200 chars, and the town
+    list must be represented as a PATH SAMPLE (first -> middle -> last) rather
+    than a tail-drop. The old bug dropped the final town ('Shoshone')."""
+    # Long list; first town "Buhl", last town "and Shoshone" (exercises the
+    # leading-"and " strip on the tail element).
+    long_locations = (
+        "Buhl, Eden, Hazelton, Murtaugh, Richfield, Dietrich, "
+        "Gooding, Hagerman, Wendell, and Shoshone"
+    )
+    description = (
+        "HAZARD...Damaging winds to 60 mph and quarter-size hail.\n\n"
+        f"Locations impacted include...{long_locations}"
+    )
+    d = {
+        "eventCode": {"SAME": ["SVR"]},
+        "certainty": "Observed",
+        "parameters": {
+            "maxWindGust": ["60 MPH"],
+            "maxHailSize": ["1.00"],
+            # 254 DEG 35 KT -> "Moving W 40 mph"
+            "eventMotionDescription": ["2200000T254DEG...35KT 42.5,-114.5"],
+        },
+        "description": description,
+    }
+    rendered = _render(
+        event_type="Severe Thunderstorm Warning",
+        area_desc="Twin Falls County",
+        geocoder_city=None,
+        county="Twin Falls",
+        state="ID",
+        expires_epoch=1_751_400_000,
+        lat=42.5,
+        lon=-114.46,
+        now=1_751_400_000,
+        d=d,
+    )
+
+    # (a) fits in one mesh packet
+    assert len(rendered) <= 200, (
+        f"rendered is {len(rendered)} chars (expected <= 200):\n{rendered!r}"
+    )
+
+    # (b) all data-point categories present
+    assert "Severe Thunderstorm Warning" in rendered, "event type missing"
+    assert "Until" in rendered, "expiry time segment missing"
+    assert "Twin Falls County" in rendered, "area missing"
+    assert "mph winds" in rendered or "hail" in rendered, "hazard segment missing"
+    assert "Moving" in rendered, "motion segment missing"
+
+    # (c) path-sampling, not tail-drop: first town, last town, and the arrow
+    assert "→" in rendered, "no arrow -> not path-sampled"
+    assert "Buhl" in rendered, "first town missing"
+    assert "Shoshone" in rendered, "last town dropped (the old tail-trim bug)"
+
+
+def test_svr_short_locations_shown_in_full(mem_db):
+    """Short town list that fits in one packet: show the FULL comma-joined
+    list, and never emit the path-sample arrow."""
+    short_locations = "Buhl, Eden, and Hazelton"
+    description = (
+        "HAZARD...Damaging winds to 60 mph and quarter-size hail.\n\n"
+        f"Locations impacted include...{short_locations}"
+    )
+    d = {
+        "eventCode": {"SAME": ["SVR"]},
+        "certainty": "Observed",
+        "parameters": {
+            "maxWindGust": ["60 MPH"],
+            "maxHailSize": ["1.00"],
+            "eventMotionDescription": ["2200000T254DEG...35KT 42.5,-114.5"],
+        },
+        "description": description,
+    }
+    rendered = _render(
+        event_type="Severe Thunderstorm Warning",
+        area_desc="Twin Falls County",
+        geocoder_city=None,
+        county="Twin Falls",
+        state="ID",
+        expires_epoch=1_751_400_000,
+        lat=42.5,
+        lon=-114.46,
+        now=1_751_400_000,
+        d=d,
+    )
+
+    assert len(rendered) <= 200
+    assert "→" not in rendered, "short list should not be path-sampled"
+    assert "Buhl, Eden, Hazelton" in rendered, "full comma-joined list expected"

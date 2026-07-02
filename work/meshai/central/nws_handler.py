@@ -104,7 +104,9 @@ def _parse_nws_description(description: str) -> dict:
         if m:
             text = m.group(1).replace("\n", " ").strip()
             if text:
-                result[key] = text[:80]
+                # Preserve the FULL town list for path-sampling in _render();
+                # all other fields keep the 80-char cap.
+                result[key] = text[:400] if key == "locations" else text[:80]
     return result
 
 
@@ -401,27 +403,57 @@ def _render(*, event_type, area_desc, geocoder_city, county, state,
             cert_seg = f" | {certainty}"
         line3 = f"{hazard_text}{cert_seg}" if hazard_text else ""
 
-    # Line 4: motion + locations
+    # Line 4: motion + locations (path-sampled if the full town list won't fit).
     compass, speed_mph = _parse_motion(params)
     motion = f"Moving {compass} {speed_mph} mph" if compass and speed_mph else ""
-    locations = (desc.get("locations") or "").rstrip("., ")
-    _loc_limit = int(adapter_config.nws.locations_max_chars)
-    if len(locations) > _loc_limit:
-        cut = locations[:_loc_limit].rsplit(" ", 1)[0]
-        if not cut:
-            cut = locations[:_loc_limit]
-        locations = cut + "\u2026"
-    if motion and locations:
-        line4 = f"{motion} — {locations}"
-    elif motion:
-        line4 = motion
-    elif locations:
-        line4 = locations
-    else:
-        line4 = ""
 
-    lines = [l for l in (line1, line2, line3, line4) if l]
-    return "\n".join(lines)
+    # Parse the (now-full) locations string into an ordered town list. Path
+    # order = soonest-impact first ... farthest-along last. The tail element
+    # frequently starts with "and " (e.g. "and Shoshone") -> strip that.
+    raw = (desc.get("locations") or "").rstrip("., ")
+    towns = [t.strip() for t in raw.split(",") if t.strip()]
+    if towns:
+        towns[-1] = re.sub(r"^and\s+", "", towns[-1], flags=re.IGNORECASE).strip()
+        towns = [t for t in towns if t]
+
+    def _line4(locs: str) -> str:
+        if motion and locs:
+            return f"{motion} — {locs}"
+        if motion:
+            return motion
+        return locs or ""
+
+    PACKET_LIMIT = int(getattr(adapter_config.nws, "single_packet_max_chars", 200))
+
+    # Prefer the FULL town list; use it verbatim if the whole message fits.
+    full_locs = ", ".join(towns)
+    line4 = _line4(full_locs)
+    msg = "\n".join(l for l in (line1, line2, line3, line4) if l)
+
+    if len(msg) > PACKET_LIMIT:
+        # Won't fit: collapse locations to a path sample that never loses the
+        # endpoints -> soonest-impact -> midway -> farthest-along.
+        if len(towns) >= 3:
+            sampled = [towns[0], towns[len(towns) // 2], towns[-1]]
+        elif len(towns) == 2:
+            sampled = [towns[0], towns[-1]]
+        else:
+            sampled = list(towns)
+        # De-dup consecutive repeats (a short list can make first == middle),
+        # so we never render "Buhl → Buhl → Shoshone".
+        deduped = []
+        for t in sampled:
+            if not deduped or deduped[-1] != t:
+                deduped.append(t)
+        path = " → ".join(deduped)
+        line4 = _line4(path)
+        msg = "\n".join(l for l in (line1, line2, line3, line4) if l)
+
+    # Final hard-cap safety net for the pathological case (extremely long town
+    # names overflow even the first->middle->last sample plus the other lines).
+    if len(msg) > PACKET_LIMIT:
+        msg = msg[:PACKET_LIMIT - 1].rstrip() + "…"
+    return msg
 
 
 def _category_to_event_type(category_raw: str) -> str:
