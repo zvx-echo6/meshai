@@ -46,6 +46,7 @@ interface NotificationToggle {
   regions: string[]
   severity_channels: Record<string, string[]>
   broadcast_channel: number | null
+  meshcore_channel?: number | null
   node_ids: string[]
   smtp_host: string
   smtp_port: number
@@ -1611,6 +1612,18 @@ function MasterToggles({ toggles, onChange }: {
                   </table>
                   <ListInput label="Regions (empty = all)" value={t.regions || []} onChange={(v) => upd(key, { regions: v })} placeholder="Add region..." />                  <div className="text-xs text-slate-500 pt-1">Channel config</div>
                   <NumberInput label="Broadcast channel" value={t.broadcast_channel ?? 0} onChange={(v) => upd(key, { broadcast_channel: v })} />
+                  <div className="space-y-1">
+                    <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">MeshCore channel</label>
+                    <input
+                      type="number"
+                      value={t.meshcore_channel != null ? t.meshcore_channel : ''}
+                      onChange={(e) => upd(key, { meshcore_channel: e.target.value === '' ? null : Number(e.target.value) })}
+                      min={0}
+                      placeholder=""
+                      className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 font-mono focus:outline-none focus:border-accent"
+                    />
+                    <p className="text-xs text-slate-600">blank = this family is not broadcast on MeshCore.</p>
+                  </div>
                   <ListInput label="DM node IDs" value={t.node_ids || []} onChange={(v) => upd(key, { node_ids: v })} placeholder="!nodeid" />
                   <ListInput label="Email recipients" value={t.recipients || []} onChange={(v) => upd(key, { recipients: v })} placeholder="ops@example.com" />
                   <TextInput label="SMTP host" value={t.smtp_host || ''} onChange={(v) => upd(key, { smtp_host: v })} placeholder="smtp.example.com" />

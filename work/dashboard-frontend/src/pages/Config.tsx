@@ -23,6 +23,10 @@ interface ConnectionConfig {
   serial_port: string
   tcp_host: string
   tcp_port: number
+  transport?: string
+  meshcore_host?: string
+  meshcore_port?: number
+  meshcore_channel_index?: number
 }
 
 interface ResponseConfig {
@@ -707,9 +711,23 @@ function BotSection({ data, onChange }: { data: BotConfig; onChange: (d: BotConf
 }
 
 function ConnectionSection({ data, onChange }: { data: ConnectionConfig; onChange: (d: ConnectionConfig) => void }) {
+  const transport = data.transport ?? 'meshtastic'
+  const showMeshCore = transport === 'meshcore' || transport === 'both'
   return (
     <div className="space-y-4">
       <SectionDescription text={SECTION_DESCRIPTIONS.connection} />
+      <SelectInput
+        label="Transport Mode"
+        value={transport}
+        onChange={(v) => onChange({ ...data, transport: v })}
+        options={[
+          { value: 'meshtastic', label: 'Meshtastic' },
+          { value: 'meshcore', label: 'MeshCore' },
+          { value: 'both', label: 'Both' },
+        ]}
+        helper="Which radio transport(s) MeshAI uses"
+        info="Meshtastic: connect to a Meshtastic radio only. MeshCore: connect to a MeshCore node only. Both: connect to both simultaneously for dual-transport operation."
+      />
       <SelectInput
         label="Connection Type"
         value={data.type}
@@ -747,6 +765,29 @@ function ConnectionSection({ data, onChange }: { data: ConnectionConfig; onChang
             max={65535}
             helper="Default 4403 for meshtasticd"
           />
+        </div>
+      )}
+      {showMeshCore && (
+        <div className="space-y-4 pt-2 border-t border-[#1e2a3a]">
+          <div className="text-xs text-slate-500 uppercase tracking-wide">MeshCore Connection</div>
+          <div className="grid grid-cols-2 gap-4">
+            <TextInput
+              label="MeshCore Host"
+              value={data.meshcore_host ?? ''}
+              onChange={(v) => onChange({ ...data, meshcore_host: v })}
+              placeholder="192.168.1.100"
+              helper="IP or hostname of the MeshCore node"
+              info="Address of the MeshCore node to connect to."
+            />
+            <NumberInput
+              label="MeshCore Port"
+              value={data.meshcore_port ?? 5525}
+              onChange={(v) => onChange({ ...data, meshcore_port: v })}
+              min={1}
+              max={65535}
+              helper="MeshCore TCP port (default 5525)"
+            />
+          </div>
         </div>
       )}
     </div>
