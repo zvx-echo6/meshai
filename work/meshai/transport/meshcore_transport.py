@@ -38,6 +38,9 @@ class MeshCoreTransport(MeshTransport):
     class, so there is zero cost to existing meshtastic deployments.
     """
 
+    # Name tag used by CompositeTransport for routing hints.
+    transport_name: str = "meshcore"
+
     def __init__(self, config) -> None:
         self.config = config
         self._mc = None                          # meshcore.MeshCore instance
@@ -190,6 +193,7 @@ class MeshCoreTransport(MeshTransport):
         text: str,
         destination: Optional[str] = None,
         channel: int = 0,
+        transport: Optional[str] = None,  # routing hint — accepted and IGNORED by single-transport impl
     ) -> bool:
         """Send a message via MeshCore.
 
@@ -198,6 +202,7 @@ class MeshCoreTransport(MeshTransport):
                   ``meshcore_max_chars`` config field for the future chunker).
             destination: hex pubkey string for a DM, or None for channel send.
             channel: Channel index for channel sends (0 = default).
+            transport: Optional routing hint (for CompositeTransport); ignored here.
 
         Returns:
             True if the send succeeded (not an error event).

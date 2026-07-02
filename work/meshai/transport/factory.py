@@ -15,8 +15,6 @@ def build_transport(config) -> MeshTransport:
         A concrete MeshTransport instance ready to be connected.
 
     Raises:
-        NotImplementedError: When the requested transport is known but not
-            yet implemented (e.g. ``"meshcore"`` or ``"both"``).
         ValueError: When the transport name is unrecognised.
     """
     transport_name = getattr(config, "transport", "meshtastic")
@@ -33,9 +31,15 @@ def build_transport(config) -> MeshTransport:
         return MeshCoreTransport(config)
 
     if transport_name == "both":
-        raise NotImplementedError(
-            "Transport 'both' is not yet implemented (Phase 4 seam)."
-        )
+        # Phase 4: composite transport — drives Meshtastic and MeshCore
+        # simultaneously with correct reply routing.
+        from meshai.connector import MeshtasticTransport
+        from meshai.transport.meshcore_transport import MeshCoreTransport
+        from meshai.transport.composite_transport import CompositeTransport
+        return CompositeTransport([
+            MeshtasticTransport(config),
+            MeshCoreTransport(config),
+        ])
 
     raise ValueError(
         f"Unknown transport {transport_name!r}. "

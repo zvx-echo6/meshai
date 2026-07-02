@@ -45,6 +45,9 @@ class MeshMessage:
 class MeshtasticTransport(MeshTransport):
     """Manages connection to a Meshtastic node (Meshtastic transport backend)."""
 
+    # Name tag used by CompositeTransport for routing hints.
+    transport_name: str = "meshtastic"
+
     def __init__(self, config: ConnectionConfig):
         self.config = config
         self._interface: Optional[meshtastic.MeshInterface] = None
@@ -351,6 +354,7 @@ class MeshtasticTransport(MeshTransport):
         text: str,
         destination: Optional[str] = None,
         channel: int = 0,
+        transport: Optional[str] = None,  # routing hint — accepted and IGNORED by single-transport impl
     ) -> bool:
         """Send a text message.
 
@@ -358,6 +362,7 @@ class MeshtasticTransport(MeshTransport):
             text: Message text to send
             destination: Node ID for DM, or None for broadcast
             channel: Channel index to send on
+            transport: Optional routing hint (for CompositeTransport); ignored here.
 
         Returns:
             True if send was initiated successfully

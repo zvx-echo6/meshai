@@ -85,14 +85,24 @@ class MeshAI:
         # state + the only reconnect driver. Reconnects IN-PLACE so the container
         # never needs to restart.
         # Guard: watchdog is Meshtastic-specific — MeshCoreTransport manages its
-        # own reconnect via the meshcore lib's auto_reconnect parameter. ---
-        if (
-            getattr(self.config.connection, "reconnect", True)
-            and isinstance(self.connector, MeshConnector)
-        ):
-            self.connector._wake = asyncio.Event()
-            self.connector.write_link_status("up")  # we just connected ok
-            self._supervisor_task = asyncio.create_task(self._connection_supervisor())
+        # own reconnect via the meshcore lib's auto_reconnect parameter.
+        # When connector is a CompositeTransport, resolve the Meshtastic child
+        # (if any) and run the watchdog on it; skip if absent (pure MeshCore). ---
+        _mt_child = (
+            self.connector
+            if isinstance(self.connector, MeshConnector)
+            else (
+                self.connector.meshtastic_child()
+                if hasattr(self.connector, "meshtastic_child")
+                else None
+            )
+        )
+        if getattr(self.config.connection, "reconnect", True) and _mt_child is not None:
+            _mt_child._wake = asyncio.Event()
+            _mt_child.write_link_status("up")  # we just connected ok
+            self._supervisor_task = asyncio.create_task(
+                self._connection_supervisor(_mt_child)
+            )
             logger.info("Connection supervisor (watchdog) started")
         self._last_cleanup = time.time()
         self._last_health_compute = 0.0
@@ -226,12 +236,18 @@ class MeshAI:
                     self.context.prune()
                 self._last_cleanup = time.time()
 
-    async def _connection_supervisor(self) -> None:
+    async def _connection_supervisor(self, c=None) -> None:
         """Watchdog: SINGLE source of truth for /tmp/meshai.link and the ONLY
         reconnect driver. Woken by connector._wake (connection.lost) or a
         health-interval timeout. Probe is socket-based (see connector.active_probe).
+
+        *c* is the resolved MeshtasticTransport to watch — either self.connector
+        directly (single-transport) or the Meshtastic child extracted from a
+        CompositeTransport.  The watchdog logic itself is unchanged; only how
+        we resolve *c* has moved to the caller (start()).
         """
-        c = self.connector
+        if c is None:
+            c = self.connector
         hi = getattr(self.config.connection, "reconnect_health_interval", 30.0)
         alive_idle = 2.0 * hi
         probe_wait = 5.0
@@ -647,6 +663,12 @@ class MeshAI:
             )
 
             # Route the message
+            # Capture the originating transport tag for reply routing.
+            # This lets CompositeTransport route the DM reply back over the
+            # same mesh the inbound message arrived on.  Single-transport
+            # connectors accept and ignore this kwarg.
+            originating_transport: Optional[str] = getattr(message, "transport", None)
+
             # Check for continuation request first
             continuation_messages = self.router.check_continuation(message)
             if continuation_messages:
@@ -654,6 +676,7 @@ class MeshAI:
                     continuation_messages,
                     destination=message.sender_id,
                     channel=message.channel,
+                    transport=originating_transport,
                 )
                 return
 
@@ -685,11 +708,13 @@ class MeshAI:
             if not messages:
                 return
 
-            # Send DM response
+            # Send DM response — thread the originating transport hint so
+            # CompositeTransport routes the reply back over the correct mesh.
             await self.responder.send_response(
                 messages,
                 destination=message.sender_id,
                 channel=message.channel,
+                transport=originating_transport,
             )
 
         except Exception as e:
