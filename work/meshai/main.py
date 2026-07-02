@@ -19,6 +19,7 @@ from .commands.status import set_start_time
 from .config import Config
 from .config_loader import load_config, get_config_dir_from_path
 from .connector import MeshConnector, MeshMessage
+from .transport.factory import build_transport
 from .central_normalizer import init_geocoder_config
 from .context import MeshContext
 from .history import ConversationHistory
@@ -372,8 +373,8 @@ class MeshAI:
         # Load persisted summaries into memory cache
         await self._load_summaries()
 
-        # Meshtastic connector
-        self.connector = MeshConnector(self.config.connection)
+        # Transport connector (factory selects backend from config.connection.transport)
+        self.connector = build_transport(self.config.connection)
 
         # Passive mesh context buffer
         ctx_cfg = self.config.context

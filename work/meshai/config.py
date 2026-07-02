@@ -34,6 +34,8 @@ class ConnectionConfig:
     reconnect_initial_delay: float = 2.0
     reconnect_max_delay: float = 60.0
     reconnect_health_interval: float = 30.0
+    # --- transport selection (Phase 1 seam; MeshCore support is future work) ---
+    transport: str = "meshtastic"  # "meshtastic" | "meshcore" | "both"
 
 
 @dataclass

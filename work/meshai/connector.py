@@ -15,6 +15,7 @@ from meshtastic import BROADCAST_NUM
 from pubsub import pub
 
 from .config import ConnectionConfig
+from .transport.base import MeshTransport
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,11 @@ class MeshMessage:
     text: str  # Message content
     channel: int  # Channel index
     is_dm: bool  # True if direct message to us
-    packet: dict  # Raw packet for additional data
+    # Raw packet for additional data.  Optional so non-Meshtastic transports
+    # (MeshCore, etc.) can leave it None while sharing the same dataclass.
+    packet: Optional[dict] = None
+    # Transport tag so consumers can branch on origin if needed.
+    transport: str = "meshtastic"
     _position: Optional[tuple[float, float]] = field(default=None, repr=False, init=False)
 
     @property
@@ -37,8 +42,8 @@ class MeshMessage:
         return self._position
 
 
-class MeshConnector:
-    """Manages connection to Meshtastic node."""
+class MeshtasticTransport(MeshTransport):
+    """Manages connection to a Meshtastic node (Meshtastic transport backend)."""
 
     def __init__(self, config: ConnectionConfig):
         self.config = config
@@ -487,3 +492,10 @@ class MeshConnector:
             logger.error(f"Failed to send message: {e}")
             return False
 
+
+# ---------------------------------------------------------------------------
+# Backward-compatibility alias.  All existing imports of ``MeshConnector``
+# continue to work without any changes.  New code should prefer
+# ``MeshtasticTransport`` or use ``build_transport()`` from the factory.
+# ---------------------------------------------------------------------------
+MeshConnector = MeshtasticTransport
