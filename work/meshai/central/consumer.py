@@ -608,7 +608,7 @@ class CentralConsumer:
             data["_meshai_precomposed"] = True
 
         kwargs = dict(
-            title=str(title)[:200],
+            title=str(title) if data.get("_meshai_precomposed") else str(title)[:200],
             summary="",
             lat=lat,
             lon=lon,
