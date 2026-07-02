@@ -60,9 +60,13 @@ class MeshBroadcastChannel(NotificationChannel):
 
     channel_type = "mesh_broadcast"
 
-    def __init__(self, connector: "MeshConnector", channel_index: int = 0):
+    def __init__(self, connector: "MeshConnector", channel_index: int = 0,
+                 meshcore_channel: Optional[str] = None):
         self._connector = connector
         self._channel = channel_index
+        # Per-family MeshCore channel NAME (None = MeshCore child skipped
+        # downstream). Ignored by Meshtastic; behavior-preserving there.
+        self._meshcore_channel = meshcore_channel
         _mc = getattr(connector, "max_chars", 200)
         self._renderer = MeshRenderer(char_limit=_mc if isinstance(_mc, int) else 200)
 
@@ -79,6 +83,7 @@ class MeshBroadcastChannel(NotificationChannel):
                     text=alert.message or "",
                     destination=None,
                     channel=self._channel,
+                    meshcore_channel=self._meshcore_channel,
                 )
                 logger.info("Broadcast pre-chunked alert to channel %d", self._channel)
                 return True
@@ -90,6 +95,7 @@ class MeshBroadcastChannel(NotificationChannel):
                     text=chunk,
                     destination=None,
                     channel=self._channel,
+                    meshcore_channel=self._meshcore_channel,
                 )
             logger.info("Broadcast %d chunk(s) to channel %d", len(chunks), self._channel)
             return True
@@ -780,6 +786,7 @@ def create_channel(rule: "NotificationRuleConfig", connector=None) -> Notificati
         return MeshBroadcastChannel(
             connector=connector,
             channel_index=rule.broadcast_channel,
+            meshcore_channel=getattr(rule, "meshcore_channel", None),
         )
     elif delivery_type == "mesh_dm":
         return MeshDMChannel(
@@ -816,6 +823,7 @@ def create_channel_from_dict(config: dict, connector=None) -> NotificationChanne
         return MeshBroadcastChannel(
             connector=connector,
             channel_index=config.get("channel_index", 0),
+            meshcore_channel=config.get("meshcore_channel"),
         )
     elif channel_type == "mesh_dm":
         return MeshDMChannel(
