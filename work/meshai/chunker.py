@@ -13,6 +13,35 @@ import re
 
 logger = logging.getLogger(__name__)
 
+# Hard ceiling on interactive LLM replies — protects LoRa airtime.
+# Broadcast/notification chunking is NOT subject to this cap.
+MAX_REPLY_PACKETS = 3
+
+_TRUNCATION_INDICATOR = " …(ask for more)"
+
+
+def cap_reply_chunks(chunks: list[str], max_packets: int, max_chars: int) -> list[str]:
+    """Cap LLM reply chunks to max_packets; append truncation indicator if cut.
+
+    Args:
+        chunks: List of message chunks produced by chunk_response.
+        max_packets: Maximum number of packets to deliver (e.g. MAX_REPLY_PACKETS).
+        max_chars: Per-packet character budget (connector.max_chars).
+
+    Returns:
+        Original list when len(chunks) <= max_packets; otherwise a capped
+        copy of length max_packets with the truncation indicator appended
+        (and the last chunk trimmed if necessary to stay within max_chars).
+    """
+    if len(chunks) <= max_packets:
+        return chunks
+    capped = list(chunks[:max_packets])
+    last = capped[-1]
+    if len(last) + len(_TRUNCATION_INDICATOR) > max_chars:
+        last = last[: max_chars - len(_TRUNCATION_INDICATOR)]
+    capped[-1] = last + _TRUNCATION_INDICATOR
+    return capped
+
 
 def strip_markdown(text: str) -> str:
     """Remove markdown formatting from LLM output.
