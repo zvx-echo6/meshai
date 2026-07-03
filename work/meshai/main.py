@@ -394,7 +394,7 @@ class MeshAI:
         # Load persisted summaries into memory cache
         await self._load_summaries()
 
-        # Transport connector (factory selects backend from config.connection.transport)
+        # Transport connector (factory derives backend from config.connection.meshcore_host)
         self.connector = build_transport(self.config.connection)
 
         # Fit every broadcast handler's one-packet formatter to the active mesh
