@@ -1608,150 +1608,174 @@ export function SeverityChannelMatrix({
   )
 }
 
-function MasterToggles({ toggles, onChange }: {
+// Merge only the MT+Other-channel-owned delivery fields of `mine` into `fresh`,
+// preserving MeshCore entries (meshcore_*) and all gating fields
+// (enabled/min_severity/freshness_seconds/cooldown_seconds/regions) that now live
+// on the Data Feeds page.
+function mergeMeshtasticAndOtherFields(
+  fresh: NotificationToggle | undefined,
+  mine: NotificationToggle,
+  key: string,
+): NotificationToggle {
+  const base: NotificationToggle = fresh ? { ...fresh } : { ...mine, name: key }
+  base.name = base.name || key
+
+  // Merge severity_channels: keep meshcore_* from fresh, overlay non-meshcore from mine.
+  const freshSC = fresh?.severity_channels || {}
+  const mineSC = mine.severity_channels || {}
+  const severities = new Set([...Object.keys(freshSC), ...Object.keys(mineSC)])
+  const mergedSC: Record<string, string[]> = {}
+  severities.forEach((sev) => {
+    const meshcoreOnly = (freshSC[sev] || []).filter((c) => c.startsWith('meshcore_'))
+    const nonMeshcore = (mineSC[sev] || []).filter((c) => !c.startsWith('meshcore_'))
+    mergedSC[sev] = [...meshcoreOnly, ...nonMeshcore]
+  })
+  base.severity_channels = mergedSC
+
+  // Overlay MT delivery fields
+  base.broadcast_channel = mine.broadcast_channel
+  base.node_ids = mine.node_ids
+  // Overlay Other channels delivery fields
+  base.smtp_host = mine.smtp_host
+  base.smtp_port = mine.smtp_port
+  base.smtp_user = mine.smtp_user
+  base.smtp_password = mine.smtp_password
+  base.smtp_tls = mine.smtp_tls
+  base.from_address = mine.from_address
+  base.recipients = mine.recipients
+  base.webhook_url = mine.webhook_url
+  base.webhook_headers = mine.webhook_headers
+
+  // NOTE: do NOT overlay gating fields (enabled, min_severity, freshness_seconds,
+  // cooldown_seconds, regions) — those are managed by Data Feeds > Family Settings.
+  return base
+}
+
+// Always-visible per-family Meshtastic delivery grid.
+// Structure mirrors MeshCoreRouting.tsx: pure delivery, no enable toggle, no expander.
+function MeshtasticDeliveryGrid({
+  toggles,
+  onChange,
+}: {
   toggles: Record<string, NotificationToggle>
   onChange: (t: Record<string, NotificationToggle>) => void
 }) {
-  const [expanded, setExpanded] = useState<string | null>(null)
   const upd = (fam: string, patch: Partial<NotificationToggle>) =>
     onChange({ ...toggles, [fam]: { ...(toggles[fam] || {}), name: fam, ...patch } as NotificationToggle })
+
   return (
-    <div className="space-y-3 mb-8">
+    <div className="space-y-3">
       <div className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
-        Master Toggles
-        <InfoButton info="Per-family notification policy: enable a family, set its severity threshold, choose which channels fire at each severity, and scope to regions (PagerDuty/Grafana-style)." />
+        Meshtastic Delivery
+        <InfoButton info="Per-family Meshtastic delivery matrix. Choose which channels fire at each severity, the broadcast channel index, and DM node IDs. Family on/off and severity threshold are configured on the Data Feeds page." />
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {TOGGLE_FAMILY_META.map(({ key, label, Icon }) => {
-          const t = (toggles[key] || ({} as NotificationToggle))
-          const isOpen = expanded === key
-          const chanCount = Object.values(t.severity_channels || {}).reduce((n, arr) => n + ((arr as string[])?.length || 0), 0)
-          const regionCount = (t.regions || []).length
+          const t = toggles[key] || ({} as NotificationToggle)
           return (
-            <div key={key} className="border border-[#1e2a3a] p-3">
-              <div className="flex items-center justify-between">
-                <button type="button" onClick={() => setExpanded(isOpen ? null : key)}
-                        className="flex items-center gap-2 text-sm text-slate-200">
-                  <Icon size={15} /> {label}
-                  {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                </button>
-                <Toggle label="" checked={!!t.enabled} onChange={(v) => upd(key, { enabled: v })} />
+            <div key={key} className="border border-[#1e2a3a] p-3 space-y-3">
+              <div className="flex items-center gap-2 text-sm text-slate-200">
+                <Icon size={15} /> {label}
               </div>
-              {!isOpen && (
-                <div className="text-xs text-slate-600 mt-1">
-                  {t.enabled
-                    ? `${regionCount || 'all'} region${regionCount === 1 ? '' : 's'}, ${chanCount} channel${chanCount === 1 ? '' : 's'} at ${t.min_severity || 'priority'}+`
-                    : 'OFF'}
+              <div className="space-y-3 p-3 bg-[#0a0e17] border border-[#1e2a3a]">
+                <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
+                  <Radio size={13} />
+                  Meshtastic
                 </div>
-              )}
-              {isOpen && (
-                <div className={`mt-3 space-y-4 ${t.enabled ? '' : 'opacity-40 pointer-events-none select-none'}`}>
+                <SeverityChannelMatrix
+                  channels={MT_CHANNELS}
+                  severityChannels={t.severity_channels || {}}
+                  onChange={(sc) => upd(key, { severity_channels: sc })}
+                />
+                <NumberInput
+                  label="Broadcast channel"
+                  value={t.broadcast_channel ?? 0}
+                  onChange={(v) => upd(key, { broadcast_channel: v })}
+                  min={0}
+                  helper="Meshtastic channel index (0 = LongFast primary)"
+                  info="The Meshtastic channel index used for mesh_broadcast delivery. 0 = primary channel."
+                />
+                <ListInput
+                  label="DM node IDs"
+                  value={t.node_ids || []}
+                  onChange={(v) => upd(key, { node_ids: v })}
+                  placeholder="!hex_id"
+                  helper="Meshtastic DM recipients (hex node IDs)"
+                  info="Hex node IDs for mesh_dm delivery (e.g. !a1b2c3d4). Used when mesh_dm is enabled for a severity."
+                />
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
-                  {/* ── General ──────────────────────────────────────────────── */}
-                  <div className="space-y-3 p-3 bg-[#0a0e17] border border-[#1e2a3a]">
-                    <div className="text-xs text-slate-500 uppercase tracking-wide">General</div>
-                    <SeveritySelector value={t.min_severity || 'priority'} onChange={(v) => upd(key, { min_severity: v })} />
-                    <ListInput
-                      label="Regions (empty = all)"
-                      value={t.regions || []}
-                      onChange={(v) => upd(key, { regions: v })}
-                      placeholder="Add region..."
-                    />
-                    <div className="grid grid-cols-2 gap-3">
-                      <NumberInput
-                        label="Freshness (sec)"
-                        value={t.freshness_seconds ?? 600}
-                        onChange={(v) => upd(key, { freshness_seconds: v })}
-                        min={0}
-                        helper="Drop events older than this"
-                        info="Events older than this window (seconds) are discarded at dispatcher entrance. 600 = 10 min."
-                      />
-                      <NumberInput
-                        label="Cooldown (sec)"
-                        value={t.cooldown_seconds ?? 0}
-                        onChange={(v) => upd(key, { cooldown_seconds: v })}
-                        min={0}
-                        helper="0 = no throttle"
-                        info="Per (family, category, region) throttle window. Prevents repeat sends within this window."
-                      />
-                    </div>
-                  </div>
+// Per-family Other Channels (email / webhook / digest) delivery grid.
+// Kept on the Meshtastic Routing page so all non-MeshCore delivery lives in one place.
+function OtherChannelsGrid({
+  toggles,
+  onChange,
+}: {
+  toggles: Record<string, NotificationToggle>
+  onChange: (t: Record<string, NotificationToggle>) => void
+}) {
+  const upd = (fam: string, patch: Partial<NotificationToggle>) =>
+    onChange({ ...toggles, [fam]: { ...(toggles[fam] || {}), name: fam, ...patch } as NotificationToggle })
 
-                  {/* ── Meshtastic ───────────────────────────────────────────── */}
-                  <div className="space-y-3 p-3 bg-[#0a0e17] border border-[#1e2a3a]">
-                    <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
-                      <Radio size={13} />
-                      Meshtastic
-                    </div>
-                    <SeverityChannelMatrix
-                      channels={MT_CHANNELS}
-                      severityChannels={t.severity_channels || {}}
-                      onChange={(sc) => upd(key, { severity_channels: sc })}
-                    />
-                    <NumberInput
-                      label="Broadcast channel"
-                      value={t.broadcast_channel ?? 0}
-                      onChange={(v) => upd(key, { broadcast_channel: v })}
-                      min={0}
-                      helper="Meshtastic channel index (0 = LongFast primary)"
-                      info="The Meshtastic channel index used for mesh_broadcast delivery. 0 = primary channel."
-                    />
-                    <ListInput
-                      label="DM node IDs"
-                      value={t.node_ids || []}
-                      onChange={(v) => upd(key, { node_ids: v })}
-                      placeholder="!hex_id"
-                      helper="Meshtastic DM recipients (hex node IDs)"
-                      info="Hex node IDs for mesh_dm delivery (e.g. !a1b2c3d4). Used when mesh_dm is enabled for a severity."
-                    />
-                  </div>
-
-                  {/* MeshCore delivery controls moved to the dedicated
-                      MeshCore -> Routing page (/meshcore/routing). Shared
-                      family settings (enable/severity/regions) stay here. */}
-
-                  {/* ── Other channels ───────────────────────────────────────── */}
-                  <div className="space-y-3 p-3 bg-[#0a0e17] border border-[#1e2a3a]">
-                    <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
-                      <Mail size={13} />
-                      Other channels
-                    </div>
-                    <SeverityChannelMatrix
-                      channels={OTHER_CHANNELS}
-                      severityChannels={t.severity_channels || {}}
-                      onChange={(sc) => upd(key, { severity_channels: sc })}
-                    />
-                    <ListInput
-                      label="Email recipients"
-                      value={t.recipients || []}
-                      onChange={(v) => upd(key, { recipients: v })}
-                      placeholder="ops@example.com"
-                    />
-                    <details className="group">
-                      <summary className="flex items-center gap-2 cursor-pointer text-xs text-slate-400 hover:text-slate-200">
-                        <ChevronRight size={12} className="group-open:rotate-90 transition-transform" />
-                        SMTP settings
-                      </summary>
-                      <div className="mt-2 space-y-2 pl-4 border-l border-[#1e2a3a]">
-                        <TextInput label="SMTP host" value={t.smtp_host || ''} onChange={(v) => upd(key, { smtp_host: v })} placeholder="smtp.example.com" />
-                        <NumberInput label="SMTP port" value={t.smtp_port ?? 587} onChange={(v) => upd(key, { smtp_port: v })} />
-                        <TextInput label="Username" value={t.smtp_user || ''} onChange={(v) => upd(key, { smtp_user: v })} />
-                        <TextInput label="Password" value={t.smtp_password || ''} onChange={(v) => upd(key, { smtp_password: v })} type="password" />
-                        <Toggle label="Use TLS" checked={t.smtp_tls ?? true} onChange={(v) => upd(key, { smtp_tls: v })} />
-                        <TextInput label="From address" value={t.from_address || ''} onChange={(v) => upd(key, { from_address: v })} placeholder="alerts@example.com" />
-                      </div>
-                    </details>
-                    <TextInput
-                      label="Webhook URL"
-                      value={t.webhook_url || ''}
-                      onChange={(v) => upd(key, { webhook_url: v })}
-                      placeholder="https://..."
-                      helper="POST alert as JSON"
-                    />
-                  </div>
-
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+        Other Channels (Email / Webhook / Digest)
+        <InfoButton info="Per-family delivery via email, webhook, and digest. The severity matrix selects which of these channels fire at each level. Email SMTP settings are behind the collapsible below each family." />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {TOGGLE_FAMILY_META.map(({ key, label, Icon }) => {
+          const t = toggles[key] || ({} as NotificationToggle)
+          return (
+            <div key={key} className="border border-[#1e2a3a] p-3 space-y-3">
+              <div className="flex items-center gap-2 text-sm text-slate-200">
+                <Icon size={15} /> {label}
+              </div>
+              <div className="space-y-3 p-3 bg-[#0a0e17] border border-[#1e2a3a]">
+                <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
+                  <Mail size={13} />
+                  Other channels
                 </div>
-              )}
+                <SeverityChannelMatrix
+                  channels={OTHER_CHANNELS}
+                  severityChannels={t.severity_channels || {}}
+                  onChange={(sc) => upd(key, { severity_channels: sc })}
+                />
+                <ListInput
+                  label="Email recipients"
+                  value={t.recipients || []}
+                  onChange={(v) => upd(key, { recipients: v })}
+                  placeholder="ops@example.com"
+                />
+                <details className="group">
+                  <summary className="flex items-center gap-2 cursor-pointer text-xs text-slate-400 hover:text-slate-200">
+                    <ChevronRight size={12} className="group-open:rotate-90 transition-transform" />
+                    SMTP settings
+                  </summary>
+                  <div className="mt-2 space-y-2 pl-4 border-l border-[#1e2a3a]">
+                    <TextInput label="SMTP host" value={t.smtp_host || ''} onChange={(v) => upd(key, { smtp_host: v })} placeholder="smtp.example.com" />
+                    <NumberInput label="SMTP port" value={t.smtp_port ?? 587} onChange={(v) => upd(key, { smtp_port: v })} />
+                    <TextInput label="Username" value={t.smtp_user || ''} onChange={(v) => upd(key, { smtp_user: v })} />
+                    <TextInput label="Password" value={t.smtp_password || ''} onChange={(v) => upd(key, { smtp_password: v })} type="password" />
+                    <Toggle label="Use TLS" checked={t.smtp_tls ?? true} onChange={(v) => upd(key, { smtp_tls: v })} />
+                    <TextInput label="From address" value={t.from_address || ''} onChange={(v) => upd(key, { from_address: v })} placeholder="alerts@example.com" />
+                  </div>
+                </details>
+                <TextInput
+                  label="Webhook URL"
+                  value={t.webhook_url || ''}
+                  onChange={(v) => upd(key, { webhook_url: v })}
+                  placeholder="https://..."
+                  helper="POST alert as JSON"
+                />
+              </div>
             </div>
           )
         })}
@@ -1825,10 +1849,34 @@ export default function Notifications() {
     setSuccess(null)
 
     try {
+      // Re-fetch the live config and merge ONLY MT+Other delivery fields so we never
+      // clobber gating fields (enabled/min_severity/freshness/cooldown) managed by
+      // Data Feeds, nor MeshCore fields managed by the MeshCore Routing page.
+      const freshRes = await fetch('/api/config/notifications')
+      if (!freshRes.ok) throw new Error('Failed to re-fetch notifications config')
+      const fresh: NotificationsConfig = await freshRes.json()
+
+      const merged: NotificationsConfig = {
+        ...fresh,
+        enabled: config.enabled,   // global master switch lives on this page
+        rules: config.rules,       // rules are only edited on this page
+        toggles: { ...(fresh.toggles || {}) },
+      }
+      const myToggles = config.toggles || {}
+      for (const { key } of TOGGLE_FAMILY_META) {
+        const mine = myToggles[key]
+        if (!mine) continue
+        merged.toggles![key] = mergeMeshtasticAndOtherFields(
+          (fresh.toggles || {})[key],
+          mine,
+          key,
+        )
+      }
+
       const res = await fetch('/api/config/notifications', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
+        body: JSON.stringify(merged),
       })
 
       const result = await res.json()
@@ -1837,10 +1885,11 @@ export default function Notifications() {
         throw new Error(result.detail || 'Save failed')
       }
 
-      setSuccess('Notifications config saved successfully')
-      setOriginalConfig(JSON.parse(JSON.stringify(config)))
+      setConfig(merged)
+      setOriginalConfig(JSON.parse(JSON.stringify(merged)))
       setHasChanges(false)
       setDirty(false)
+      setSuccess('Meshtastic routing saved successfully')
       setTimeout(() => setSuccess(null), 3000)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed')
@@ -2144,7 +2193,7 @@ export default function Notifications() {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-slate-500">
-            Alert delivery and scheduled reports. Rules define what triggers a notification and where it gets sent.
+            Per-family Meshtastic delivery and other-channel delivery. Family gating (enable, severity threshold, freshness/cooldown) is on <a href="/environment" className="text-accent hover:underline">Data Feeds</a>. MeshCore delivery is on the <a href="/meshcore/routing" className="text-accent hover:underline">MeshCore Routing</a> page.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -2197,16 +2246,22 @@ export default function Notifications() {
           info="When disabled, no alerts or scheduled messages will be delivered. Alerts still get recorded to history."
         />
 
+        {/* Meshtastic delivery grids — always visible regardless of master switch */}
+        {config.toggles && (
+          <>
+            <MeshtasticDeliveryGrid
+              toggles={config.toggles}
+              onChange={(t) => setConfig({ ...config, toggles: t })}
+            />
+            <OtherChannelsGrid
+              toggles={config.toggles}
+              onChange={(t) => setConfig({ ...config, toggles: t })}
+            />
+          </>
+        )}
+
         {config.enabled && (
           <>
-            {/* Master Toggles */}
-            {config.toggles && (
-              <MasterToggles
-                toggles={config.toggles}
-                onChange={(t) => setConfig({ ...config, toggles: t })}
-              />
-            )}
-
             {/* Rules Section */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">

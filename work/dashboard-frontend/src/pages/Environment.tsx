@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import {
  Cloud, Flame, Radio, Car, Mountain, Satellite, Activity, Server,
- Save, RotateCcw, RefreshCw, AlertCircle, AlertTriangle, Info,
+ Save, RotateCcw, RefreshCw, AlertCircle, AlertTriangle, Info, Bell,
 } from 'lucide-react'
 import {
  Toggle, TextInput, NumberInput, SelectInput, ListInput, NumberListInput,
@@ -11,6 +11,7 @@ import {
  fetchEnvStatus, fetchEnvActive,
  type EnvStatus, type EnvEvent,
 } from '@/lib/api'
+import { TOGGLE_FAMILY_META, type NotificationToggle, type NotificationsConfig } from './Notifications'
 
 type FeedSource = 'native' | 'central'
 
@@ -248,6 +249,7 @@ const FAMILIES: { key: string; label: string; icon: typeof Cloud; adapters: Adap
  { key: 'geohazards', label: 'Geohazards', icon: Mountain, adapters: ['usgs_quake', 'usgs', 'avalanche'] },
  { key: 'tracking', label: 'Tracking', icon: Satellite, adapters: ['satpass'] },
  { key: 'mesh', label: 'Mesh Health', icon: Activity, adapters: [] },
+ { key: 'family_settings', label: 'Family Settings', icon: Bell, adapters: [] },
 ]
 
 // ---------------------------------------------------------------- main page
@@ -321,6 +323,13 @@ export default function Environment() {
   dry_run: true,
  })
  const [satpassOriginal, setSatpassOriginal] = useState<string>("")
+
+ // ── Notification family gating state ──────────────────────────────────────
+ const [notifConfig, setNotifConfig] = useState<NotificationsConfig | null>(null)
+ const [notifOriginal, setNotifOriginal] = useState<string>('')
+ const [notifSaving, setNotifSaving] = useState(false)
+ const [notifError, setNotifError] = useState<string | null>(null)
+ const [notifSuccess, setNotifSuccess] = useState<string | null>(null)
 
 
  useEffect(() => {
@@ -476,6 +485,20 @@ export default function Environment() {
    } finally {
     setLoading(false)
    }
+  })()
+ }, [])
+
+ // Fetch notification family gating config separately (best-effort)
+ useEffect(() => {
+  ;(async () => {
+   try {
+    const res = await fetch('/api/config/notifications')
+    if (res.ok) {
+     const data: NotificationsConfig = await res.json()
+     setNotifConfig(data)
+     setNotifOriginal(JSON.stringify(data))
+    }
+   } catch { /* best-effort */ }
   })()
  }, [])
 
@@ -701,6 +724,69 @@ const save = async () => {
  }
 
  const up = (patch: Partial<EnvConfig>) => env && setEnv({ ...env, ...patch })
+
+ // ── Notification family gating helpers ────────────────────────────────────
+ const notifToggles: Record<string, NotificationToggle> = notifConfig?.toggles || {}
+ const notifHasChanges = notifConfig !== null && JSON.stringify(notifConfig) !== notifOriginal
+
+ const updNotif = (fam: string, patch: Partial<NotificationToggle>) => {
+  if (!notifConfig) return
+  const t = notifConfig.toggles || {}
+  setNotifConfig({
+   ...notifConfig,
+   toggles: {
+    ...t,
+    [fam]: { ...(t[fam] || {}), name: fam, ...patch } as NotificationToggle,
+   },
+  })
+ }
+
+ const saveNotif = async () => {
+  if (!notifConfig) return
+  setNotifSaving(true)
+  setNotifError(null)
+  setNotifSuccess(null)
+  try {
+   // Re-fetch and merge only gating fields, preserving all delivery fields.
+   const freshRes = await fetch('/api/config/notifications')
+   if (!freshRes.ok) throw new Error('Failed to re-fetch notifications config')
+   const fresh: NotificationsConfig = await freshRes.json()
+   const merged: NotificationsConfig = { ...fresh, toggles: { ...(fresh.toggles || {}) } }
+   const myToggles = notifConfig.toggles || {}
+   for (const { key } of TOGGLE_FAMILY_META) {
+    const mine = myToggles[key]
+    if (!mine) continue
+    const freshT = (fresh.toggles || {})[key] || {}
+    merged.toggles![key] = {
+     ...freshT,
+     name: (freshT as NotificationToggle).name || key,
+     enabled: mine.enabled,
+     min_severity: mine.min_severity,
+     freshness_seconds: mine.freshness_seconds ?? (freshT as NotificationToggle).freshness_seconds ?? 600,
+     cooldown_seconds: mine.cooldown_seconds ?? (freshT as NotificationToggle).cooldown_seconds ?? 0,
+    } as NotificationToggle
+   }
+   const res = await fetch('/api/config/notifications', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(merged),
+   })
+   const result = await res.json()
+   if (!res.ok) throw new Error(result.detail || 'Save failed')
+   setNotifConfig(merged)
+   setNotifOriginal(JSON.stringify(merged))
+   setNotifSuccess('Family settings saved')
+   setTimeout(() => setNotifSuccess(null), 3000)
+  } catch (e) {
+   setNotifError(e instanceof Error ? e.message : 'Save failed')
+  } finally {
+   setNotifSaving(false)
+  }
+ }
+
+ const discardNotif = () => {
+  if (notifOriginal) setNotifConfig(JSON.parse(notifOriginal))
+ }
 
  if (loading) return <div className="flex items-center justify-center h-64 text-[#777]">Loading environmental config…</div>
  if (!env) return <div className="flex items-center justify-center h-64 text-red-400">{error || 'No config'}</div>
@@ -1245,6 +1331,87 @@ const save = async () => {
       </div>
      </div>
      <div className="text-[11px] text-[#666]">Central not available — reserved for a future migration.</div>
+    </div>
+   )}
+
+   {/* ── Family Settings — notification gating per family ──────────────── */}
+   {family === 'family_settings' && (
+    <div className="space-y-4">
+     <p className="text-xs text-[#777]">
+      Per-family gating: enable/disable each notification family, set its minimum severity threshold,
+      freshness window, and cooldown. Delivery routing (which mesh channels, email, webhook) is
+      configured on the <a href="/notifications" className="text-accent hover:underline">Meshtastic Routing</a> and{' '}
+      <a href="/meshcore/routing" className="text-accent hover:underline">MeshCore Routing</a> pages.
+      Regions filter is dormant and intentionally hidden.
+     </p>
+     {notifError && <div className="text-sm text-red-400 bg-red-500/10 p-3">{notifError}</div>}
+     {notifSuccess && <div className="text-sm text-green-400 bg-green-500/10 p-3">{notifSuccess}</div>}
+     {notifConfig === null ? (
+      <div className="text-xs text-[#666] italic">Loading family settings…</div>
+     ) : (
+      <>
+       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {TOGGLE_FAMILY_META.map(({ key, label, Icon }) => {
+         const t: NotificationToggle = notifToggles[key] || ({} as NotificationToggle)
+         return (
+          <div key={key} className="border border-border p-3 space-y-3">
+           <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm text-[#e0e0e0]">
+             <Icon size={15} /> {label}
+            </div>
+            <Toggle label="" checked={!!t.enabled} onChange={(v) => updNotif(key, { enabled: v })} />
+           </div>
+           <div className={t.enabled ? 'space-y-3' : 'space-y-3 opacity-40 pointer-events-none select-none'}>
+            <SelectInput
+             label="Min Severity"
+             value={t.min_severity || 'priority'}
+             onChange={(v) => updNotif(key, { min_severity: v })}
+             options={[
+              { value: 'routine', label: 'Routine — informational' },
+              { value: 'priority', label: 'Priority — needs attention' },
+              { value: 'immediate', label: 'Immediate — act now' },
+             ]}
+            />
+            <div className="grid grid-cols-2 gap-3">
+             <NumberInput
+              label="Freshness (sec)"
+              value={t.freshness_seconds ?? 600}
+              onChange={(v) => updNotif(key, { freshness_seconds: v })}
+              min={0}
+              helper="Drop events older than this"
+             />
+             <NumberInput
+              label="Cooldown (sec)"
+              value={t.cooldown_seconds ?? 0}
+              onChange={(v) => updNotif(key, { cooldown_seconds: v })}
+              min={0}
+              helper="0 = no throttle"
+             />
+            </div>
+           </div>
+          </div>
+         )
+        })}
+       </div>
+       {notifHasChanges && (
+        <div className="flex justify-end gap-2 pt-2">
+         <button
+          onClick={discardNotif}
+          className="flex items-center gap-1 px-3 py-1.5 text-sm text-[#777] hover:text-white border border-border"
+         >
+          <RotateCcw size={14} /> Discard
+         </button>
+         <button
+          onClick={saveNotif}
+          disabled={notifSaving}
+          className="flex items-center gap-1 px-3 py-1.5 text-sm bg-accent text-white disabled:opacity-50"
+         >
+          <Save size={14} /> {notifSaving ? 'Saving…' : 'Save'}
+         </button>
+        </div>
+       )}
+      </>
+     )}
     </div>
    )}
 
