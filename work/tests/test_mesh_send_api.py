@@ -157,3 +157,108 @@ def test_meshcore_channels_no_meshcore():
     r = client.get("/api/meshcore/channels")
     assert r.status_code == 200
     assert r.json() == {"active": False, "channels": []}
+
+
+# ============================================================================
+# GET /api/meshcore/contacts
+# ============================================================================
+
+
+_SAMPLE_ROSTER = [
+    {
+        "name": "Repeater One",
+        "pubkey": "aa11deadbeef",
+        "type": "repeater",
+        "last_advert": 1000,
+        "lat": 43.6,
+        "lon": -116.2,
+        "out_path_len": 2,
+    },
+    {
+        "name": "Sensor Two",
+        "pubkey": "bb22cafef00d",
+        "type": "sensor",
+        "last_advert": 2000,
+        "lat": None,
+        "lon": None,
+        "out_path_len": -1,
+    },
+]
+
+
+def test_meshcore_contacts_active():
+    mc = _child("meshcore", connected=True)
+    mc.get_contacts.return_value = list(_SAMPLE_ROSTER)
+    connector = _composite([mc])
+    client = _client(connector)
+
+    r = client.get("/api/meshcore/contacts")
+    assert r.status_code == 200
+    assert r.json() == {"active": True, "contacts": _SAMPLE_ROSTER}
+
+
+def test_meshcore_contacts_no_meshcore():
+    mt = _child("meshtastic", connected=True)
+    connector = _composite([mt])
+    client = _client(connector)
+
+    r = client.get("/api/meshcore/contacts")
+    assert r.status_code == 200
+    assert r.json() == {"active": False, "contacts": []}
+
+
+def test_meshcore_contacts_disconnected():
+    mc = _child("meshcore", connected=False)
+    connector = _composite([mc])
+    client = _client(connector)
+
+    r = client.get("/api/meshcore/contacts")
+    assert r.status_code == 200
+    assert r.json() == {"active": False, "contacts": []}
+
+
+# ============================================================================
+# GET /api/meshcore/self
+# ============================================================================
+
+
+def test_meshcore_self_active():
+    mc = _child("meshcore", connected=True)
+    mc.self_info.return_value = {
+        "name": "AIDA",
+        "pubkey": "deadbeef1234",
+        "connected": True,
+        "host": "100.64.0.9",
+        "port": 5050,
+        "channel_count": 2,
+    }
+    connector = _composite([mc])
+    client = _client(connector)
+
+    r = client.get("/api/meshcore/self")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["connected"] is True
+    assert body["pubkey"] == "deadbeef1234"
+    assert body["name"] == "AIDA"
+    assert body["channel_count"] == 2
+
+
+def test_meshcore_self_no_meshcore():
+    mt = _child("meshtastic", connected=True)
+    connector = _composite([mt])
+    client = _client(connector)
+
+    r = client.get("/api/meshcore/self")
+    assert r.status_code == 200
+    assert r.json() == {"connected": False}
+
+
+def test_meshcore_self_disconnected():
+    mc = _child("meshcore", connected=False)
+    connector = _composite([mc])
+    client = _client(connector)
+
+    r = client.get("/api/meshcore/self")
+    assert r.status_code == 200
+    assert r.json() == {"connected": False}

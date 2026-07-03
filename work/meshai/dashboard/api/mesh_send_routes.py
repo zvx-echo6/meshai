@@ -39,6 +39,33 @@ async def meshcore_channels(request: Request):
     return {"active": False, "channels": []}
 
 
+@router.get("/meshcore/contacts")
+async def meshcore_contacts(request: Request):
+    """Roster of known MeshCore contacts if a meshcore transport is connected."""
+    connector = getattr(request.app.state, "connector", None)
+    mc = _find_child(connector, "meshcore")
+    if mc is not None and getattr(mc, "connected", False):
+        try:
+            contacts = list(mc.get_contacts())
+        except Exception:
+            contacts = []
+        return {"active": True, "contacts": contacts}
+    return {"active": False, "contacts": []}
+
+
+@router.get("/meshcore/self")
+async def meshcore_self(request: Request):
+    """Companion self/connection status if a meshcore transport is connected."""
+    connector = getattr(request.app.state, "connector", None)
+    mc = _find_child(connector, "meshcore")
+    if mc is not None and getattr(mc, "connected", False):
+        try:
+            return mc.self_info()
+        except Exception:
+            return {"connected": False}
+    return {"connected": False}
+
+
 class TestSendRequest(BaseModel):
     transport: str
     channel: Union[str, int]

@@ -170,6 +170,46 @@ class MeshCoreTransport(MeshTransport):
         """Enumerated MeshCore channel names (from _chan_name_to_idx, populated at connect)."""
         return list(self._chan_name_to_idx.keys())
 
+    def get_contacts(self) -> list[dict]:
+        """Roster of known MeshCore contacts. [] if not connected."""
+        if self._mc is None or not self._connected:
+            return []
+        try:
+            ensure = getattr(self._mc, "ensure_contacts", None)
+            if ensure is not None:
+                self._run_coro(ensure())
+        except Exception:
+            pass
+        contacts = getattr(self._mc, "contacts", None) or {}
+        roster: list[dict] = []
+        for pubkey_hex, c in contacts.items():
+            if not isinstance(c, dict):
+                continue
+            roster.append({
+                "name": c.get("adv_name"),
+                "pubkey": c.get("public_key") or pubkey_hex,
+                "type": c.get("type"),
+                "last_advert": c.get("last_advert"),
+                "lat": c.get("adv_lat"),
+                "lon": c.get("adv_lon"),
+                "out_path_len": c.get("out_path_len"),
+            })
+        return roster
+
+    def self_info(self) -> dict:
+        """Companion self/connection status. {connected: False} if not connected."""
+        if self._mc is None or not self._connected:
+            return {"connected": False}
+        info = self._self_info or {}
+        return {
+            "name": info.get("name"),
+            "pubkey": info.get("public_key"),
+            "connected": True,
+            "host": getattr(self.config, "meshcore_host", "100.64.0.9"),
+            "port": getattr(self.config, "meshcore_port", 5050),
+            "channel_count": len(self.known_channels()),
+        }
+
     def set_context_config(self, cfg) -> None:
         """Set (or clear) the MeshCore passive-context filter config.
 

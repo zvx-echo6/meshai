@@ -508,3 +508,124 @@ class TestMyNodeId:
         t = MeshCoreTransport(_mc_config())
         t._self_info = {}
         assert t.my_node_id is None
+
+
+# ---------------------------------------------------------------------------
+# 7. get_contacts() — roster mapping
+# ---------------------------------------------------------------------------
+
+# Sample companion contact table: pubkey_hex -> raw contact dict, mirroring the
+# meshcore lib's ``mc.contacts`` shape (repeater + sensor, with/without pos).
+_SAMPLE_CONTACTS = {
+    "aa11": {
+        "adv_name": "Repeater One",
+        "public_key": "aa11deadbeef",
+        "type": "repeater",
+        "last_advert": 1000,
+        "adv_lat": 43.6,
+        "adv_lon": -116.2,
+        "out_path_len": 2,
+    },
+    "bb22": {
+        "adv_name": "Sensor Two",
+        "public_key": "bb22cafef00d",
+        "type": "sensor",
+        "last_advert": 2000,
+        "adv_lat": None,
+        "adv_lon": None,
+        "out_path_len": -1,
+    },
+}
+
+
+class TestGetContacts:
+    def test_maps_contacts_into_roster_shape(self):
+        """mc.contacts dict is mapped into the roster shape (repeater + sensor)."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            mc.ensure_contacts = AsyncMock(return_value=None)
+            mc.contacts = dict(_SAMPLE_CONTACTS)
+            roster = t.get_contacts()
+            assert isinstance(roster, list)
+            assert len(roster) == 2
+            by_name = {r["name"]: r for r in roster}
+
+            rep = by_name["Repeater One"]
+            assert rep == {
+                "name": "Repeater One",
+                "pubkey": "aa11deadbeef",
+                "type": "repeater",
+                "last_advert": 1000,
+                "lat": 43.6,
+                "lon": -116.2,
+                "out_path_len": 2,
+            }
+
+            sensor = by_name["Sensor Two"]
+            assert sensor["type"] == "sensor"
+            assert sensor["pubkey"] == "bb22cafef00d"
+            assert sensor["lat"] is None
+            assert sensor["lon"] is None
+            assert sensor["out_path_len"] == -1
+        finally:
+            _cleanup(t)
+
+    def test_pubkey_falls_back_to_hex_key(self):
+        """When a contact carries no public_key, the dict hex key is used."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            mc.ensure_contacts = AsyncMock(return_value=None)
+            mc.contacts = {"ff00": {"adv_name": "NoKey", "type": "chat"}}
+            roster = t.get_contacts()
+            assert len(roster) == 1
+            assert roster[0]["pubkey"] == "ff00"
+            assert roster[0]["name"] == "NoKey"
+        finally:
+            _cleanup(t)
+
+    def test_works_without_ensure_contacts(self):
+        """A companion lacking ensure_contacts still yields the roster."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            mc.ensure_contacts = None
+            mc.contacts = dict(_SAMPLE_CONTACTS)
+            roster = t.get_contacts()
+            assert len(roster) == 2
+        finally:
+            _cleanup(t)
+
+    def test_returns_empty_when_not_connected(self):
+        """A fresh, unconnected transport (_mc is None) returns []."""
+        t = MeshCoreTransport(_mc_config())
+        assert t.get_contacts() == []
+
+
+# ---------------------------------------------------------------------------
+# 8. self_info() — companion self/connection status
+# ---------------------------------------------------------------------------
+
+class TestSelfInfo:
+    def test_connected_returns_status_dict(self):
+        """Connected: returns name/pubkey/connected/host/port/channel_count."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            # Build _chan_name_to_idx from the fixture's fake channel table so
+            # channel_count is non-zero (fixture wires get_channel but doesn't enumerate).
+            t._enumerate_channels()
+            t._self_info = {"public_key": "deadbeef1234", "name": "AIDA"}
+            info = t.self_info()
+            assert info["name"] == "AIDA"
+            assert info["pubkey"] == "deadbeef1234"
+            assert info["connected"] is True
+            assert info["host"] == "127.0.0.1"
+            assert info["port"] == 5050
+            # channel_count reflects the installed fake channel table.
+            assert info["channel_count"] == len(t.known_channels())
+            assert info["channel_count"] == 2
+        finally:
+            _cleanup(t)
+
+    def test_not_connected_returns_disconnected(self):
+        """A fresh, unconnected transport (_mc is None) returns {connected: False}."""
+        t = MeshCoreTransport(_mc_config())
+        assert t.self_info() == {"connected": False}
