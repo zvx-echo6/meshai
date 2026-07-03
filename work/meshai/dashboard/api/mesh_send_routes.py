@@ -39,6 +39,54 @@ async def meshcore_channels(request: Request):
     return {"active": False, "channels": []}
 
 
+@router.get("/meshcore/contacts")
+async def meshcore_contacts(request: Request):
+    """Roster of known MeshCore contacts if a meshcore transport is connected."""
+    connector = getattr(request.app.state, "connector", None)
+    mc = _find_child(connector, "meshcore")
+    if mc is not None and getattr(mc, "connected", False):
+        try:
+            contacts = list(mc.get_contacts())
+        except Exception:
+            contacts = []
+        return {"active": True, "contacts": contacts}
+    return {"active": False, "contacts": []}
+
+
+@router.get("/meshcore/self")
+async def meshcore_self(request: Request):
+    """Companion self/connection status if a meshcore transport is connected."""
+    connector = getattr(request.app.state, "connector", None)
+    mc = _find_child(connector, "meshcore")
+    if mc is not None and getattr(mc, "connected", False):
+        try:
+            return mc.self_info()
+        except Exception:
+            return {"connected": False}
+    return {"connected": False}
+
+
+@router.post("/meshcore/advert")
+async def meshcore_send_advert(request: Request):
+    """Broadcast a signed self-advertisement (flood=True) via MeshCore.
+
+    Returns {sent: bool, detail: str}.  Returns {sent: false} when MeshCore
+    is not connected.
+    """
+    connector = getattr(request.app.state, "connector", None)
+    mc = _find_child(connector, "meshcore")
+    if mc is None or not getattr(mc, "connected", False):
+        return {"sent": False, "detail": "MeshCore not connected"}
+    try:
+        ok = bool(mc.send_advert())
+        detail = "Self-advert sent" if ok else "send_advert returned False"
+        logger.info("dashboard: meshcore manual advert sent=%s", ok)
+        return {"sent": ok, "detail": detail}
+    except Exception as exc:
+        logger.error("dashboard: meshcore advert error: %s", exc)
+        return {"sent": False, "detail": str(exc)}
+
+
 class TestSendRequest(BaseModel):
     transport: str
     channel: Union[str, int]

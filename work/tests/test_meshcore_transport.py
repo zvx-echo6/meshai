@@ -70,6 +70,11 @@ def _build_fake_meshcore():
                 result.is_error.return_value = False
                 return result
 
+            @staticmethod
+            async def send_advert(flood=False):
+                # No return value required for advert.
+                pass
+
     mod.MeshCore = _FakeMeshCore
     return mod
 
@@ -508,3 +513,284 @@ class TestMyNodeId:
         t = MeshCoreTransport(_mc_config())
         t._self_info = {}
         assert t.my_node_id is None
+
+
+# ---------------------------------------------------------------------------
+# 7. get_contacts() — roster mapping
+# ---------------------------------------------------------------------------
+
+# Sample companion contact table: pubkey_hex -> raw contact dict, mirroring the
+# meshcore lib's ``mc.contacts`` shape (repeater + sensor, with/without pos).
+_SAMPLE_CONTACTS = {
+    "aa11": {
+        "adv_name": "Repeater One",
+        "public_key": "aa11deadbeef",
+        "type": "repeater",
+        "last_advert": 1000,
+        "adv_lat": 43.6,
+        "adv_lon": -116.2,
+        "out_path_len": 2,
+    },
+    "bb22": {
+        "adv_name": "Sensor Two",
+        "public_key": "bb22cafef00d",
+        "type": "sensor",
+        "last_advert": 2000,
+        "adv_lat": None,
+        "adv_lon": None,
+        "out_path_len": -1,
+    },
+}
+
+
+class TestGetContacts:
+    def test_maps_contacts_into_roster_shape(self):
+        """mc.contacts dict is mapped into the roster shape (repeater + sensor)."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            mc.ensure_contacts = AsyncMock(return_value=None)
+            mc.contacts = dict(_SAMPLE_CONTACTS)
+            roster = t.get_contacts()
+            assert isinstance(roster, list)
+            assert len(roster) == 2
+            by_name = {r["name"]: r for r in roster}
+
+            rep = by_name["Repeater One"]
+            assert rep == {
+                "name": "Repeater One",
+                "pubkey": "aa11deadbeef",
+                "type": "repeater",
+                "last_advert": 1000,
+                "lat": 43.6,
+                "lon": -116.2,
+                "out_path_len": 2,
+            }
+
+            sensor = by_name["Sensor Two"]
+            assert sensor["type"] == "sensor"
+            assert sensor["pubkey"] == "bb22cafef00d"
+            assert sensor["lat"] is None
+            assert sensor["lon"] is None
+            assert sensor["out_path_len"] == -1
+        finally:
+            _cleanup(t)
+
+    def test_pubkey_falls_back_to_hex_key(self):
+        """When a contact carries no public_key, the dict hex key is used."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            mc.ensure_contacts = AsyncMock(return_value=None)
+            mc.contacts = {"ff00": {"adv_name": "NoKey", "type": "chat"}}
+            roster = t.get_contacts()
+            assert len(roster) == 1
+            assert roster[0]["pubkey"] == "ff00"
+            assert roster[0]["name"] == "NoKey"
+        finally:
+            _cleanup(t)
+
+    def test_works_without_ensure_contacts(self):
+        """A companion lacking ensure_contacts still yields the roster."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            mc.ensure_contacts = None
+            mc.contacts = dict(_SAMPLE_CONTACTS)
+            roster = t.get_contacts()
+            assert len(roster) == 2
+        finally:
+            _cleanup(t)
+
+    def test_returns_empty_when_not_connected(self):
+        """A fresh, unconnected transport (_mc is None) returns []."""
+        t = MeshCoreTransport(_mc_config())
+        assert t.get_contacts() == []
+
+
+# ---------------------------------------------------------------------------
+# 8. self_info() — companion self/connection status
+# ---------------------------------------------------------------------------
+
+class TestSelfInfo:
+    def test_connected_returns_status_dict(self):
+        """Connected: returns name/pubkey/connected/host/port/channel_count."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            # Build _chan_name_to_idx from the fixture's fake channel table so
+            # channel_count is non-zero (fixture wires get_channel but doesn't enumerate).
+            t._enumerate_channels()
+            t._self_info = {"public_key": "deadbeef1234", "name": "AIDA"}
+            info = t.self_info()
+            assert info["name"] == "AIDA"
+            assert info["pubkey"] == "deadbeef1234"
+            assert info["connected"] is True
+            assert info["host"] == "127.0.0.1"
+            assert info["port"] == 5050
+            # channel_count reflects the installed fake channel table.
+            assert info["channel_count"] == len(t.known_channels())
+            assert info["channel_count"] == 2
+        finally:
+            _cleanup(t)
+
+    def test_not_connected_returns_disconnected(self):
+        """A fresh, unconnected transport (_mc is None) returns {connected: False}."""
+        t = MeshCoreTransport(_mc_config())
+        assert t.self_info() == {"connected": False}
+
+    def test_connected_includes_last_advert_sent(self):
+        """self_info() includes last_advert_sent (None before first advert)."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            t._self_info = {"public_key": "abc123", "name": "TestNode"}
+            info = t.self_info()
+            assert "last_advert_sent" in info
+            assert info["last_advert_sent"] is None  # no advert sent yet
+        finally:
+            _cleanup(t)
+
+    def test_self_info_last_advert_sent_updated_after_send_advert(self):
+        """self_info() reflects last_advert_sent after send_advert() succeeds."""
+        import time
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            mc.commands.send_advert = AsyncMock(return_value=None)
+            t._self_info = {"public_key": "abc123", "name": "TestNode"}
+            before = time.time()
+            t.send_advert()
+            info = t.self_info()
+            assert info["last_advert_sent"] is not None
+            assert info["last_advert_sent"] >= before
+        finally:
+            _cleanup(t)
+
+
+# ---------------------------------------------------------------------------
+# 9. send_advert()
+# ---------------------------------------------------------------------------
+
+class TestSendAdvert:
+    def test_connected_calls_lib_command_and_returns_true(self):
+        """send_advert() awaits mc.commands.send_advert(flood=True) and returns True."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            mc.commands.send_advert = AsyncMock(return_value=None)
+            result = t.send_advert()
+            assert result is True
+            mc.commands.send_advert.assert_awaited_once_with(flood=True)
+        finally:
+            _cleanup(t)
+
+    def test_not_connected_returns_false(self):
+        """send_advert() returns False when _mc is None (transport not connected)."""
+        t = MeshCoreTransport(_mc_config())
+        assert t.send_advert() is False
+
+    def test_connected_but_flag_false_returns_false(self):
+        """send_advert() returns False when _connected is False."""
+        t = MeshCoreTransport(_mc_config())
+        t._mc = MagicMock()   # mc set but _connected remains False
+        assert t.send_advert() is False
+
+    def test_updates_last_advert_sent_on_success(self):
+        """send_advert() sets _last_advert_sent to current epoch on success."""
+        import time
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            mc.commands.send_advert = AsyncMock(return_value=None)
+            before = time.time()
+            t.send_advert()
+            assert t._last_advert_sent is not None
+            assert t._last_advert_sent >= before
+        finally:
+            _cleanup(t)
+
+    def test_exception_returns_false_and_does_not_raise(self):
+        """send_advert() returns False (never raises) when the lib command raises."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            mc.commands.send_advert = AsyncMock(side_effect=Exception("timeout"))
+            result = t.send_advert()
+            assert result is False
+        finally:
+            _cleanup(t)
+
+    def test_does_not_update_last_advert_sent_on_failure(self):
+        """_last_advert_sent stays None when the lib command raises."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            mc.commands.send_advert = AsyncMock(side_effect=Exception("timeout"))
+            t.send_advert()
+            assert t._last_advert_sent is None
+        finally:
+            _cleanup(t)
+
+
+# ---------------------------------------------------------------------------
+# 10. advert-on-connect
+# ---------------------------------------------------------------------------
+
+class TestAdvertOnConnect:
+    def test_advert_sent_after_connect(self):
+        """connect() calls send_advert() once after _enumerate_channels()."""
+        from unittest.mock import patch
+        cfg = _mc_config()
+        # Disable periodic advert so we only check the one-shot on-connect call.
+        cfg.meshcore_advert_interval_seconds = 0
+        t = MeshCoreTransport(cfg)
+        advert_calls = []
+
+        original_send_advert = MeshCoreTransport.send_advert
+
+        def _spy_send_advert(self_inner):
+            advert_calls.append(True)
+            return True
+
+        with patch.object(MeshCoreTransport, "send_advert", _spy_send_advert):
+            t.connect()
+
+        try:
+            assert len(advert_calls) == 1, (
+                f"expected 1 send_advert call on connect, got {len(advert_calls)}"
+            )
+        finally:
+            t.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# 11. Periodic advert scheduler
+# ---------------------------------------------------------------------------
+
+class TestPeriodicAdvertScheduler:
+    def test_task_armed_when_interval_nonzero(self):
+        """connect() with meshcore_advert_interval_seconds > 0 arms _advert_task."""
+        import time
+        cfg = _mc_config(meshcore_advert_interval_seconds=3600)
+        t = MeshCoreTransport(cfg)
+        try:
+            t.connect()
+            # Give the event loop a moment to execute the call_soon_threadsafe callback.
+            time.sleep(0.1)
+            assert t._advert_task is not None, "_advert_task should be set after connect"
+        finally:
+            t.disconnect()
+
+    def test_task_not_armed_when_interval_zero(self):
+        """connect() with meshcore_advert_interval_seconds=0 leaves _advert_task None."""
+        import time
+        cfg = _mc_config(meshcore_advert_interval_seconds=0)
+        t = MeshCoreTransport(cfg)
+        try:
+            t.connect()
+            time.sleep(0.1)
+            assert t._advert_task is None, "_advert_task should not be set when interval=0"
+        finally:
+            t.disconnect()
+
+    def test_task_cleared_after_disconnect(self):
+        """disconnect() cancels and clears _advert_task."""
+        import time
+        cfg = _mc_config(meshcore_advert_interval_seconds=3600)
+        t = MeshCoreTransport(cfg)
+        t.connect()
+        time.sleep(0.1)
+        assert t._advert_task is not None
+        t.disconnect()
+        assert t._advert_task is None, "_advert_task should be None after disconnect"

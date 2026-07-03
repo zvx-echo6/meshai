@@ -92,6 +92,21 @@ class CompositeTransport(MeshTransport):
         child = self.meshcore_child()
         return child.known_channels() if child is not None else []
 
+    def get_contacts(self) -> List[dict]:
+        """Passthrough to the MeshCore child's contact roster; [] if no meshcore child."""
+        child = self.meshcore_child()
+        return child.get_contacts() if child is not None else []
+
+    def self_info(self) -> dict:
+        """Passthrough to the MeshCore child's self/connection status; {connected: False} if no meshcore child."""
+        child = self.meshcore_child()
+        return child.self_info() if child is not None else {"connected": False}
+
+    def send_advert(self) -> bool:
+        """Passthrough to the MeshCore child's send_advert(); False if no meshcore child."""
+        child = self.meshcore_child()
+        return child.send_advert() if child is not None else False
+
     # ------------------------------------------------------------------
     # Routing decision helpers (factored out for unit-test access)
     # ------------------------------------------------------------------

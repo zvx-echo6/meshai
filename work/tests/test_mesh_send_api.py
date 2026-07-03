@@ -157,3 +157,196 @@ def test_meshcore_channels_no_meshcore():
     r = client.get("/api/meshcore/channels")
     assert r.status_code == 200
     assert r.json() == {"active": False, "channels": []}
+
+
+# ============================================================================
+# GET /api/meshcore/contacts
+# ============================================================================
+
+
+_SAMPLE_ROSTER = [
+    {
+        "name": "Repeater One",
+        "pubkey": "aa11deadbeef",
+        "type": "repeater",
+        "last_advert": 1000,
+        "lat": 43.6,
+        "lon": -116.2,
+        "out_path_len": 2,
+    },
+    {
+        "name": "Sensor Two",
+        "pubkey": "bb22cafef00d",
+        "type": "sensor",
+        "last_advert": 2000,
+        "lat": None,
+        "lon": None,
+        "out_path_len": -1,
+    },
+]
+
+
+def test_meshcore_contacts_active():
+    mc = _child("meshcore", connected=True)
+    mc.get_contacts.return_value = list(_SAMPLE_ROSTER)
+    connector = _composite([mc])
+    client = _client(connector)
+
+    r = client.get("/api/meshcore/contacts")
+    assert r.status_code == 200
+    assert r.json() == {"active": True, "contacts": _SAMPLE_ROSTER}
+
+
+def test_meshcore_contacts_no_meshcore():
+    mt = _child("meshtastic", connected=True)
+    connector = _composite([mt])
+    client = _client(connector)
+
+    r = client.get("/api/meshcore/contacts")
+    assert r.status_code == 200
+    assert r.json() == {"active": False, "contacts": []}
+
+
+def test_meshcore_contacts_disconnected():
+    mc = _child("meshcore", connected=False)
+    connector = _composite([mc])
+    client = _client(connector)
+
+    r = client.get("/api/meshcore/contacts")
+    assert r.status_code == 200
+    assert r.json() == {"active": False, "contacts": []}
+
+
+# ============================================================================
+# GET /api/meshcore/self
+# ============================================================================
+
+
+def test_meshcore_self_active():
+    mc = _child("meshcore", connected=True)
+    mc.self_info.return_value = {
+        "name": "AIDA",
+        "pubkey": "deadbeef1234",
+        "connected": True,
+        "host": "100.64.0.9",
+        "port": 5050,
+        "channel_count": 2,
+    }
+    connector = _composite([mc])
+    client = _client(connector)
+
+    r = client.get("/api/meshcore/self")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["connected"] is True
+    assert body["pubkey"] == "deadbeef1234"
+    assert body["name"] == "AIDA"
+    assert body["channel_count"] == 2
+
+
+def test_meshcore_self_no_meshcore():
+    mt = _child("meshtastic", connected=True)
+    connector = _composite([mt])
+    client = _client(connector)
+
+    r = client.get("/api/meshcore/self")
+    assert r.status_code == 200
+    assert r.json() == {"connected": False}
+
+
+def test_meshcore_self_disconnected():
+    mc = _child("meshcore", connected=False)
+    connector = _composite([mc])
+    client = _client(connector)
+
+    r = client.get("/api/meshcore/self")
+    assert r.status_code == 200
+    assert r.json() == {"connected": False}
+
+
+# ============================================================================
+# POST /api/meshcore/advert
+# ============================================================================
+
+
+def test_meshcore_advert_connected_returns_sent_true():
+    """POST /api/meshcore/advert → {sent: true} when meshcore is connected."""
+    mc = _child("meshcore", connected=True)
+    mc.send_advert.return_value = True
+    connector = _composite([mc])
+    client = _client(connector)
+
+    r = client.post("/api/meshcore/advert")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["sent"] is True
+    assert "detail" in body
+    mc.send_advert.assert_called_once()
+
+
+def test_meshcore_advert_connected_send_returns_false():
+    """POST /api/meshcore/advert → {sent: false} when send_advert() returns False."""
+    mc = _child("meshcore", connected=True)
+    mc.send_advert.return_value = False
+    connector = _composite([mc])
+    client = _client(connector)
+
+    r = client.post("/api/meshcore/advert")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["sent"] is False
+
+
+def test_meshcore_advert_not_connected():
+    """POST /api/meshcore/advert → {sent: false, detail: 'MeshCore not connected'}."""
+    mc = _child("meshcore", connected=False)
+    connector = _composite([mc])
+    client = _client(connector)
+
+    r = client.post("/api/meshcore/advert")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["sent"] is False
+    assert body["detail"] == "MeshCore not connected"
+
+
+def test_meshcore_advert_no_meshcore_child():
+    """POST /api/meshcore/advert → {sent: false} when there is no meshcore transport."""
+    mt = _child("meshtastic", connected=True)
+    connector = _composite([mt])
+    client = _client(connector)
+
+    r = client.post("/api/meshcore/advert")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["sent"] is False
+    assert body["detail"] == "MeshCore not connected"
+
+
+# ============================================================================
+# Config round-trip: meshcore_advert_interval_seconds
+# ============================================================================
+
+
+def test_connection_config_advert_interval_default():
+    """meshcore_advert_interval_seconds defaults to 10800 (3 h)."""
+    from meshai.config import ConnectionConfig
+    cfg = ConnectionConfig()
+    assert cfg.meshcore_advert_interval_seconds == 10800
+
+
+def test_connection_config_advert_interval_zero():
+    """meshcore_advert_interval_seconds = 0 disables periodic advert."""
+    from meshai.config import ConnectionConfig
+    cfg = ConnectionConfig(meshcore_advert_interval_seconds=0)
+    assert cfg.meshcore_advert_interval_seconds == 0
+
+
+def test_connection_config_advert_interval_round_trips_yaml():
+    """meshcore_advert_interval_seconds survives YAML serialize → deserialize."""
+    from meshai.config import ConnectionConfig, _dataclass_to_dict, _dict_to_dataclass
+    cfg = ConnectionConfig(meshcore_advert_interval_seconds=7200)
+    data = _dataclass_to_dict(cfg)
+    assert data["meshcore_advert_interval_seconds"] == 7200
+    cfg2 = _dict_to_dataclass(ConnectionConfig, data)
+    assert cfg2.meshcore_advert_interval_seconds == 7200

@@ -13,6 +13,7 @@ imported (and the test suite can run) without the lib installed.
 import asyncio
 import logging
 import threading
+import time as _time
 from typing import Callable, Optional
 
 from .base import MeshTransport
@@ -82,6 +83,10 @@ class MeshCoreTransport(MeshTransport):
         # Companion channel table: channel NAME -> slot index, built at
         # connect time by _enumerate_channels().  Empty until connected.
         self._chan_name_to_idx: dict[str, int] = {}
+        # Self-advertisement tracking.
+        self._last_advert_sent: Optional[float] = None   # epoch seconds or None
+        # asyncio.Task handle for the periodic advert loop; None when inactive.
+        self._advert_task = None
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -170,12 +175,122 @@ class MeshCoreTransport(MeshTransport):
         """Enumerated MeshCore channel names (from _chan_name_to_idx, populated at connect)."""
         return list(self._chan_name_to_idx.keys())
 
+    def get_contacts(self) -> list[dict]:
+        """Roster of known MeshCore contacts. [] if not connected."""
+        if self._mc is None or not self._connected:
+            return []
+        try:
+            ensure = getattr(self._mc, "ensure_contacts", None)
+            if ensure is not None:
+                self._run_coro(ensure())
+        except Exception:
+            pass
+        contacts = getattr(self._mc, "contacts", None) or {}
+        roster: list[dict] = []
+        for pubkey_hex, c in contacts.items():
+            if not isinstance(c, dict):
+                continue
+            roster.append({
+                "name": c.get("adv_name"),
+                "pubkey": c.get("public_key") or pubkey_hex,
+                "type": c.get("type"),
+                "last_advert": c.get("last_advert"),
+                "lat": c.get("adv_lat"),
+                "lon": c.get("adv_lon"),
+                "out_path_len": c.get("out_path_len"),
+            })
+        return roster
+
+    def self_info(self) -> dict:
+        """Companion self/connection status. {connected: False} if not connected."""
+        if self._mc is None or not self._connected:
+            return {"connected": False}
+        info = self._self_info or {}
+        return {
+            "name": info.get("name"),
+            "pubkey": info.get("public_key"),
+            "connected": True,
+            "host": getattr(self.config, "meshcore_host", "100.64.0.9"),
+            "port": getattr(self.config, "meshcore_port", 5050),
+            "channel_count": len(self.known_channels()),
+            "last_advert_sent": self._last_advert_sent,
+        }
+
     def set_context_config(self, cfg) -> None:
         """Set (or clear) the MeshCore passive-context filter config.
 
         cfg: MeshCoreContextConfig or None (None = pass-through).
         """
         self._mc_context = cfg
+
+    # ------------------------------------------------------------------
+    # Self-advertisement
+    # ------------------------------------------------------------------
+
+    def send_advert(self) -> bool:
+        """Broadcast a signed self-advertisement to the mesh (flood=True).
+
+        Bridges the async ``mc.commands.send_advert`` call to the dedicated
+        event loop via ``_run_coro``.  Safe no-op returning False when not
+        connected or when the lib command raises.
+
+        Callers must log the human-readable context (manual / on-connect);
+        this method is intentionally silent on success to avoid duplicate
+        log lines across call sites.
+        """
+        if self._mc is None or not self._connected:
+            logger.debug("MeshCore: send_advert skipped — not connected")
+            return False
+        try:
+            self._run_coro(self._mc.commands.send_advert(flood=True))
+            self._last_advert_sent = _time.time()
+            return True
+        except Exception as exc:
+            logger.warning("MeshCore: send_advert failed: %s", exc)
+            return False
+
+    async def _periodic_advert_loop(self, interval: int) -> None:
+        """Periodic self-advertisement coroutine (runs as a Task on the dedicated loop).
+
+        Sleeps *interval* seconds, sends one flood advert, repeats.  Stops on
+        CancelledError (raised by ``_cancel_periodic_advert`` at disconnect) or
+        when the transport drops its connection.  No overlap is possible because
+        the loop awaits the sleep before each send.
+        """
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                if not self._connected or self._mc is None:
+                    return
+                try:
+                    await self._mc.commands.send_advert(flood=True)
+                    self._last_advert_sent = _time.time()
+                    logger.info("MeshCore: sent periodic self-advert")
+                except Exception as exc:
+                    logger.warning("MeshCore: periodic send_advert failed: %s", exc)
+        except asyncio.CancelledError:
+            logger.debug("MeshCore: periodic advert task cancelled")
+            raise
+
+    def _schedule_periodic_advert(self, interval: int) -> None:
+        """Create the periodic advert asyncio.Task on the dedicated loop (thread-safe).
+
+        Called from the main thread after connect(); the Task is created ON the
+        dedicated loop via call_soon_threadsafe so asyncio.create_task() fires
+        in the right context.
+        """
+        def _arm() -> None:
+            self._advert_task = asyncio.get_event_loop().create_task(
+                self._periodic_advert_loop(interval)
+            )
+        self._loop.call_soon_threadsafe(_arm)
+
+    def _cancel_periodic_advert(self) -> None:
+        """Cancel the periodic advert task (thread-safe).  Called at disconnect."""
+        task = self._advert_task
+        self._advert_task = None
+        if task is not None and self._loop is not None and self._loop.is_running():
+            self._loop.call_soon_threadsafe(task.cancel)
 
     # ------------------------------------------------------------------
     # Internal coroutines (run on the dedicated loop)
@@ -269,6 +384,20 @@ class MeshCoreTransport(MeshTransport):
         # per-family broadcasts can resolve their channel name to a slot.
         self._enumerate_channels()
 
+        # Announce ourselves so other nodes can discover and DM us.
+        try:
+            if self.send_advert():
+                logger.info("MeshCore: sent self-advert on connect")
+            else:
+                logger.warning("MeshCore: send_advert on connect returned False")
+        except Exception as exc:
+            logger.warning("MeshCore: send_advert on connect error: %s", exc)
+
+        # Arm periodic re-advertisement if configured (default 3 h; 0 = disabled).
+        interval = getattr(self.config, "meshcore_advert_interval_seconds", 10800)
+        if interval > 0:
+            self._schedule_periodic_advert(interval)
+
         logger.info(
             "MeshCoreTransport: connected as %s (pubkey %s)",
             self._self_info.get("name", "unknown"),
@@ -277,6 +406,8 @@ class MeshCoreTransport(MeshTransport):
 
     def disconnect(self) -> None:
         """Disconnect and stop the event loop thread."""
+        # Cancel periodic advert before tearing down the loop.
+        self._cancel_periodic_advert()
         if self._mc is not None:
             try:
                 self._run_coro(self._do_disconnect(), timeout=10.0)

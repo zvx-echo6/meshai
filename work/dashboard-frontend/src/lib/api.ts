@@ -492,6 +492,48 @@ export async function getMeshcoreChannels(): Promise<MeshcoreChannels> {
   return fetchJson<MeshcoreChannels>('/api/meshcore/channels')
 }
 
+export interface MeshcoreContact {
+  name: string | null
+  pubkey: string
+  type: string | null
+  last_advert: number | null
+  lat: number | null
+  lon: number | null
+  out_path_len: number | null
+}
+export interface MeshcoreContacts {
+  active: boolean
+  contacts: MeshcoreContact[]
+}
+export interface MeshcoreSelf {
+  name?: string | null
+  pubkey?: string | null
+  connected: boolean
+  host?: string
+  port?: number
+  channel_count?: number
+  last_advert_sent?: number | null  // epoch seconds; null/absent = never advertised
+}
+
+export async function fetchMeshcoreContacts(): Promise<MeshcoreContacts> {
+  return fetchJson<MeshcoreContacts>('/api/meshcore/contacts')
+}
+export async function fetchMeshcoreSelf(): Promise<MeshcoreSelf> {
+  return fetchJson<MeshcoreSelf>('/api/meshcore/self')
+}
+
+export async function sendMeshcoreAdvert(): Promise<TestSendResult> {
+  const response = await fetch('/api/meshcore/advert', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status} ${response.statusText}`)
+  }
+  return response.json()
+}
+
 export async function sendTestMessage(body: {
   transport: 'meshtastic' | 'meshcore'
   channel: string | number
