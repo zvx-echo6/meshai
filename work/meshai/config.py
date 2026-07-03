@@ -53,6 +53,11 @@ class ConnectionConfig:
     meshcore_ack_wait_seconds: float = 6.0       # wait for delivery ACK before falling back to path discovery
     meshcore_discovery_wait_seconds: float = 8.0  # path-discovery timeout on the no-ACK fallback (was hardcoded 25s)
 
+    # --- MeshCore telemetry auto-poll settings ---
+    # Selected contacts (names or pubkeys) to auto-poll for telemetry; empty = none.
+    meshcore_telemetry_contacts: list = field(default_factory=list)
+    meshcore_telemetry_interval_seconds: int = 1800  # auto-poll interval (0 = disabled; floor 300)
+
     def __post_init__(self):
         if self.meshcore_conn_type not in {"tcp", "serial", "ble"}:
             raise ValueError(
