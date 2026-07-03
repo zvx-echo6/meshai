@@ -224,7 +224,8 @@ class CompositeTransport(MeshTransport):
         """
         if destination is None:
             # --- Rule 1: broadcast ---
-            return self._broadcast(text, channel, meshcore_channel=meshcore_channel)
+            return self._broadcast(text, channel, meshcore_channel=meshcore_channel,
+                                   transport=transport)
 
         if transport is not None:
             # --- Rule 2: hinted DM ---
@@ -233,18 +234,48 @@ class CompositeTransport(MeshTransport):
         # --- Rule 3: unhinted DM ---
         return self._send_unhinted(text, destination, channel)
 
-    def _broadcast(self, text: str, channel: int, meshcore_channel: Optional[str] = None) -> bool:
+    def _broadcast(self, text: str, channel: int, meshcore_channel: Optional[str] = None,
+                   transport: Optional[str] = None) -> bool:
         """Fan text out to connected children with per-transport channel routing.
+
+        If ``transport`` is given, send ONLY to the child whose name matches —
+        this is the explicit per-mesh delivery path (mesh_broadcast → "meshtastic",
+        meshcore_broadcast → "meshcore").  If ``transport`` is None, keep the
+        legacy fan-out: all connected children with per-transport channel routing.
 
         For the Meshtastic child, ``channel`` (Meshtastic channel index) is used.
         For the MeshCore child:
-          - ``meshcore_channel`` set → route that channel NAME to MeshCore,
-            which resolves it to a companion slot at send time.
+          - ``meshcore_channel`` set → route that channel NAME to MeshCore.
           - ``meshcore_channel`` is None → skip the MeshCore child entirely
             (family not configured for MeshCore; no fallback to a default).
 
         Returns True if at least one child succeeded.
         """
+        if transport is not None:
+            # Hinted broadcast: send ONLY to the named child.
+            child = self._by_name.get(transport)
+            if child is None:
+                logger.debug(
+                    "CompositeTransport: broadcast hint %r not found; known: %s",
+                    transport, list(self._by_name),
+                )
+                return False
+            name = _child_name(child)
+            if not child.connected:
+                logger.debug(
+                    "CompositeTransport: hinted broadcast child %r not connected", name
+                )
+                return False
+            child_channel = meshcore_channel if name == "meshcore" else channel
+            try:
+                return child.send_message(text, destination=None, channel=child_channel)
+            except Exception as exc:
+                logger.error(
+                    "CompositeTransport: hinted broadcast via %r raised: %s", name, exc
+                )
+                return False
+
+        # No hint: fan to all connected children (backward-compat, no-hint path).
         any_ok = False
         for child in self._children:
             name = _child_name(child)

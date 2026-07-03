@@ -56,22 +56,23 @@ class NotificationChannel(ABC):
 
 
 class MeshBroadcastChannel(NotificationChannel):
-    """Post alert to mesh channel."""
+    """Post alert to Meshtastic channel (explicit Meshtastic-only delivery)."""
 
     channel_type = "mesh_broadcast"
 
     def __init__(self, connector: "MeshConnector", channel_index: int = 0,
-                 meshcore_channel: Optional[str] = None):
+                 transport: Optional[str] = "meshtastic"):
         self._connector = connector
         self._channel = channel_index
-        # Per-family MeshCore channel NAME (None = MeshCore child skipped
-        # downstream). Ignored by Meshtastic; behavior-preserving there.
-        self._meshcore_channel = meshcore_channel
+        # Transport hint: "meshtastic" for mesh_broadcast; passed to CompositeTransport
+        # so it routes only to the Meshtastic child. Single-transport implementations
+        # accept and ignore this kwarg, so behavior is unchanged there.
+        self._transport = transport
         _mc = getattr(connector, "max_chars", 200)
         self._renderer = MeshRenderer(char_limit=_mc if isinstance(_mc, int) else 200)
 
     async def deliver(self, alert: "NotificationPayload", rule: "NotificationRuleConfig") -> bool:
-        """Send alert to mesh channel."""
+        """Send alert to Meshtastic channel."""
         if not self._connector:
             logger.warning("No mesh connector available")
             return False
@@ -83,7 +84,7 @@ class MeshBroadcastChannel(NotificationChannel):
                     text=alert.message or "",
                     destination=None,
                     channel=self._channel,
-                    meshcore_channel=self._meshcore_channel,
+                    transport=self._transport,
                 )
                 logger.info("Broadcast pre-chunked alert to channel %d", self._channel)
                 return True
@@ -95,7 +96,7 @@ class MeshBroadcastChannel(NotificationChannel):
                     text=chunk,
                     destination=None,
                     channel=self._channel,
-                    meshcore_channel=self._meshcore_channel,
+                    transport=self._transport,
                 )
             logger.info("Broadcast %d chunk(s) to channel %d", len(chunks), self._channel)
             return True
@@ -173,19 +174,127 @@ class MeshBroadcastChannel(NotificationChannel):
             return False, f"Mesh broadcast failed: {e}"
 
 
+class MeshCoreBroadcastChannel(NotificationChannel):
+    """Post alert to a MeshCore channel (explicit MeshCore-only delivery)."""
+
+    channel_type = "meshcore_broadcast"
+
+    def __init__(self, connector: "MeshConnector", meshcore_channel: Optional[str] = None):
+        self._connector = connector
+        # Channel NAME on the MeshCore companion (resolved to a slot at send time).
+        self._meshcore_channel = meshcore_channel
+        _mc = getattr(connector, "max_chars", 200)
+        self._renderer = MeshRenderer(char_limit=_mc if isinstance(_mc, int) else 200)
+
+    def _has_meshcore_capability(self) -> bool:
+        """Return True if the connector can reach a MeshCore transport."""
+        # CompositeTransport: check for a child named "meshcore".
+        by_name = getattr(self._connector, "_by_name", None)
+        if by_name is not None:
+            return "meshcore" in by_name
+        # Single-transport: check for an explicit transport_name tag.
+        return getattr(self._connector, "transport_name", None) == "meshcore"
+
+    async def deliver(self, alert: "NotificationPayload", rule: "NotificationRuleConfig") -> bool:
+        """Send alert to MeshCore channel."""
+        if not self._connector:
+            logger.warning("No mesh connector available for meshcore_broadcast")
+            return False
+
+        if not self._meshcore_channel:
+            logger.debug("meshcore_broadcast: meshcore_channel not set; skipping")
+            return False
+
+        if not self._has_meshcore_capability():
+            logger.debug(
+                "meshcore_broadcast: connector has no MeshCore transport; skipping"
+            )
+            return False
+
+        try:
+            # If payload already has chunk metadata (from digest), use message directly
+            if alert.chunk_index is not None:
+                self._connector.send_message(
+                    text=alert.message or "",
+                    destination=None,
+                    meshcore_channel=self._meshcore_channel,
+                    transport="meshcore",
+                )
+                logger.info(
+                    "MeshCore broadcast pre-chunked alert to channel %r",
+                    self._meshcore_channel,
+                )
+                return True
+
+            # Render to chunks for single-event delivery
+            chunks = self._renderer.render(alert)
+            for chunk in chunks:
+                self._connector.send_message(
+                    text=chunk,
+                    destination=None,
+                    meshcore_channel=self._meshcore_channel,
+                    transport="meshcore",
+                )
+            logger.info(
+                "MeshCore broadcast %d chunk(s) to channel %r",
+                len(chunks), self._meshcore_channel,
+            )
+            return True
+        except Exception as e:
+            logger.error("Failed to MeshCore broadcast alert: %s", e)
+            return False
+
+    async def test_connection(self) -> dict:
+        """Test MeshCore channel connectivity."""
+        if not self._has_meshcore_capability():
+            return {
+                "success": False,
+                "message": "No MeshCore transport available",
+                "error": "Set connection.transport to 'meshcore' or 'both'",
+                "details": {"meshcore_channel": self._meshcore_channel},
+            }
+        return {
+            "success": True,
+            "message": f"MeshCore channel: {self._meshcore_channel}",
+            "error": "",
+            "details": {"meshcore_channel": self._meshcore_channel},
+        }
+
+    async def deliver_test(self, message: str) -> tuple[bool, str]:
+        """Deliver a specific test message to the MeshCore channel."""
+        if not self._connector:
+            return False, "Not connected"
+        if not self._meshcore_channel:
+            return False, "No MeshCore channel configured"
+        try:
+            self._connector.send_message(
+                text=message,
+                destination=None,
+                meshcore_channel=self._meshcore_channel,
+                transport="meshcore",
+            )
+            return True, f"Sent to MeshCore channel {self._meshcore_channel!r}"
+        except Exception as e:
+            return False, f"MeshCore broadcast failed: {e}"
+
+
 class MeshDMChannel(NotificationChannel):
-    """DM alert to specific node IDs."""
+    """DM alert to specific Meshtastic node IDs."""
 
     channel_type = "mesh_dm"
 
-    def __init__(self, connector: "MeshConnector", node_ids: list[str]):
+    def __init__(self, connector: "MeshConnector", node_ids: list[str],
+                 transport_hint: Optional[str] = "meshtastic"):
         self._connector = connector
         self._node_ids = node_ids
+        # Explicit transport hint so CompositeTransport routes only to the
+        # Meshtastic child. Single-transport impls ignore this kwarg.
+        self._transport_hint = transport_hint
         _mc = getattr(connector, "max_chars", 200)
         self._renderer = MeshRenderer(char_limit=_mc if isinstance(_mc, int) else 200)
 
     async def deliver(self, alert: "NotificationPayload", rule: "NotificationRuleConfig") -> bool:
-        """Send alert via DM to configured nodes."""
+        """Send alert via DM to configured Meshtastic nodes."""
         if not self._connector:
             return False
 
@@ -201,7 +310,12 @@ class MeshDMChannel(NotificationChannel):
             for message in messages:
                 try:
                     node_id = str(node_id)
-                    self._connector.send_message(text=message, destination=node_id, channel=0)
+                    self._connector.send_message(
+                        text=message,
+                        destination=node_id,
+                        channel=0,
+                        transport=self._transport_hint,
+                    )
                 except Exception as e:
                     logger.error("Failed to DM %s: %s", node_id, e)
                     success = False
@@ -293,6 +407,109 @@ class MeshDMChannel(NotificationChannel):
             return True, f"Sent to {success_count}/{len(self._node_ids)} nodes. Errors: {'; '.join(errors)}"
         else:
             return False, f"All DMs failed: {'; '.join(errors)}"
+
+
+class MeshCoreDMChannel(NotificationChannel):
+    """DM alert to specific MeshCore contacts (names or pubkeys)."""
+
+    channel_type = "meshcore_dm"
+
+    def __init__(self, connector: "MeshConnector", contacts: list):
+        self._connector = connector
+        self._contacts = list(contacts)
+        _mc = getattr(connector, "max_chars", 200)
+        self._renderer = MeshRenderer(char_limit=_mc if isinstance(_mc, int) else 200)
+
+    def _has_meshcore_capability(self) -> bool:
+        """Return True if the connector can reach a MeshCore transport."""
+        by_name = getattr(self._connector, "_by_name", None)
+        if by_name is not None:
+            return "meshcore" in by_name
+        return getattr(self._connector, "transport_name", None) == "meshcore"
+
+    async def deliver(self, alert: "NotificationPayload", rule: "NotificationRuleConfig") -> bool:
+        """Send alert via DM to configured MeshCore contacts."""
+        if not self._connector:
+            return False
+
+        if not self._contacts:
+            logger.debug("meshcore_dm: no contacts configured; skipping")
+            return False
+
+        if not self._has_meshcore_capability():
+            logger.debug(
+                "meshcore_dm: connector has no MeshCore transport; skipping"
+            )
+            return False
+
+        # If payload already has chunk metadata (from digest), use message directly
+        if alert.chunk_index is not None:
+            messages = [alert.message or ""]
+        else:
+            messages = self._renderer.render(alert)
+
+        success = True
+        for contact in self._contacts:
+            for message in messages:
+                try:
+                    self._connector.send_message(
+                        text=message,
+                        destination=str(contact),
+                        transport="meshcore",
+                    )
+                except Exception as e:
+                    logger.error("Failed to MeshCore DM %s: %s", contact, e)
+                    success = False
+
+        return success
+
+    async def test_connection(self) -> dict:
+        """Test MeshCore DM connectivity."""
+        if not self._has_meshcore_capability():
+            return {
+                "success": False,
+                "message": "No MeshCore transport available",
+                "error": "Set connection.transport to 'meshcore' or 'both'",
+                "details": {"contacts": self._contacts},
+            }
+        if not self._contacts:
+            return {
+                "success": False,
+                "message": "No MeshCore DM contacts configured",
+                "error": "Add at least one contact to meshcore_dm_contacts",
+                "details": {"contacts": []},
+            }
+        return {
+            "success": True,
+            "message": f"MeshCore DM to {len(self._contacts)} contact(s)",
+            "error": "",
+            "details": {"contacts": self._contacts},
+        }
+
+    async def deliver_test(self, message: str) -> tuple[bool, str]:
+        """Deliver a specific test message via MeshCore DM."""
+        if not self._connector:
+            return False, "Not connected"
+        if not self._contacts:
+            return False, "No MeshCore DM contacts configured"
+        success_count = 0
+        errors = []
+        for contact in self._contacts:
+            try:
+                self._connector.send_message(
+                    text=message,
+                    destination=str(contact),
+                    transport="meshcore",
+                )
+                success_count += 1
+            except Exception as e:
+                errors.append(f"{contact}: {e}")
+        if success_count == len(self._contacts):
+            return True, f"Sent MeshCore DM to {success_count} contact(s)"
+        elif success_count > 0:
+            return True, f"Sent to {success_count}/{len(self._contacts)} contacts. Errors: {'; '.join(errors)}"
+        else:
+            return False, f"All MeshCore DMs failed: {'; '.join(errors)}"
 
 
 class EmailChannel(NotificationChannel):
@@ -772,26 +989,51 @@ class WebhookChannel(NotificationChannel):
 
 def create_channel(rule: "NotificationRuleConfig", connector=None) -> NotificationChannel:
     """Create a channel instance from a NotificationRuleConfig.
-    
+
+    Delivery types and their per-mesh routing:
+      mesh_broadcast    -> Meshtastic ONLY (broadcast_channel; transport="meshtastic")
+      meshcore_broadcast-> MeshCore ONLY (meshcore_channel NAME; transport="meshcore")
+      mesh_dm           -> Meshtastic DM (node_ids; transport="meshtastic")
+      meshcore_dm       -> MeshCore DM (meshcore_dm_contacts; transport="meshcore")
+      email             -> SMTP email
+      webhook           -> HTTP POST
+
     Args:
         rule: NotificationRuleConfig with delivery_type and channel settings
         connector: MeshConnector instance (required for mesh channels)
-    
+
     Returns:
         NotificationChannel instance
     """
     delivery_type = rule.delivery_type
 
     if delivery_type == "mesh_broadcast":
+        # Meshtastic-only broadcast: explicit transport hint so CompositeTransport
+        # routes only to the Meshtastic child and skips MeshCore.
         return MeshBroadcastChannel(
             connector=connector,
             channel_index=rule.broadcast_channel,
+            transport="meshtastic",
+        )
+    elif delivery_type == "meshcore_broadcast":
+        # MeshCore-only broadcast: routes to MeshCore child by channel NAME.
+        return MeshCoreBroadcastChannel(
+            connector=connector,
             meshcore_channel=getattr(rule, "meshcore_channel", None),
         )
     elif delivery_type == "mesh_dm":
+        # Meshtastic-only DM: explicit transport hint so CompositeTransport
+        # routes only to the Meshtastic child.
         return MeshDMChannel(
             connector=connector,
             node_ids=rule.node_ids,
+            transport_hint="meshtastic",
+        )
+    elif delivery_type == "meshcore_dm":
+        # MeshCore-only DM: routes to MeshCore child via contact name/pubkey.
+        return MeshCoreDMChannel(
+            connector=connector,
+            contacts=list(getattr(rule, "meshcore_dm_contacts", []) or []),
         )
     elif delivery_type == "email":
         return EmailChannel(
@@ -814,21 +1056,23 @@ def create_channel(rule: "NotificationRuleConfig", connector=None) -> Notificati
 
 def create_channel_from_dict(config: dict, connector=None) -> NotificationChannel:
     """Create a channel instance from a dict config (legacy interface).
-    
+
     Used by old router.py and test_channel API. Will be removed in Phase 2.7.
     """
     channel_type = config.get("type", "")
 
     if channel_type == "mesh_broadcast":
+        # Legacy dict configs are Meshtastic-only; no auto-fan.
         return MeshBroadcastChannel(
             connector=connector,
             channel_index=config.get("channel_index", 0),
-            meshcore_channel=config.get("meshcore_channel"),
+            transport="meshtastic",
         )
     elif channel_type == "mesh_dm":
         return MeshDMChannel(
             connector=connector,
             node_ids=config.get("node_ids", []),
+            transport_hint="meshtastic",
         )
     elif channel_type == "email":
         return EmailChannel(

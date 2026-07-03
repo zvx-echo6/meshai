@@ -1,10 +1,16 @@
-"""v0.5 Section 1: NotificationToggle dispatch routing tests."""
+"""v0.5 Section 1: NotificationToggle dispatch routing tests.
+
+Also covers the per-mesh delivery type routing introduced in
+feat/meshcore-first-class-delivery (meshcore_broadcast, meshcore_dm).
+"""
 
 import asyncio
+from unittest.mock import MagicMock
 
-from meshai.config import Config
+from meshai.config import Config, NotificationToggle
 from meshai.notifications.pipeline.dispatcher import Dispatcher
 from meshai.notifications.events import make_event
+from meshai.notifications.channels import create_channel
 
 
 class RecChannel:
@@ -134,3 +140,297 @@ def test_rules_and_toggles_both_fire():
     rec = _dispatch(cfg, _ev(severity="priority"))
     names = {r["name"] for r in rec}
     assert "legacy" in names and "toggle:weather" in names  # parallel paths both fire
+
+
+# ============================================================
+# Per-mesh delivery type routing tests (feat/meshcore-first-class-delivery)
+# ============================================================
+
+def _wipe_db():
+    """Wipe dispatcher persistence so each test is independent."""
+    try:
+        from meshai.persistence import get_db
+        conn = get_db()
+        conn.execute("DELETE FROM dispatcher_dedup")
+        conn.execute("DELETE FROM dispatcher_cooldowns")
+        conn.execute(
+            "UPDATE dispatcher_state SET cold_start_anchor=NULL, "
+            "stale_dropped=0, cooldown_dropped=0, dedup_dropped=0, "
+            "cold_start_dropped=0 WHERE id=1"
+        )
+    except Exception:
+        pass
+
+
+def _dispatch_with_connector(cfg, event, connector):
+    """Dispatch event, using a real connector so send_message calls are captured."""
+    _wipe_db()
+    delivered_rules = []
+
+    def _factory(rule, conn):
+        ch = create_channel(rule, connector)
+        # Wrap to record rule metadata too.
+        original_deliver = ch.deliver
+
+        async def _record_deliver(payload, r):
+            result = await original_deliver(payload, r)
+            delivered_rules.append({
+                "delivery_type": r.delivery_type,
+                "meshcore_channel": getattr(r, "meshcore_channel", None),
+                "meshcore_dm_contacts": list(getattr(r, "meshcore_dm_contacts", []) or []),
+                "node_ids": list(getattr(r, "node_ids", []) or []),
+            })
+            return result
+
+        ch.deliver = _record_deliver
+        return ch
+
+    d = Dispatcher(cfg, _factory, connector=connector)
+    asyncio.run(d.dispatch(event))
+    return delivered_rules
+
+
+def test_meshcore_broadcast_routes_to_meshcore_child_only():
+    """meshcore_broadcast in severity_channels → send_message called with
+    transport='meshcore' and the family's meshcore_channel name.
+    The Meshtastic child must NOT be called for this type."""
+    meshtastic_child = MagicMock()
+    meshtastic_child.connected = True
+    meshtastic_child.transport_name = "meshtastic"
+    meshtastic_child.send_message.return_value = True
+
+    meshcore_child = MagicMock()
+    meshcore_child.connected = True
+    meshcore_child.transport_name = "meshcore"
+    meshcore_child.send_message.return_value = True
+
+    from meshai.transport.composite_transport import CompositeTransport
+    connector = CompositeTransport([meshtastic_child, meshcore_child])
+    # Simulate that the connector has a meshcore child (for capability check in channel).
+    connector._by_name = {"meshtastic": meshtastic_child, "meshcore": meshcore_child}
+
+    cfg = Config()
+    cfg.notifications.rules = []
+    cfg.notifications.cold_start_grace_seconds = 0
+    t = cfg.notifications.toggles["fire"]
+    t.enabled = True
+    t.min_severity = "immediate"
+    t.severity_channels = {"immediate": ["meshcore_broadcast"]}
+    t.broadcast_channel = 0
+    t.meshcore_channel = "AIDA"
+
+    event = make_event(
+        source="wfigs", category="fire_perimeter",
+        severity="immediate", title="fire alert",
+    )
+
+    rules = _dispatch_with_connector(cfg, event, connector)
+    assert len(rules) == 1
+    assert rules[0]["delivery_type"] == "meshcore_broadcast"
+    assert rules[0]["meshcore_channel"] == "AIDA"
+
+    # MeshCore child received the call with correct transport+channel.
+    assert meshcore_child.send_message.called
+    mc_kwargs = meshcore_child.send_message.call_args.kwargs
+    assert mc_kwargs.get("destination") is None
+    assert mc_kwargs.get("channel") == "AIDA"  # child receives channel=meshcore_channel
+
+    # Meshtastic child must NOT have been called.
+    meshtastic_child.send_message.assert_not_called()
+
+
+def test_mesh_broadcast_routes_to_meshtastic_child_only():
+    """mesh_broadcast → send_message with transport='meshtastic' and
+    the Meshtastic channel index. MeshCore child must NOT be called."""
+    meshtastic_child = MagicMock()
+    meshtastic_child.connected = True
+    meshtastic_child.transport_name = "meshtastic"
+    meshtastic_child.send_message.return_value = True
+
+    meshcore_child = MagicMock()
+    meshcore_child.connected = True
+    meshcore_child.transport_name = "meshcore"
+    meshcore_child.send_message.return_value = True
+
+    from meshai.transport.composite_transport import CompositeTransport
+    connector = CompositeTransport([meshtastic_child, meshcore_child])
+    connector._by_name = {"meshtastic": meshtastic_child, "meshcore": meshcore_child}
+
+    cfg = Config()
+    cfg.notifications.rules = []
+    cfg.notifications.cold_start_grace_seconds = 0
+    t = cfg.notifications.toggles["weather"]
+    t.enabled = True
+    t.min_severity = "priority"
+    t.severity_channels = {"priority": ["mesh_broadcast"]}
+    t.broadcast_channel = 3
+
+    event = make_event(
+        source="nws", category="weather_warning",
+        severity="priority", title="weather alert",
+    )
+
+    rules = _dispatch_with_connector(cfg, event, connector)
+    assert len(rules) == 1
+    assert rules[0]["delivery_type"] == "mesh_broadcast"
+
+    # Meshtastic child received the call.
+    assert meshtastic_child.send_message.called
+    mt_kwargs = meshtastic_child.send_message.call_args.kwargs
+    assert mt_kwargs.get("destination") is None
+    assert mt_kwargs.get("channel") == 3
+
+    # MeshCore child must NOT have been called.
+    meshcore_child.send_message.assert_not_called()
+
+
+def test_meshcore_dm_routes_to_meshcore_contacts():
+    """meshcore_dm → connector.send_message called per meshcore_dm_contacts
+    entry with transport='meshcore'."""
+    from meshai.notifications.channels import MeshCoreDMChannel
+
+    mock_connector = MagicMock()
+    mock_connector._by_name = {"meshcore": MagicMock(), "meshtastic": MagicMock()}
+    mock_connector.send_message.return_value = True
+
+    from meshai.config import NotificationRuleConfig
+    import time as _time
+    from meshai.notifications.events import NotificationPayload
+
+    rule = NotificationRuleConfig(
+        name="toggle:mesh_health",
+        delivery_type="meshcore_dm",
+        meshcore_dm_contacts=["alice", "bob"],
+    )
+
+    channel = create_channel(rule, mock_connector)
+    assert isinstance(channel, MeshCoreDMChannel)
+
+    payload = NotificationPayload(
+        message="dm alert",
+        category="mesh_health",
+        severity="immediate",
+        timestamp=_time.time(),
+        chunk_index=0,
+    )
+
+    result = asyncio.run(channel.deliver(payload, rule))
+    assert result is True
+
+    # One send_message call per contact.
+    assert mock_connector.send_message.call_count == 2
+    destinations = [
+        call.kwargs.get("destination")
+        for call in mock_connector.send_message.call_args_list
+    ]
+    assert set(destinations) == {"alice", "bob"}
+    for call in mock_connector.send_message.call_args_list:
+        assert call.kwargs.get("transport") == "meshcore"
+
+
+def test_meshcore_broadcast_noop_when_no_meshcore_transport():
+    """meshcore_broadcast with transport=meshtastic (no MeshCore child) →
+    deliver returns False, no exception raised."""
+    from meshai.notifications.channels import MeshCoreBroadcastChannel
+    from meshai.config import NotificationRuleConfig
+    import time as _time
+    from meshai.notifications.events import NotificationPayload
+
+    # Connector has NO meshcore child (transport=meshtastic scenario).
+    mock_connector = MagicMock()
+    # _by_name exists but has only meshtastic.
+    mock_connector._by_name = {"meshtastic": MagicMock()}
+
+    rule = NotificationRuleConfig(
+        name="toggle:fire",
+        delivery_type="meshcore_broadcast",
+        meshcore_channel="AIDA",
+    )
+
+    channel = create_channel(rule, mock_connector)
+    assert isinstance(channel, MeshCoreBroadcastChannel)
+
+    payload = NotificationPayload(
+        message="fire alert",
+        category="fire",
+        severity="immediate",
+        timestamp=_time.time(),
+        chunk_index=0,
+    )
+
+    # Must not raise; returns False (no-op).
+    result = asyncio.run(channel.deliver(payload, rule))
+    assert result is False
+    # send_message must NOT have been called (no accidental Meshtastic send).
+    mock_connector.send_message.assert_not_called()
+
+
+def test_config_round_trip_meshcore_fields():
+    """NotificationToggle with meshcore types in severity_channels and
+    meshcore_dm_contacts survives _dataclass_to_dict / _dict_to_dataclass."""
+    from meshai.config import _dataclass_to_dict, _dict_to_dataclass, NotificationToggle
+
+    tog = NotificationToggle(
+        name="fire",
+        enabled=True,
+        min_severity="immediate",
+        severity_channels={
+            "priority": ["meshcore_broadcast"],
+            "immediate": ["mesh_broadcast", "meshcore_broadcast", "meshcore_dm"],
+        },
+        broadcast_channel=1,
+        meshcore_channel="AIDA",
+        meshcore_dm_contacts=["alice", "bob"],
+        node_ids=["!deadbeef"],
+    )
+
+    d = _dataclass_to_dict(tog)
+    assert d["meshcore_dm_contacts"] == ["alice", "bob"]
+    assert d["meshcore_channel"] == "AIDA"
+    assert "meshcore_broadcast" in d["severity_channels"]["priority"]
+    assert "meshcore_dm" in d["severity_channels"]["immediate"]
+
+    restored = _dict_to_dataclass(NotificationToggle, d)
+    assert restored.meshcore_dm_contacts == ["alice", "bob"]
+    assert restored.meshcore_channel == "AIDA"
+    assert "meshcore_broadcast" in restored.severity_channels["priority"]
+    assert "meshcore_dm" in restored.severity_channels["immediate"]
+    assert restored.node_ids == ["!deadbeef"]
+
+
+def test_meshtastic_only_config_unchanged():
+    """Existing configs with only mesh_broadcast/mesh_dm and
+    transport=meshtastic behave identically to pre-MeshCore behavior."""
+    mock_connector = MagicMock()
+    # Simulate a plain MeshtasticTransport (no _by_name, transport_name=meshtastic).
+    mock_connector.transport_name = "meshtastic"
+    mock_connector.send_message.return_value = True
+    # No _by_name attribute (not a CompositeTransport).
+    del mock_connector._by_name
+
+    cfg = Config()
+    cfg.notifications.rules = []
+    cfg.notifications.cold_start_grace_seconds = 0
+    t = cfg.notifications.toggles["weather"]
+    t.enabled = True
+    t.min_severity = "priority"
+    t.severity_channels = {
+        "priority": ["mesh_broadcast"],
+        "immediate": ["mesh_broadcast", "mesh_dm"],
+    }
+    t.broadcast_channel = 0
+    t.node_ids = ["!deadbeef"]
+
+    event = make_event(
+        source="nws", category="weather_warning",
+        severity="priority", title="weather alert",
+    )
+    rules = _dispatch_with_connector(cfg, event, mock_connector)
+    assert len(rules) == 1
+    assert rules[0]["delivery_type"] == "mesh_broadcast"
+
+    # send_message called with Meshtastic channel and transport hint.
+    assert mock_connector.send_message.called
+    kwargs = mock_connector.send_message.call_args.kwargs
+    assert kwargs.get("transport") == "meshtastic"
+    assert kwargs.get("channel") == 0

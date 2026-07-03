@@ -559,6 +559,8 @@ class NotificationRuleConfig:
 
     # Mesh DM fields
     node_ids: list = field(default_factory=list)
+    # MeshCore DM target contacts (names or pubkeys). Parallel to node_ids for Meshtastic.
+    meshcore_dm_contacts: list = field(default_factory=list)
 
     # Email fields
     smtp_host: str = ""
@@ -600,6 +602,8 @@ class NotificationToggle:
     # Per-family MeshCore channel NAME on the companion; None = not broadcast on MeshCore.
     meshcore_channel: Optional[str] = None
     node_ids: list = field(default_factory=list)
+    # MeshCore DM target contacts (names or pubkeys). Parallel to node_ids for Meshtastic.
+    meshcore_dm_contacts: list = field(default_factory=list)
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
