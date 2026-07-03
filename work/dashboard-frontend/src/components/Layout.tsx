@@ -15,6 +15,7 @@ import {
   Network,
   Users,
   Bot,
+  Settings,
   type LucideIcon,
 } from 'lucide-react'
 import { fetchStatus, type SystemStatus } from '@/lib/api'
@@ -44,21 +45,21 @@ const topNavItems: NavItem[] = [
   { path: '/alerts', label: 'Alerts', icon: Bell },
   { path: '/reference', label: 'Reference', icon: BookOpen },
   { path: '/adapter-config', label: 'Adapter Config', icon: Sliders },
+  { path: '/config', label: 'Config', icon: Settings },
   { path: '/gauge-sites', label: 'Gauge Sites', icon: Droplets },
   { path: '/town-anchors', label: 'Town Anchors', icon: MapPin },
 ]
 
 // Grouped sections with labeled headers. Meshtastic "Connection" and "Sources"
-// deep-link into the existing /config page via a ?section= query param that
-// Config.tsx reads on mount to pre-select its active section.
+// are focused standalone pages (/meshtastic/connection, /meshtastic/sources).
 const navGroups: NavGroup[] = [
   {
     header: 'Meshtastic',
     items: [
-      { path: '/config?section=connection', label: 'Connection', icon: Wifi },
+      { path: '/meshtastic/connection', label: 'Connection', icon: Wifi },
       { path: '/notifications', label: 'Routing', icon: BellRing },
       { path: '/mesh', label: 'Mesh', icon: Radio },
-      { path: '/config?section=mesh_sources', label: 'Sources', icon: Layers },
+      { path: '/meshtastic/sources', label: 'Sources', icon: Layers },
     ],
   },
   {

@@ -14,6 +14,8 @@ import MeshCoreRouting from './pages/MeshCoreRouting'
 import MeshCoreConnection from './pages/MeshCoreConnection'
 import MeshCoreContacts from './pages/MeshCoreContacts'
 import MeshCoreCompanion from './pages/MeshCoreCompanion'
+import MeshtasticConnection from './pages/MeshtasticConnection'
+import MeshtasticSources from './pages/MeshtasticSources'
 import { ToastProvider } from './components/ToastProvider'
 
 function App() {
@@ -35,6 +37,8 @@ function App() {
           <Route path="/meshcore/connection" element={<MeshCoreConnection />} />
           <Route path="/meshcore/contacts" element={<MeshCoreContacts />} />
           <Route path="/meshcore/companion" element={<MeshCoreCompanion />} />
+          <Route path="/meshtastic/connection" element={<MeshtasticConnection />} />
+          <Route path="/meshtastic/sources" element={<MeshtasticSources />} />
         </Routes>
       </Layout>
     </ToastProvider>

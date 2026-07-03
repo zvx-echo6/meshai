@@ -1,25 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Link } from 'react-router-dom'
 import { Save, RotateCcw, RefreshCw, Check } from 'lucide-react'
-import { TextInput, NumberInput, SelectInput } from './Config'
+import { ConnectionSection, type ConnectionConfig } from './Config'
 import { notifyRestartRequired } from '@/components/RestartBanner'
 import { fetchConfig as apiFetchConfig, updateConfig as apiUpdateConfig } from '@/lib/api'
 
-// Only the fields this page edits are typed explicitly; the rest of the
-// connection config (Meshtastic type / serial / tcp) is preserved untouched on
-// save via object spread.
-interface ConnectionConfig {
-  type?: string
-  serial_port?: string
-  tcp_host?: string
-  tcp_port?: number
-  transport?: string
-  meshcore_host?: string
-  meshcore_port?: number
-  [key: string]: unknown
-}
-
-export default function MeshCoreConnection() {
+export default function MeshtasticConnection() {
   const [config, setConfig] = useState<ConnectionConfig | null>(null)
   const [originalConfig, setOriginalConfig] = useState<ConnectionConfig | null>(null)
   const [loading, setLoading] = useState(true)
@@ -44,7 +29,7 @@ export default function MeshCoreConnection() {
   }, [])
 
   useEffect(() => {
-    document.title = 'MeshCore Connection - MeshAI'
+    document.title = 'Meshtastic Connection - MeshAI'
     fetchConfig()
   }, [fetchConfig])
 
@@ -54,20 +39,17 @@ export default function MeshCoreConnection() {
     }
   }, [config, originalConfig])
 
-  const upd = (patch: Partial<ConnectionConfig>) =>
-    setConfig((c) => (c ? { ...c, ...patch } : c))
-
   const saveConfig = async () => {
     if (!config) return
     setSaving(true)
     setError(null)
     setSuccess(null)
     try {
-      // PUT the whole connection object so Meshtastic fields are preserved.
+      // PUT the whole connection object so MeshCore fields aren't clobbered.
       const result = await apiUpdateConfig('connection', config)
       setOriginalConfig(JSON.parse(JSON.stringify(config)))
       setHasChanges(false)
-      setSuccess('MeshCore connection saved successfully')
+      setSuccess('Meshtastic connection saved successfully')
       if (result.restart_required) {
         notifyRestartRequired([])
       }
@@ -89,7 +71,7 @@ export default function MeshCoreConnection() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-slate-400">Loading MeshCore connection...</div>
+        <div className="text-slate-400">Loading Meshtastic connection...</div>
       </div>
     )
   }
@@ -108,7 +90,7 @@ export default function MeshCoreConnection() {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-slate-500">
-            Transport mode and MeshCore node connection.
+            Connection to your Meshtastic radio (serial or TCP).
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -150,48 +132,8 @@ export default function MeshCoreConnection() {
       )}
 
       {/* Form */}
-      <div className="bg-bg-card border border-border p-6 space-y-4">
-        <SelectInput
-          label="Transport Mode"
-          value={config.transport ?? 'meshtastic'}
-          onChange={(v) => upd({ transport: v })}
-          options={[
-            { value: 'meshtastic', label: 'Meshtastic' },
-            { value: 'meshcore', label: 'MeshCore' },
-            { value: 'both', label: 'Both' },
-          ]}
-          helper="Which radio transport(s) MeshAI uses"
-          info="Meshtastic: connect to a Meshtastic radio only. MeshCore: connect to a MeshCore node only. Both: connect to both simultaneously for dual-transport operation."
-        />
-        <div className="pt-2 border-t border-[#1e2a3a] space-y-4">
-          <div className="text-xs text-slate-500 uppercase tracking-wide">MeshCore Connection</div>
-          <div className="grid grid-cols-2 gap-4">
-            <TextInput
-              label="MeshCore Host"
-              value={config.meshcore_host ?? ''}
-              onChange={(v) => upd({ meshcore_host: v })}
-              placeholder="192.168.1.100"
-              helper="IP or hostname of the MeshCore node"
-              info="Address of the MeshCore node to connect to."
-            />
-            <NumberInput
-              label="MeshCore Port"
-              value={config.meshcore_port ?? 5525}
-              onChange={(v) => upd({ meshcore_port: v })}
-              min={1}
-              max={65535}
-              helper="MeshCore TCP port (default 5525)"
-            />
-          </div>
-        </div>
-        <div className="pt-2">
-          <Link
-            to="/meshtastic/connection"
-            className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-accent transition-colors"
-          >
-            &rarr; Meshtastic connection
-          </Link>
-        </div>
+      <div className="bg-bg-card border border-border p-6">
+        <ConnectionSection data={config} onChange={setConfig} />
       </div>
     </div>
   )

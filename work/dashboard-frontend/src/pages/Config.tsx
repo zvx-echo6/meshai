@@ -4,8 +4,8 @@ import { notifyRestartRequired } from '@/components/RestartBanner'
 import NodePicker from '@/components/NodePicker'
 import ChannelPicker from '@/components/ChannelPicker'
 import {
-  Settings, Bot, Wifi, MessageSquare, Database, Brain, Eye,
-  Terminal, Cpu, Cloud, Radio, BookOpen, Layers, Activity,
+  Settings, Bot, MessageSquare, Database, Brain, Eye,
+  Terminal, Cpu, Cloud, BookOpen, Activity,
   LayoutDashboard, Save, RotateCcw, RefreshCw,
   Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle,
   Check, X, Eye as EyeIcon, EyeOff, ExternalLink
@@ -19,7 +19,7 @@ interface BotConfig {
   filter_bbs_protocols: boolean
 }
 
-interface ConnectionConfig {
+export interface ConnectionConfig {
   type: string
   serial_port: string
   tcp_host: string
@@ -87,7 +87,7 @@ interface WeatherConfig {
   wttr: { url: string }
 }
 
-interface MeshMonitorConfig {
+export interface MeshMonitorConfig {
   enabled: boolean
   url: string
   inject_into_prompt: boolean
@@ -110,7 +110,7 @@ interface KnowledgeConfig {
   top_k: number
 }
 
-interface MeshSourceConfig {
+export interface MeshSourceConfig {
   name: string
   type: string
   url: string
@@ -226,7 +226,6 @@ type SectionKey = keyof FullConfig
 
 const SECTIONS: { key: SectionKey; label: string; icon: typeof Settings }[] = [
   { key: 'bot', label: 'Bot', icon: Bot },
-  { key: 'connection', label: 'Connection', icon: Wifi },
   { key: 'response', label: 'Response', icon: MessageSquare },
   { key: 'history', label: 'History', icon: Database },
   { key: 'memory', label: 'Memory', icon: Brain },
@@ -234,9 +233,7 @@ const SECTIONS: { key: SectionKey; label: string; icon: typeof Settings }[] = [
   { key: 'commands', label: 'Commands', icon: Terminal },
   { key: 'llm', label: 'LLM', icon: Cpu },
   { key: 'weather', label: 'Weather', icon: Cloud },
-  { key: 'meshmonitor', label: 'MeshMonitor', icon: Radio },
   { key: 'knowledge', label: 'Knowledge', icon: BookOpen },
-  { key: 'mesh_sources', label: 'Mesh Sources', icon: Layers },
   { key: 'mesh_intelligence', label: 'Intelligence', icon: Activity },
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
 ]
@@ -710,7 +707,7 @@ function BotSection({ data, onChange }: { data: BotConfig; onChange: (d: BotConf
   )
 }
 
-function ConnectionSection({ data, onChange }: { data: ConnectionConfig; onChange: (d: ConnectionConfig) => void }) {
+export function ConnectionSection({ data, onChange }: { data: ConnectionConfig; onChange: (d: ConnectionConfig) => void }) {
   return (
     <div className="space-y-4">
       <SectionDescription text={SECTION_DESCRIPTIONS.connection} />
@@ -1159,7 +1156,7 @@ function WeatherSection({ data, onChange }: { data: WeatherConfig; onChange: (d:
   )
 }
 
-function MeshMonitorSection({ data, onChange }: { data: MeshMonitorConfig; onChange: (d: MeshMonitorConfig) => void }) {
+export function MeshMonitorSection({ data, onChange }: { data: MeshMonitorConfig; onChange: (d: MeshMonitorConfig) => void }) {
   return (
     <div className="space-y-4">
       <SectionDescription text={SECTION_DESCRIPTIONS.meshmonitor} />
@@ -1376,7 +1373,7 @@ function MeshSourceCard({ source, onChange, onDelete }: {
   )
 }
 
-function MeshSourcesSection({ data, onChange }: { data: MeshSourceConfig[]; onChange: (d: MeshSourceConfig[]) => void }) {
+export function MeshSourcesSection({ data, onChange }: { data: MeshSourceConfig[]; onChange: (d: MeshSourceConfig[]) => void }) {
   const addSource = () => {
     onChange([...data, {
       name: 'New Source',
@@ -1929,7 +1926,6 @@ export default function Config() {
   const renderSection = () => {
     switch (activeSection) {
       case 'bot': return <BotSection data={config.bot} onChange={(d) => updateSection('bot', d)} />
-      case 'connection': return <ConnectionSection data={config.connection} onChange={(d) => updateSection('connection', d)} />
       case 'response': return <ResponseSection data={config.response} onChange={(d) => updateSection('response', d)} />
       case 'history': return <HistorySection data={config.history} onChange={(d) => updateSection('history', d)} />
       case 'memory': return <MemorySection data={config.memory} onChange={(d) => updateSection('memory', d)} />
@@ -1937,9 +1933,7 @@ export default function Config() {
       case 'commands': return <CommandsSection data={config.commands} onChange={(d) => updateSection('commands', d)} />
       case 'llm': return <LLMSection data={config.llm} onChange={(d) => updateSection('llm', d)} />
       case 'weather': return <WeatherSection data={config.weather} onChange={(d) => updateSection('weather', d)} />
-      case 'meshmonitor': return <MeshMonitorSection data={config.meshmonitor} onChange={(d) => updateSection('meshmonitor', d)} />
       case 'knowledge': return <KnowledgeSection data={config.knowledge} onChange={(d) => updateSection('knowledge', d)} />
-      case 'mesh_sources': return <MeshSourcesSection data={config.mesh_sources} onChange={(d) => updateSection('mesh_sources', d)} />
       case 'mesh_intelligence': return <MeshIntelligenceSection data={config.mesh_intelligence} onChange={(d) => updateSection('mesh_intelligence', d)} />
       case 'dashboard': return <DashboardSection data={config.dashboard} onChange={(d) => updateSection('dashboard', d)} />
       default: return null
