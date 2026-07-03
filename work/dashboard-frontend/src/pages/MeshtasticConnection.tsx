@@ -3,8 +3,10 @@ import { Save, RotateCcw, RefreshCw, Check } from 'lucide-react'
 import { ConnectionSection, type ConnectionConfig } from './Config'
 import { notifyRestartRequired } from '@/components/RestartBanner'
 import { fetchConfig as apiFetchConfig, updateConfig as apiUpdateConfig } from '@/lib/api'
+import { useDirty } from '@/context/DirtyContext'
 
 export default function MeshtasticConnection() {
+  const { setDirty } = useDirty()
   const [config, setConfig] = useState<ConnectionConfig | null>(null)
   const [originalConfig, setOriginalConfig] = useState<ConnectionConfig | null>(null)
   const [loading, setLoading] = useState(true)
@@ -39,6 +41,11 @@ export default function MeshtasticConnection() {
     }
   }, [config, originalConfig])
 
+  useEffect(() => {
+    setDirty(hasChanges)
+    return () => setDirty(false)
+  }, [hasChanges, setDirty])
+
   const saveConfig = async () => {
     if (!config) return
     setSaving(true)
@@ -49,6 +56,7 @@ export default function MeshtasticConnection() {
       const result = await apiUpdateConfig('connection', config)
       setOriginalConfig(JSON.parse(JSON.stringify(config)))
       setHasChanges(false)
+      setDirty(false)
       setSuccess('Meshtastic connection saved successfully')
       if (result.restart_required) {
         notifyRestartRequired([])

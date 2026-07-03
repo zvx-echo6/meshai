@@ -17,9 +17,11 @@ import MeshCoreCompanion from './pages/MeshCoreCompanion'
 import MeshtasticConnection from './pages/MeshtasticConnection'
 import MeshtasticSources from './pages/MeshtasticSources'
 import { ToastProvider } from './components/ToastProvider'
+import { DirtyProvider } from './context/DirtyContext'
 
 function App() {
   return (
+    <DirtyProvider>
     <ToastProvider>
       <Layout>
         <Routes>
@@ -42,6 +44,7 @@ function App() {
         </Routes>
       </Layout>
     </ToastProvider>
+    </DirtyProvider>
   )
 }
 

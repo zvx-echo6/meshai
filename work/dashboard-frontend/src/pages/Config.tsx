@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { notifyRestartRequired } from '@/components/RestartBanner'
+import { useDirty } from '@/context/DirtyContext'
 import NodePicker from '@/components/NodePicker'
 import ChannelPicker from '@/components/ChannelPicker'
 import {
@@ -1799,6 +1800,7 @@ function DashboardSection({ data, onChange }: { data: DashboardConfig; onChange:
 }
 
 export default function Config() {
+  const { setDirty } = useDirty()
   const [config, setConfig] = useState<FullConfig | null>(null)
   const [originalConfig, setOriginalConfig] = useState<FullConfig | null>(null)
   const [activeSection, setActiveSection] = useState<SectionKey>('bot')
@@ -1846,6 +1848,11 @@ export default function Config() {
     }
   }, [config, originalConfig])
 
+  useEffect(() => {
+    setDirty(hasChanges)
+    return () => setDirty(false)
+  }, [hasChanges, setDirty])
+
   const saveSection = async () => {
     if (!config) return
 
@@ -1870,6 +1877,7 @@ export default function Config() {
       setSuccess(`${activeSection} saved successfully`)
       setOriginalConfig(JSON.parse(JSON.stringify(config)))
       setHasChanges(false)
+      setDirty(false)
 
       if (result.restart_required) {
         setRestartRequired(true)

@@ -8,8 +8,10 @@ import {
 } from './Config'
 import { notifyRestartRequired } from '@/components/RestartBanner'
 import { fetchConfig as apiFetchConfig, updateConfig as apiUpdateConfig } from '@/lib/api'
+import { useDirty } from '@/context/DirtyContext'
 
 export default function MeshtasticSources() {
+  const { setDirty } = useDirty()
   const [meshmonitor, setMeshmonitor] = useState<MeshMonitorConfig | null>(null)
   const [originalMeshmonitor, setOriginalMeshmonitor] = useState<MeshMonitorConfig | null>(null)
   const [meshSources, setMeshSources] = useState<MeshSourceConfig[] | null>(null)
@@ -54,6 +56,11 @@ export default function MeshtasticSources() {
     }
   }, [meshmonitor, originalMeshmonitor, meshSources, originalMeshSources])
 
+  useEffect(() => {
+    setDirty(hasChanges)
+    return () => setDirty(false)
+  }, [hasChanges, setDirty])
+
   const saveConfig = async () => {
     if (!meshmonitor || !meshSources) return
     setSaving(true)
@@ -67,6 +74,7 @@ export default function MeshtasticSources() {
       setOriginalMeshmonitor(JSON.parse(JSON.stringify(meshmonitor)))
       setOriginalMeshSources(JSON.parse(JSON.stringify(meshSources)))
       setHasChanges(false)
+      setDirty(false)
       setSuccess('Meshtastic sources saved successfully')
       if (mmResult.restart_required || msResult.restart_required) {
         notifyRestartRequired([])
