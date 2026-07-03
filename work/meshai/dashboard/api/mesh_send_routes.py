@@ -87,6 +87,52 @@ async def meshcore_send_advert(request: Request):
         return {"sent": False, "detail": str(exc)}
 
 
+@router.get("/meshcore/telemetry")
+async def meshcore_telemetry(request: Request):
+    """Cached telemetry readings for auto-polled MeshCore contacts.
+
+    Returns {active: bool, entries: list}.  entries is [] (and active False)
+    when MeshCore is not connected.
+    """
+    connector = getattr(request.app.state, "connector", None)
+    mc = _find_child(connector, "meshcore")
+    if mc is not None and getattr(mc, "connected", False):
+        try:
+            entries = list(mc.get_telemetry_cache())
+        except Exception:
+            entries = []
+        return {"active": True, "entries": entries}
+    return {"active": False, "entries": []}
+
+
+@router.post("/meshcore/telemetry/poll")
+async def meshcore_telemetry_poll(request: Request):
+    """On-demand ('Poll now') telemetry request for a single MeshCore contact.
+
+    Body: {"contact": "<name-or-pubkey>"}.  Returns {available, contact, data}
+    on success, or {available: False, detail: ...} when unavailable/inactive.
+    """
+    connector = getattr(request.app.state, "connector", None)
+    mc = _find_child(connector, "meshcore")
+    if mc is None or not getattr(mc, "connected", False):
+        return {"available": False, "detail": "MeshCore not connected"}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    contact = (body or {}).get("contact")
+    if not contact:
+        return {"available": False, "detail": "Missing 'contact'"}
+    try:
+        data = mc.req_telemetry(contact)
+        if data is None:
+            return {"available": False, "contact": contact, "detail": "No telemetry response"}
+        return {"available": True, "contact": contact, "data": data}
+    except Exception as exc:
+        logger.error("dashboard: meshcore telemetry poll error: %s", exc)
+        return {"available": False, "contact": contact, "detail": str(exc)}
+
+
 class TestSendRequest(BaseModel):
     transport: str
     channel: Union[str, int]

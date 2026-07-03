@@ -107,6 +107,16 @@ class CompositeTransport(MeshTransport):
         child = self.meshcore_child()
         return child.send_advert() if child is not None else False
 
+    def req_telemetry(self, contact_id):
+        """Passthrough to the MeshCore child's on-demand telemetry poll; None if no child."""
+        child = self.meshcore_child()
+        return child.req_telemetry(contact_id) if child is not None else None
+
+    def get_telemetry_cache(self):
+        """Passthrough to the MeshCore child's telemetry cache; [] if no meshcore child."""
+        child = self.meshcore_child()
+        return child.get_telemetry_cache() if child is not None else []
+
     # ------------------------------------------------------------------
     # Routing decision helpers (factored out for unit-test access)
     # ------------------------------------------------------------------

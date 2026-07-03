@@ -43,6 +43,10 @@ class ConnectionConfig:
     meshcore_auto_reconnect: bool = True        # enable meshcore lib auto-reconnect
     meshcore_max_reconnect_attempts: int = 5    # max reconnect attempts (0 = unlimited)
     meshcore_advert_interval_seconds: int = 10800  # periodic self-advert interval (0 = disabled)
+    # --- MeshCore telemetry auto-poll settings ---
+    # Selected contacts (names or pubkeys) to auto-poll for telemetry; empty = none.
+    meshcore_telemetry_contacts: list = field(default_factory=list)
+    meshcore_telemetry_interval_seconds: int = 1800  # auto-poll interval (0 = disabled; floor 300)
 
 
 @dataclass
