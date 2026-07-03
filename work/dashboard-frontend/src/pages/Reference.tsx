@@ -1186,18 +1186,6 @@ export default function Reference() {
               ]}
             />
 
-            <SectionHeader>Subscription Commands</SectionHeader>
-            <RefTable
-              headers={['Command', 'What It Does']}
-              rows={[
-                [<Mono>!subscribe</Mono>, 'Lists all alert categories you can subscribe to'],
-                [<Mono>!subscribe fire_proximity</Mono>, 'Subscribe to a specific category'],
-                [<Mono>!subscribe all</Mono>, 'Subscribe to everything'],
-                [<Mono>!unsubscribe fire_proximity</Mono>, 'Unsubscribe from a category'],
-                [<Mono>!subscriptions</Mono>, "Shows what you're currently subscribed to"],
-              ]}
-            />
-
             <SectionHeader>Conversational</SectionHeader>
             <p>
               Bang commands are the short, predictable interface. For anything that

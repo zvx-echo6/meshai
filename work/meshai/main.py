@@ -45,7 +45,6 @@ class MeshAI:
         self.data_store = None  # Replaces source_manager
         self.health_engine = None
         self.mesh_reporter = None
-        self.subscription_manager = None
         self.alert_engine = None
         self.notification_router = None
         self.event_bus = None  # Notification pipeline EventBus (v0.3)
@@ -53,7 +52,6 @@ class MeshAI:
         self.env_store = None  # Environmental feeds store
         self._central_consumer = None  # Central NATS consumer (v0.4)
         self._fire_pacer = None  # FirePacer for rate-limited fire broadcasts
-        self._last_sub_check: float = 0.0
         self.router: Optional[MessageRouter] = None
         self.responder: Optional[Responder] = None
         self._running = False
@@ -223,12 +221,6 @@ class MeshAI:
                 except Exception as e:
                     logger.debug("Env refresh error: %s", e)
 
-            # Check scheduled subscriptions (every 60 seconds)
-            if self.subscription_manager and self.mesh_reporter:
-                if time.time() - self._last_sub_check >= 60:
-                    await self._check_scheduled_subs()
-                    self._last_sub_check = time.time()
-
             # Periodic cleanup
             if time.time() - self._last_cleanup >= 3600:
                 await self.history.cleanup_expired()
@@ -326,8 +318,6 @@ class MeshAI:
         if self.data_store:
             await self.data_store.stop_mqtt_sources()
             self.data_store.close()
-        if self.subscription_manager:
-            self.subscription_manager.close()
 
         self._remove_pid()
         logger.info("MeshAI stopped")
@@ -395,7 +385,10 @@ class MeshAI:
         await self._load_summaries()
 
         # Transport connector (factory derives backend from config.connection.meshcore_host)
-        self.connector = build_transport(self.config.connection)
+        self.connector = build_transport(
+            self.config.connection,
+            meshcore_context=self.config.meshcore_context,
+        )
 
         # Fit every broadcast handler's one-packet formatter to the active mesh
         # transport's budget (LoRa max_chars, 140). Durable across adapter_config
@@ -494,22 +487,13 @@ class MeshAI:
         else:
             self.mesh_reporter = None
 
-        # Subscription manager (uses same db as data_store)
-        if self.data_store:
-            from .subscriptions import SubscriptionManager
-            self.subscription_manager = SubscriptionManager(db_path="/data/mesh_history.db")
-            logger.info("Subscription manager enabled")
-        else:
-            self.subscription_manager = None
-
-        # Alert engine (needs health engine, reporter, and subscription manager)
-        if self.health_engine and self.mesh_reporter and self.subscription_manager:
+        # Alert engine (needs health engine and reporter)
+        if self.health_engine and self.mesh_reporter:
             from .alert_engine import AlertEngine
             mi = self.config.mesh_intelligence
             self.alert_engine = AlertEngine(
                 health_engine=self.health_engine,
                 reporter=self.mesh_reporter,
-                subscription_manager=self.subscription_manager,
                 config=mi,
                 db_path="/data/mesh_history.db",
                 timezone=self.config.timezone,
@@ -610,9 +594,7 @@ class MeshAI:
             mesh_reporter=self.mesh_reporter,
             data_store=self.data_store,
             health_engine=self.health_engine,
-            subscription_manager=self.subscription_manager,
             env_store=self.env_store,
-            notification_router=self.notification_router,
         )
 
         # Message router
@@ -796,93 +778,8 @@ class MeshAI:
                 except Exception as e:
                     logger.error(f"Failed to send channel alert: {e}")
 
-                # Fallback: Send DMs to matching subscribers
-                if self.alert_engine and self.subscription_manager:
-                    subscribers = self.alert_engine.get_subscribers_for_alert(alert)
-                    for sub in subscribers:
-                        user_id = sub["user_id"]
-                        try:
-                            await self._send_sub_dm(user_id, message)
-                            logger.info(f"Alert DM sent to {user_id}: {alert['type']}")
-                        except Exception as e:
-                            logger.error(f"Failed to send alert DM to {user_id}: {e}")
-
         if self.alert_engine:
             self.alert_engine.clear_pending()
-
-    async def _check_scheduled_subs(self) -> None:
-        """Check for and deliver due scheduled reports."""
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-
-        tz = ZoneInfo(self.config.timezone)
-        now = datetime.now(tz)
-        current_hhmm = now.strftime("%H%M")
-        current_day = now.strftime("%a").lower()
-
-        due_subs = self.subscription_manager.get_due_subscriptions(current_hhmm, current_day)
-
-        for sub in due_subs:
-            try:
-                # Generate report based on scope
-                report = self._generate_sub_report(sub)
-                if not report:
-                    continue
-
-                # Send DM to subscriber
-                user_id = sub["user_id"]
-                await self._send_sub_dm(user_id, report)
-
-                # Mark as sent
-                self.subscription_manager.mark_sent(sub["id"])
-                logger.info(f"Delivered {sub['sub_type']} report to {user_id}")
-
-            except Exception as e:
-                logger.error(f"Error delivering subscription {sub['id']}: {e}")
-
-    def _generate_sub_report(self, sub: dict) -> str:
-        """Generate report content for a subscription."""
-        if not self.mesh_reporter:
-            return None
-
-        sub_type = sub["sub_type"]
-        scope_type = sub.get("scope_type", "mesh")
-        scope_value = sub.get("scope_value")
-
-        if scope_type == "region" and scope_value:
-            # Region-scoped report
-            region = self.mesh_reporter._find_region(scope_value)
-            if region:
-                return self.mesh_reporter.build_region_compact(region.name)
-            return None
-        elif scope_type == "node" and scope_value:
-            # Node-scoped report
-            return self.mesh_reporter.build_node_compact(scope_value)
-        else:
-            # Mesh-wide report
-            return self.mesh_reporter.build_lora_compact(scope="mesh")
-
-    async def _send_sub_dm(self, node_num: str, message: str) -> None:
-        """Send a subscription DM to a node."""
-        if not self.connector:
-            return
-
-        # Convert node_num to destination format
-        try:
-            dest = int(node_num)
-        except ValueError:
-            dest = node_num
-
-        # Send via responder for proper chunking
-        if self.responder:
-            await self.responder.send_response(
-                message,
-                destination=dest,
-                channel=0,  # DM channel
-            )
-        else:
-            # Fallback to direct send
-            self.connector.send_message(message, destination=dest)
 
 
 def setup_logging(verbose: bool = False) -> None:

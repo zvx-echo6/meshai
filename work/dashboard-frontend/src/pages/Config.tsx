@@ -163,7 +163,7 @@ interface AlertRulesConfig {
   region_score_threshold: number
 }
 
-interface MeshIntelligenceConfig {
+export interface MeshIntelligenceConfig {
   enabled: boolean
   regions: RegionAnchor[]
   locality_radius_miles: number
@@ -267,9 +267,6 @@ const AVAILABLE_COMMANDS = [
   { name: 'ping', description: 'Test bot responsiveness' },
   { name: 'clear', description: 'Clear your conversation history' },
   { name: 'reset', description: 'Reset conversation context' },
-  { name: 'sub', description: 'Subscribe to scheduled reports or alerts' },
-  { name: 'unsub', description: 'Remove a subscription' },
-  { name: 'mysubs', description: 'List your active subscriptions' },
   { name: 'alerts', description: 'Active NWS weather alerts for mesh area' },
   { name: 'solar', description: 'Space weather and HF propagation conditions' },
   { name: 'hf', description: 'HF radio propagation (alias for !solar)' },
@@ -916,21 +913,9 @@ function ContextSection({ data, onChange }: { data: ContextConfig; onChange: (d:
       />
       {data.enabled && (
         <>
-          <ChannelPicker
-            label="Observe Channels"
-            value={data.observe_channels}
-            onChange={(v) => onChange({ ...data, observe_channels: v })}
-            helper="Channels to monitor (empty = all)"
-            info="Meshtastic channels to listen on. Leave empty to monitor all channels."
-            mode="multi"
-          />
-          <NodePicker
-            label="Ignore Nodes"
-            value={data.ignore_nodes}
-            onChange={(v) => onChange({ ...data, ignore_nodes: v })}
-            helper="Nodes to exclude from context"
-            info="Messages from these nodes won't be included in passive context. Useful for filtering out noisy automated nodes."
-          />
+          {/* Observe Channels + Ignore Nodes moved to the Meshtastic Connection
+              page ("Bot behavior" section). max_age / max_context_items remain
+              here as general context knobs. */}
           <div className="grid grid-cols-2 gap-4">
             <NumberInput
               label="Max Age (sec)"
@@ -1421,7 +1406,7 @@ export function MeshSourcesSection({ data, onChange }: { data: MeshSourceConfig[
   )
 }
 
-function MeshIntelligenceSection({ data, onChange }: { data: MeshIntelligenceConfig; onChange: (d: MeshIntelligenceConfig) => void }) {
+export function MeshIntelligenceSection({ data, onChange }: { data: MeshIntelligenceConfig; onChange: (d: MeshIntelligenceConfig) => void }) {
   const [expandedRegion, setExpandedRegion] = useState<number | null>(null)
 
   return (

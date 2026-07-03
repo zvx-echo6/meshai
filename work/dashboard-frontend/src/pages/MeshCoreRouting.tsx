@@ -197,16 +197,19 @@ export default function MeshCoreRouting() {
         </div>
       </div>
 
-      {/* Cross-link note: shared family settings live on the Meshtastic Routing page */}
+      {/* Cross-link note: gating on Data Feeds, MT+Other delivery on Meshtastic Routing */}
       <div className="flex items-start gap-2 p-3 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-400">
         <ExternalLink size={16} className="text-accent mt-0.5 flex-shrink-0" />
         <div>
-          Shared per-family settings (enable, severity threshold, regions, freshness/cooldown, and
-          Meshtastic / email / webhook delivery) live on the{' '}
+          Family gating (enable, severity threshold, freshness/cooldown) is on{' '}
+          <Link to="/environment" className="text-accent hover:underline">
+            Data Feeds
+          </Link>
+          . Meshtastic and email/webhook/digest delivery is on{' '}
           <Link to="/notifications" className="text-accent hover:underline">
             Meshtastic Routing
-          </Link>{' '}
-          page. This page edits only the MeshCore delivery for each family.
+          </Link>
+          . This page edits only the MeshCore delivery for each family.
         </div>
       </div>
 
@@ -225,7 +228,7 @@ export default function MeshCoreRouting() {
       <div className="bg-bg-card border border-border p-6 space-y-4">
         <div className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
           MeshCore Delivery
-          <InfoButton info="For each notification family, choose which MeshCore channels fire at each severity, the MeshCore channel name to broadcast on, and the DM contacts to unicast to. Enabling a family and its severity threshold are set on the Meshtastic Routing page." />
+          <InfoButton info="For each notification family, choose which MeshCore channels fire at each severity, the MeshCore channel name to broadcast on, and the DM contacts to unicast to. Enabling a family and its severity threshold are configured on the Data Feeds page." />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {TOGGLE_FAMILY_META.map(({ key, label, Icon }) => {

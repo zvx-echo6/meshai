@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { Save, RotateCcw, RefreshCw, Check } from 'lucide-react'
-import { TextInput, NumberInput } from './Config'
+import { TextInput, NumberInput, Toggle, ListInput } from './Config'
 import { notifyRestartRequired } from '@/components/RestartBanner'
 import { fetchConfig as apiFetchConfig, updateConfig as apiUpdateConfig, getMeshcoreChannels, sendTestMessage } from '@/lib/api'
 import { useDirty } from '@/context/DirtyContext'
@@ -19,10 +19,24 @@ interface ConnectionConfig {
   [key: string]: unknown
 }
 
+// MeshCore-native "Bot behavior" config (section `meshcore_context`).
+// observe_channels are channel NAMES; ignore_contacts are contact names or
+// pubkey prefixes. Unknown fields are preserved on save via object spread.
+interface MeshcoreContextCfg {
+  enable_passive_context?: boolean
+  observe_channels?: string[]
+  ignore_contacts?: string[]
+  respond_to_dms?: boolean
+  [key: string]: unknown
+}
+
 export default function MeshCoreConnection() {
   const { setDirty } = useDirty()
   const [config, setConfig] = useState<ConnectionConfig | null>(null)
   const [originalConfig, setOriginalConfig] = useState<ConnectionConfig | null>(null)
+  // Bot behavior (section `meshcore_context`)
+  const [mcContext, setMcContext] = useState<MeshcoreContextCfg | null>(null)
+  const [originalMcContext, setOriginalMcContext] = useState<MeshcoreContextCfg | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -40,9 +54,14 @@ export default function MeshCoreConnection() {
   const fetchConfig = useCallback(async () => {
     setLoading(true)
     try {
-      const data = (await apiFetchConfig('connection')) as ConnectionConfig
+      const [data, mcCtx] = await Promise.all([
+        apiFetchConfig('connection') as Promise<ConnectionConfig>,
+        apiFetchConfig('meshcore_context') as Promise<MeshcoreContextCfg>,
+      ])
       setConfig(data)
       setOriginalConfig(JSON.parse(JSON.stringify(data)))
+      setMcContext(mcCtx)
+      setOriginalMcContext(JSON.parse(JSON.stringify(mcCtx)))
       setHasChanges(false)
       setError(null)
     } catch (err) {
@@ -87,10 +106,13 @@ export default function MeshCoreConnection() {
   }
 
   useEffect(() => {
-    if (config && originalConfig) {
-      setHasChanges(JSON.stringify(config) !== JSON.stringify(originalConfig))
+    if (config && originalConfig && mcContext && originalMcContext) {
+      const changed =
+        JSON.stringify(config) !== JSON.stringify(originalConfig) ||
+        JSON.stringify(mcContext) !== JSON.stringify(originalMcContext)
+      setHasChanges(changed)
     }
-  }, [config, originalConfig])
+  }, [config, originalConfig, mcContext, originalMcContext])
 
   useEffect(() => {
     setDirty(hasChanges)
@@ -101,18 +123,23 @@ export default function MeshCoreConnection() {
     setConfig((c) => (c ? { ...c, ...patch } : c))
 
   const saveConfig = async () => {
-    if (!config) return
+    if (!config || !mcContext) return
     setSaving(true)
     setError(null)
     setSuccess(null)
     try {
-      // PUT the whole connection object so Meshtastic fields are preserved.
-      const result = await apiUpdateConfig('connection', config)
+      // PUT the whole objects so sibling fields (Meshtastic connection fields,
+      // any other meshcore_context keys) are preserved.
+      const results = await Promise.all([
+        apiUpdateConfig('connection', config),
+        apiUpdateConfig('meshcore_context', mcContext),
+      ])
       setOriginalConfig(JSON.parse(JSON.stringify(config)))
+      setOriginalMcContext(JSON.parse(JSON.stringify(mcContext)))
       setHasChanges(false)
       setDirty(false)
       setSuccess('MeshCore connection saved successfully')
-      if (result.restart_required) {
+      if (results.some((r) => r.restart_required)) {
         notifyRestartRequired([])
       }
       setTimeout(() => setSuccess(null), 3000)
@@ -124,10 +151,20 @@ export default function MeshCoreConnection() {
   }
 
   const discardChanges = () => {
-    if (originalConfig) {
-      setConfig(JSON.parse(JSON.stringify(originalConfig)))
-      setHasChanges(false)
-    }
+    if (originalConfig) setConfig(JSON.parse(JSON.stringify(originalConfig)))
+    if (originalMcContext) setMcContext(JSON.parse(JSON.stringify(originalMcContext)))
+    setHasChanges(false)
+  }
+
+  const toggleObserveChannel = (name: string) => {
+    setMcContext((c) => {
+      if (!c) return c
+      const current = c.observe_channels ?? []
+      const next = current.includes(name)
+        ? current.filter((n) => n !== name)
+        : [...current, name]
+      return { ...c, observe_channels: next }
+    })
   }
 
   if (loading) {
@@ -227,6 +264,63 @@ export default function MeshCoreConnection() {
           </Link>
         </div>
       </div>
+
+      {/* Bot behavior card — mirrors the Meshtastic Connection page, MeshCore-native */}
+      {mcContext && (
+        <div className="bg-bg-card border border-border p-6 space-y-4">
+          <div className="text-xs text-slate-500 uppercase tracking-wide">Bot behavior</div>
+          <Toggle
+            label="Enable Passive Context"
+            checked={!!mcContext.enable_passive_context}
+            onChange={(v) => setMcContext({ ...mcContext, enable_passive_context: v })}
+            helper="Listen to MeshCore channel traffic for context"
+            info="When enabled, the bot monitors MeshCore channels and includes recent messages in its context so it can reference what others said."
+          />
+          {/* Observe MeshCore channels — multi-select of channel NAMES (empty = observe all) */}
+          <div className="space-y-1">
+            <label className="block text-xs text-slate-500 uppercase tracking-wide">Observe MeshCore Channels</label>
+            <div className="border border-[#1e2a3a] p-2 space-y-1">
+              {channels.map((ch) => {
+                const selected = (mcContext.observe_channels ?? []).includes(ch)
+                return (
+                  <label
+                    key={ch}
+                    onClick={() => toggleObserveChannel(ch)}
+                    className="flex items-center gap-2 p-2 rounded hover:bg-[#0a0e17] cursor-pointer"
+                  >
+                    <div className={`w-4 h-4 rounded border flex items-center justify-center ${
+                      selected ? 'bg-accent border-accent' : 'border-slate-600'
+                    }`}>
+                      {selected && <Check size={12} className="text-white" />}
+                    </div>
+                    <span className="text-sm text-slate-200">{ch}</span>
+                  </label>
+                )
+              })}
+              {channels.length === 0 && (
+                <div className="text-sm text-slate-500 p-2">
+                  No channels available{!channelsActive ? ' (MeshCore not connected)' : ''}
+                </div>
+              )}
+            </div>
+            <p className="text-xs text-slate-600">Channels to monitor (none selected = observe all)</p>
+          </div>
+          <ListInput
+            label="Ignore MeshCore Contacts"
+            value={mcContext.ignore_contacts ?? []}
+            onChange={(v) => setMcContext({ ...mcContext, ignore_contacts: v })}
+            helper="Contact names or pubkey prefixes to exclude from context (comma-separated)"
+            info="Messages from these MeshCore contacts won't be included in passive context. Enter contact names or public-key prefixes."
+          />
+          <Toggle
+            label="Respond to DMs"
+            checked={!!mcContext.respond_to_dms}
+            onChange={(v) => setMcContext({ ...mcContext, respond_to_dms: v })}
+            helper="Reply when someone sends a MeshCore direct message"
+            info="When enabled, the bot responds to MeshCore direct messages. When disabled, it only responds to channel messages that mention its name."
+          />
+        </div>
+      )}
 
       {/* Send test message card */}
       <div className={`bg-bg-card border border-border p-6 space-y-4${!channelsActive ? ' opacity-60' : ''}`}>

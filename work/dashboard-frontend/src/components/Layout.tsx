@@ -5,7 +5,6 @@ import {
   LayoutDashboard,
   Radio,
   Cloud,
-  Bell,
   BellRing,
   BookOpen,
   Sliders,
@@ -17,6 +16,9 @@ import {
   Users,
   Bot,
   Settings,
+  Calendar,
+  Activity,
+  AlertTriangle,
   type LucideIcon,
 } from 'lucide-react'
 import { fetchStatus, type SystemStatus } from '@/lib/api'
@@ -39,28 +41,26 @@ interface NavGroup {
   items: NavItem[]
 }
 
-// Top-level, ungrouped items (no header).
-const topNavItems: NavItem[] = [
-  { path: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { path: '/environment', label: 'Environment', icon: Cloud },
-  { path: '/alerts', label: 'Alerts', icon: Bell },
-  { path: '/reference', label: 'Reference', icon: BookOpen },
-  { path: '/adapter-config', label: 'Adapter Config', icon: Sliders },
-  { path: '/config', label: 'Config', icon: Settings },
-  { path: '/gauge-sites', label: 'Gauge Sites', icon: Droplets },
-  { path: '/town-anchors', label: 'Town Anchors', icon: MapPin },
-]
-
-// Grouped sections with labeled headers. Meshtastic "Connection" and "Sources"
-// are focused standalone pages (/meshtastic/connection, /meshtastic/sources).
+// All nav items are grouped — no ungrouped topNavItems.
 const navGroups: NavGroup[] = [
+  {
+    header: 'General',
+    items: [
+      { path: '/', label: 'Dashboard', icon: LayoutDashboard },
+      { path: '/config', label: 'Settings', icon: Settings },
+      { path: '/environment', label: 'Data Feeds', icon: Cloud },
+      { path: '/activity', label: 'Activity Log', icon: Activity },
+      { path: '/places', label: 'Places', icon: MapPin },
+    ],
+  },
   {
     header: 'Meshtastic',
     items: [
       { path: '/meshtastic/connection', label: 'Connection', icon: Wifi },
       { path: '/notifications', label: 'Routing', icon: BellRing },
-      { path: '/mesh', label: 'Mesh', icon: Radio },
-      { path: '/meshtastic/sources', label: 'Sources', icon: Layers },
+      { path: '/meshtastic/scheduled', label: 'Scheduled Broadcasts', icon: Calendar },
+      { path: '/meshtastic/nodes', label: 'Nodes & Health', icon: Activity },
+      { path: '/meshtastic/danger-zones', label: 'Danger Zones', icon: AlertTriangle },
     ],
   },
   {
@@ -68,17 +68,46 @@ const navGroups: NavGroup[] = [
     items: [
       { path: '/meshcore/connection', label: 'Connection', icon: Network },
       { path: '/meshcore/routing', label: 'Routing', icon: BellRing },
-      { path: '/meshcore/contacts', label: 'Contacts', icon: Users },
-      { path: '/meshcore/companion', label: 'Companion', icon: Bot },
+      { path: '/meshcore/scheduled', label: 'Scheduled Broadcasts', icon: Calendar },
+      { path: '/meshcore/contacts', label: 'Contacts & Companion', icon: Users },
+      { path: '/meshcore/danger-zones', label: 'Danger Zones', icon: AlertTriangle },
+    ],
+  },
+  {
+    header: 'Documentation',
+    items: [
+      { path: '/reference', label: 'Reference', icon: BookOpen },
     ],
   },
 ]
 
-// Flattened view of every nav item (top + all groups) for title lookup.
-const allNavItems: NavItem[] = [
-  ...topNavItems,
-  ...navGroups.flatMap((g) => g.items),
+// Flattened view of every nav item for title lookup.
+// Also include de-navved routes so they still resolve a title.
+const extraTitleItems: NavItem[] = [
+  { path: '/adapter-config', label: 'Adapter Config', icon: Sliders },
+  { path: '/gauge-sites', label: 'Gauge Sites', icon: Droplets },
+  { path: '/town-anchors', label: 'Town Anchors', icon: MapPin },
+  { path: '/mesh', label: 'Mesh', icon: Radio },
+  { path: '/meshtastic/sources', label: 'Sources', icon: Layers },
+  { path: '/meshcore/companion', label: 'Companion', icon: Bot },
 ]
+
+const allNavItems: NavItem[] = [
+  ...navGroups.flatMap((g) => g.items),
+  ...extraTitleItems,
+]
+
+// Titles for new pages not reachable via explicit nav items.
+const pathTitles: Record<string, string> = {
+  '/places': 'Places',
+  '/meshtastic/scheduled': 'Scheduled Broadcasts',
+  '/meshcore/scheduled': 'Scheduled Broadcasts',
+  '/meshtastic/nodes': 'Nodes & Health',
+  '/meshtastic/danger-zones': 'Danger Zones',
+  '/meshcore/danger-zones': 'Danger Zones',
+  '/meshcore/contacts': 'Contacts & Companion',
+  '/meshcore/companion': 'Contacts & Companion',
+}
 
 function formatUptime(seconds: number): string {
   const days = Math.floor(seconds / 86400)
@@ -125,11 +154,13 @@ function renderNavItem(
 }
 
 function getPageTitle(fullPath: string): string {
-  // Exact match first (honors any ?section= query on deep-linked items).
+  // Check explicit path-title map first (covers new pages).
+  const base = fullPath.split('?')[0]
+  if (pathTitles[base]) return pathTitles[base]
+  // Exact match (honors ?section= deep-links).
   const exact = allNavItems.find((i) => i.path === fullPath)
   if (exact) return exact.label
   // Fallback: match by pathname only, ignoring query strings.
-  const base = fullPath.split('?')[0]
   const byPath = allNavItems.find((i) => i.path.split('?')[0] === base)
   return byPath?.label || 'Dashboard'
 }
@@ -203,7 +234,6 @@ export default function Layout({ children }: LayoutProps) {
 
         {/* Navigation */}
         <nav className="flex-1 py-4">
-          {topNavItems.map((item) => renderNavItem(item, location.pathname, location.search, handleNavClick))}
           {navGroups.map((group) => (
             <div key={group.header} className="mt-4">
               <div className="px-5 pt-2 pb-1 text-[10px] font-sans font-semibold uppercase tracking-wider text-[#555]">

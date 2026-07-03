@@ -445,6 +445,8 @@ class Dispatcher:
 
         delivered_any = False
         for ch_type in ch_types:
+            rule = None
+            payload = None
             try:
                 rule = self._toggle_to_rule(tog, ch_type, event)
                 channel = self._channel_factory(rule, self._connector)
@@ -458,15 +460,20 @@ class Dispatcher:
                 if success:
                     delivered_any = True
                     self._logger.info(f"Dispatched event {event.id} via toggle {fam}/{ch_type}")
-                    # v0.5.8b post-broadcast commit. Persistence-side
-                    # bookkeeping that should only happen when a delivery
-                    # actually went out: mesh_broadcasts_out audit row +
-                    # handler-supplied last_broadcast_* UPDATE callback.
-                    self._post_broadcast_commit(event, payload, rule, ch_type)
                 else:
                     self._logger.warning(f"Toggle channel delivery returned False for {fam}/{ch_type}")
+                # v0.5.8b post-broadcast commit -> v20 per-mesh audit.
+                # Written ONCE PER MESH CHANNEL with its own transport+success,
+                # so a fan-out to both meshes yields two rows and a skip
+                # (deliver()==False) is still visible as success=0. The
+                # last_broadcast_* callback fires only when success is truthy.
+                self._post_broadcast_commit(event, payload, rule, ch_type,
+                                            success=bool(success))
             except Exception:
                 self._logger.exception(f"Toggle channel delivery failed for {fam}/{ch_type}")
+                # A crashed delivery is still a failed send -> success=0 row.
+                self._post_broadcast_commit(event, payload, rule, ch_type,
+                                            success=False)
 
         # ---------- Section 6 — guard commit (v0.6-4, B13 fix) ----------
         # Cooldown arming + dedup recording happen ONLY after at least one
@@ -600,39 +607,75 @@ class Dispatcher:
                 success = await channel.deliver(payload, rule)
             except Exception:
                 self._logger.exception(
-                    "scheduled-broadcast: delivery raised for %s; skipping", ch_type)
-                continue
+                    "scheduled-broadcast: delivery raised for %s", ch_type)
+                success = False
 
             if success:
                 delivered_any = True
-                # Audit row -- mirrors _post_broadcast_commit for scheduled.
-                try:
-                    from meshai.persistence import get_db
-                    conn = get_db()
-                    bytes_sent = len(text.encode("utf-8")) if text else 0
-                    conn.execute(
-                        "INSERT INTO mesh_broadcasts_out(sent_at, recipient, "
-                        "channel, text, source_event_table, source_event_pk, "
-                        "bytes_sent, ack_received) VALUES (?,?,?,?,?,?,?,?)",
-                        (int(time.time()), "broadcast",
-                         rf.broadcast_channel, text,
-                         source_event_table, str(source_event_pk),
-                         bytes_sent, 0),
-                    )
-                except Exception:
-                    self._logger.exception(
-                        "scheduled-broadcast: audit row insert failed for %s", ch_type)
+
+            # v20 per-mesh audit row. Written once per mesh channel with its
+            # own transport+success, so a fan-out to both meshes yields two
+            # rows and a skip (deliver()==False) is visible as success=0.
+            try:
+                from meshai.persistence import get_db
+                conn = get_db()
+                bytes_sent = len(text.encode("utf-8")) if text else 0
+                transport, channel_id, recipient = self._audit_route(rule, ch_type)
+                conn.execute(
+                    "INSERT INTO mesh_broadcasts_out(sent_at, recipient, "
+                    "channel, text, source_event_table, source_event_pk, "
+                    "bytes_sent, ack_received, transport, success) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (int(time.time()), recipient,
+                     channel_id, text,
+                     source_event_table, str(source_event_pk),
+                     bytes_sent, 0,
+                     transport, 1 if success else 0),
+                )
+            except Exception:
+                self._logger.exception(
+                    "scheduled-broadcast: audit row insert failed for %s", ch_type)
         return delivered_any
 
-    def _post_broadcast_commit(self, event, payload, rule, ch_type: str) -> None:
-        """Persistence side-effects of an actually-successful broadcast.
+    @staticmethod
+    def _audit_route(rule, ch_type: str):
+        """Resolve (transport, channel_id, recipient) for a mesh delivery.
 
-        Inserts the mesh_broadcasts_out audit row when the handler signalled
-        it wants one via `event.data["_broadcast_audit"]`, then invokes the
-        handler-supplied `_on_broadcast_committed` callback so the handler
-        can refresh its own last_broadcast_* bookkeeping. Both calls are
-        wrapped: a bookkeeping failure must NOT undo the actual broadcast
-        nor break dispatch for sibling toggles.
+        transport is the mesh family the row belongs to ("meshtastic" /
+        "meshcore"); channel_id is the Meshtastic channel INDEX or the
+        MeshCore channel NAME; recipient is 'broadcast' or the DM target
+        list. Mirrors create_channel()'s delivery_type routing.
+        """
+        if ch_type == "mesh_broadcast":
+            return "meshtastic", getattr(rule, "broadcast_channel", None), "broadcast"
+        if ch_type == "meshcore_broadcast":
+            return "meshcore", getattr(rule, "meshcore_channel", None), "broadcast"
+        if ch_type == "mesh_dm":
+            node_ids = list(getattr(rule, "node_ids", []) or [])
+            return "meshtastic", None, (",".join(map(str, node_ids)) or "dm")
+        if ch_type == "meshcore_dm":
+            contacts = list(getattr(rule, "meshcore_dm_contacts", []) or [])
+            return "meshcore", None, (",".join(map(str, contacts)) or "meshcore_dm")
+        # Unknown / non-mesh: leave transport NULL, fall back to legacy channel.
+        return None, getattr(rule, "broadcast_channel", None), "broadcast"
+
+    def _post_broadcast_commit(self, event, payload, rule, ch_type: str,
+                               *, success: bool = True) -> None:
+        """Persistence side-effects of a per-mesh broadcast delivery.
+
+        Called ONCE PER MESH CHANNEL (one per delivery_type family), so a
+        broadcast that fans to both meshes writes TWO mesh_broadcasts_out
+        rows -- each carrying its own `transport` + `success` flag. The row
+        is written whenever the handler signalled it wants an audit trail
+        via `event.data["_broadcast_audit"]`, REGARDLESS of success, so a
+        skip/failure (e.g. MeshCore channel-not-found -> deliver()==False)
+        is still visible as success=0.
+
+        The handler-supplied `_on_broadcast_committed` callback (which
+        refreshes last_broadcast_* bookkeeping) fires ONLY when the send
+        actually landed (success is truthy). Both calls are wrapped: a
+        bookkeeping failure must NOT undo the actual broadcast nor break
+        dispatch for sibling toggles.
         """
         data = getattr(event, "data", None) or {}
         if not data:
@@ -646,23 +689,17 @@ class Dispatcher:
                 conn = get_db()
                 text = payload.message if payload is not None else (event.title or "")
                 bytes_sent = len(text.encode("utf-8")) if text else 0
-                if ch_type == "mesh_dm":
-                    node_ids = list(getattr(rule, "node_ids", []) or [])
-                    recipient = ",".join(map(str, node_ids)) or "dm"
-                elif ch_type == "meshcore_dm":
-                    contacts = list(getattr(rule, "meshcore_dm_contacts", []) or [])
-                    recipient = ",".join(map(str, contacts)) or "meshcore_dm"
-                else:
-                    recipient = "broadcast"
-                channel = getattr(rule, "broadcast_channel", None)
+                transport, channel, recipient = self._audit_route(rule, ch_type)
                 conn.execute(
                     "INSERT INTO mesh_broadcasts_out(sent_at, recipient, channel, "
                     "text, source_event_table, source_event_pk, bytes_sent, "
-                    "ack_received) VALUES (?,?,?,?,?,?,?,?)",
+                    "ack_received, transport, success) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (
                         int(committed_at), recipient, channel, text,
                         audit.get("table"), audit.get("pk"),
                         bytes_sent, 0,
+                        transport, 1 if success else 0,
                     ),
                 )
             except Exception:
@@ -671,6 +708,11 @@ class Dispatcher:
                     "(table=%s pk=%s)",
                     audit.get("table"), audit.get("pk"),
                 )
+
+        if not success:
+            # A failed/skipped send is audited above but must NOT arm the
+            # handler's last_broadcast_* bookkeeping.
+            return
 
         cb = data.get("_on_broadcast_committed")
         if callable(cb):

@@ -735,45 +735,6 @@ class NotificationRouter:
 
         return {"matches": False, "conditions": [], "preview": "Unknown rule type"}
 
-    def add_mesh_subscription(self, node_id: str, categories: list[str], rule_name: Optional[str] = None) -> str:
-        """Add a mesh DM subscription for a node."""
-        if not rule_name:
-            rule_name = "sub_%s" % node_id
-
-        for rule in self._rules:
-            if rule.get("name") == rule_name:
-                rule["categories"] = categories if categories else []
-                rule["node_ids"] = [node_id]
-                return rule_name
-
-        self._rules.append({
-            "name": rule_name,
-            "enabled": True,
-            "trigger_type": "condition",
-            "categories": categories if categories else [],
-            "min_severity": "priority",
-            "delivery_type": "mesh_dm",
-            "node_ids": [node_id],
-            "cooldown_minutes": 10,
-        })
-
-        return rule_name
-
-    def remove_mesh_subscription(self, node_id: str) -> bool:
-        """Remove a mesh subscription for a node."""
-        rule_name = "sub_%s" % node_id
-        self._rules = [r for r in self._rules if r.get("name") != rule_name]
-        return True
-
-    def get_node_subscriptions(self, node_id: str) -> list[str]:
-        """Get categories a node is subscribed to."""
-        rule_name = "sub_%s" % node_id
-        for rule in self._rules:
-            if rule.get("name") == rule_name:
-                categories = rule.get("categories", [])
-                return categories if categories else ["all"]
-        return []
-
     async def generate_report(self, report_type: str, env_store, health_engine) -> str:
         """Generate an LLM-summarized report from current data."""
         context_parts = []

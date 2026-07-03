@@ -8,7 +8,6 @@ import {
 } from 'lucide-react'
 import ChannelPicker from '@/components/ChannelPicker'
 import NodePicker from '@/components/NodePicker'
-import { fetchConfig as apiFetchConfig, updateConfig as apiUpdateConfig } from '@/lib/api'
 import { useDirty } from '@/context/DirtyContext'
 
 // Types
@@ -365,7 +364,7 @@ export function InfoButton({ info }: { info: string }) {
 }
 
 // Form components
-function TextInput({ label, value, onChange, type = 'text', placeholder = '', helper = '', info = '' }: {
+export function TextInput({ label, value, onChange, type = 'text', placeholder = '', helper = '', info = '' }: {
   label: string
   value: string
   onChange: (v: string) => void
@@ -406,7 +405,7 @@ function TextInput({ label, value, onChange, type = 'text', placeholder = '', he
   )
 }
 
-function NumberInput({ label, value, onChange, min, max, step = 1, helper = '', info = '' }: {
+export function NumberInput({ label, value, onChange, min, max, step = 1, helper = '', info = '' }: {
   label: string
   value: number
   onChange: (v: number) => void
@@ -436,7 +435,7 @@ function NumberInput({ label, value, onChange, min, max, step = 1, helper = '', 
   )
 }
 
-function Toggle({ label, checked, onChange, helper = '', info = '' }: {
+export function Toggle({ label, checked, onChange, helper = '', info = '' }: {
   label: string
   checked: boolean
   onChange: (v: boolean) => void
@@ -469,7 +468,7 @@ function Toggle({ label, checked, onChange, helper = '', info = '' }: {
   )
 }
 
-function TimeInput({ label, value, onChange, helper = '', info = '' }: {
+export function TimeInput({ label, value, onChange, helper = '', info = '' }: {
   label: string
   value: string
   onChange: (v: string) => void
@@ -1609,150 +1608,174 @@ export function SeverityChannelMatrix({
   )
 }
 
-function MasterToggles({ toggles, onChange }: {
+// Merge only the MT+Other-channel-owned delivery fields of `mine` into `fresh`,
+// preserving MeshCore entries (meshcore_*) and all gating fields
+// (enabled/min_severity/freshness_seconds/cooldown_seconds/regions) that now live
+// on the Data Feeds page.
+function mergeMeshtasticAndOtherFields(
+  fresh: NotificationToggle | undefined,
+  mine: NotificationToggle,
+  key: string,
+): NotificationToggle {
+  const base: NotificationToggle = fresh ? { ...fresh } : { ...mine, name: key }
+  base.name = base.name || key
+
+  // Merge severity_channels: keep meshcore_* from fresh, overlay non-meshcore from mine.
+  const freshSC = fresh?.severity_channels || {}
+  const mineSC = mine.severity_channels || {}
+  const severities = new Set([...Object.keys(freshSC), ...Object.keys(mineSC)])
+  const mergedSC: Record<string, string[]> = {}
+  severities.forEach((sev) => {
+    const meshcoreOnly = (freshSC[sev] || []).filter((c) => c.startsWith('meshcore_'))
+    const nonMeshcore = (mineSC[sev] || []).filter((c) => !c.startsWith('meshcore_'))
+    mergedSC[sev] = [...meshcoreOnly, ...nonMeshcore]
+  })
+  base.severity_channels = mergedSC
+
+  // Overlay MT delivery fields
+  base.broadcast_channel = mine.broadcast_channel
+  base.node_ids = mine.node_ids
+  // Overlay Other channels delivery fields
+  base.smtp_host = mine.smtp_host
+  base.smtp_port = mine.smtp_port
+  base.smtp_user = mine.smtp_user
+  base.smtp_password = mine.smtp_password
+  base.smtp_tls = mine.smtp_tls
+  base.from_address = mine.from_address
+  base.recipients = mine.recipients
+  base.webhook_url = mine.webhook_url
+  base.webhook_headers = mine.webhook_headers
+
+  // NOTE: do NOT overlay gating fields (enabled, min_severity, freshness_seconds,
+  // cooldown_seconds, regions) — those are managed by Data Feeds > Family Settings.
+  return base
+}
+
+// Always-visible per-family Meshtastic delivery grid.
+// Structure mirrors MeshCoreRouting.tsx: pure delivery, no enable toggle, no expander.
+function MeshtasticDeliveryGrid({
+  toggles,
+  onChange,
+}: {
   toggles: Record<string, NotificationToggle>
   onChange: (t: Record<string, NotificationToggle>) => void
 }) {
-  const [expanded, setExpanded] = useState<string | null>(null)
   const upd = (fam: string, patch: Partial<NotificationToggle>) =>
     onChange({ ...toggles, [fam]: { ...(toggles[fam] || {}), name: fam, ...patch } as NotificationToggle })
+
   return (
-    <div className="space-y-3 mb-8">
+    <div className="space-y-3">
       <div className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
-        Master Toggles
-        <InfoButton info="Per-family notification policy: enable a family, set its severity threshold, choose which channels fire at each severity, and scope to regions (PagerDuty/Grafana-style)." />
+        Meshtastic Delivery
+        <InfoButton info="Per-family Meshtastic delivery matrix. Choose which channels fire at each severity, the broadcast channel index, and DM node IDs. Family on/off and severity threshold are configured on the Data Feeds page." />
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {TOGGLE_FAMILY_META.map(({ key, label, Icon }) => {
-          const t = (toggles[key] || ({} as NotificationToggle))
-          const isOpen = expanded === key
-          const chanCount = Object.values(t.severity_channels || {}).reduce((n, arr) => n + ((arr as string[])?.length || 0), 0)
-          const regionCount = (t.regions || []).length
+          const t = toggles[key] || ({} as NotificationToggle)
           return (
-            <div key={key} className="border border-[#1e2a3a] p-3">
-              <div className="flex items-center justify-between">
-                <button type="button" onClick={() => setExpanded(isOpen ? null : key)}
-                        className="flex items-center gap-2 text-sm text-slate-200">
-                  <Icon size={15} /> {label}
-                  {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                </button>
-                <Toggle label="" checked={!!t.enabled} onChange={(v) => upd(key, { enabled: v })} />
+            <div key={key} className="border border-[#1e2a3a] p-3 space-y-3">
+              <div className="flex items-center gap-2 text-sm text-slate-200">
+                <Icon size={15} /> {label}
               </div>
-              {!isOpen && (
-                <div className="text-xs text-slate-600 mt-1">
-                  {t.enabled
-                    ? `${regionCount || 'all'} region${regionCount === 1 ? '' : 's'}, ${chanCount} channel${chanCount === 1 ? '' : 's'} at ${t.min_severity || 'priority'}+`
-                    : 'OFF'}
+              <div className="space-y-3 p-3 bg-[#0a0e17] border border-[#1e2a3a]">
+                <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
+                  <Radio size={13} />
+                  Meshtastic
                 </div>
-              )}
-              {isOpen && (
-                <div className={`mt-3 space-y-4 ${t.enabled ? '' : 'opacity-40 pointer-events-none select-none'}`}>
+                <SeverityChannelMatrix
+                  channels={MT_CHANNELS}
+                  severityChannels={t.severity_channels || {}}
+                  onChange={(sc) => upd(key, { severity_channels: sc })}
+                />
+                <NumberInput
+                  label="Broadcast channel"
+                  value={t.broadcast_channel ?? 0}
+                  onChange={(v) => upd(key, { broadcast_channel: v })}
+                  min={0}
+                  helper="Meshtastic channel index (0 = LongFast primary)"
+                  info="The Meshtastic channel index used for mesh_broadcast delivery. 0 = primary channel."
+                />
+                <ListInput
+                  label="DM node IDs"
+                  value={t.node_ids || []}
+                  onChange={(v) => upd(key, { node_ids: v })}
+                  placeholder="!hex_id"
+                  helper="Meshtastic DM recipients (hex node IDs)"
+                  info="Hex node IDs for mesh_dm delivery (e.g. !a1b2c3d4). Used when mesh_dm is enabled for a severity."
+                />
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
-                  {/* ── General ──────────────────────────────────────────────── */}
-                  <div className="space-y-3 p-3 bg-[#0a0e17] border border-[#1e2a3a]">
-                    <div className="text-xs text-slate-500 uppercase tracking-wide">General</div>
-                    <SeveritySelector value={t.min_severity || 'priority'} onChange={(v) => upd(key, { min_severity: v })} />
-                    <ListInput
-                      label="Regions (empty = all)"
-                      value={t.regions || []}
-                      onChange={(v) => upd(key, { regions: v })}
-                      placeholder="Add region..."
-                    />
-                    <div className="grid grid-cols-2 gap-3">
-                      <NumberInput
-                        label="Freshness (sec)"
-                        value={t.freshness_seconds ?? 600}
-                        onChange={(v) => upd(key, { freshness_seconds: v })}
-                        min={0}
-                        helper="Drop events older than this"
-                        info="Events older than this window (seconds) are discarded at dispatcher entrance. 600 = 10 min."
-                      />
-                      <NumberInput
-                        label="Cooldown (sec)"
-                        value={t.cooldown_seconds ?? 0}
-                        onChange={(v) => upd(key, { cooldown_seconds: v })}
-                        min={0}
-                        helper="0 = no throttle"
-                        info="Per (family, category, region) throttle window. Prevents repeat sends within this window."
-                      />
-                    </div>
-                  </div>
+// Per-family Other Channels (email / webhook / digest) delivery grid.
+// Kept on the Meshtastic Routing page so all non-MeshCore delivery lives in one place.
+function OtherChannelsGrid({
+  toggles,
+  onChange,
+}: {
+  toggles: Record<string, NotificationToggle>
+  onChange: (t: Record<string, NotificationToggle>) => void
+}) {
+  const upd = (fam: string, patch: Partial<NotificationToggle>) =>
+    onChange({ ...toggles, [fam]: { ...(toggles[fam] || {}), name: fam, ...patch } as NotificationToggle })
 
-                  {/* ── Meshtastic ───────────────────────────────────────────── */}
-                  <div className="space-y-3 p-3 bg-[#0a0e17] border border-[#1e2a3a]">
-                    <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
-                      <Radio size={13} />
-                      Meshtastic
-                    </div>
-                    <SeverityChannelMatrix
-                      channels={MT_CHANNELS}
-                      severityChannels={t.severity_channels || {}}
-                      onChange={(sc) => upd(key, { severity_channels: sc })}
-                    />
-                    <NumberInput
-                      label="Broadcast channel"
-                      value={t.broadcast_channel ?? 0}
-                      onChange={(v) => upd(key, { broadcast_channel: v })}
-                      min={0}
-                      helper="Meshtastic channel index (0 = LongFast primary)"
-                      info="The Meshtastic channel index used for mesh_broadcast delivery. 0 = primary channel."
-                    />
-                    <ListInput
-                      label="DM node IDs"
-                      value={t.node_ids || []}
-                      onChange={(v) => upd(key, { node_ids: v })}
-                      placeholder="!hex_id"
-                      helper="Meshtastic DM recipients (hex node IDs)"
-                      info="Hex node IDs for mesh_dm delivery (e.g. !a1b2c3d4). Used when mesh_dm is enabled for a severity."
-                    />
-                  </div>
-
-                  {/* MeshCore delivery controls moved to the dedicated
-                      MeshCore -> Routing page (/meshcore/routing). Shared
-                      family settings (enable/severity/regions) stay here. */}
-
-                  {/* ── Other channels ───────────────────────────────────────── */}
-                  <div className="space-y-3 p-3 bg-[#0a0e17] border border-[#1e2a3a]">
-                    <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
-                      <Mail size={13} />
-                      Other channels
-                    </div>
-                    <SeverityChannelMatrix
-                      channels={OTHER_CHANNELS}
-                      severityChannels={t.severity_channels || {}}
-                      onChange={(sc) => upd(key, { severity_channels: sc })}
-                    />
-                    <ListInput
-                      label="Email recipients"
-                      value={t.recipients || []}
-                      onChange={(v) => upd(key, { recipients: v })}
-                      placeholder="ops@example.com"
-                    />
-                    <details className="group">
-                      <summary className="flex items-center gap-2 cursor-pointer text-xs text-slate-400 hover:text-slate-200">
-                        <ChevronRight size={12} className="group-open:rotate-90 transition-transform" />
-                        SMTP settings
-                      </summary>
-                      <div className="mt-2 space-y-2 pl-4 border-l border-[#1e2a3a]">
-                        <TextInput label="SMTP host" value={t.smtp_host || ''} onChange={(v) => upd(key, { smtp_host: v })} placeholder="smtp.example.com" />
-                        <NumberInput label="SMTP port" value={t.smtp_port ?? 587} onChange={(v) => upd(key, { smtp_port: v })} />
-                        <TextInput label="Username" value={t.smtp_user || ''} onChange={(v) => upd(key, { smtp_user: v })} />
-                        <TextInput label="Password" value={t.smtp_password || ''} onChange={(v) => upd(key, { smtp_password: v })} type="password" />
-                        <Toggle label="Use TLS" checked={t.smtp_tls ?? true} onChange={(v) => upd(key, { smtp_tls: v })} />
-                        <TextInput label="From address" value={t.from_address || ''} onChange={(v) => upd(key, { from_address: v })} placeholder="alerts@example.com" />
-                      </div>
-                    </details>
-                    <TextInput
-                      label="Webhook URL"
-                      value={t.webhook_url || ''}
-                      onChange={(v) => upd(key, { webhook_url: v })}
-                      placeholder="https://..."
-                      helper="POST alert as JSON"
-                    />
-                  </div>
-
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+        Other Channels (Email / Webhook / Digest)
+        <InfoButton info="Per-family delivery via email, webhook, and digest. The severity matrix selects which of these channels fire at each level. Email SMTP settings are behind the collapsible below each family." />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {TOGGLE_FAMILY_META.map(({ key, label, Icon }) => {
+          const t = toggles[key] || ({} as NotificationToggle)
+          return (
+            <div key={key} className="border border-[#1e2a3a] p-3 space-y-3">
+              <div className="flex items-center gap-2 text-sm text-slate-200">
+                <Icon size={15} /> {label}
+              </div>
+              <div className="space-y-3 p-3 bg-[#0a0e17] border border-[#1e2a3a]">
+                <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
+                  <Mail size={13} />
+                  Other channels
                 </div>
-              )}
+                <SeverityChannelMatrix
+                  channels={OTHER_CHANNELS}
+                  severityChannels={t.severity_channels || {}}
+                  onChange={(sc) => upd(key, { severity_channels: sc })}
+                />
+                <ListInput
+                  label="Email recipients"
+                  value={t.recipients || []}
+                  onChange={(v) => upd(key, { recipients: v })}
+                  placeholder="ops@example.com"
+                />
+                <details className="group">
+                  <summary className="flex items-center gap-2 cursor-pointer text-xs text-slate-400 hover:text-slate-200">
+                    <ChevronRight size={12} className="group-open:rotate-90 transition-transform" />
+                    SMTP settings
+                  </summary>
+                  <div className="mt-2 space-y-2 pl-4 border-l border-[#1e2a3a]">
+                    <TextInput label="SMTP host" value={t.smtp_host || ''} onChange={(v) => upd(key, { smtp_host: v })} placeholder="smtp.example.com" />
+                    <NumberInput label="SMTP port" value={t.smtp_port ?? 587} onChange={(v) => upd(key, { smtp_port: v })} />
+                    <TextInput label="Username" value={t.smtp_user || ''} onChange={(v) => upd(key, { smtp_user: v })} />
+                    <TextInput label="Password" value={t.smtp_password || ''} onChange={(v) => upd(key, { smtp_password: v })} type="password" />
+                    <Toggle label="Use TLS" checked={t.smtp_tls ?? true} onChange={(v) => upd(key, { smtp_tls: v })} />
+                    <TextInput label="From address" value={t.from_address || ''} onChange={(v) => upd(key, { from_address: v })} placeholder="alerts@example.com" />
+                  </div>
+                </details>
+                <TextInput
+                  label="Webhook URL"
+                  value={t.webhook_url || ''}
+                  onChange={(v) => upd(key, { webhook_url: v })}
+                  placeholder="https://..."
+                  helper="POST alert as JSON"
+                />
+              </div>
             </div>
           )
         })}
@@ -1826,10 +1849,34 @@ export default function Notifications() {
     setSuccess(null)
 
     try {
+      // Re-fetch the live config and merge ONLY MT+Other delivery fields so we never
+      // clobber gating fields (enabled/min_severity/freshness/cooldown) managed by
+      // Data Feeds, nor MeshCore fields managed by the MeshCore Routing page.
+      const freshRes = await fetch('/api/config/notifications')
+      if (!freshRes.ok) throw new Error('Failed to re-fetch notifications config')
+      const fresh: NotificationsConfig = await freshRes.json()
+
+      const merged: NotificationsConfig = {
+        ...fresh,
+        enabled: config.enabled,   // global master switch lives on this page
+        rules: config.rules,       // rules are only edited on this page
+        toggles: { ...(fresh.toggles || {}) },
+      }
+      const myToggles = config.toggles || {}
+      for (const { key } of TOGGLE_FAMILY_META) {
+        const mine = myToggles[key]
+        if (!mine) continue
+        merged.toggles![key] = mergeMeshtasticAndOtherFields(
+          (fresh.toggles || {})[key],
+          mine,
+          key,
+        )
+      }
+
       const res = await fetch('/api/config/notifications', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
+        body: JSON.stringify(merged),
       })
 
       const result = await res.json()
@@ -1838,10 +1885,11 @@ export default function Notifications() {
         throw new Error(result.detail || 'Save failed')
       }
 
-      setSuccess('Notifications config saved successfully')
-      setOriginalConfig(JSON.parse(JSON.stringify(config)))
+      setConfig(merged)
+      setOriginalConfig(JSON.parse(JSON.stringify(merged)))
       setHasChanges(false)
       setDirty(false)
+      setSuccess('Meshtastic routing saved successfully')
       setTimeout(() => setSuccess(null), 3000)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed')
@@ -2145,7 +2193,7 @@ export default function Notifications() {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-slate-500">
-            Alert delivery and scheduled reports. Rules define what triggers a notification and where it gets sent.
+            Per-family Meshtastic delivery and other-channel delivery. Family gating (enable, severity threshold, freshness/cooldown) is on <a href="/environment" className="text-accent hover:underline">Data Feeds</a>. MeshCore delivery is on the <a href="/meshcore/routing" className="text-accent hover:underline">MeshCore Routing</a> page.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -2198,80 +2246,22 @@ export default function Notifications() {
           info="When disabled, no alerts or scheduled messages will be delivered. Alerts still get recorded to history."
         />
 
+        {/* Meshtastic delivery grids — always visible regardless of master switch */}
+        {config.toggles && (
+          <>
+            <MeshtasticDeliveryGrid
+              toggles={config.toggles}
+              onChange={(t) => setConfig({ ...config, toggles: t })}
+            />
+            <OtherChannelsGrid
+              toggles={config.toggles}
+              onChange={(t) => setConfig({ ...config, toggles: t })}
+            />
+          </>
+        )}
+
         {config.enabled && (
-          <>            {/* Cold-start grace -- v0.5.8b */}
-            <div className="space-y-3 p-4 bg-[#0a0e17] border border-[#1e2a3a]">
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-slate-500 uppercase tracking-wide">Cold-start grace</label>
-              </div>
-              <NumberInput
-                label="Grace period (seconds)"
-                value={config.cold_start_grace_seconds ?? 60}
-                onChange={(v) => setConfig({ ...config, cold_start_grace_seconds: v })}
-                min={0}
-                max={600}
-                helper="Suppress broadcasts for this many seconds after the first event arrives"
-                info="When meshai starts seeing events for the first time, suppress mesh broadcasts for this many seconds to absorb any JetStream backlog. Persistence rows still get written; only broadcasts are suppressed."
-              />
-            </div>
-
-            {/* Band Conditions -- v0.5.11 */}
-            <div className="space-y-3 p-4 bg-[#0a0e17] border border-[#1e2a3a]">
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-slate-500 uppercase tracking-wide">Band Conditions (HF propagation)</label>
-              </div>
-              <Toggle
-                label="Enable scheduled band-conditions broadcasts"
-                checked={config.band_conditions_enabled ?? true}
-                onChange={(v) => setConfig({ ...config, band_conditions_enabled: v })}
-                helper="3x/day HF propagation summary (Day/Night ratings per band group). The daily fire digest (twice-daily LLM summary of active fires + the last 24h of growth/spotting) is configured separately under Adapter Config -> fires.digest_*. See Reference -> Fire Tracker (Fusion) and Reference -> Broadcast Types for the New/Update/Active prefix system."
-                info="Source priority: (1) recent SWPC readings persisted locally; (2) HamQSL.com fallback; (3) silent skip if both fail. Persistence rows are written either way for an audit trail."
-              />
-              {(config.band_conditions_enabled ?? true) && (
-                <div className="grid grid-cols-3 gap-3">
-                  <TimeInput
-                    label="Slot 1"
-                    value={(config.band_conditions_schedule ?? ['06:00','14:00','22:00'])[0] || '06:00'}
-                    onChange={(v) => {
-                      const s = [...(config.band_conditions_schedule ?? ['06:00','14:00','22:00'])]
-                      s[0] = v
-                      setConfig({ ...config, band_conditions_schedule: s })
-                    }}
-                    helper="Morning (default 06:00 MT)"
-                  />
-                  <TimeInput
-                    label="Slot 2"
-                    value={(config.band_conditions_schedule ?? ['06:00','14:00','22:00'])[1] || '14:00'}
-                    onChange={(v) => {
-                      const s = [...(config.band_conditions_schedule ?? ['06:00','14:00','22:00'])]
-                      s[1] = v
-                      setConfig({ ...config, band_conditions_schedule: s })
-                    }}
-                    helper="Afternoon (default 14:00 MT)"
-                  />
-                  <TimeInput
-                    label="Slot 3"
-                    value={(config.band_conditions_schedule ?? ['06:00','14:00','22:00'])[2] || '22:00'}
-                    onChange={(v) => {
-                      const s = [...(config.band_conditions_schedule ?? ['06:00','14:00','22:00'])]
-                      s[2] = v
-                      setConfig({ ...config, band_conditions_schedule: s })
-                    }}
-                    helper="Night (default 22:00 MT)"
-                  />
-                </div>
-              )}
-              <p className="text-xs text-slate-600">All times are Mountain Time (America/Boise). DST handled automatically.</p>
-            </div>
-
-            {/* Master Toggles */}
-            {config.toggles && (
-              <MasterToggles
-                toggles={config.toggles}
-                onChange={(t) => setConfig({ ...config, toggles: t })}
-              />
-            )}
-
+          <>
             {/* Rules Section */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -2344,451 +2334,7 @@ export default function Notifications() {
         )}
       </div>
 
-      {/* Danger Zones — self-contained panel (own GET/PUT for the isolated
-          `danger_zones` config section; never entangled with the notifications
-          save above). Additive only. */}
-      <DangerZonesPanel />
     </div>
   )
 }
 
-// ============================================================================
-// Danger Zones panel — fully isolated, additive feature.
-// Loads/saves the standalone `danger_zones` config section via the generic
-// /api/config helpers. Has its OWN state, fetch (on mount), and save. It is
-// intentionally decoupled from the page's `notifications` config so it can
-// never be tangled with the existing save logic.
-// ============================================================================
-
-const DZ_MONITOR_ROLES = ['CLIENT_BASE', 'ROUTER', 'ROUTER_LATE'] as const
-
-const DZ_DELIVERY_OPTIONS = [
-  { value: 'mesh_dm', label: 'Mesh DM (unicast to nodes)' },
-  { value: 'mesh_broadcast', label: 'Mesh Broadcast (channel)' },
-  { value: 'email', label: 'Email' },
-  { value: 'webhook', label: 'Webhook' },
-  { value: 'none', label: '(None / log only)' },
-]
-
-// Per-family rows. snow is a sub-gate of weather; flood a sub-gate of seismic.
-const DZ_FAMILIES: {
-  key: string
-  label: string
-  description: string
-  Icon: typeof Activity
-  showAcres?: boolean
-  tabled?: boolean
-}[] = [
-  { key: 'fire', label: 'Fire', description: 'Active wildfires (radius from fire perimeter).', Icon: Flame, showAcres: true },
-  { key: 'weather', label: 'Weather', description: 'Severe weather warnings near a node.', Icon: Cloud },
-  { key: 'snow', label: 'Snow (sub-gate of Weather)', description: 'Snow-category weather events.', Icon: Snowflake, tabled: true },
-  { key: 'flood', label: 'Flood (sub-gate of Seismic)', description: 'Stream/flood gauge events.', Icon: Activity },
-  { key: 'avalanche', label: 'Avalanche', description: 'Avalanche advisories near a node.', Icon: Mountain },
-  { key: 'seismic', label: 'Seismic', description: 'Earthquakes and seismic events near a node.', Icon: Mountain },
-]
-
-interface DangerZoneHazardConfig {
-  enabled: boolean
-  buffer_mi: number
-  min_acres: number
-}
-
-interface DangerZonesConfig {
-  enabled: boolean
-  dry_run: boolean
-  monitor_roles: string[]
-  default_buffer_mi: number
-  cooldown_minutes: number
-  fire: DangerZoneHazardConfig
-  weather: DangerZoneHazardConfig
-  snow: DangerZoneHazardConfig
-  flood: DangerZoneHazardConfig
-  avalanche: DangerZoneHazardConfig
-  seismic: DangerZoneHazardConfig
-  delivery_type: string
-  node_ids: string[]
-  broadcast_channel: number | null
-  webhook_url: string
-  webhook_headers: Record<string, string>
-}
-
-function dzDefaultHazard(): DangerZoneHazardConfig {
-  return { enabled: false, buffer_mi: 5.0, min_acres: 0 }
-}
-
-// New-object default. NOTE: delivery_type defaults to mesh_dm (do NOT copy the
-// page's mesh_broadcast new-rule default).
-function dzDefault(): DangerZonesConfig {
-  return {
-    enabled: false,
-    dry_run: true,
-    monitor_roles: ['ROUTER', 'ROUTER_LATE', 'CLIENT_BASE'],
-    default_buffer_mi: 5.0,
-    cooldown_minutes: 360,
-    fire: dzDefaultHazard(),
-    weather: dzDefaultHazard(),
-    snow: dzDefaultHazard(),
-    flood: dzDefaultHazard(),
-    avalanche: dzDefaultHazard(),
-    seismic: dzDefaultHazard(),
-    delivery_type: 'mesh_dm',
-    node_ids: [],
-    broadcast_channel: null,
-    webhook_url: '',
-    webhook_headers: {},
-  }
-}
-
-// Minimal local select — SelectInput lives in Config.tsx (which we must not
-// touch/entangle), so this panel keeps its own tiny equivalent.
-function DZSelect({ label, value, onChange, options, info = '' }: {
-  label: string
-  value: string
-  onChange: (v: string) => void
-  options: { value: string; label: string }[]
-  info?: string
-}) {
-  return (
-    <div className="space-y-1">
-      <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
-        {label}
-        {info && <InfoButton info={info} />}
-      </label>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 focus:outline-none focus:border-accent"
-      >
-        {options.map((opt) => (
-          <option key={opt.value} value={opt.value}>{opt.label}</option>
-        ))}
-      </select>
-    </div>
-  )
-}
-
-// Per-family row — mirrors the AlertRuleToggle (toggle + thresholds) pattern.
-// AlertRuleToggle itself lives in Config.tsx and is NOT exported, so this is a
-// local equivalent purpose-built for the per-family hazard config.
-function DZFamilyRow({ meta, cfg, onChange }: {
-  meta: { key: string; label: string; description: string; Icon: typeof Activity; showAcres?: boolean; tabled?: boolean }
-  cfg: DangerZoneHazardConfig
-  onChange: (c: DangerZoneHazardConfig) => void
-}) {
-  const { Icon } = meta
-  return (
-    <div className={`border border-[#1e2a3a] p-3 space-y-2 ${meta.tabled ? 'opacity-50' : ''}`}>
-      <div className="flex items-center justify-between">
-        <div className="flex items-start gap-2 flex-1">
-          <Icon size={15} className="text-slate-400 mt-0.5 flex-shrink-0" />
-          <div className="flex-1">
-            <span className="text-sm text-slate-300">{meta.label}</span>
-            <p className="text-xs text-slate-600">{meta.description}</p>
-            {meta.tabled && (
-              <span className="inline-block mt-1 px-2 py-0.5 text-[10px] uppercase tracking-wide rounded bg-slate-700 text-slate-300">
-                Tabled — needs snowfall + elevation pipeline
-              </span>
-            )}
-          </div>
-        </div>
-        <button
-          type="button"
-          disabled={meta.tabled}
-          onClick={() => { if (!meta.tabled) onChange({ ...cfg, enabled: !cfg.enabled }) }}
-          className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ml-3 ${
-            cfg.enabled ? 'bg-accent' : 'bg-[#1e2a3a]'
-          } ${meta.tabled ? 'cursor-not-allowed' : ''}`}
-        >
-          <span
-            className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform ${
-              cfg.enabled ? 'translate-x-5' : ''
-            }`}
-          />
-        </button>
-      </div>
-      {cfg.enabled && !meta.tabled && (
-        <div className={`grid gap-3 pt-2 border-t border-[#1e2a3a] ${meta.showAcres ? 'grid-cols-2' : 'grid-cols-1'}`}>
-          <NumberInput
-            label="Buffer (mi)"
-            value={cfg.buffer_mi ?? 0}
-            onChange={(v) => onChange({ ...cfg, buffer_mi: v })}
-            min={0}
-            step={0.5}
-          />
-          {meta.showAcres && (
-            <NumberInput
-              label="Min Acres"
-              value={cfg.min_acres ?? 0}
-              onChange={(v) => onChange({ ...cfg, min_acres: v })}
-              min={0}
-              step={1}
-            />
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function DangerZonesPanel() {
-  const [expanded, setExpanded] = useState(false)
-  const [cfg, setCfg] = useState<DangerZonesConfig | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState<string | null>(null)
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const raw = (await apiFetchConfig('danger_zones')) as Partial<DangerZonesConfig>
-      // Merge over defaults so missing/new fields are always present.
-      const d = dzDefault()
-      setCfg({
-        ...d,
-        ...raw,
-        fire: { ...d.fire, ...(raw.fire || {}) },
-        weather: { ...d.weather, ...(raw.weather || {}) },
-        snow: { ...d.snow, ...(raw.snow || {}) },
-        flood: { ...d.flood, ...(raw.flood || {}) },
-        avalanche: { ...d.avalanche, ...(raw.avalanche || {}) },
-        seismic: { ...d.seismic, ...(raw.seismic || {}) },
-        monitor_roles: raw.monitor_roles ?? d.monitor_roles,
-        node_ids: raw.node_ids ?? d.node_ids,
-        webhook_headers: raw.webhook_headers ?? d.webhook_headers,
-      })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load danger zones config')
-      setCfg(dzDefault())
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  const save = async () => {
-    if (!cfg) return
-    setSaving(true)
-    setError(null)
-    setSuccess(null)
-    try {
-      await apiUpdateConfig('danger_zones', cfg)
-      setSuccess('Danger Zones config saved')
-      setTimeout(() => setSuccess(null), 3000)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const upd = (patch: Partial<DangerZonesConfig>) => setCfg(c => (c ? { ...c, ...patch } : c))
-
-  const toggleRole = (role: string) => {
-    if (!cfg) return
-    const cur = cfg.monitor_roles || []
-    upd({ monitor_roles: cur.includes(role) ? cur.filter(r => r !== role) : [...cur, role] })
-  }
-
-  return (
-    <div className="bg-bg-card border border-border">
-      {/* Collapsible header */}
-      <button
-        type="button"
-        onClick={() => setExpanded(e => !e)}
-        className="w-full flex items-center justify-between p-4 text-left"
-      >
-        <div className="flex items-center gap-3">
-          <AlertTriangle size={18} className="text-amber-400" />
-          <div>
-            <div className="text-sm font-medium text-slate-200">Danger Zones</div>
-            <div className="text-xs text-slate-500">
-              Alert when monitored infrastructure nodes are in/near a hazard
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {cfg && (
-            <span className={`text-xs px-2 py-0.5 rounded ${
-              cfg.enabled
-                ? (cfg.dry_run ? 'bg-yellow-500/10 text-yellow-400' : 'bg-green-500/10 text-green-400')
-                : 'bg-slate-800 text-slate-500'
-            }`}>
-              {cfg.enabled ? (cfg.dry_run ? 'Dry-run' : 'Live') : 'Disabled'}
-            </span>
-          )}
-          {expanded ? <ChevronDown size={18} className="text-slate-500" /> : <ChevronRight size={18} className="text-slate-500" />}
-        </div>
-      </button>
-
-      {expanded && (
-        <div className="p-6 pt-0 space-y-6">
-          {/* Safety copy */}
-          <div className="flex items-start gap-2 p-3 bg-amber-500/10 border border-amber-500/20">
-            <AlertCircle size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
-            <div className="text-xs text-amber-200/90 leading-relaxed">
-              Ships disabled; when enabled, defaults to dry-run / log-only — no mesh traffic
-              until you turn dry-run off. Requires <span className="font-medium">Enable Notifications</span> (above)
-              and environmental feeds to be on, since hazard events only flow when those are active.
-            </div>
-          </div>
-
-          {/* Status messages */}
-          {error && (
-            <div className="p-3 text-sm bg-red-500/10 text-red-400 border border-red-500/20">{error}</div>
-          )}
-          {success && (
-            <div className="p-3 text-sm bg-green-500/10 text-green-400 border border-green-500/20">
-              <Check size={14} className="inline mr-2" />{success}
-            </div>
-          )}
-
-          {loading || !cfg ? (
-            <div className="text-sm text-slate-500">Loading danger zones config...</div>
-          ) : (
-            <>
-              <Toggle
-                label="Enable Danger Zones"
-                checked={cfg.enabled}
-                onChange={(v) => upd({ enabled: v })}
-                helper="Master switch for the infrastructure danger-zone correlator"
-              />
-              <Toggle
-                label="Dry-run (log only)"
-                checked={cfg.dry_run}
-                onChange={(v) => upd({ dry_run: v })}
-                helper="When on, matches are logged but nothing is sent to the mesh. Turn off only after verifying dry-run output."
-              />
-
-              {/* Monitored roles */}
-              <div className="space-y-2">
-                <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
-                  Monitored Roles
-                  <InfoButton info="Which Meshtastic node roles to correlate against hazards. Only nodes that have a GPS position are scanned." />
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {DZ_MONITOR_ROLES.map(role => {
-                    const on = (cfg.monitor_roles || []).includes(role)
-                    return (
-                      <button
-                        key={role}
-                        type="button"
-                        onClick={() => toggleRole(role)}
-                        className={`px-3 py-1.5 rounded text-sm transition-colors ${
-                          on ? 'bg-accent text-white' : 'bg-[#1e2a3a] text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        {role}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* Global numeric settings */}
-              <div className="grid grid-cols-2 gap-4">
-                <NumberInput
-                  label="Default Buffer (mi)"
-                  value={cfg.default_buffer_mi}
-                  onChange={(v) => upd({ default_buffer_mi: v })}
-                  min={0}
-                  step={0.5}
-                  helper="Buffer used when a family has none set"
-                />
-                <NumberInput
-                  label="Cooldown (min)"
-                  value={cfg.cooldown_minutes}
-                  onChange={(v) => upd({ cooldown_minutes: v })}
-                  min={0}
-                  helper="Min time between repeat alerts per node+family"
-                />
-              </div>
-
-              {/* Per-family hazard config */}
-              <div className="space-y-3">
-                <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
-                  Hazard Families
-                  <InfoButton info="Enable each hazard family to monitor, with its own buffer distance and severity threshold. Snow is a sub-gate of Weather; Flood a sub-gate of Seismic." />
-                </label>
-                {DZ_FAMILIES.map(meta => (
-                  <DZFamilyRow
-                    key={meta.key}
-                    meta={meta}
-                    cfg={cfg[meta.key as keyof DangerZonesConfig] as DangerZoneHazardConfig}
-                    onChange={(c) => upd({ [meta.key]: c } as Partial<DangerZonesConfig>)}
-                  />
-                ))}
-              </div>
-
-              {/* Delivery */}
-              <div className="space-y-4 p-4 bg-[#0a0e17] border border-[#1e2a3a]">
-                <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
-                  <Send size={14} />
-                  DELIVERY
-                </div>
-                <DZSelect
-                  label="Delivery Method"
-                  value={cfg.delivery_type || 'mesh_dm'}
-                  onChange={(v) => upd({ delivery_type: v })}
-                  options={DZ_DELIVERY_OPTIONS}
-                  info="Where danger-zone alerts get delivered. Mesh DM unicasts to specific nodes; broadcast sends to a channel. Has no effect while dry-run is on."
-                />
-
-                {cfg.delivery_type === 'mesh_dm' && (
-                  <NodePicker
-                    label="Recipient Nodes"
-                    value={cfg.node_ids || []}
-                    onChange={(v) => upd({ node_ids: v })}
-                    helper="Nodes that receive direct messages"
-                    valueType="node_id_hex"
-                  />
-                )}
-
-                {cfg.delivery_type === 'mesh_broadcast' && (
-                  <ChannelPicker
-                    label="Broadcast Channel"
-                    value={cfg.broadcast_channel ?? 0}
-                    onChange={(v) => upd({ broadcast_channel: v })}
-                    helper="Select the mesh radio channel"
-                    mode="single"
-                  />
-                )}
-
-                {cfg.delivery_type === 'webhook' && (
-                  <TextInput
-                    label="Webhook URL"
-                    value={cfg.webhook_url || ''}
-                    onChange={(v) => upd({ webhook_url: v })}
-                    placeholder="https://discord.com/api/webhooks/..."
-                    helper="POST alert as JSON"
-                  />
-                )}
-
-                {cfg.delivery_type === 'email' && (
-                  <p className="text-xs text-slate-600">
-                    Email delivery uses the SMTP settings configured for notification rules.
-                  </p>
-                )}
-              </div>
-
-              {/* Save */}
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={save}
-                  disabled={saving}
-                  className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent/80 disabled:bg-slate-700 disabled:cursor-not-allowed rounded text-white transition-colors"
-                >
-                  <Save size={16} />
-                  {saving ? 'Saving...' : 'Save Danger Zones'}
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}

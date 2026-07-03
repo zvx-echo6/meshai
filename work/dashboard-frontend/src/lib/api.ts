@@ -111,15 +111,18 @@ export interface AlertHistoryResponse {
   total: number
 }
 
-export interface Subscription {
+export interface ActivityEntry {
   id: number
-  user_id: string
-  sub_type: string
-  schedule_time?: string
-  schedule_day?: string
-  scope_type: string
-  scope_value?: string
-  enabled: boolean
+  sent_at: number | string | null   // epoch seconds (int) on new rows
+  recipient: string | null
+  channel: string | number | null
+  text: string | null
+  source_event_table: string | null
+  source_event_pk: string | number | null
+  bytes_sent: number | null
+  ack_received: number | null
+  transport: string | null   // 'meshtastic' | 'meshcore' | null (legacy)
+  success: number | null     // 1 sent, 0 skip/fail, null legacy
 }
 
 export interface EnvStatus {
@@ -294,8 +297,8 @@ export async function fetchAlertHistory(
   return fetchJson<AlertHistoryResponse | AlertHistoryItem[]>(`/api/alerts/history?${params.toString()}`)
 }
 
-export async function fetchSubscriptions(): Promise<Subscription[]> {
-  return fetchJson<Subscription[]>('/api/subscriptions')
+export async function fetchActivity(limit = 100): Promise<ActivityEntry[]> {
+  return fetchJson<ActivityEntry[]>(`/api/activity?limit=${limit}`)
 }
 
 export async function fetchEnvStatus(): Promise<EnvStatus> {
