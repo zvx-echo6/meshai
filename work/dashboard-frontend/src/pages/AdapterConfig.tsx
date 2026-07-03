@@ -7,12 +7,30 @@
 // Auto-saves on blur (text/number inputs) or change (bool toggle + select).
 // Cache invalidation is server-side -- every PUT triggers it. The handler
 // reads via the in-process accessor on its next call.
+//
+// Phase D: can be embedded in Advanced tab of Data Feeds. Pass excludeKeys
+// to hide curated keys (owned by the curated panels), and hideLlmToggle=true
+// to hide the include_in_llm_context checkbox (surfaced in curated panels).
 
 import { useEffect, useState, useCallback } from 'react'
 import {
  ChevronDown, ChevronRight, RotateCcw, Loader2, Check, AlertCircle,
  Sliders,
 } from 'lucide-react'
+
+// Curated keys — owned by Environment.tsx curated panels. Filtered out of the
+// Advanced (raw) view to avoid double-editing.
+export const CURATED_KEYS: Record<string, string[]> = {
+ wfigs: ['allowed_incident_types', 'freshness_seconds', 'cooldown_seconds', 'broadcast_on_acres', 'broadcast_on_contained'],
+ fires: ['digest_enabled', 'digest_schedule', 'digest_timezone'],
+ tomtom_incidents: ['min_magnitude', 'drop_non_present', 'drop_zero_magnitude'],
+ itd_511: ['min_severity', 'enabled_categories', 'enabled_sub_types'],
+ wzdx: ['broadcast', 'min_severity', 'sub_types'],
+ nws: ['broadcast_severities', 'duplicate_allowed_after_seconds'],
+ avalanche: ['min_danger_level'],
+ swpc: ['geomag_kp_floor', 'flare_class_floor', 'proton_pfu_floor'],
+ satpass: ['enabled', 'observers', 'min_elevation', 'norad_ids', 'max_broadcasts_per_hour', 'dry_run'],
+}
 
 interface ConfigRow {
  adapter: string
@@ -38,7 +56,14 @@ type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 // Brief animation after a successful save.
 const SAVED_BADGE_MS = 1500
 
-export default function AdapterConfig() {
+interface AdapterConfigProps {
+ /** Keys to hide per adapter (curated keys owned by Data Feeds panels). */
+ excludeKeys?: Record<string, string[]>
+ /** When true, hides the include_in_llm_context checkbox (surfaced in curated panels). */
+ hideLlmToggle?: boolean
+}
+
+export default function AdapterConfig({ excludeKeys, hideLlmToggle }: AdapterConfigProps = {}) {
  const [config, setConfig] = useState<GroupedConfig>({})
  const [meta, setMeta] = useState<MetaMap>({})
  const [loading, setLoading] = useState(true)
@@ -183,7 +208,7 @@ export default function AdapterConfig() {
     <Sliders className="w-5 h-5" />
     <h1 className="text-xl font-semibold">Adapter Config</h1>
     <span className="text-xs text-[#666] ml-2">
-     {Object.values(config).reduce((n, l) => n + l.length, 0)} settings across {allAdapters.length} adapters
+     {Object.entries(config).reduce((n, [adp, l]) => n + (excludeKeys?.[adp] ? l.filter((r) => !excludeKeys[adp].includes(r.key)).length : l.length), 0)} settings across {allAdapters.length} adapters
     </span>
    </div>
    <p className="text-xs text-[#777] max-w-3xl">
@@ -198,7 +223,10 @@ export default function AdapterConfig() {
      include_in_llm_context: true,
      description: '',
     }
-    const rows = config[adapter] || []
+    const rawRows = config[adapter] || []
+    const rows = excludeKeys?.[adapter]
+     ? rawRows.filter((r) => !excludeKeys[adapter].includes(r.key))
+     : rawRows
     const isExpanded = expanded[adapter] ?? false
     const metaId = `meta:${adapter}`
     const metaStatus = saveStatus[metaId] || 'idle'
@@ -220,10 +248,10 @@ export default function AdapterConfig() {
          <h2 className="text-base font-semibold text-white">{m.display_name}</h2>
          <code className="text-xs text-[#666]">{adapter}</code>
          {rows.length > 0 && (
-          <span className="text-xs text-[#777] ml-1">({rows.length} settings)</span>
+          <span className="text-xs text-[#777] ml-1">({rows.length} settings{excludeKeys?.[adapter]?.length ? `, ${excludeKeys[adapter].length} curated` : ''})</span>
          )}
          {rows.length === 0 && (
-          <span className="text-xs text-[#666] ml-1 italic">(meta only)</span>
+          <span className="text-xs text-[#666] ml-1 italic">{rawRows.length > 0 ? '(all curated)' : '(meta only)'}</span>
          )}
         </div>
         {m.description && (
@@ -231,17 +259,19 @@ export default function AdapterConfig() {
         )}
        </div>
 
-       {/* include_in_llm_context toggle */}
-       <label className="flex items-center gap-2 text-xs text-[#e0e0e0] select-none">
-        <input
-         type="checkbox"
-         checked={m.include_in_llm_context}
-         onChange={(e) => putMeta(adapter, { include_in_llm_context: e.target.checked })}
-         className="w-4 h-4 accent-[#f59e0b]"
-        />
-        LLM context
-        <SaveBadge status={metaStatus} error={saveError[metaId]} />
-       </label>
+       {/* include_in_llm_context toggle — hidden when surfaced in curated panels */}
+       {!hideLlmToggle && (
+        <label className="flex items-center gap-2 text-xs text-[#e0e0e0] select-none">
+         <input
+          type="checkbox"
+          checked={m.include_in_llm_context}
+          onChange={(e) => putMeta(adapter, { include_in_llm_context: e.target.checked })}
+          className="w-4 h-4 accent-[#f59e0b]"
+         />
+         LLM context
+         <SaveBadge status={metaStatus} error={saveError[metaId]} />
+        </label>
+       )}
       </div>
 
       {/* Expanded body */}

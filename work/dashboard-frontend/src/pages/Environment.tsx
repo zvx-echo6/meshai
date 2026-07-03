@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import {
  Cloud, Flame, Radio, Car, Mountain, Satellite, Activity, Server,
  Save, RotateCcw, RefreshCw, AlertCircle, AlertTriangle, Info, Bell,
+ Sliders,
 } from 'lucide-react'
 import {
  Toggle, TextInput, NumberInput, SelectInput, ListInput, NumberListInput,
@@ -12,6 +13,7 @@ import {
  type EnvStatus, type EnvEvent,
 } from '@/lib/api'
 import { TOGGLE_FAMILY_META, type NotificationToggle, type NotificationsConfig } from './Notifications'
+import AdapterConfig, { CURATED_KEYS } from './AdapterConfig'
 
 type FeedSource = 'native' | 'central'
 
@@ -171,12 +173,16 @@ function FeedSourceToggle({ value, onChange, disabled, centralDisabled }: {
 }
 
 // ---------------------------------------------------------------- adapter panel
-function AdapterPanel({ title, subtitle, enabled, onEnabled, feedSource, onFeedSource, hasCentral, nativeOnly, hasKey, health, events, children }: {
+function AdapterPanel({ title, subtitle, enabled, onEnabled, feedSource, onFeedSource, hasCentral, nativeOnly, hasKey, health, events, children, llmContext, onLlmContext }: {
  title: string; subtitle?: string
  enabled: boolean; onEnabled: (v: boolean) => void
  feedSource: FeedSource; onFeedSource: (v: FeedSource) => void
  hasCentral: boolean; nativeOnly: boolean; hasKey: boolean
  health?: FeedHealth; events?: EnvEvent[]; children?: ReactNode
+ /** Current value of include_in_llm_context; undefined = not applicable */
+ llmContext?: boolean
+ /** Called when user toggles include_in_llm_context */
+ onLlmContext?: (v: boolean) => void
 }) {
  const centralDisabled = nativeOnly || !hasCentral
  return (
@@ -187,6 +193,17 @@ function AdapterPanel({ title, subtitle, enabled, onEnabled, feedSource, onFeedS
      {subtitle && <p className="text-xs text-[#666]">{subtitle}</p>}
     </div>
     <div className="flex items-center gap-4">
+     {onLlmContext !== undefined && (
+      <label className="flex items-center gap-1.5 cursor-pointer select-none" title="Include this adapter's data in LLM (bot) context">
+       <input
+        type="checkbox"
+        checked={llmContext ?? true}
+        onChange={(e) => onLlmContext(e.target.checked)}
+        className="w-3.5 h-3.5 accent-[#f59e0b]"
+       />
+       <span className="text-[10px] uppercase tracking-wide text-[#666]">LLM</span>
+      </label>
+     )}
      <div className="flex items-center gap-1">
       <span className="text-[10px] uppercase tracking-wide text-[#666]">source</span>
       <FeedSourceToggle value={feedSource} onChange={onFeedSource} disabled={!enabled} centralDisabled={centralDisabled} />
@@ -266,6 +283,12 @@ export default function Environment() {
  const [family, setFamily] = useState('weather')
  const [adapter, setAdapter] = useState<AdapterKey | null>('nws')
 
+ // Top-level tab: 'curated' = existing panels, 'advanced' = raw key/value editor
+ const [pageTab, setPageTab] = useState<'curated' | 'advanced'>('curated')
+
+ // include_in_llm_context per backend adapter name — fetched from /api/adapter-meta
+ const [llmMeta, setLlmMeta] = useState<Record<string, boolean>>({})
+
  // WFIGS/fires adapter config state
  const [wfigsConfig, setWfigsConfig] = useState<WfigsConfig>({
   allowed_incident_types: ['WF'],
@@ -341,124 +364,150 @@ export default function Environment() {
     setEnv(data)
     setOriginal(JSON.stringify(data))
 
-    // Load adapter-config for wfigs
+    // Helper: normalize GET /api/adapter-config/{adapter} response.
+    // The API returns an ARRAY [{key, value}, ...]. Convert to {key: {value}} map
+    // so callers can read data.field?.value just like an object response.
+    const toMap = (arr: unknown): Record<string, { value: unknown }> => {
+     const result: Record<string, { value: unknown }> = {}
+     if (Array.isArray(arr)) {
+      for (const r of arr as Array<{ key: string; value: unknown }>) {
+       result[r.key] = { value: r.value }
+      }
+     }
+     return result
+    }
+
+    // Load adapter-config for wfigs (array → object fix: line ~350)
     try {
      const wfigsRes = await fetch("/api/adapter-config/wfigs")
      if (wfigsRes.ok) {
-      const wfigsData = await wfigsRes.json()
+      const wfigsData = toMap(await wfigsRes.json())
       const cfg: WfigsConfig = {
-       allowed_incident_types: wfigsData.allowed_incident_types?.value ?? ['WF'],
-       freshness_seconds: wfigsData.freshness_seconds?.value ?? 0,
-       cooldown_seconds: wfigsData.cooldown_seconds?.value ?? 28800,
-       broadcast_on_acres: wfigsData.broadcast_on_acres?.value ?? true,
-       broadcast_on_contained: wfigsData.broadcast_on_contained?.value ?? true,
+       allowed_incident_types: (wfigsData.allowed_incident_types?.value as string[]) ?? ['WF'],
+       freshness_seconds: (wfigsData.freshness_seconds?.value as number) ?? 0,
+       cooldown_seconds: (wfigsData.cooldown_seconds?.value as number) ?? 28800,
+       broadcast_on_acres: (wfigsData.broadcast_on_acres?.value as boolean) ?? true,
+       broadcast_on_contained: (wfigsData.broadcast_on_contained?.value as boolean) ?? true,
       }
       setWfigsConfig(cfg)
       setWfigsOriginal(JSON.stringify(cfg))
      }
     } catch { /* adapter-config optional */ }
 
-    // Load adapter-config for fires (digest settings)
+    // Load adapter-config for fires/digest (array → object fix: line ~367)
     try {
      const firesRes = await fetch("/api/adapter-config/fires")
      if (firesRes.ok) {
-      const firesData = await firesRes.json()
+      const firesData = toMap(await firesRes.json())
       const cfg: FiresConfig = {
-       digest_enabled: firesData.digest_enabled?.value ?? true,
-       digest_schedule: firesData.digest_schedule?.value ?? ["06:00", "18:00"],
-       digest_timezone: firesData.digest_timezone?.value ?? "America/Boise",
+       digest_enabled: (firesData.digest_enabled?.value as boolean) ?? true,
+       digest_schedule: (firesData.digest_schedule?.value as string[]) ?? ["06:00", "18:00"],
+       digest_timezone: (firesData.digest_timezone?.value as string) ?? "America/Boise",
       }
       setFiresConfig(cfg)
       setFiresOriginal(JSON.stringify(cfg))
      }
     } catch { /* adapter-config optional */ }
 
-    // Load adapter-config for tomtom_incidents
+    // Load adapter-config for tomtom_incidents (array → object fix: line ~382)
     try {
      const ttRes = await fetch("/api/adapter-config/tomtom_incidents")
      if (ttRes.ok) {
-      const ttData = await ttRes.json()
+      const ttData = toMap(await ttRes.json())
       const cfg: TomtomConfig = {
-       min_magnitude: ttData.min_magnitude?.value ?? 4,
-       drop_non_present: ttData.drop_non_present?.value ?? true,
-       drop_zero_magnitude: ttData.drop_zero_magnitude?.value ?? true,
+       min_magnitude: (ttData.min_magnitude?.value as number) ?? 4,
+       drop_non_present: (ttData.drop_non_present?.value as boolean) ?? true,
+       drop_zero_magnitude: (ttData.drop_zero_magnitude?.value as boolean) ?? true,
       }
       setTomtomConfig(cfg)
       setTomtomOriginal(JSON.stringify(cfg))
      }
     } catch { /* adapter-config optional */ }
 
-    // Load adapter-config for itd_511
+    // Load adapter-config for itd_511 (array → object fix: line ~398)
     try {
      const r511Res = await fetch("/api/adapter-config/itd_511")
      if (r511Res.ok) {
-      const r511Data = await r511Res.json()
+      const r511Data = toMap(await r511Res.json())
       const cfg: Roads511Config = {
-       min_severity: r511Data.min_severity?.value ?? "None",
-       enabled_categories: r511Data.enabled_categories?.value ?? ["incident", "closure"],
-       enabled_sub_types: r511Data.enabled_sub_types?.value ?? ["accident", "road_closed", "closure", "lane_closed", "vehicle_on_fire", "flooding", "debris"],
+       min_severity: (r511Data.min_severity?.value as string) ?? "None",
+       enabled_categories: (r511Data.enabled_categories?.value as string[]) ?? ["incident", "closure"],
+       enabled_sub_types: (r511Data.enabled_sub_types?.value as string[]) ?? ["accident", "road_closed", "closure", "lane_closed", "vehicle_on_fire", "flooding", "debris"],
       }
       setRoads511Config(cfg)
       setRoads511Original(JSON.stringify(cfg))
      }
     } catch { /* adapter-config optional */ }
 
-    // Load adapter-config for wzdx
+    // Load adapter-config for wzdx (array → object fix: line ~413)
     try {
      const wzdxRes = await fetch("/api/adapter-config/wzdx")
      if (wzdxRes.ok) {
-      const wzdxData = await wzdxRes.json()
+      const wzdxData = toMap(await wzdxRes.json())
       const cfg: WzdxConfig = {
-       broadcast: wzdxData.broadcast?.value ?? false,
-       min_severity: wzdxData.min_severity?.value ?? "Minor",
-       sub_types: wzdxData.sub_types?.value ?? ["road_works", "lane_closed", "road_closed"],
+       broadcast: (wzdxData.broadcast?.value as boolean) ?? false,
+       min_severity: (wzdxData.min_severity?.value as string) ?? "Minor",
+       sub_types: (wzdxData.sub_types?.value as string[]) ?? ["road_works", "lane_closed", "road_closed"],
       }
       setWzdxConfig(cfg)
       setWzdxOriginal(JSON.stringify(cfg))
      }
     } catch { /* adapter-config optional */ }
 
-    // Load adapter-config for nws
+    // Load adapter-config for nws (array → object fix: line ~427)
     try {
      const nwsRes = await fetch("/api/adapter-config/nws")
      if (nwsRes.ok) {
-      const nwsData = await nwsRes.json()
+      const nwsData = toMap(await nwsRes.json())
       const cfg: NwsConfig = {
-       broadcast_severities: nwsData.broadcast_severities?.value ?? ["Extreme", "Severe"],
-       duplicate_allowed_after_seconds: nwsData.duplicate_allowed_after_seconds?.value ?? 3600,
+       broadcast_severities: (nwsData.broadcast_severities?.value as string[]) ?? ["Extreme", "Severe"],
+       duplicate_allowed_after_seconds: (nwsData.duplicate_allowed_after_seconds?.value as number) ?? 3600,
       }
       setNwsConfig(cfg)
       setNwsOriginal(JSON.stringify(cfg))
      }
     } catch { /* adapter-config optional */ }
 
-    // Load adapter-config for avalanche
+    // Load adapter-config for avalanche (array → object fix: line ~441)
     try {
      const avyRes = await fetch("/api/adapter-config/avalanche")
      if (avyRes.ok) {
-      const avyData = await avyRes.json()
+      const avyData = toMap(await avyRes.json())
       const cfg: AvalancheConfig = {
-       min_danger_level: avyData.min_danger_level?.value ?? 3,
+       min_danger_level: (avyData.min_danger_level?.value as number) ?? 3,
       }
       setAvalancheConfig(cfg)
       setAvalancheOriginal(JSON.stringify(cfg))
      }
     } catch { /* adapter-config optional */ }
 
-    // Load adapter-config for swpc
+    // Load adapter-config for swpc (array → object fix: line ~453)
     try {
      const swpcRes = await fetch("/api/adapter-config/swpc")
      if (swpcRes.ok) {
-      const swpcData = await swpcRes.json()
+      const swpcData = toMap(await swpcRes.json())
       const cfg: SwpcConfig = {
-       geomag_kp_floor: swpcData.geomag_kp_floor?.value ?? 7.0,
-       flare_class_floor: swpcData.flare_class_floor?.value ?? "X1",
-       proton_pfu_floor: swpcData.proton_pfu_floor?.value ?? 10.0,
+       geomag_kp_floor: (swpcData.geomag_kp_floor?.value as number) ?? 7.0,
+       flare_class_floor: (swpcData.flare_class_floor?.value as string) ?? "X1",
+       proton_pfu_floor: (swpcData.proton_pfu_floor?.value as number) ?? 10.0,
       }
       setSwpcConfig(cfg)
       setSwpcOriginal(JSON.stringify(cfg))
      }
     } catch { /* adapter-config optional */ }
+
+    // Load adapter-meta for include_in_llm_context per adapter
+    try {
+     const metaRes = await fetch('/api/adapter-meta')
+     if (metaRes.ok) {
+      const metaData = await metaRes.json() as Record<string, { include_in_llm_context?: boolean }>
+      const llmMap: Record<string, boolean> = {}
+      for (const [k, v] of Object.entries(metaData)) {
+       llmMap[k] = v.include_in_llm_context ?? true
+      }
+      setLlmMeta(llmMap)
+     }
+    } catch { /* best-effort */ }
 
     // Load adapter-config for satpass
     try {
@@ -537,6 +586,18 @@ export default function Environment() {
    const err = await res.json().catch(() => ({}))
    throw new Error(err.detail || `Failed to save ${adapterName}.${key}`)
   }
+ }
+
+ // Auto-save include_in_llm_context toggle via /api/adapter-meta/{adapter}
+ const saveLlmContext = async (adapterName: string, val: boolean) => {
+  setLlmMeta((prev) => ({ ...prev, [adapterName]: val }))
+  try {
+   await fetch(`/api/adapter-meta/${adapterName}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ include_in_llm_context: val }),
+   })
+  } catch { /* best-effort */ }
  }
 
 const save = async () => {
@@ -724,6 +785,23 @@ const save = async () => {
  }
 
  const up = (patch: Partial<EnvConfig>) => env && setEnv({ ...env, ...patch })
+
+ // Maps from Environment.tsx adapter key → backend adapter-meta name.
+ // Used to read/write include_in_llm_context per adapter panel.
+ const PANEL_META_KEY: Partial<Record<AdapterKey, string>> = {
+  nws: 'nws',
+  fires: 'wfigs',
+  firms: 'firms',
+  swpc: 'swpc',
+  ducting: 'ducting',
+  traffic: 'tomtom_incidents',
+  roads511: 'itd_511',
+  wzdx: 'wzdx',
+  usgs: 'usgs',
+  usgs_quake: 'usgs_quake',
+  avalanche: 'avalanche',
+  satpass: 'satpass',
+ }
 
  // ── Notification family gating helpers ────────────────────────────────────
  const notifToggles: Record<string, NotificationToggle> = notifConfig?.toggles || {}
@@ -921,6 +999,32 @@ const save = async () => {
      <div className="grid grid-cols-2 gap-4">
       <NumberInput label="Update Cooldown (hours)" value={Math.round(wfigsConfig.cooldown_seconds / 3600)} onChange={(v) => setWfigsConfig({ ...wfigsConfig, cooldown_seconds: v * 3600 })} min={0} helper="Minimum hours between updates for the same fire" />
       <NumberInput label="Freshness Window (hours)" value={Math.round(wfigsConfig.freshness_seconds / 3600)} onChange={(v) => setWfigsConfig({ ...wfigsConfig, freshness_seconds: v * 3600 })} min={0} helper="0 = always broadcast regardless of event age" />
+     </div>
+     <div className="border-t border-border pt-4 mt-2">
+      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">Fire Digest</div>
+      <label className="flex items-center justify-between">
+       <span className="text-sm font-sans text-[#e0e0e0]">Enable daily digest</span>
+       <input type="checkbox" checked={firesConfig.digest_enabled}
+        onChange={(e) => setFiresConfig({ ...firesConfig, digest_enabled: e.target.checked })}
+        className="w-4 h-4 accent-[#f59e0b]" />
+      </label>
+      {firesConfig.digest_enabled && (
+       <div className="mt-3 space-y-3">
+        <ListInput label="Schedule (HH:MM)" value={firesConfig.digest_schedule}
+         onChange={(v) => setFiresConfig({ ...firesConfig, digest_schedule: v })}
+         helper="Digest times in HH:MM format, e.g. 06:00 and 18:00" />
+        <SelectInput label="Timezone" value={firesConfig.digest_timezone}
+         onChange={(v) => setFiresConfig({ ...firesConfig, digest_timezone: v })}
+         options={[
+          { value: 'America/Boise', label: 'Mountain — America/Boise' },
+          { value: 'America/Los_Angeles', label: 'Pacific — America/Los_Angeles' },
+          { value: 'America/Denver', label: 'Mountain — America/Denver' },
+          { value: 'America/Chicago', label: 'Central — America/Chicago' },
+          { value: 'America/New_York', label: 'Eastern — America/New_York' },
+          { value: 'UTC', label: 'UTC' },
+         ]} />
+       </div>
+      )}
      </div>
     </div>
    )
@@ -1254,17 +1358,21 @@ const save = async () => {
   <div className="space-y-6">
    {/* Header + master enable + save bar */}
    <div className="flex items-center justify-between">
-    <h1 className="text-xl font-semibold text-white">Environment</h1>
+    <h1 className="text-xl font-semibold text-white">Data Feeds</h1>
     <div className="flex items-center gap-3">
-     <Toggle label="Feeds Enabled" checked={env.enabled} onChange={(v) => up({ enabled: v })} />
-     {hasChanges && (
+     {pageTab === 'curated' && (
       <>
-       <button onClick={discard} className="flex items-center gap-1 px-3 py-1.5 text-sm text-[#777] hover:text-white border border-border">
-        <RotateCcw size={14} /> Discard
-       </button>
-       <button onClick={save} disabled={saving} className="flex items-center gap-1 px-3 py-1.5 text-sm bg-accent text-white disabled:opacity-50">
-        <Save size={14} /> {saving ? 'Saving…' : 'Save'}
-       </button>
+       <Toggle label="Feeds Enabled" checked={env.enabled} onChange={(v) => up({ enabled: v })} />
+       {hasChanges && (
+        <>
+         <button onClick={discard} className="flex items-center gap-1 px-3 py-1.5 text-sm text-[#777] hover:text-white border border-border">
+          <RotateCcw size={14} /> Discard
+         </button>
+         <button onClick={save} disabled={saving} className="flex items-center gap-1 px-3 py-1.5 text-sm bg-accent text-white disabled:opacity-50">
+          <Save size={14} /> {saving ? 'Saving…' : 'Save'}
+         </button>
+        </>
+       )}
       </>
      )}
     </div>
@@ -1279,6 +1387,33 @@ const save = async () => {
     </div>
    )}
 
+   {/* Top-level tab bar: Data Feeds (curated) | Advanced (raw key/value editor) */}
+   <div className="flex gap-1 border-b border-border">
+    <button
+     onClick={() => setPageTab('curated')}
+     className={`flex items-center gap-2 px-4 py-2 text-sm border-b-2 -mb-px transition-colors ${pageTab === 'curated' ? 'border-accent text-accent' : 'border-transparent text-[#777] hover:text-white'}`}>
+     <Cloud size={15} /> Data Feeds
+    </button>
+    <button
+     onClick={() => setPageTab('advanced')}
+     className={`flex items-center gap-2 px-4 py-2 text-sm border-b-2 -mb-px transition-colors ${pageTab === 'advanced' ? 'border-accent text-accent' : 'border-transparent text-[#777] hover:text-white'}`}>
+     <Sliders size={15} /> Advanced (raw)
+    </button>
+   </div>
+
+   {/* Advanced tab: raw key/value editor, curated keys filtered out */}
+   {pageTab === 'advanced' && (
+    <div className="-mx-6">
+     <div className="px-6 pb-2 text-xs text-[#777]">
+      Curated keys (owned by the Data Feeds panels above) are hidden here.
+      Future or unknown keys from adapters will appear in this view.
+     </div>
+     <AdapterConfig excludeKeys={CURATED_KEYS} hideLlmToggle />
+    </div>
+   )}
+
+   {/* Curated panels — only shown in curated tab */}
+   {pageTab === 'curated' && <>
 
    {/* Family tabs */}
    <div className="flex gap-1 border-b border-border overflow-x-auto">
@@ -1440,11 +1575,15 @@ const save = async () => {
       hasKey={META[activeAdapter].hasKey}
       health={healthFor(activeAdapter)}
       events={eventsFor(activeAdapter)}
+      llmContext={PANEL_META_KEY[activeAdapter] !== undefined ? (llmMeta[PANEL_META_KEY[activeAdapter]!] ?? true) : undefined}
+      onLlmContext={PANEL_META_KEY[activeAdapter] !== undefined ? (v) => saveLlmContext(PANEL_META_KEY[activeAdapter]!, v) : undefined}
      >
       {renderSettings(activeAdapter)}
      </AdapterPanel>
     </>
    )}
+
+   </> /* end curated tab */}
   </div>
  )
 }
