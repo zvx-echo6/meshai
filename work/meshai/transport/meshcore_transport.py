@@ -138,6 +138,10 @@ class MeshCoreTransport(MeshTransport):
             "MeshCore: enumerated %d named channel(s)", len(self._chan_name_to_idx)
         )
 
+    def known_channels(self) -> list[str]:
+        """Enumerated MeshCore channel names (from _chan_name_to_idx, populated at connect)."""
+        return list(self._chan_name_to_idx.keys())
+
     # ------------------------------------------------------------------
     # Internal coroutines (run on the dedicated loop)
     # ------------------------------------------------------------------

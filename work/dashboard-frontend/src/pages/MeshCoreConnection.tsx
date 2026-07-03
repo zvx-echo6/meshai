@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { Save, RotateCcw, RefreshCw, Check } from 'lucide-react'
 import { TextInput, NumberInput } from './Config'
 import { notifyRestartRequired } from '@/components/RestartBanner'
-import { fetchConfig as apiFetchConfig, updateConfig as apiUpdateConfig } from '@/lib/api'
+import { fetchConfig as apiFetchConfig, updateConfig as apiUpdateConfig, getMeshcoreChannels, sendTestMessage } from '@/lib/api'
 import { useDirty } from '@/context/DirtyContext'
 
 // Only the fields this page edits are typed explicitly; the rest of the
@@ -29,6 +29,14 @@ export default function MeshCoreConnection() {
   const [success, setSuccess] = useState<string | null>(null)
   const [hasChanges, setHasChanges] = useState(false)
 
+  // Test send state
+  const [channelsActive, setChannelsActive] = useState(false)
+  const [channels, setChannels] = useState<string[]>([])
+  const [selectedChannel, setSelectedChannel] = useState('')
+  const [testText, setTestText] = useState('')
+  const [testSending, setTestSending] = useState(false)
+  const [testResult, setTestResult] = useState<{ sent: boolean; detail: string } | null>(null)
+
   const fetchConfig = useCallback(async () => {
     setLoading(true)
     try {
@@ -48,6 +56,35 @@ export default function MeshCoreConnection() {
     document.title = 'MeshCore Connection - MeshAI'
     fetchConfig()
   }, [fetchConfig])
+
+  useEffect(() => {
+    getMeshcoreChannels()
+      .then((res) => {
+        setChannelsActive(res.active)
+        setChannels(res.channels)
+        if (res.channels.length > 0) setSelectedChannel(res.channels[0])
+      })
+      .catch(() => {
+        setChannelsActive(false)
+      })
+  }, [])
+
+  const handleTestSend = async () => {
+    setTestSending(true)
+    setTestResult(null)
+    try {
+      const result = await sendTestMessage({
+        transport: 'meshcore',
+        channel: selectedChannel,
+        text: testText.trim() || undefined,
+      })
+      setTestResult(result)
+    } catch (err) {
+      setTestResult({ sent: false, detail: err instanceof Error ? err.message : 'Send failed' })
+    } finally {
+      setTestSending(false)
+    }
+  }
 
   useEffect(() => {
     if (config && originalConfig) {
@@ -189,6 +226,51 @@ export default function MeshCoreConnection() {
             &rarr; Meshtastic connection
           </Link>
         </div>
+      </div>
+
+      {/* Send test message card */}
+      <div className={`bg-bg-card border border-border p-6 space-y-4${!channelsActive ? ' opacity-60' : ''}`}>
+        <div className="text-xs text-slate-500 uppercase tracking-wide">Send Test Message</div>
+        {!channelsActive ? (
+          <p className="text-sm text-slate-500">MeshCore not connected</p>
+        ) : (
+          <>
+            <div className="space-y-1">
+              <label className="text-xs text-slate-500 uppercase tracking-wide">Channel</label>
+              <select
+                value={selectedChannel}
+                onChange={(e) => setSelectedChannel(e.target.value)}
+                className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 focus:outline-none focus:border-accent"
+              >
+                {channels.map((ch) => (
+                  <option key={ch} value={ch}>{ch}</option>
+                ))}
+              </select>
+            </div>
+            <TextInput
+              label="Message (optional)"
+              value={testText}
+              onChange={setTestText}
+              placeholder={`\u{1F9EA} MeshAI test — ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}`}
+            />
+            <button
+              onClick={handleTestSend}
+              disabled={testSending}
+              className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent/80 disabled:bg-slate-700 disabled:cursor-not-allowed rounded text-white text-sm transition-colors"
+            >
+              {testSending ? 'Sending...' : 'Send test'}
+            </button>
+            {testResult && (
+              testResult.sent ? (
+                <div className="p-3 text-sm bg-green-500/10 text-green-400 border border-green-500/20">
+                  <Check size={14} className="inline mr-2" />{testResult.detail}
+                </div>
+              ) : (
+                <div className="p-3 text-sm bg-red-500/10 text-red-400 border border-red-500/20">{testResult.detail}</div>
+              )
+            )}
+          </>
+        )}
       </div>
     </div>
   )

@@ -52,6 +52,7 @@ def create_app() -> FastAPI:
     from .api.system_routes import router as system_router
     from .api.config_routes import router as config_router
     from .api.mesh_routes import router as mesh_router
+    from .api.mesh_send_routes import router as mesh_send_router
     from .api.env_routes import router as env_router
     from .api.alert_routes import router as alert_router
     from .api.notification_routes import router as notification_router
@@ -62,6 +63,7 @@ def create_app() -> FastAPI:
     app.include_router(curation_router, prefix="/api")
     app.include_router(config_router, prefix="/api")
     app.include_router(mesh_router, prefix="/api")
+    app.include_router(mesh_send_router, prefix="/api")
     app.include_router(env_router, prefix="/api")
     app.include_router(alert_router, prefix="/api")
 
