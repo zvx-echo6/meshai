@@ -512,6 +512,7 @@ export interface MeshcoreSelf {
   host?: string
   port?: number
   channel_count?: number
+  last_advert_sent?: number | null  // epoch seconds; null/absent = never advertised
 }
 
 export async function fetchMeshcoreContacts(): Promise<MeshcoreContacts> {
@@ -519,6 +520,18 @@ export async function fetchMeshcoreContacts(): Promise<MeshcoreContacts> {
 }
 export async function fetchMeshcoreSelf(): Promise<MeshcoreSelf> {
   return fetchJson<MeshcoreSelf>('/api/meshcore/self')
+}
+
+export async function sendMeshcoreAdvert(): Promise<TestSendResult> {
+  const response = await fetch('/api/meshcore/advert', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status} ${response.statusText}`)
+  }
+  return response.json()
 }
 
 export async function sendTestMessage(body: {

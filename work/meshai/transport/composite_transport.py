@@ -102,6 +102,11 @@ class CompositeTransport(MeshTransport):
         child = self.meshcore_child()
         return child.self_info() if child is not None else {"connected": False}
 
+    def send_advert(self) -> bool:
+        """Passthrough to the MeshCore child's send_advert(); False if no meshcore child."""
+        child = self.meshcore_child()
+        return child.send_advert() if child is not None else False
+
     # ------------------------------------------------------------------
     # Routing decision helpers (factored out for unit-test access)
     # ------------------------------------------------------------------
