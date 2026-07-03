@@ -448,7 +448,9 @@ class Dispatcher:
             try:
                 rule = self._toggle_to_rule(tog, ch_type, event)
                 channel = self._channel_factory(rule, self._connector)
-                if friendly is not None and ch_type in ("mesh_broadcast", "mesh_dm"):
+                if friendly is not None and ch_type in (
+                    "mesh_broadcast", "mesh_dm", "meshcore_broadcast", "meshcore_dm"
+                ):
                     payload = make_payload_from_event(event, message=friendly)
                 else:
                     payload = make_payload_from_event(event)
@@ -549,14 +551,32 @@ class Dispatcher:
                     source_event_table, source_event_pk)
                 return False
 
-        # Route through rf_propagation toggle\'s broadcast_channel.
+        # Route through rf_propagation toggle\'s configured channels.
         toggles = getattr(self._config.notifications, "toggles", None) or {}
         rf = toggles.get("rf_propagation") if isinstance(toggles, dict) else None
-        if rf is None or not getattr(rf, "broadcast_channel", None):
+        if rf is None:
             self._logger.info(
-                "scheduled-broadcast: rf_propagation channel not "
-                "configured; dropping")
+                "scheduled-broadcast: rf_propagation toggle not found; dropping")
             return False
+
+        # Resolve broadcast channel types from the toggle\'s severity_channels for
+        # "priority" (band-conditions are priority-class RF propagation info).
+        # Falls back to ["mesh_broadcast"] for old configs without severity_channels.
+        sev_channels = getattr(rf, "severity_channels", {}) or {}
+        ch_types = [
+            c for c in sev_channels.get("priority", ["mesh_broadcast"])
+            if c in ("mesh_broadcast", "meshcore_broadcast")
+        ]
+        if not ch_types:
+            # Backward compat: if severity_channels has no broadcast types,
+            # use mesh_broadcast when broadcast_channel is configured.
+            if getattr(rf, "broadcast_channel", None) is not None:
+                ch_types = ["mesh_broadcast"]
+            else:
+                self._logger.info(
+                    "scheduled-broadcast: rf_propagation channel not "
+                    "configured; dropping")
+                return False
 
         # Build a synthetic Event purely to reuse _toggle_to_rule + the
         # NotificationPayload constructor. Severity \'priority\' keeps it
@@ -570,35 +590,39 @@ class Dispatcher:
             severity="priority", title=text,
         )
         ev.data["_meshai_precomposed"] = True
-        rule = self._toggle_to_rule(rf, "mesh_broadcast", ev)
-        try:
-            channel = self._channel_factory(rule, self._connector)
-            payload = make_payload_from_event(ev, message=text)
-            success = await channel.deliver(payload, rule)
-        except Exception:
-            self._logger.exception(
-                "scheduled-broadcast: delivery raised; treating as failed")
-            return False
 
-        if success:
-            # Audit row -- mirrors _post_broadcast_commit for scheduled.
+        delivered_any = False
+        for ch_type in ch_types:
+            rule = self._toggle_to_rule(rf, ch_type, ev)
             try:
-                from meshai.persistence import get_db
-                conn = get_db()
-                bytes_sent = len(text.encode("utf-8")) if text else 0
-                conn.execute(
-                    "INSERT INTO mesh_broadcasts_out(sent_at, recipient, "
-                    "channel, text, source_event_table, source_event_pk, "
-                    "bytes_sent, ack_received) VALUES (?,?,?,?,?,?,?,?)",
-                    (int(time.time()), "broadcast",
-                     rf.broadcast_channel, text,
-                     source_event_table, str(source_event_pk),
-                     bytes_sent, 0),
-                )
+                channel = self._channel_factory(rule, self._connector)
+                payload = make_payload_from_event(ev, message=text)
+                success = await channel.deliver(payload, rule)
             except Exception:
                 self._logger.exception(
-                    "scheduled-broadcast: audit row insert failed")
-        return bool(success)
+                    "scheduled-broadcast: delivery raised for %s; skipping", ch_type)
+                continue
+
+            if success:
+                delivered_any = True
+                # Audit row -- mirrors _post_broadcast_commit for scheduled.
+                try:
+                    from meshai.persistence import get_db
+                    conn = get_db()
+                    bytes_sent = len(text.encode("utf-8")) if text else 0
+                    conn.execute(
+                        "INSERT INTO mesh_broadcasts_out(sent_at, recipient, "
+                        "channel, text, source_event_table, source_event_pk, "
+                        "bytes_sent, ack_received) VALUES (?,?,?,?,?,?,?,?)",
+                        (int(time.time()), "broadcast",
+                         rf.broadcast_channel, text,
+                         source_event_table, str(source_event_pk),
+                         bytes_sent, 0),
+                    )
+                except Exception:
+                    self._logger.exception(
+                        "scheduled-broadcast: audit row insert failed for %s", ch_type)
+        return delivered_any
 
     def _post_broadcast_commit(self, event, payload, rule, ch_type: str) -> None:
         """Persistence side-effects of an actually-successful broadcast.
@@ -625,6 +649,9 @@ class Dispatcher:
                 if ch_type == "mesh_dm":
                     node_ids = list(getattr(rule, "node_ids", []) or [])
                     recipient = ",".join(map(str, node_ids)) or "dm"
+                elif ch_type == "meshcore_dm":
+                    contacts = list(getattr(rule, "meshcore_dm_contacts", []) or [])
+                    recipient = ",".join(map(str, contacts)) or "meshcore_dm"
                 else:
                     recipient = "broadcast"
                 channel = getattr(rule, "broadcast_channel", None)
@@ -662,6 +689,7 @@ class Dispatcher:
             broadcast_channel=(getattr(tog, "broadcast_channel", None) or 0),
             meshcore_channel=getattr(tog, "meshcore_channel", None),
             node_ids=list(getattr(tog, "node_ids", []) or []),
+            meshcore_dm_contacts=list(getattr(tog, "meshcore_dm_contacts", []) or []),
             smtp_host=getattr(tog, "smtp_host", ""), smtp_port=getattr(tog, "smtp_port", 587),
             smtp_user=getattr(tog, "smtp_user", ""), smtp_password=getattr(tog, "smtp_password", ""),
             smtp_tls=getattr(tog, "smtp_tls", True), from_address=getattr(tog, "from_address", ""),

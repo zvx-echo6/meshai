@@ -10,6 +10,12 @@ import Reference from './pages/Reference'
 import AdapterConfig from './pages/AdapterConfig'
 import GaugeSites from './pages/GaugeSites'
 import TownAnchors from './pages/TownAnchors'
+import MeshCoreRouting from './pages/MeshCoreRouting'
+import MeshCoreConnection from './pages/MeshCoreConnection'
+import MeshCoreContacts from './pages/MeshCoreContacts'
+import MeshCoreCompanion from './pages/MeshCoreCompanion'
+import MeshtasticConnection from './pages/MeshtasticConnection'
+import MeshtasticSources from './pages/MeshtasticSources'
 import { ToastProvider } from './components/ToastProvider'
 
 function App() {
@@ -27,6 +33,12 @@ function App() {
           <Route path="/adapter-config" element={<AdapterConfig />} />
           <Route path="/gauge-sites" element={<GaugeSites />} />
           <Route path="/town-anchors" element={<TownAnchors />} />
+          <Route path="/meshcore/routing" element={<MeshCoreRouting />} />
+          <Route path="/meshcore/connection" element={<MeshCoreConnection />} />
+          <Route path="/meshcore/contacts" element={<MeshCoreContacts />} />
+          <Route path="/meshcore/companion" element={<MeshCoreCompanion />} />
+          <Route path="/meshtastic/connection" element={<MeshtasticConnection />} />
+          <Route path="/meshtastic/sources" element={<MeshtasticSources />} />
         </Routes>
       </Layout>
     </ToastProvider>

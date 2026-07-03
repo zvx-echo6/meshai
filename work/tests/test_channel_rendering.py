@@ -216,15 +216,15 @@ def test_webhook_channel_uses_webhook_renderer():
 
 # ============================================================
 # PER-FAMILY MESHCORE ROUTING — end-to-end threading guard
-# (regression guard for the broadcast send-path gap)
+# Updated for the explicit-per-mesh model (meshcore_broadcast/mesh_broadcast)
 # ============================================================
 
-def test_broadcast_threads_meshcore_channel_through_factory():
-    """create_channel(rule) -> MeshBroadcastChannel.deliver must pass BOTH
-    channel=<broadcast_channel> AND meshcore_channel=<name> to send_message.
+def test_mesh_broadcast_routes_to_meshtastic_only():
+    """mesh_broadcast passes transport='meshtastic' and channel index to
+    send_message. meshcore_channel is NOT passed (auto-fan removed).
 
-    This is the regression guard for the gap where the rule's
-    meshcore_channel never reached connector.send_message.
+    Regression guard: before this model, mesh_broadcast also threaded
+    meshcore_channel through; now it is Meshtastic-only.
     """
     from meshai.config import NotificationRuleConfig
     from meshai.notifications.channels import create_channel
@@ -234,7 +234,7 @@ def test_broadcast_threads_meshcore_channel_through_factory():
         name="toggle:fire",
         delivery_type="mesh_broadcast",
         broadcast_channel=1,
-        meshcore_channel="AIDA",
+        meshcore_channel="AIDA",  # present in config but must NOT flow to send_message
     )
 
     channel = create_channel(rule, mock_connector)
@@ -254,54 +254,63 @@ def test_broadcast_threads_meshcore_channel_through_factory():
     mock_connector.send_message.assert_called_once()
     kwargs = mock_connector.send_message.call_args.kwargs
     assert kwargs.get("channel") == 1
-    # The load-bearing assertion: the name was NOT dropped.
-    assert kwargs.get("meshcore_channel") == "AIDA"
+    assert kwargs.get("transport") == "meshtastic"
+    # meshcore_channel must NOT be present (no auto-fan).
+    assert "meshcore_channel" not in kwargs or kwargs.get("meshcore_channel") is None
 
 
-def test_broadcast_meshcore_channel_none_passed_through():
-    """meshcore_channel=None (family not on MeshCore) => send_message still
-    receives meshcore_channel=None (MeshCore child skipped downstream)."""
+def test_meshcore_broadcast_routes_to_meshcore_only():
+    """meshcore_broadcast passes meshcore_channel=name and transport='meshcore'
+    to send_message. This is the explicit MeshCore-only delivery path."""
     from meshai.config import NotificationRuleConfig
-    from meshai.notifications.channels import create_channel
+    from meshai.notifications.channels import MeshCoreBroadcastChannel, create_channel
 
+    # Simulate a CompositeTransport connector with a meshcore child.
     mock_connector = MagicMock()
+    mock_connector._by_name = {"meshcore": MagicMock(), "meshtastic": MagicMock()}
+    mock_connector.send_message.return_value = True
+
     rule = NotificationRuleConfig(
-        name="toggle:weather",
-        delivery_type="mesh_broadcast",
-        broadcast_channel=0,
-        meshcore_channel=None,
+        name="toggle:fire",
+        delivery_type="meshcore_broadcast",
+        meshcore_channel="AIDA",
     )
 
     channel = create_channel(rule, mock_connector)
+    assert isinstance(channel, MeshCoreBroadcastChannel)
 
     payload = NotificationPayload(
-        message="weather alert",
-        category="weather_warning",
-        severity="priority",
+        message="fire alert",
+        category="fire",
+        severity="immediate",
         timestamp=time.time(),
-        event_type="weather_warning",
+        event_type="fire",
         chunk_index=0,
     )
 
     assert asyncio.run(channel.deliver(payload, rule)) is True
 
+    mock_connector.send_message.assert_called_once()
     kwargs = mock_connector.send_message.call_args.kwargs
-    assert kwargs.get("channel") == 0
-    assert "meshcore_channel" in kwargs
-    assert kwargs.get("meshcore_channel") is None
+    assert kwargs.get("meshcore_channel") == "AIDA"
+    assert kwargs.get("transport") == "meshcore"
+    assert kwargs.get("destination") is None
 
 
 def test_broadcast_render_loop_threads_meshcore_channel():
-    """Non-prechunked path (renderer loop) also threads meshcore_channel
-    on every chunk send."""
+    """Non-prechunked path (renderer loop) for meshcore_broadcast threads
+    meshcore_channel on every chunk send."""
     from meshai.config import NotificationRuleConfig
     from meshai.notifications.channels import create_channel
 
     mock_connector = MagicMock()
+    # Connector has a meshcore child so the no-op guard passes.
+    mock_connector._by_name = {"meshcore": MagicMock(), "meshtastic": MagicMock()}
+    mock_connector.send_message.return_value = True
+
     rule = NotificationRuleConfig(
         name="toggle:fire",
-        delivery_type="mesh_broadcast",
-        broadcast_channel=2,
+        delivery_type="meshcore_broadcast",
         meshcore_channel="AIDA",
     )
     channel = create_channel(rule, mock_connector)
@@ -318,5 +327,5 @@ def test_broadcast_render_loop_threads_meshcore_channel():
     assert asyncio.run(channel.deliver(payload, rule)) is True
     assert mock_connector.send_message.call_count >= 2
     for call in mock_connector.send_message.call_args_list:
-        assert call.kwargs.get("channel") == 2
         assert call.kwargs.get("meshcore_channel") == "AIDA"
+        assert call.kwargs.get("transport") == "meshcore"

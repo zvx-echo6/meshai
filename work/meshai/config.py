@@ -550,7 +550,7 @@ class NotificationRuleConfig:
     custom_message: str = ""
 
     # Delivery type
-    delivery_type: str = ""  # mesh_broadcast, mesh_dm, email, webhook
+    delivery_type: str = ""  # mesh_broadcast, mesh_dm, meshcore_broadcast, meshcore_dm, email, webhook
 
     # Mesh broadcast fields
     broadcast_channel: int = 0
@@ -559,6 +559,8 @@ class NotificationRuleConfig:
 
     # Mesh DM fields
     node_ids: list = field(default_factory=list)
+    # MeshCore DM target contacts (names or pubkeys). Parallel to node_ids for Meshtastic.
+    meshcore_dm_contacts: list = field(default_factory=list)
 
     # Email fields
     smtp_host: str = ""
@@ -600,6 +602,8 @@ class NotificationToggle:
     # Per-family MeshCore channel NAME on the companion; None = not broadcast on MeshCore.
     meshcore_channel: Optional[str] = None
     node_ids: list = field(default_factory=list)
+    # MeshCore DM target contacts (names or pubkeys). Parallel to node_ids for Meshtastic.
+    meshcore_dm_contacts: list = field(default_factory=list)
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
@@ -693,7 +697,8 @@ _DZ_VALID_ROLES = frozenset({
 })
 
 _DZ_VALID_DELIVERY = frozenset({
-    "mesh_broadcast", "mesh_dm", "email", "webhook", "none",
+    "mesh_broadcast", "mesh_dm", "meshcore_broadcast", "meshcore_dm",
+    "email", "webhook", "none",
 })
 # Hazard families that map onto categories.VALID_TOGGLES. snow is a sub-gate of
 # weather and flood a sub-gate of seismic (resolved in the correlator), so they

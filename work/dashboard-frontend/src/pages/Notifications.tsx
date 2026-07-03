@@ -39,15 +39,18 @@ interface NotificationRuleConfig {
   region_scope: string[]
 }
 
-interface NotificationToggle {
+export interface NotificationToggle {
   name: string
   enabled: boolean
   min_severity: string
   regions: string[]
   severity_channels: Record<string, string[]>
+  freshness_seconds?: number
+  cooldown_seconds?: number
   broadcast_channel: number | null
   meshcore_channel?: string | null
   node_ids: string[]
+  meshcore_dm_contacts: string[]
   smtp_host: string
   smtp_port: number
   smtp_user: string
@@ -59,7 +62,7 @@ interface NotificationToggle {
   webhook_headers: Record<string, string>
 }
 
-interface NotificationsConfig {
+export interface NotificationsConfig {
   enabled: boolean
   cold_start_grace_seconds?: number
   band_conditions_enabled?: boolean
@@ -335,7 +338,7 @@ function formatRelativeTime(timestamp: number | null): string {
 }
 
 // InfoButton component
-function InfoButton({ info }: { info: string }) {
+export function InfoButton({ info }: { info: string }) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -489,7 +492,7 @@ function TimeInput({ label, value, onChange, helper = '', info = '' }: {
   )
 }
 
-function ListInput({ label, value, onChange, placeholder = 'Add item...', helper = '', info = '' }: {
+export function ListInput({ label, value, onChange, placeholder = 'Add item...', helper = '', info = '' }: {
   label: string
   value: string[]
   onChange: (v: string[]) => void
@@ -1417,7 +1420,7 @@ function NotificationRuleCard({
 }
 
 // Main Notifications Page Component
-const TOGGLE_FAMILY_META: { key: string; label: string; Icon: typeof Activity }[] = [
+export const TOGGLE_FAMILY_META: { key: string; label: string; Icon: typeof Activity }[] = [
   { key: 'mesh_health', label: 'Mesh Health', Icon: Activity },
   { key: 'weather', label: 'Weather', Icon: Cloud },
   { key: 'fire', label: 'Fire', Icon: Flame },
@@ -1541,8 +1544,69 @@ function GroupedCategoryPicker({
     </div>
   )
 }
-const TOGGLE_CHANNELS = ['digest', 'mesh_broadcast', 'mesh_dm', 'email', 'webhook']
+// Per-mesh channel groups for the split severity matrix
+const MT_CHANNELS = ['mesh_broadcast', 'mesh_dm'] as const
+export const MC_CHANNELS = ['meshcore_broadcast', 'meshcore_dm'] as const
+const OTHER_CHANNELS = ['digest', 'email', 'webhook'] as const
 const TOGGLE_SEVERITIES = ['routine', 'priority', 'immediate']
+
+// Reusable severity × channel matrix.
+// Toggling a single channel only touches that exact string in the severity row —
+// all other channels (including those owned by the other mesh section) are preserved.
+// This makes every checkbox merge-safe: Meshtastic toggles never clobber MeshCore
+// entries and vice-versa.
+export function SeverityChannelMatrix({
+  channels,
+  severityChannels,
+  onChange,
+}: {
+  channels: readonly string[]
+  severityChannels: Record<string, string[]>
+  onChange: (updated: Record<string, string[]>) => void
+}) {
+  const colLabel = (c: string) =>
+    c.replace('meshcore_', 'mc_').replace('mesh_', '').replace(/_/g, ' ')
+  return (
+    <table className="text-xs w-full">
+      <thead>
+        <tr>
+          <th className="text-left text-slate-600 font-normal w-20">severity</th>
+          {channels.map((c) => (
+            <th key={c} className="text-slate-500 font-normal px-1 whitespace-nowrap">{colLabel(c)}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {TOGGLE_SEVERITIES.map((sev) => (
+          <tr key={sev}>
+            <td className="text-slate-400 pr-2 whitespace-nowrap">{sev}</td>
+            {channels.map((ch) => {
+              const on = (severityChannels[sev] || []).includes(ch)
+              return (
+                <td key={ch} className="text-center">
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={(e) => {
+                      // Shallow-copy the dict so we don't mutate state, then
+                      // only modify the specific channel being toggled.
+                      const cur: Record<string, string[]> = { ...severityChannels }
+                      const arr = new Set(cur[sev] || [])
+                      if (e.target.checked) arr.add(ch)
+                      else arr.delete(ch)
+                      cur[sev] = Array.from(arr)
+                      onChange(cur)
+                    }}
+                  />
+                </td>
+              )
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
 
 function MasterToggles({ toggles, onChange }: {
   toggles: Record<string, NotificationToggle>
@@ -1581,53 +1645,111 @@ function MasterToggles({ toggles, onChange }: {
                 </div>
               )}
               {isOpen && (
-                <div className={`mt-3 space-y-3 ${t.enabled ? '' : 'opacity-40 pointer-events-none select-none'}`}>
-                  <SeveritySelector value={t.min_severity || 'priority'} onChange={(v) => upd(key, { min_severity: v })} />
-                  <div className="text-xs text-slate-500">Severity &rarr; channels</div>
-                  <table className="text-xs w-full">
-                    <thead>
-                      <tr><th></th>{TOGGLE_CHANNELS.map((c) => <th key={c} className="text-slate-500 font-normal px-1">{c.replace('_', ' ')}</th>)}</tr>
-                    </thead>
-                    <tbody>
-                      {TOGGLE_SEVERITIES.map((sev) => (
-                        <tr key={sev}>
-                          <td className="text-slate-400 pr-2">{sev}</td>
-                          {TOGGLE_CHANNELS.map((ch) => {
-                            const on = (t.severity_channels?.[sev] || []).includes(ch)
-                            return (
-                              <td key={ch} className="text-center">
-                                <input type="checkbox" checked={on} onChange={(e) => {
-                                  const cur: Record<string, string[]> = { ...(t.severity_channels || {}) }
-                                  const arr = new Set(cur[sev] || [])
-                                  if (e.target.checked) arr.add(ch); else arr.delete(ch)
-                                  cur[sev] = Array.from(arr)
-                                  upd(key, { severity_channels: cur })
-                                }} />
-                              </td>
-                            )
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <ListInput label="Regions (empty = all)" value={t.regions || []} onChange={(v) => upd(key, { regions: v })} placeholder="Add region..." />                  <div className="text-xs text-slate-500 pt-1">Channel config</div>
-                  <NumberInput label="Broadcast channel" value={t.broadcast_channel ?? 0} onChange={(v) => upd(key, { broadcast_channel: v })} />
-                  <div className="space-y-1">
-                    <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">MeshCore channel</label>
-                    <input
-                      type="text"
-                      value={t.meshcore_channel != null ? t.meshcore_channel : ''}
-                      onChange={(e) => upd(key, { meshcore_channel: e.target.value === '' ? null : e.target.value })}
-                      placeholder=""
-                      className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 font-mono focus:outline-none focus:border-accent"
+                <div className={`mt-3 space-y-4 ${t.enabled ? '' : 'opacity-40 pointer-events-none select-none'}`}>
+
+                  {/* ── General ──────────────────────────────────────────────── */}
+                  <div className="space-y-3 p-3 bg-[#0a0e17] border border-[#1e2a3a]">
+                    <div className="text-xs text-slate-500 uppercase tracking-wide">General</div>
+                    <SeveritySelector value={t.min_severity || 'priority'} onChange={(v) => upd(key, { min_severity: v })} />
+                    <ListInput
+                      label="Regions (empty = all)"
+                      value={t.regions || []}
+                      onChange={(v) => upd(key, { regions: v })}
+                      placeholder="Add region..."
                     />
-                    <p className="text-xs text-slate-600">MeshCore channel name on your companion (e.g. AIDA); blank = not broadcast on MeshCore.</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <NumberInput
+                        label="Freshness (sec)"
+                        value={t.freshness_seconds ?? 600}
+                        onChange={(v) => upd(key, { freshness_seconds: v })}
+                        min={0}
+                        helper="Drop events older than this"
+                        info="Events older than this window (seconds) are discarded at dispatcher entrance. 600 = 10 min."
+                      />
+                      <NumberInput
+                        label="Cooldown (sec)"
+                        value={t.cooldown_seconds ?? 0}
+                        onChange={(v) => upd(key, { cooldown_seconds: v })}
+                        min={0}
+                        helper="0 = no throttle"
+                        info="Per (family, category, region) throttle window. Prevents repeat sends within this window."
+                      />
+                    </div>
                   </div>
-                  <ListInput label="DM node IDs" value={t.node_ids || []} onChange={(v) => upd(key, { node_ids: v })} placeholder="!nodeid" />
-                  <ListInput label="Email recipients" value={t.recipients || []} onChange={(v) => upd(key, { recipients: v })} placeholder="ops@example.com" />
-                  <TextInput label="SMTP host" value={t.smtp_host || ''} onChange={(v) => upd(key, { smtp_host: v })} placeholder="smtp.example.com" />
-                  <NumberInput label="SMTP port" value={t.smtp_port ?? 587} onChange={(v) => upd(key, { smtp_port: v })} />
-                  <TextInput label="Webhook URL" value={t.webhook_url || ''} onChange={(v) => upd(key, { webhook_url: v })} placeholder="https://..." />
+
+                  {/* ── Meshtastic ───────────────────────────────────────────── */}
+                  <div className="space-y-3 p-3 bg-[#0a0e17] border border-[#1e2a3a]">
+                    <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
+                      <Radio size={13} />
+                      Meshtastic
+                    </div>
+                    <SeverityChannelMatrix
+                      channels={MT_CHANNELS}
+                      severityChannels={t.severity_channels || {}}
+                      onChange={(sc) => upd(key, { severity_channels: sc })}
+                    />
+                    <NumberInput
+                      label="Broadcast channel"
+                      value={t.broadcast_channel ?? 0}
+                      onChange={(v) => upd(key, { broadcast_channel: v })}
+                      min={0}
+                      helper="Meshtastic channel index (0 = LongFast primary)"
+                      info="The Meshtastic channel index used for mesh_broadcast delivery. 0 = primary channel."
+                    />
+                    <ListInput
+                      label="DM node IDs"
+                      value={t.node_ids || []}
+                      onChange={(v) => upd(key, { node_ids: v })}
+                      placeholder="!hex_id"
+                      helper="Meshtastic DM recipients (hex node IDs)"
+                      info="Hex node IDs for mesh_dm delivery (e.g. !a1b2c3d4). Used when mesh_dm is enabled for a severity."
+                    />
+                  </div>
+
+                  {/* MeshCore delivery controls moved to the dedicated
+                      MeshCore -> Routing page (/meshcore/routing). Shared
+                      family settings (enable/severity/regions) stay here. */}
+
+                  {/* ── Other channels ───────────────────────────────────────── */}
+                  <div className="space-y-3 p-3 bg-[#0a0e17] border border-[#1e2a3a]">
+                    <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
+                      <Mail size={13} />
+                      Other channels
+                    </div>
+                    <SeverityChannelMatrix
+                      channels={OTHER_CHANNELS}
+                      severityChannels={t.severity_channels || {}}
+                      onChange={(sc) => upd(key, { severity_channels: sc })}
+                    />
+                    <ListInput
+                      label="Email recipients"
+                      value={t.recipients || []}
+                      onChange={(v) => upd(key, { recipients: v })}
+                      placeholder="ops@example.com"
+                    />
+                    <details className="group">
+                      <summary className="flex items-center gap-2 cursor-pointer text-xs text-slate-400 hover:text-slate-200">
+                        <ChevronRight size={12} className="group-open:rotate-90 transition-transform" />
+                        SMTP settings
+                      </summary>
+                      <div className="mt-2 space-y-2 pl-4 border-l border-[#1e2a3a]">
+                        <TextInput label="SMTP host" value={t.smtp_host || ''} onChange={(v) => upd(key, { smtp_host: v })} placeholder="smtp.example.com" />
+                        <NumberInput label="SMTP port" value={t.smtp_port ?? 587} onChange={(v) => upd(key, { smtp_port: v })} />
+                        <TextInput label="Username" value={t.smtp_user || ''} onChange={(v) => upd(key, { smtp_user: v })} />
+                        <TextInput label="Password" value={t.smtp_password || ''} onChange={(v) => upd(key, { smtp_password: v })} type="password" />
+                        <Toggle label="Use TLS" checked={t.smtp_tls ?? true} onChange={(v) => upd(key, { smtp_tls: v })} />
+                        <TextInput label="From address" value={t.from_address || ''} onChange={(v) => upd(key, { from_address: v })} placeholder="alerts@example.com" />
+                      </div>
+                    </details>
+                    <TextInput
+                      label="Webhook URL"
+                      value={t.webhook_url || ''}
+                      onChange={(v) => upd(key, { webhook_url: v })}
+                      placeholder="https://..."
+                      helper="POST alert as JSON"
+                    />
+                  </div>
+
                 </div>
               )}
             </div>
