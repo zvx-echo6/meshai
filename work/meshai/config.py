@@ -105,6 +105,15 @@ class ContextConfig:
 
 
 @dataclass
+class MeshCoreContextConfig:
+    """MeshCore passive-context / bot-behavior settings (MeshCore-native)."""
+    enable_passive_context: bool = True
+    observe_channels: list[str] = field(default_factory=list)  # channel NAMES, empty = all
+    ignore_contacts: list[str] = field(default_factory=list)   # contact names or pubkey prefixes
+    respond_to_dms: bool = True
+
+
+@dataclass
 class CommandsConfig:
     """Command settings."""
 
@@ -782,6 +791,7 @@ class Config:
     history: HistoryConfig = field(default_factory=HistoryConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
+    meshcore_context: MeshCoreContextConfig = field(default_factory=MeshCoreContextConfig)
     commands: CommandsConfig = field(default_factory=CommandsConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     weather: WeatherConfig = field(default_factory=WeatherConfig)

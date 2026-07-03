@@ -45,6 +45,7 @@ VALID_SECTIONS = {
     "history",
     "memory",
     "context",
+    "meshcore_context",
     "commands",
     "llm",
     "weather",

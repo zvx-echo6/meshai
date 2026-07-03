@@ -24,6 +24,30 @@ logger = logging.getLogger(__name__)
 _COMMAND_TIMEOUT = 10.0
 
 
+def mc_context_allows(cfg, msg, idx_to_name):
+    """Return True if a MeshCore inbound MeshMessage should be forwarded.
+
+    cfg: MeshCoreContextConfig or None. idx_to_name: dict[int,str] channel-idx->name.
+    """
+    if cfg is None:
+        return True
+    if msg.is_dm:
+        if not cfg.respond_to_dms:
+            return False
+        # ignore_contacts matches the pubkey prefix (sender_id) OR the contact name (sender_name)
+        if msg.sender_id in cfg.ignore_contacts or msg.sender_name in cfg.ignore_contacts:
+            return False
+        return True
+    # channel (non-DM) message -> only relevant for passive context
+    if not cfg.enable_passive_context:
+        return False
+    if cfg.observe_channels:
+        name = idx_to_name.get(msg.channel)
+        if name is None or name not in cfg.observe_channels:
+            return False
+    return True
+
+
 class MeshCoreTransport(MeshTransport):
     """MeshTransport implementation over a pyMC companion TCP frame server.
 
@@ -41,8 +65,12 @@ class MeshCoreTransport(MeshTransport):
     # Name tag used by CompositeTransport for routing hints.
     transport_name: str = "meshcore"
 
-    def __init__(self, config) -> None:
+    def __init__(self, config, meshcore_context=None) -> None:
         self.config = config
+        # MeshCore passive-context / bot-behavior filter (MeshCoreContextConfig
+        # or None). None = pass-through (no filtering). Injected at construction
+        # time by the factory; can also be (re)set via set_context_config().
+        self._mc_context = meshcore_context
         self._mc = None                          # meshcore.MeshCore instance
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread: Optional[threading.Thread] = None
@@ -141,6 +169,13 @@ class MeshCoreTransport(MeshTransport):
     def known_channels(self) -> list[str]:
         """Enumerated MeshCore channel names (from _chan_name_to_idx, populated at connect)."""
         return list(self._chan_name_to_idx.keys())
+
+    def set_context_config(self, cfg) -> None:
+        """Set (or clear) the MeshCore passive-context filter config.
+
+        cfg: MeshCoreContextConfig or None (None = pass-through).
+        """
+        self._mc_context = cfg
 
     # ------------------------------------------------------------------
     # Internal coroutines (run on the dedicated loop)
@@ -416,13 +451,21 @@ class MeshCoreTransport(MeshTransport):
     # ------------------------------------------------------------------
 
     def _on_dm_event(self, event) -> None:
-        """Handle CONTACT_MSG_RECV: normalize and dispatch to meshai."""
+        """Handle CONTACT_MSG_RECV: normalize, filter, and dispatch to meshai."""
         msg = self._normalize_dm_event(event)
+        if msg is None or not mc_context_allows(
+            self._mc_context, msg, {v: k for k, v in self._chan_name_to_idx.items()}
+        ):
+            return
         self._dispatch_message(msg)
 
     def _on_channel_event(self, event) -> None:
-        """Handle CHANNEL_MSG_RECV: normalize and dispatch to meshai."""
+        """Handle CHANNEL_MSG_RECV: normalize, filter, and dispatch to meshai."""
         msg = self._normalize_channel_event(event)
+        if msg is None or not mc_context_allows(
+            self._mc_context, msg, {v: k for k, v in self._chan_name_to_idx.items()}
+        ):
+            return
         self._dispatch_message(msg)
 
     def _dispatch_message(self, msg: Optional[MeshMessage]) -> None:

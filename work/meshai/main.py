@@ -395,7 +395,10 @@ class MeshAI:
         await self._load_summaries()
 
         # Transport connector (factory derives backend from config.connection.meshcore_host)
-        self.connector = build_transport(self.config.connection)
+        self.connector = build_transport(
+            self.config.connection,
+            meshcore_context=self.config.meshcore_context,
+        )
 
         # Fit every broadcast handler's one-packet formatter to the active mesh
         # transport's budget (LoRa max_chars, 140). Durable across adapter_config
