@@ -94,9 +94,8 @@ from meshai.transport.meshcore_transport import MeshCoreTransport  # noqa: E402
 # ---------------------------------------------------------------------------
 
 def _mc_config(**overrides):
-    """Return a ConnectionConfig wired for meshcore."""
+    """Return a ConnectionConfig with meshcore_host set (activates MeshCore)."""
     cfg = ConnectionConfig(
-        transport="meshcore",
         meshcore_host="127.0.0.1",
         meshcore_port=5050,
     )
@@ -186,11 +185,16 @@ def _install_channel_table(mc, table=None):
 # ---------------------------------------------------------------------------
 
 class TestBuildTransport:
-    def test_returns_meshcore_transport(self):
+    def test_returns_composite_when_meshcore_host_set(self):
+        """meshcore_host set → build_transport returns CompositeTransport."""
+        from meshai.transport.composite_transport import CompositeTransport
         t = build_transport(_mc_config())
-        assert isinstance(t, MeshCoreTransport)
+        assert isinstance(t, CompositeTransport)
+        # MeshCoreTransport must be the second child.
+        assert isinstance(t.children[1], MeshCoreTransport)
 
     def test_is_mesh_transport_subclass(self):
+        """CompositeTransport (returned when meshcore_host is set) is a MeshTransport."""
         t = build_transport(_mc_config())
         assert isinstance(t, MeshTransport)
 

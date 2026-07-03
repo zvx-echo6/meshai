@@ -1,10 +1,9 @@
-"""Lightweight tests for the Phase-1 MeshTransport abstraction.
+"""Tests for the MeshTransport abstraction and derive-from-config factory.
 
-These tests exercise the structural contracts introduced by the refactor:
+These tests exercise:
   - MeshtasticTransport is a concrete subclass of MeshTransport
-  - build_transport returns the right type for the default config
-  - build_transport raises appropriately for unimplemented / unknown transports
-  - MeshMessage has the new additive fields with the expected defaults
+  - build_transport derives active transports from meshcore_host, not a flag
+  - MeshMessage has the expected transport-routing fields with correct defaults
 
 No real radio, socket, or asyncio loop is required.
 """
@@ -47,50 +46,78 @@ class TestMeshtasticTransportABC:
 
 
 # ---------------------------------------------------------------------------
-# Factory
+# Factory — transports derived from meshcore_host, not a transport flag
 # ---------------------------------------------------------------------------
 
 
 class TestBuildTransport:
-    def _default_config(self):
-        return ConnectionConfig()  # transport defaults to "meshtastic"
+    def _config_no_meshcore(self):
+        """Default config: meshcore_host is blank → Meshtastic only."""
+        return ConnectionConfig()
 
-    def _config_with(self, transport_name):
+    def _config_with_meshcore(self, host="1.2.3.4"):
+        """Config with a non-empty meshcore_host → composite."""
         cfg = ConnectionConfig()
-        cfg.transport = transport_name
+        cfg.meshcore_host = host
         return cfg
 
-    def test_default_config_returns_meshtastic_transport(self):
-        cfg = self._default_config()
+    def test_blank_host_returns_meshtastic_only(self):
+        """Empty meshcore_host → MeshtasticTransport, no composite."""
+        cfg = self._config_no_meshcore()
+        assert cfg.meshcore_host == ""
         transport = build_transport(cfg)
         assert isinstance(transport, MeshtasticTransport)
-
-    def test_explicit_meshtastic_returns_meshtastic_transport(self):
-        cfg = self._config_with("meshtastic")
-        transport = build_transport(cfg)
-        assert isinstance(transport, MeshtasticTransport)
-
-    def test_meshcore_returns_meshcore_transport(self):
-        # Phase 2: meshcore is now implemented; build_transport returns a
-        # MeshCoreTransport instance (MeshTransport subclass).
-        from meshai.transport.meshcore_transport import MeshCoreTransport
-        cfg = self._config_with("meshcore")
-        transport = build_transport(cfg)
-        assert isinstance(transport, MeshCoreTransport)
-        assert isinstance(transport, MeshTransport)
-
-    def test_both_returns_composite(self):
-        """Phase 4: transport='both' now returns a CompositeTransport (seam filled)."""
+        # Must NOT be a composite when MeshCore is not configured.
         from meshai.transport.composite_transport import CompositeTransport
-        cfg = self._config_with("both")
+        assert not isinstance(transport, CompositeTransport)
+
+    def test_meshcore_host_set_returns_composite(self):
+        """Non-empty meshcore_host → CompositeTransport with both children."""
+        from meshai.transport.composite_transport import CompositeTransport
+        from meshai.transport.meshcore_transport import MeshCoreTransport
+        cfg = self._config_with_meshcore("1.2.3.4")
         t = build_transport(cfg)
         assert isinstance(t, CompositeTransport)
         assert len(t.children) == 2
+        assert isinstance(t.children[0], MeshtasticTransport)
+        assert isinstance(t.children[1], MeshCoreTransport)
 
-    def test_unknown_transport_raises_value_error(self):
-        cfg = self._config_with("unknown_transport_xyz")
-        with pytest.raises(ValueError):
-            build_transport(cfg)
+    def test_whitespace_only_host_is_treated_as_blank(self):
+        """Whitespace-only meshcore_host is treated as blank → Meshtastic only."""
+        cfg = ConnectionConfig()
+        cfg.meshcore_host = "   "
+        transport = build_transport(cfg)
+        assert isinstance(transport, MeshtasticTransport)
+        from meshai.transport.composite_transport import CompositeTransport
+        assert not isinstance(transport, CompositeTransport)
+
+    def test_config_has_no_transport_field(self):
+        """ConnectionConfig must not have a transport attribute after the refactor."""
+        cfg = ConnectionConfig()
+        assert not hasattr(cfg, "transport"), (
+            "ConnectionConfig.transport was not removed; the refactor is incomplete."
+        )
+
+    def test_stray_transport_key_in_yaml_loads_without_error(self):
+        """A config dict with a stale 'transport' key must load cleanly."""
+        from meshai.config import _dict_to_dataclass, ConnectionConfig as CC
+        raw = {
+            "type": "tcp",
+            "tcp_host": "10.0.0.1",
+            "transport": "both",  # stale key — must be ignored
+            "meshcore_host": "192.168.1.253",
+        }
+        cfg = _dict_to_dataclass(CC, raw)
+        # The stale key must be silently dropped; no AttributeError.
+        assert not hasattr(cfg, "transport")
+        assert cfg.meshcore_host == "192.168.1.253"
+
+    def test_serialized_config_has_no_transport_field(self):
+        """_dataclass_to_dict must not emit a 'transport' key."""
+        from meshai.config import _dataclass_to_dict
+        cfg = ConnectionConfig()
+        d = _dataclass_to_dict(cfg)
+        assert "transport" not in d
 
 
 # ---------------------------------------------------------------------------

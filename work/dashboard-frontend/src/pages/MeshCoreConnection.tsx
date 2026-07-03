@@ -14,7 +14,6 @@ interface ConnectionConfig {
   serial_port?: string
   tcp_host?: string
   tcp_port?: number
-  transport?: string
   meshcore_host?: string
   meshcore_port?: number
   [key: string]: unknown
@@ -159,54 +158,28 @@ export default function MeshCoreConnection() {
 
       {/* Form */}
       <div className="bg-bg-card border border-border p-6 space-y-4">
-        <div className="flex items-center justify-between py-2">
-          <div>
-            <span className="text-sm text-slate-300">Enable MeshCore</span>
-            <p className="text-xs text-slate-600">
-              Meshtastic is always on; enabling adds MeshCore (Both).
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              const checked = !(config.transport === 'both' || config.transport === 'meshcore')
-              upd({ transport: checked ? 'both' : 'meshtastic' })
-            }}
-            className={`relative w-11 h-6 rounded-full transition-colors ${
-              config.transport === 'both' || config.transport === 'meshcore'
-                ? 'bg-accent'
-                : 'bg-[#1e2a3a]'
-            }`}
-          >
-            <span
-              className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform ${
-                config.transport === 'both' || config.transport === 'meshcore'
-                  ? 'translate-x-5'
-                  : ''
-              }`}
-            />
-          </button>
-        </div>
-        <div className="pt-2 border-t border-[#1e2a3a] space-y-4">
-          <div className="text-xs text-slate-500 uppercase tracking-wide">MeshCore Connection</div>
-          <div className="grid grid-cols-2 gap-4">
-            <TextInput
-              label="MeshCore Host"
-              value={config.meshcore_host ?? ''}
-              onChange={(v) => upd({ meshcore_host: v })}
-              placeholder="192.168.1.100"
-              helper="IP or hostname of the MeshCore node"
-              info="Address of the MeshCore node to connect to."
-            />
-            <NumberInput
-              label="MeshCore Port"
-              value={config.meshcore_port ?? 5525}
-              onChange={(v) => upd({ meshcore_port: v })}
-              min={1}
-              max={65535}
-              helper="MeshCore TCP port (default 5525)"
-            />
-          </div>
+        <div className="text-xs text-slate-500 uppercase tracking-wide">MeshCore Connection</div>
+        <p className="text-xs text-slate-500">
+          Set the host and port to enable MeshCore; leave host blank to disable.
+          Meshtastic is always active.
+        </p>
+        <div className="grid grid-cols-2 gap-4">
+          <TextInput
+            label="MeshCore Host"
+            value={config.meshcore_host ?? ''}
+            onChange={(v) => upd({ meshcore_host: v })}
+            placeholder="192.168.1.100"
+            helper="IP or hostname — leave blank to disable MeshCore"
+            info="MeshCore is active when this field is non-empty."
+          />
+          <NumberInput
+            label="MeshCore Port"
+            value={config.meshcore_port ?? 5525}
+            onChange={(v) => upd({ meshcore_port: v })}
+            min={1}
+            max={65535}
+            helper="MeshCore TCP port (default 5525)"
+          />
         </div>
         <div className="pt-2">
           <Link

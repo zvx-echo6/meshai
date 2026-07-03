@@ -142,7 +142,7 @@ class TestMaxChars:
     def test_fixed_universal_budget_from_config(self) -> None:
         """With a config, CompositeTransport reads mesh_max_chars directly."""
         from meshai.config import ConnectionConfig
-        cfg = ConnectionConfig(transport="both", mesh_max_chars=140)
+        cfg = ConnectionConfig(mesh_max_chars=140)
         mt = FakeChild("meshtastic", max_chars_val=200)
         mc = FakeChild("meshcore", max_chars_val=140)
         comp = CompositeTransport([mt, mc], config=cfg)
@@ -151,7 +151,7 @@ class TestMaxChars:
     def test_fixed_universal_budget_ignores_child_values(self) -> None:
         """CompositeTransport must NOT take min(children); it sources config."""
         from meshai.config import ConnectionConfig
-        cfg = ConnectionConfig(transport="both", mesh_max_chars=140)
+        cfg = ConnectionConfig(mesh_max_chars=140)
         # Even if a child would report 230, the composite must return 140.
         child = FakeChild("meshtastic", max_chars_val=230)
         comp = CompositeTransport([child], config=cfg)

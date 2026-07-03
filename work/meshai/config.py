@@ -34,12 +34,11 @@ class ConnectionConfig:
     reconnect_initial_delay: float = 2.0
     reconnect_max_delay: float = 60.0
     reconnect_health_interval: float = 30.0
-    # --- transport selection (Phase 1 seam; MeshCore support is Phase 2) ---
-    transport: str = "meshtastic"  # "meshtastic" | "meshcore" | "both"
     # Universal mesh message budget (MeshCore LCD → 140 for all transports).
     mesh_max_chars: int = 140
-    # --- MeshCore transport settings (used when transport="meshcore") ---
-    meshcore_host: str = "100.64.0.9"          # pyMC companion frame server host
+    # --- MeshCore transport settings ---
+    # MeshCore is active when meshcore_host is a non-empty string; blank = off.
+    meshcore_host: str = ""                     # pyMC companion frame server host
     meshcore_port: int = 5050                   # pyMC companion frame server port
     meshcore_auto_reconnect: bool = True        # enable meshcore lib auto-reconnect
     meshcore_max_reconnect_attempts: int = 5    # max reconnect attempts (0 = unlimited)

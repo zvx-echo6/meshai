@@ -89,17 +89,16 @@ from meshai.notifications.pipeline import build_pipeline           # noqa: E402
 # ---------------------------------------------------------------------------
 
 def _mt_config(**overrides):
-    """Return a ConnectionConfig wired for meshtastic (default)."""
-    cfg = ConnectionConfig(transport="meshtastic")
+    """Return a ConnectionConfig with no MeshCore host (Meshtastic-only)."""
+    cfg = ConnectionConfig()  # meshcore_host defaults to "" → Meshtastic only
     for k, v in overrides.items():
         setattr(cfg, k, v)
     return cfg
 
 
 def _mc_config(**overrides):
-    """Return a ConnectionConfig wired for meshcore."""
+    """Return a ConnectionConfig with meshcore_host set (activates MeshCore)."""
     cfg = ConnectionConfig(
-        transport="meshcore",
         meshcore_host="127.0.0.1",
         meshcore_port=5050,
     )
@@ -158,7 +157,7 @@ class TestTransportMaxChars:
         """Sanity: all transports + CompositeTransport report mesh_max_chars=140.
 
         This is the canonical single-budget guarantee: Meshtastic, MeshCore,
-        and the composite (transport=both) all resolve to the same constant.
+        and the composite (meshcore_host set) all resolve to the same constant.
         """
         from meshai.config import ConnectionConfig
         from meshai.transport.composite_transport import CompositeTransport
@@ -169,9 +168,8 @@ class TestTransportMaxChars:
         # MeshCore
         assert MeshCoreTransport(_mc_config()).max_chars == 140
 
-        # Composite (built via factory with transport="both")
+        # Composite — derived from meshcore_host being non-empty
         cfg_both = ConnectionConfig(
-            transport="both",
             type="tcp",
             tcp_host="127.0.0.1",
             tcp_port=4403,

@@ -7,10 +7,9 @@ Holds an ordered list of child transports and:
   - self-filters inbound messages per child (drops own echoes);
   - exposes ``meshtastic_child()`` for the supervisor watchdog.
 
-This transport is DORMANT unless ``transport: both`` in config.  Single-
-transport paths (``transport: meshtastic`` / ``transport: meshcore``) are
-byte-identical to Phase 3 behaviour because the factory never instantiates
-this class for them.
+This transport is active when ``meshcore_host`` is configured (non-empty).
+The factory instantiates it only when MeshCore is configured; Meshtastic-only
+configs receive a bare MeshtasticTransport instead.
 """
 
 import asyncio
