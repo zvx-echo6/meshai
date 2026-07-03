@@ -56,31 +56,29 @@ async def get_alert_history(
     }
 
 
-@router.get("/subscriptions")
-async def get_subscriptions(request: Request):
-    """Get all alert subscriptions."""
-    subscription_manager = getattr(request.app.state, "subscription_manager", None)
+@router.get("/activity")
+async def get_activity(
+    request: Request,
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Activity Log: most recent outbound mesh broadcasts, newest first.
 
-    if not subscription_manager:
-        return []
+    Reads mesh_broadcasts_out from the persistence/migration DB (get_db) and
+    returns every column as a plain dict. Legacy rows keep NULL
+    transport/success. If the table doesn't exist yet, returns [].
+    """
+    from meshai.persistence import get_db
 
     try:
-        subs = subscription_manager.get_all_subs()
-        return [
-            {
-                "id": sub["id"],
-                "user_id": sub["user_id"],
-                "sub_type": sub["sub_type"],
-                "schedule_time": sub.get("schedule_time"),
-                "schedule_day": sub.get("schedule_day"),
-                "scope_type": sub.get("scope_type", "mesh"),
-                "scope_value": sub.get("scope_value"),
-                "enabled": sub.get("enabled", 1) == 1,
-            }
-            for sub in subs
-        ]
+        conn = get_db()
+        rows = conn.execute(
+            "SELECT * FROM mesh_broadcasts_out "
+            "ORDER BY sent_at DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
     except Exception:
         return []
+    return [dict(r) for r in rows]
 
 
 def _map_severity(alert: dict) -> str:

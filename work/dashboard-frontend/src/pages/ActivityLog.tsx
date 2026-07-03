@@ -1,0 +1,180 @@
+import { useEffect, useState } from 'react'
+import { Activity, Clock, CheckCircle, MinusCircle, Radio } from 'lucide-react'
+import { fetchActivity, type ActivityEntry } from '@/lib/api'
+
+// --- helpers ---------------------------------------------------------------
+
+// sent_at is stored as int(time.time()) epoch SECONDS on new rows. Guard null
+// and detect seconds-vs-ms so we render correct local time either way.
+function formatSentAt(sent_at: number | string | null): string {
+  if (sent_at === null || sent_at === undefined || sent_at === '') return '—'
+  let d: Date
+  if (typeof sent_at === 'number') {
+    // epoch seconds -> ms (values below ~1e12 are seconds)
+    d = new Date(sent_at < 1e12 ? sent_at * 1000 : sent_at)
+  } else {
+    const asNum = Number(sent_at)
+    d = Number.isFinite(asNum) && sent_at.trim() !== ''
+      ? new Date(asNum < 1e12 ? asNum * 1000 : asNum)
+      : new Date(sent_at)
+  }
+  return isNaN(d.getTime()) ? '—' : d.toLocaleString()
+}
+
+// Mesh badge styling per transport family.
+function transportBadge(transport: string | null) {
+  switch (transport) {
+    case 'meshtastic':
+      return { label: 'Meshtastic', cls: 'bg-blue-500/15 text-blue-400 border border-blue-500/30' }
+    case 'meshcore':
+      return { label: 'MeshCore', cls: 'bg-green-500/15 text-green-400 border border-green-500/30' }
+    default:
+      return { label: 'Legacy', cls: 'bg-slate-500/15 text-slate-400 border border-slate-600/40' }
+  }
+}
+
+// Channel label: Meshtastic index (#n) or MeshCore name; '—' when null.
+function channelLabel(channel: string | number | null): string {
+  if (channel === null || channel === undefined || channel === '') return '—'
+  if (typeof channel === 'number') return `ch ${channel}`
+  return channel.startsWith('#') ? channel : `#${channel}`
+}
+
+// Type/family tag derived from source_event_table (e.g. 'fires' -> 'fire').
+function familyLabel(table: string | null): string {
+  if (!table) return 'broadcast'
+  const t = table.replace(/_/g, ' ').trim()
+  return t.endsWith('s') ? t.slice(0, -1) : t
+}
+
+// --- component -------------------------------------------------------------
+
+export default function ActivityLog() {
+  const [entries, setEntries] = useState<ActivityEntry[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    document.title = 'Activity Log — MeshAI'
+  }, [])
+
+  useEffect(() => {
+    let alive = true
+    const load = () => {
+      fetchActivity()
+        .then((data) => {
+          if (!alive) return
+          setEntries(data)
+          setError(null)
+          setLoading(false)
+        })
+        .catch((err) => {
+          if (!alive) return
+          setError(err.message)
+          setLoading(false)
+        })
+    }
+    load()
+    const interval = setInterval(load, 5000)
+    return () => {
+      alive = false
+      clearInterval(interval)
+    }
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-slate-400">Loading activity…</div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-red-400">Error: {error}</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-bg-card border border-border">
+        <div className="p-4 border-b border-border flex items-center gap-2">
+          <Activity size={14} className="text-[#f59e0b]" />
+          <h2 className="text-sm font-medium text-slate-300">
+            Activity Log
+          </h2>
+          <span className="text-xs text-slate-500 ml-auto">
+            {entries.length} recent broadcast{entries.length === 1 ? '' : 's'} · newest first
+          </span>
+        </div>
+
+        {entries.length === 0 ? (
+          <div className="flex items-center gap-2 text-slate-500 p-8">
+            <Radio size={18} />
+            <span>No outbound broadcasts recorded yet.</span>
+          </div>
+        ) : (
+          <ul className="divide-y divide-border">
+            {entries.map((e) => {
+              const badge = transportBadge(e.transport)
+              return (
+                <li key={e.id} className="p-4 hover:bg-bg-hover transition-colors">
+                  <div className="flex items-start gap-3">
+                    {/* status indicator */}
+                    <div className="pt-0.5">
+                      {e.success === 1 ? (
+                        <CheckCircle size={16} className="text-green-500" />
+                      ) : e.success === 0 ? (
+                        <MinusCircle size={16} className="text-amber-500" />
+                      ) : (
+                        <MinusCircle size={16} className="text-slate-600" />
+                      )}
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      {/* meta row: mesh badge, channel, family, status */}
+                      <div className="flex items-center flex-wrap gap-2 mb-1">
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${badge.cls}`}>
+                          {badge.label}
+                        </span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-bg-hover text-slate-400 border border-border">
+                          {channelLabel(e.channel)}
+                        </span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-[#f59e0b]/10 text-[#f59e0b]">
+                          {familyLabel(e.source_event_table)}
+                        </span>
+                        {e.success === 1 && (
+                          <span className="text-xs text-green-500">Sent</span>
+                        )}
+                        {e.success === 0 && (
+                          <span className="text-xs text-amber-500">Skip</span>
+                        )}
+                        {(e.success === null || e.success === undefined) && (
+                          <span className="text-xs text-slate-500">—</span>
+                        )}
+                      </div>
+
+                      {/* message text */}
+                      <div className="text-sm text-slate-200 break-words whitespace-pre-wrap">
+                        {e.text || <span className="text-slate-500 italic">(no text)</span>}
+                      </div>
+
+                      {/* timestamp */}
+                      <div className="flex items-center gap-1 mt-1.5 text-xs text-slate-500 font-mono">
+                        <Clock size={12} />
+                        {formatSentAt(e.sent_at)}
+                      </div>
+                    </div>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  )
+}

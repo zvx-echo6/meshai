@@ -32,11 +32,9 @@ class HelpCommand(CommandHandler):
 
         # Group by category
         health_names = {"health", "region", "neighbors"}
-        sub_names = {"sub", "unsub", "mysubs"}
 
         health_cmds = [c for c in unique if c.name.lower() in health_names]
-        sub_cmds = [c for c in unique if c.name.lower() in sub_names]
-        other_cmds = [c for c in unique if c.name.lower() not in health_names and c.name.lower() not in sub_names and c.name.lower() != "help"]
+        other_cmds = [c for c in unique if c.name.lower() not in health_names and c.name.lower() != "help"]
 
         lines = ["Commands:"]
 
@@ -44,12 +42,6 @@ class HelpCommand(CommandHandler):
             lines.append("")
             lines.append("Mesh Health:")
             for c in sorted(health_cmds, key=lambda x: x.name):
-                lines.append(f"  !{c.name} - {c.description}")
-
-        if sub_cmds:
-            lines.append("")
-            lines.append("Subscriptions:")
-            for c in sorted(sub_cmds, key=lambda x: x.name):
                 lines.append(f"  !{c.name} - {c.description}")
 
         if other_cmds:
@@ -67,9 +59,6 @@ class HelpCommand(CommandHandler):
     def _command_help(self, cmd_name: str) -> str:
         """Detailed help for a specific command."""
         aliases = {
-            "sub": "sub", "subscribe": "sub", "subscription": "sub", "subscriptions": "sub",
-            "unsub": "unsub", "unsubscribe": "unsub",
-            "mysubs": "mysubs", "subs": "mysubs",
             "health": "health", "mesh": "health",
             "region": "region", "reg": "region",
             "neighbors": "neighbors", "nbr": "neighbors", "nb": "neighbors",
@@ -81,32 +70,6 @@ class HelpCommand(CommandHandler):
         registered = {c.name.lower() for c in self._dispatcher.get_commands()}
 
         texts = {
-            "sub": (
-                "Subscribe to Reports & Alerts\n\n"
-                "Daily report:\n"
-                "  !sub daily 6pm\n"
-                "  !sub daily 7:30am region SCID\n"
-                "  !sub daily 6pm node MHR\n\n"
-                "Weekly digest:\n"
-                "  !sub weekly 8am sun\n\n"
-                "Alerts (instant DM on issues):\n"
-                "  !sub alerts\n"
-                "  !sub alerts region Wood River\n\n"
-                "Time: 6pm, 6:30pm, 1830, 18:30\n"
-                "Regions: SCID, SWID, Magic Valley, Twin Falls\n\n"
-                "Manage:\n"
-                "  !mysubs - list yours\n"
-                "  !unsub daily - remove daily\n"
-                "  !unsub all - remove everything"
-            ),
-            "unsub": (
-                "Unsubscribe\n\n"
-                "  !unsub daily  - remove daily report\n"
-                "  !unsub weekly - remove weekly digest\n"
-                "  !unsub alerts - remove alerts\n"
-                "  !unsub all    - remove everything"
-            ),
-            "mysubs": "!mysubs - list your active subscriptions",
             "health": (
                 "Mesh Health\n\n"
                 "  !health     - 5-pillar health summary\n"

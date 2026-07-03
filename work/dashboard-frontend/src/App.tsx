@@ -4,7 +4,7 @@ import Dashboard from './pages/Dashboard'
 import Mesh from './pages/Mesh'
 import Environment from './pages/Environment'
 import Config from './pages/Config'
-import Alerts from './pages/Alerts'
+import ActivityLog from './pages/ActivityLog'
 import Notifications from './pages/Notifications'
 import Reference from './pages/Reference'
 import AdapterConfig from './pages/AdapterConfig'
@@ -34,7 +34,8 @@ function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/environment" element={<Environment />} />
           <Route path="/config" element={<Config />} />
-          <Route path="/alerts" element={<Alerts />} />
+          <Route path="/alerts" element={<ActivityLog />} />
+          <Route path="/activity" element={<ActivityLog />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/reference" element={<Reference />} />
           <Route path="/adapter-config" element={<AdapterConfig />} />

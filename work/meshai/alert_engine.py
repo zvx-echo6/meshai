@@ -9,7 +9,6 @@ if TYPE_CHECKING:
     from .config import AlertRulesConfig, MeshIntelligenceConfig
     from .mesh_health import MeshHealthEngine
     from .mesh_reporter import MeshReporter
-    from .subscriptions import SubscriptionManager
 
 logger = logging.getLogger(__name__)
 
@@ -65,14 +64,12 @@ class AlertEngine:
         self,
         health_engine: "MeshHealthEngine",
         reporter: "MeshReporter",
-        subscription_manager: "SubscriptionManager",
         config: "MeshIntelligenceConfig",
         db_path: str = "",
         timezone: str = "America/Boise",
     ):
         self._health = health_engine
         self._reporter = reporter
-        self._subs = subscription_manager
         self._rules = config.alert_rules
         self._critical_nodes = set(n.upper() for n in (config.critical_nodes or []))
         self._db_path = db_path
@@ -579,14 +576,6 @@ class AlertEngine:
 
     def clear_pending(self):
         self._pending_alerts = []
-
-    def get_subscribers_for_alert(self, alert: dict) -> list[dict]:
-        if not self._subs:
-            return []
-        return self._subs.get_alert_subscribers(
-            scope_type=alert.get("scope_type"),
-            scope_value=alert.get("scope_value"),
-        )
 
     def check_environmental(self, env_store) -> list[dict]:
         """Check environmental feeds for alertable conditions.
