@@ -55,17 +55,17 @@ const navGroups: NavGroup[] = [
   {
     header: 'Meshtastic',
     items: [
-      { path: '/mesh', label: 'Mesh', icon: Radio },
-      { path: '/notifications', label: 'Routing', icon: BellRing },
       { path: '/config?section=connection', label: 'Connection', icon: Wifi },
+      { path: '/notifications', label: 'Routing', icon: BellRing },
+      { path: '/mesh', label: 'Mesh', icon: Radio },
       { path: '/config?section=mesh_sources', label: 'Sources', icon: Layers },
     ],
   },
   {
     header: 'MeshCore',
     items: [
-      { path: '/meshcore/routing', label: 'Routing', icon: BellRing },
       { path: '/meshcore/connection', label: 'Connection', icon: Network },
+      { path: '/meshcore/routing', label: 'Routing', icon: BellRing },
       { path: '/meshcore/contacts', label: 'Contacts', icon: Users },
       { path: '/meshcore/companion', label: 'Companion', icon: Bot },
     ],

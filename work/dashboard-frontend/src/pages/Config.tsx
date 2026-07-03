@@ -753,20 +753,15 @@ function ConnectionSection({ data, onChange }: { data: ConnectionConfig; onChang
           />
         </div>
       )}
-      {/* MeshCore transport mode + host/port now live on their own first-class
-          page (/meshcore/connection) to avoid two divergent live-editing copies. */}
-      <div className="pt-2 border-t border-[#1e2a3a]">
-        <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">MeshCore Connection</div>
+      {/* MeshCore transport + host/port live on their own first-class page
+          (/meshcore/connection). Subtle cross-link only — no editable fields here. */}
+      <div className="pt-2">
         <Link
           to="/meshcore/connection"
-          className="inline-flex items-center gap-2 px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-accent hover:border-accent transition-colors"
+          className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-accent transition-colors"
         >
-          <ExternalLink size={14} />
-          Configure MeshCore transport, host &amp; port
+          &rarr; MeshCore transport &amp; connection
         </Link>
-        <p className="text-xs text-slate-600 mt-2">
-          Transport mode (Meshtastic / MeshCore / Both) and the MeshCore host &amp; port are managed on the MeshCore &rarr; Connection page.
-        </p>
       </div>
     </div>
   )

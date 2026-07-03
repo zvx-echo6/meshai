@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { Save, RotateCcw, RefreshCw, Check } from 'lucide-react'
 import { TextInput, NumberInput, SelectInput } from './Config'
 import { notifyRestartRequired } from '@/components/RestartBanner'
@@ -107,8 +108,7 @@ export default function MeshCoreConnection() {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-slate-500">
-            Transport mode and MeshCore node connection. Meshtastic connection settings live on the
-            Config &rarr; Connection page.
+            Transport mode and MeshCore node connection.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -183,6 +183,14 @@ export default function MeshCoreConnection() {
               helper="MeshCore TCP port (default 5525)"
             />
           </div>
+        </div>
+        <div className="pt-2">
+          <Link
+            to="/config?section=connection"
+            className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-accent transition-colors"
+          >
+            &rarr; Meshtastic connection
+          </Link>
         </div>
       </div>
     </div>
