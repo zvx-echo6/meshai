@@ -9,6 +9,7 @@ import {
 import ChannelPicker from '@/components/ChannelPicker'
 import NodePicker from '@/components/NodePicker'
 import { fetchConfig as apiFetchConfig, updateConfig as apiUpdateConfig } from '@/lib/api'
+import { useDirty } from '@/context/DirtyContext'
 
 // Types
 interface NotificationRuleConfig {
@@ -1762,6 +1763,7 @@ function MasterToggles({ toggles, onChange }: {
 
 
 export default function Notifications() {
+  const { setDirty } = useDirty()
   const [config, setConfig] = useState<NotificationsConfig | null>(null)
   const [originalConfig, setOriginalConfig] = useState<NotificationsConfig | null>(null)
   const [categories, setCategories] = useState<AlertCategory[]>([])
@@ -1811,6 +1813,11 @@ export default function Notifications() {
     }
   }, [config, originalConfig])
 
+  useEffect(() => {
+    setDirty(hasChanges)
+    return () => setDirty(false)
+  }, [hasChanges, setDirty])
+
   const saveConfig = async () => {
     if (!config) return
 
@@ -1834,6 +1841,7 @@ export default function Notifications() {
       setSuccess('Notifications config saved successfully')
       setOriginalConfig(JSON.parse(JSON.stringify(config)))
       setHasChanges(false)
+      setDirty(false)
       setTimeout(() => setSuccess(null), 3000)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed')

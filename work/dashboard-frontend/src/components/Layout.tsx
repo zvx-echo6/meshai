@@ -1,5 +1,6 @@
 import { ReactNode, useEffect, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useDirty } from '@/context/DirtyContext'
 import {
   LayoutDashboard,
   Radio,
@@ -91,7 +92,14 @@ function formatUptime(seconds: number): string {
 
 // Renders a single nav <Link>. Items whose path carries a ?section= query are
 // matched against pathname+search so only the matching deep-link highlights.
-function renderNavItem(item: NavItem, pathname: string, search: string) {
+// onNavClick: called with the target path; return true to allow navigation,
+// false to block it (caller shows confirm dialog).
+function renderNavItem(
+  item: NavItem,
+  pathname: string,
+  search: string,
+  onNavClick: (path: string, e: React.MouseEvent) => void,
+) {
   const isActive = item.path.includes('?')
     ? `${pathname}${search}` === item.path
     : pathname === item.path
@@ -100,6 +108,7 @@ function renderNavItem(item: NavItem, pathname: string, search: string) {
     <Link
       key={item.path}
       to={item.path}
+      onClick={(e) => onNavClick(item.path, e)}
       className={`flex items-center gap-3 px-5 py-3 text-sm font-sans transition-colors relative ${
         isActive
           ? 'text-white bg-transparent'
@@ -127,10 +136,22 @@ function getPageTitle(fullPath: string): string {
 
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation()
+  const navigate = useNavigate()
+  const { dirty, setDirty } = useDirty()
   const { connected, lastAlert } = useWebSocket()
   const { addToast } = useToast()
   const [status, setStatus] = useState<SystemStatus | null>(null)
   const [lastAlertId, setLastAlertId] = useState<string | null>(null)
+
+  const handleNavClick = (path: string, e: React.MouseEvent) => {
+    if (dirty) {
+      e.preventDefault()
+      if (window.confirm('You have unsaved changes. Discard them?')) {
+        setDirty(false)
+        navigate(path)
+      }
+    }
+  }
 
   // Trigger toast on new alerts
   useEffect(() => {
@@ -182,13 +203,13 @@ export default function Layout({ children }: LayoutProps) {
 
         {/* Navigation */}
         <nav className="flex-1 py-4">
-          {topNavItems.map((item) => renderNavItem(item, location.pathname, location.search))}
+          {topNavItems.map((item) => renderNavItem(item, location.pathname, location.search, handleNavClick))}
           {navGroups.map((group) => (
             <div key={group.header} className="mt-4">
               <div className="px-5 pt-2 pb-1 text-[10px] font-sans font-semibold uppercase tracking-wider text-[#555]">
                 {group.header}
               </div>
-              {group.items.map((item) => renderNavItem(item, location.pathname, location.search))}
+              {group.items.map((item) => renderNavItem(item, location.pathname, location.search, handleNavClick))}
             </div>
           ))}
         </nav>

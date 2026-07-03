@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { Save, RotateCcw, RefreshCw, Check } from 'lucide-react'
-import { TextInput, NumberInput, SelectInput } from './Config'
+import { TextInput, NumberInput } from './Config'
 import { notifyRestartRequired } from '@/components/RestartBanner'
 import { fetchConfig as apiFetchConfig, updateConfig as apiUpdateConfig } from '@/lib/api'
+import { useDirty } from '@/context/DirtyContext'
 
 // Only the fields this page edits are typed explicitly; the rest of the
 // connection config (Meshtastic type / serial / tcp) is preserved untouched on
@@ -20,6 +21,7 @@ interface ConnectionConfig {
 }
 
 export default function MeshCoreConnection() {
+  const { setDirty } = useDirty()
   const [config, setConfig] = useState<ConnectionConfig | null>(null)
   const [originalConfig, setOriginalConfig] = useState<ConnectionConfig | null>(null)
   const [loading, setLoading] = useState(true)
@@ -54,6 +56,11 @@ export default function MeshCoreConnection() {
     }
   }, [config, originalConfig])
 
+  useEffect(() => {
+    setDirty(hasChanges)
+    return () => setDirty(false)
+  }, [hasChanges, setDirty])
+
   const upd = (patch: Partial<ConnectionConfig>) =>
     setConfig((c) => (c ? { ...c, ...patch } : c))
 
@@ -67,6 +74,7 @@ export default function MeshCoreConnection() {
       const result = await apiUpdateConfig('connection', config)
       setOriginalConfig(JSON.parse(JSON.stringify(config)))
       setHasChanges(false)
+      setDirty(false)
       setSuccess('MeshCore connection saved successfully')
       if (result.restart_required) {
         notifyRestartRequired([])
@@ -151,18 +159,34 @@ export default function MeshCoreConnection() {
 
       {/* Form */}
       <div className="bg-bg-card border border-border p-6 space-y-4">
-        <SelectInput
-          label="Transport Mode"
-          value={config.transport ?? 'meshtastic'}
-          onChange={(v) => upd({ transport: v })}
-          options={[
-            { value: 'meshtastic', label: 'Meshtastic' },
-            { value: 'meshcore', label: 'MeshCore' },
-            { value: 'both', label: 'Both' },
-          ]}
-          helper="Which radio transport(s) MeshAI uses"
-          info="Meshtastic: connect to a Meshtastic radio only. MeshCore: connect to a MeshCore node only. Both: connect to both simultaneously for dual-transport operation."
-        />
+        <div className="flex items-center justify-between py-2">
+          <div>
+            <span className="text-sm text-slate-300">Enable MeshCore</span>
+            <p className="text-xs text-slate-600">
+              Meshtastic is always on; enabling adds MeshCore (Both).
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const checked = !(config.transport === 'both' || config.transport === 'meshcore')
+              upd({ transport: checked ? 'both' : 'meshtastic' })
+            }}
+            className={`relative w-11 h-6 rounded-full transition-colors ${
+              config.transport === 'both' || config.transport === 'meshcore'
+                ? 'bg-accent'
+                : 'bg-[#1e2a3a]'
+            }`}
+          >
+            <span
+              className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform ${
+                config.transport === 'both' || config.transport === 'meshcore'
+                  ? 'translate-x-5'
+                  : ''
+              }`}
+            />
+          </button>
+        </div>
         <div className="pt-2 border-t border-[#1e2a3a] space-y-4">
           <div className="text-xs text-slate-500 uppercase tracking-wide">MeshCore Connection</div>
           <div className="grid grid-cols-2 gap-4">

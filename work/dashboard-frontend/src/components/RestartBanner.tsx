@@ -82,7 +82,7 @@ export default function RestartBanner() {
     setRestarting(true)
     setError(null)
     try {
-      const res = await fetch('/api/system/restart', { method: 'POST' })
+      const res = await fetch('/api/restart', { method: 'POST' })
       if (!res.ok && res.status !== 202) {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.detail || `HTTP ${res.status}`)

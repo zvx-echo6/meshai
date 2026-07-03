@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
+import { useDirty } from '@/context/DirtyContext'
 import { Save, RotateCcw, RefreshCw, Check, MessageSquare, ExternalLink } from 'lucide-react'
 import {
   SeverityChannelMatrix,
@@ -40,6 +41,7 @@ function mergeMeshcoreFields(
 }
 
 export default function MeshCoreRouting() {
+  const { setDirty } = useDirty()
   const [config, setConfig] = useState<NotificationsConfig | null>(null)
   const [originalConfig, setOriginalConfig] = useState<NotificationsConfig | null>(null)
   const [loading, setLoading] = useState(true)
@@ -74,6 +76,11 @@ export default function MeshCoreRouting() {
       setHasChanges(JSON.stringify(config) !== JSON.stringify(originalConfig))
     }
   }, [config, originalConfig])
+
+  useEffect(() => {
+    setDirty(hasChanges)
+    return () => setDirty(false)
+  }, [hasChanges, setDirty])
 
   const upd = (fam: string, patch: Partial<NotificationToggle>) => {
     if (!config) return
@@ -118,6 +125,7 @@ export default function MeshCoreRouting() {
       setConfig(merged)
       setOriginalConfig(JSON.parse(JSON.stringify(merged)))
       setHasChanges(false)
+      setDirty(false)
       setSuccess('MeshCore routing saved successfully')
       setTimeout(() => setSuccess(null), 3000)
     } catch (err) {
