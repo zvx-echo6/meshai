@@ -4,44 +4,29 @@ from .base import MeshTransport
 
 
 def build_transport(config) -> MeshTransport:
-    """Instantiate and return the configured MeshTransport.
+    """Instantiate and return the active MeshTransport derived from config.
+
+    The active transports are derived from the connection config, not a
+    separate mode flag:
+
+    - Meshtastic is always the base transport.
+    - MeshCore is active when ``config.meshcore_host`` is a non-empty string.
+    - Both configured → CompositeTransport wrapping both.
+    - MeshCore host blank (default) → Meshtastic only.
 
     Args:
-        config: A ConnectionConfig (or duck-compatible object).  The
-                ``transport`` field selects the backend; it defaults to
-                ``"meshtastic"`` so existing configs require no changes.
+        config: A ConnectionConfig (or duck-compatible object).
 
     Returns:
         A concrete MeshTransport instance ready to be connected.
-
-    Raises:
-        ValueError: When the transport name is unrecognised.
     """
-    transport_name = getattr(config, "transport", "meshtastic")
+    from meshai.connector import MeshtasticTransport
+    meshtastic = MeshtasticTransport(config)
 
-    if transport_name == "meshtastic":
-        # Import here to avoid a circular import at module load time.
-        from meshai.connector import MeshtasticTransport
-        return MeshtasticTransport(config)
-
-    if transport_name == "meshcore":
-        # Function-local import keeps the module importable without the meshcore
-        # lib installed (lazy import pattern mirrors the meshtastic case).
-        from meshai.transport.meshcore_transport import MeshCoreTransport
-        return MeshCoreTransport(config)
-
-    if transport_name == "both":
-        # Phase 4: composite transport — drives Meshtastic and MeshCore
-        # simultaneously with correct reply routing.
-        from meshai.connector import MeshtasticTransport
+    meshcore_host = getattr(config, "meshcore_host", "") or ""
+    if meshcore_host.strip():
         from meshai.transport.meshcore_transport import MeshCoreTransport
         from meshai.transport.composite_transport import CompositeTransport
-        return CompositeTransport([
-            MeshtasticTransport(config),
-            MeshCoreTransport(config),
-        ], config=config)
+        return CompositeTransport([meshtastic, MeshCoreTransport(config)], config=config)
 
-    raise ValueError(
-        f"Unknown transport {transport_name!r}. "
-        "Expected one of: 'meshtastic', 'meshcore', 'both'."
-    )
+    return meshtastic

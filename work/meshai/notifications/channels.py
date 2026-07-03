@@ -250,7 +250,7 @@ class MeshCoreBroadcastChannel(NotificationChannel):
             return {
                 "success": False,
                 "message": "No MeshCore transport available",
-                "error": "Set connection.transport to 'meshcore' or 'both'",
+                "error": "Set connection.meshcore_host to enable MeshCore",
                 "details": {"meshcore_channel": self._meshcore_channel},
             }
         return {
@@ -469,7 +469,7 @@ class MeshCoreDMChannel(NotificationChannel):
             return {
                 "success": False,
                 "message": "No MeshCore transport available",
-                "error": "Set connection.transport to 'meshcore' or 'both'",
+                "error": "Set connection.meshcore_host to enable MeshCore",
                 "details": {"contacts": self._contacts},
             }
         if not self._contacts:

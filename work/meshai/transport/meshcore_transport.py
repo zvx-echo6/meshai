@@ -33,9 +33,9 @@ class MeshCoreTransport(MeshTransport):
     The meshcore client (``self._mc``) is created and used exclusively on that
     loop.
 
-    The transport is dormant until ``connect()`` is called.  When
-    ``transport != "meshcore"`` in config the factory never instantiates this
-    class, so there is zero cost to existing meshtastic deployments.
+    The transport is dormant until ``connect()`` is called.  The factory
+    only instantiates this class when ``meshcore_host`` is non-empty, so
+    there is zero cost to Meshtastic-only deployments.
     """
 
     # Name tag used by CompositeTransport for routing hints.

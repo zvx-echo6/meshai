@@ -25,7 +25,6 @@ export interface ConnectionConfig {
   serial_port: string
   tcp_host: string
   tcp_port: number
-  transport?: string
   meshcore_host?: string
   meshcore_port?: number
 }
@@ -751,14 +750,14 @@ export function ConnectionSection({ data, onChange }: { data: ConnectionConfig; 
           />
         </div>
       )}
-      {/* MeshCore transport + host/port live on their own first-class page
+      {/* MeshCore host/port live on their own first-class page
           (/meshcore/connection). Subtle cross-link only — no editable fields here. */}
       <div className="pt-2">
         <Link
           to="/meshcore/connection"
           className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-accent transition-colors"
         >
-          &rarr; MeshCore transport &amp; connection
+          &rarr; MeshCore connection
         </Link>
       </div>
     </div>
