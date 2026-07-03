@@ -116,7 +116,7 @@ export default function MeshCoreConnection() {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-slate-500">
-            Transport mode and MeshCore node connection.
+            MeshCore node connection.
           </p>
         </div>
         <div className="flex items-center gap-2">
