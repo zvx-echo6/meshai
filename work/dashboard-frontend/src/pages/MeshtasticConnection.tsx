@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Save, RotateCcw, RefreshCw, Check } from 'lucide-react'
-import { ConnectionSection, type ConnectionConfig } from './Config'
+import { ConnectionSection, TextInput, NumberInput, type ConnectionConfig } from './Config'
 import { notifyRestartRequired } from '@/components/RestartBanner'
-import { fetchConfig as apiFetchConfig, updateConfig as apiUpdateConfig } from '@/lib/api'
+import { fetchConfig as apiFetchConfig, updateConfig as apiUpdateConfig, sendTestMessage } from '@/lib/api'
 import { useDirty } from '@/context/DirtyContext'
 
 export default function MeshtasticConnection() {
@@ -14,6 +14,29 @@ export default function MeshtasticConnection() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [hasChanges, setHasChanges] = useState(false)
+
+  // Test send state
+  const [testChannel, setTestChannel] = useState(0)
+  const [testText, setTestText] = useState('')
+  const [testSending, setTestSending] = useState(false)
+  const [testResult, setTestResult] = useState<{ sent: boolean; detail: string } | null>(null)
+
+  const handleTestSend = async () => {
+    setTestSending(true)
+    setTestResult(null)
+    try {
+      const result = await sendTestMessage({
+        transport: 'meshtastic',
+        channel: testChannel,
+        text: testText.trim() || undefined,
+      })
+      setTestResult(result)
+    } catch (err) {
+      setTestResult({ sent: false, detail: err instanceof Error ? err.message : 'Send failed' })
+    } finally {
+      setTestSending(false)
+    }
+  }
 
   const fetchConfig = useCallback(async () => {
     setLoading(true)
@@ -142,6 +165,41 @@ export default function MeshtasticConnection() {
       {/* Form */}
       <div className="bg-bg-card border border-border p-6">
         <ConnectionSection data={config} onChange={setConfig} />
+      </div>
+
+      {/* Send test message card */}
+      <div className="bg-bg-card border border-border p-6 space-y-4">
+        <div className="text-xs text-slate-500 uppercase tracking-wide">Send Test Message</div>
+        <NumberInput
+          label="Channel Index"
+          value={testChannel}
+          onChange={setTestChannel}
+          min={0}
+          max={7}
+          helper="Meshtastic channel number (0 = primary)"
+        />
+        <TextInput
+          label="Message (optional)"
+          value={testText}
+          onChange={setTestText}
+          placeholder={`\u{1F9EA} MeshAI test — ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}`}
+        />
+        <button
+          onClick={handleTestSend}
+          disabled={testSending}
+          className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent/80 disabled:bg-slate-700 disabled:cursor-not-allowed rounded text-white text-sm transition-colors"
+        >
+          {testSending ? 'Sending...' : 'Send test'}
+        </button>
+        {testResult && (
+          testResult.sent ? (
+            <div className="p-3 text-sm bg-green-500/10 text-green-400 border border-green-500/20">
+              <Check size={14} className="inline mr-2" />{testResult.detail}
+            </div>
+          ) : (
+            <div className="p-3 text-sm bg-red-500/10 text-red-400 border border-red-500/20">{testResult.detail}</div>
+          )
+        )}
       </div>
     </div>
   )

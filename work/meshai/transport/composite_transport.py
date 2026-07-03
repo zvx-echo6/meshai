@@ -83,6 +83,15 @@ class CompositeTransport(MeshTransport):
                 return c
         return None
 
+    def meshcore_child(self) -> Optional[MeshTransport]:
+        """Return the MeshCoreTransport child, or None if absent."""
+        return self._by_name.get("meshcore")
+
+    def known_channels(self) -> List[str]:
+        """Passthrough to the MeshCore child's known channels; [] if no meshcore child."""
+        child = self.meshcore_child()
+        return child.known_channels() if child is not None else []
+
     # ------------------------------------------------------------------
     # Routing decision helpers (factored out for unit-test access)
     # ------------------------------------------------------------------

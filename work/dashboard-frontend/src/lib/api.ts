@@ -481,3 +481,26 @@ export async function fetchHotspots(): Promise<HotspotsResponse> {
 export async function fetchRegions(): Promise<RegionInfo[]> {
   return fetchJson<RegionInfo[]>('/api/regions')
 }
+
+export interface MeshcoreChannels { active: boolean; channels: string[] }
+export interface TestSendResult { sent: boolean; detail: string }
+
+export async function getMeshcoreChannels(): Promise<MeshcoreChannels> {
+  return fetchJson<MeshcoreChannels>('/api/meshcore/channels')
+}
+
+export async function sendTestMessage(body: {
+  transport: 'meshtastic' | 'meshcore'
+  channel: string | number
+  text?: string
+}): Promise<TestSendResult> {
+  const response = await fetch('/api/mesh/test-send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status} ${response.statusText}`)
+  }
+  return response.json()
+}
