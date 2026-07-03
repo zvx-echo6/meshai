@@ -15,11 +15,15 @@ class TestRequest(BaseModel):
 
 class ChannelTestRequest(BaseModel):
     """Request body for channel connectivity test."""
-    type: str  # mesh_broadcast, mesh_dm, email, webhook
+    type: str  # mesh_broadcast, mesh_dm, meshcore_broadcast, meshcore_dm, email, webhook
     # Mesh broadcast
     channel_index: Optional[int] = 0
     # Mesh DM
     node_ids: Optional[List[str]] = []
+    # MeshCore broadcast
+    meshcore_channel: Optional[str] = None
+    # MeshCore DM
+    meshcore_dm_contacts: Optional[List[str]] = []
     # Email
     smtp_host: Optional[str] = ""
     smtp_port: Optional[int] = 587
@@ -117,6 +121,10 @@ async def test_channel(request: Request, body: ChannelTestRequest):
         channel_config["channel_index"] = body.channel_index or 0
     elif body.type == "mesh_dm":
         channel_config["node_ids"] = body.node_ids or []
+    elif body.type == "meshcore_broadcast":
+        channel_config["meshcore_channel"] = body.meshcore_channel or ""
+    elif body.type == "meshcore_dm":
+        channel_config["meshcore_dm_contacts"] = body.meshcore_dm_contacts or []
     elif body.type == "email":
         channel_config.update({
             "smtp_host": body.smtp_host or "",

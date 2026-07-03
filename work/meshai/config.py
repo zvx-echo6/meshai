@@ -550,7 +550,7 @@ class NotificationRuleConfig:
     custom_message: str = ""
 
     # Delivery type
-    delivery_type: str = ""  # mesh_broadcast, mesh_dm, email, webhook
+    delivery_type: str = ""  # mesh_broadcast, mesh_dm, meshcore_broadcast, meshcore_dm, email, webhook
 
     # Mesh broadcast fields
     broadcast_channel: int = 0
@@ -697,7 +697,8 @@ _DZ_VALID_ROLES = frozenset({
 })
 
 _DZ_VALID_DELIVERY = frozenset({
-    "mesh_broadcast", "mesh_dm", "email", "webhook", "none",
+    "mesh_broadcast", "mesh_dm", "meshcore_broadcast", "meshcore_dm",
+    "email", "webhook", "none",
 })
 # Hazard families that map onto categories.VALID_TOGGLES. snow is a sub-gate of
 # weather and flood a sub-gate of seismic (resolved in the correlator), so they

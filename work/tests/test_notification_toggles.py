@@ -229,11 +229,14 @@ def test_meshcore_broadcast_routes_to_meshcore_child_only():
     assert rules[0]["delivery_type"] == "meshcore_broadcast"
     assert rules[0]["meshcore_channel"] == "AIDA"
 
-    # MeshCore child received the call with correct transport+channel.
+    # MeshCore child received the call with the channel NAME on the correct kwarg.
     assert meshcore_child.send_message.called
     mc_kwargs = meshcore_child.send_message.call_args.kwargs
     assert mc_kwargs.get("destination") is None
-    assert mc_kwargs.get("channel") == "AIDA"  # child receives channel=meshcore_channel
+    # Regression guard for DEFECT 1: channel NAME must be routed via meshcore_channel=.
+    assert mc_kwargs.get("meshcore_channel") == "AIDA"
+    # The old broken code passed AIDA via channel=; that must NOT be the routing mechanism.
+    assert mc_kwargs.get("channel") != "AIDA"
 
     # Meshtastic child must NOT have been called.
     meshtastic_child.send_message.assert_not_called()

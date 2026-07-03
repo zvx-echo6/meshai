@@ -126,7 +126,7 @@ class DigestScheduler:
         channel = self._channel_factory(rule, self._connector)
         delivery_type = rule.delivery_type
 
-        if delivery_type in ("mesh_broadcast", "mesh_dm"):
+        if delivery_type in ("mesh_broadcast", "mesh_dm", "meshcore_broadcast", "meshcore_dm"):
             # One deliver call per chunk
             chunks = digest.mesh_chunks
             total = len(chunks)

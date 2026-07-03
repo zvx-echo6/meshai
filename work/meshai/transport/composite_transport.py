@@ -266,9 +266,13 @@ class CompositeTransport(MeshTransport):
                     "CompositeTransport: hinted broadcast child %r not connected", name
                 )
                 return False
-            child_channel = meshcore_channel if name == "meshcore" else channel
             try:
-                return child.send_message(text, destination=None, channel=child_channel)
+                if name == "meshcore":
+                    return child.send_message(
+                        text, destination=None, meshcore_channel=meshcore_channel
+                    )
+                else:
+                    return child.send_message(text, destination=None, channel=channel)
             except Exception as exc:
                 logger.error(
                     "CompositeTransport: hinted broadcast via %r raised: %s", name, exc
