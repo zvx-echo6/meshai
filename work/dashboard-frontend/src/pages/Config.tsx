@@ -163,7 +163,7 @@ interface AlertRulesConfig {
   region_score_threshold: number
 }
 
-interface MeshIntelligenceConfig {
+export interface MeshIntelligenceConfig {
   enabled: boolean
   regions: RegionAnchor[]
   locality_radius_miles: number
@@ -1421,7 +1421,7 @@ export function MeshSourcesSection({ data, onChange }: { data: MeshSourceConfig[
   )
 }
 
-function MeshIntelligenceSection({ data, onChange }: { data: MeshIntelligenceConfig; onChange: (d: MeshIntelligenceConfig) => void }) {
+export function MeshIntelligenceSection({ data, onChange }: { data: MeshIntelligenceConfig; onChange: (d: MeshIntelligenceConfig) => void }) {
   const [expandedRegion, setExpandedRegion] = useState<number | null>(null)
 
   return (
