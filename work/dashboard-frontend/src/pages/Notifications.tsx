@@ -39,7 +39,7 @@ interface NotificationRuleConfig {
   region_scope: string[]
 }
 
-interface NotificationToggle {
+export interface NotificationToggle {
   name: string
   enabled: boolean
   min_severity: string
@@ -62,7 +62,7 @@ interface NotificationToggle {
   webhook_headers: Record<string, string>
 }
 
-interface NotificationsConfig {
+export interface NotificationsConfig {
   enabled: boolean
   cold_start_grace_seconds?: number
   band_conditions_enabled?: boolean
@@ -338,7 +338,7 @@ function formatRelativeTime(timestamp: number | null): string {
 }
 
 // InfoButton component
-function InfoButton({ info }: { info: string }) {
+export function InfoButton({ info }: { info: string }) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -492,7 +492,7 @@ function TimeInput({ label, value, onChange, helper = '', info = '' }: {
   )
 }
 
-function ListInput({ label, value, onChange, placeholder = 'Add item...', helper = '', info = '' }: {
+export function ListInput({ label, value, onChange, placeholder = 'Add item...', helper = '', info = '' }: {
   label: string
   value: string[]
   onChange: (v: string[]) => void
@@ -1420,7 +1420,7 @@ function NotificationRuleCard({
 }
 
 // Main Notifications Page Component
-const TOGGLE_FAMILY_META: { key: string; label: string; Icon: typeof Activity }[] = [
+export const TOGGLE_FAMILY_META: { key: string; label: string; Icon: typeof Activity }[] = [
   { key: 'mesh_health', label: 'Mesh Health', Icon: Activity },
   { key: 'weather', label: 'Weather', Icon: Cloud },
   { key: 'fire', label: 'Fire', Icon: Flame },
@@ -1546,7 +1546,7 @@ function GroupedCategoryPicker({
 }
 // Per-mesh channel groups for the split severity matrix
 const MT_CHANNELS = ['mesh_broadcast', 'mesh_dm'] as const
-const MC_CHANNELS = ['meshcore_broadcast', 'meshcore_dm'] as const
+export const MC_CHANNELS = ['meshcore_broadcast', 'meshcore_dm'] as const
 const OTHER_CHANNELS = ['digest', 'email', 'webhook'] as const
 const TOGGLE_SEVERITIES = ['routine', 'priority', 'immediate']
 
@@ -1555,7 +1555,7 @@ const TOGGLE_SEVERITIES = ['routine', 'priority', 'immediate']
 // all other channels (including those owned by the other mesh section) are preserved.
 // This makes every checkbox merge-safe: Meshtastic toggles never clobber MeshCore
 // entries and vice-versa.
-function SeverityChannelMatrix({
+export function SeverityChannelMatrix({
   channels,
   severityChannels,
   onChange,
@@ -1706,37 +1706,9 @@ function MasterToggles({ toggles, onChange }: {
                     />
                   </div>
 
-                  {/* ── MeshCore ─────────────────────────────────────────────── */}
-                  <div className="space-y-3 p-3 bg-[#0a0e17] border border-[#1e2a3a]">
-                    <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
-                      <MessageSquare size={13} />
-                      MeshCore
-                    </div>
-                    <SeverityChannelMatrix
-                      channels={MC_CHANNELS}
-                      severityChannels={t.severity_channels || {}}
-                      onChange={(sc) => upd(key, { severity_channels: sc })}
-                    />
-                    <div className="space-y-1">
-                      <label className="text-xs text-slate-500 uppercase tracking-wide">MeshCore channel name</label>
-                      <input
-                        type="text"
-                        value={t.meshcore_channel != null ? t.meshcore_channel : ''}
-                        onChange={(e) => upd(key, { meshcore_channel: e.target.value === '' ? null : e.target.value })}
-                        placeholder="AIDA"
-                        className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 font-mono focus:outline-none focus:border-accent"
-                      />
-                      <p className="text-xs text-slate-600">Channel name on your MeshCore companion (e.g. AIDA). Blank = not broadcast on MeshCore.</p>
-                    </div>
-                    <ListInput
-                      label="MeshCore DM contacts"
-                      value={t.meshcore_dm_contacts || []}
-                      onChange={(v) => upd(key, { meshcore_dm_contacts: v })}
-                      placeholder="contact name or pubkey"
-                      helper="MeshCore DM recipients (names or pubkeys)"
-                      info="Contact names or pubkeys on the MeshCore companion. Used when meshcore_dm is enabled for a severity."
-                    />
-                  </div>
+                  {/* MeshCore delivery controls moved to the dedicated
+                      MeshCore -> Routing page (/meshcore/routing). Shared
+                      family settings (enable/severity/regions) stay here. */}
 
                   {/* ── Other channels ───────────────────────────────────────── */}
                   <div className="space-y-3 p-3 bg-[#0a0e17] border border-[#1e2a3a]">

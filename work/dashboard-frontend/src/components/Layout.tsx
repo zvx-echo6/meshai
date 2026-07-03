@@ -4,13 +4,18 @@ import {
   LayoutDashboard,
   Radio,
   Cloud,
-  Settings,
   Bell,
   BellRing,
   BookOpen,
   Sliders,
   Droplets,
   MapPin,
+  Wifi,
+  Layers,
+  Network,
+  Users,
+  Bot,
+  type LucideIcon,
 } from 'lucide-react'
 import { fetchStatus, type SystemStatus } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
@@ -21,17 +26,56 @@ interface LayoutProps {
   children: ReactNode
 }
 
-const navItems = [
+interface NavItem {
+  path: string
+  label: string
+  icon: LucideIcon
+}
+
+interface NavGroup {
+  header: string
+  items: NavItem[]
+}
+
+// Top-level, ungrouped items (no header).
+const topNavItems: NavItem[] = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { path: '/mesh', label: 'Mesh', icon: Radio },
   { path: '/environment', label: 'Environment', icon: Cloud },
-  { path: '/config', label: 'Config', icon: Settings },
   { path: '/alerts', label: 'Alerts', icon: Bell },
-  { path: '/notifications', label: 'Notifications', icon: BellRing },
   { path: '/reference', label: 'Reference', icon: BookOpen },
   { path: '/adapter-config', label: 'Adapter Config', icon: Sliders },
   { path: '/gauge-sites', label: 'Gauge Sites', icon: Droplets },
   { path: '/town-anchors', label: 'Town Anchors', icon: MapPin },
+]
+
+// Grouped sections with labeled headers. Meshtastic "Connection" and "Sources"
+// deep-link into the existing /config page via a ?section= query param that
+// Config.tsx reads on mount to pre-select its active section.
+const navGroups: NavGroup[] = [
+  {
+    header: 'Meshtastic',
+    items: [
+      { path: '/mesh', label: 'Mesh', icon: Radio },
+      { path: '/notifications', label: 'Routing', icon: BellRing },
+      { path: '/config?section=connection', label: 'Connection', icon: Wifi },
+      { path: '/config?section=mesh_sources', label: 'Sources', icon: Layers },
+    ],
+  },
+  {
+    header: 'MeshCore',
+    items: [
+      { path: '/meshcore/routing', label: 'Routing', icon: BellRing },
+      { path: '/meshcore/connection', label: 'Connection', icon: Network },
+      { path: '/meshcore/contacts', label: 'Contacts', icon: Users },
+      { path: '/meshcore/companion', label: 'Companion', icon: Bot },
+    ],
+  },
+]
+
+// Flattened view of every nav item (top + all groups) for title lookup.
+const allNavItems: NavItem[] = [
+  ...topNavItems,
+  ...navGroups.flatMap((g) => g.items),
 ]
 
 function formatUptime(seconds: number): string {
@@ -44,9 +88,40 @@ function formatUptime(seconds: number): string {
   return `${mins}m`
 }
 
-function getPageTitle(pathname: string): string {
-  const item = navItems.find((i) => i.path === pathname)
-  return item?.label || 'Dashboard'
+// Renders a single nav <Link>. Items whose path carries a ?section= query are
+// matched against pathname+search so only the matching deep-link highlights.
+function renderNavItem(item: NavItem, pathname: string, search: string) {
+  const isActive = item.path.includes('?')
+    ? `${pathname}${search}` === item.path
+    : pathname === item.path
+  const Icon = item.icon
+  return (
+    <Link
+      key={item.path}
+      to={item.path}
+      className={`flex items-center gap-3 px-5 py-3 text-sm font-sans transition-colors relative ${
+        isActive
+          ? 'text-white bg-transparent'
+          : 'text-[#777] hover:text-white hover:bg-bg-hover'
+      }`}
+    >
+      {isActive && (
+        <div className="absolute right-0 top-0 bottom-0 w-[2px] bg-[#f59e0b]" />
+      )}
+      <Icon size={16} />
+      {item.label}
+    </Link>
+  )
+}
+
+function getPageTitle(fullPath: string): string {
+  // Exact match first (honors any ?section= query on deep-linked items).
+  const exact = allNavItems.find((i) => i.path === fullPath)
+  if (exact) return exact.label
+  // Fallback: match by pathname only, ignoring query strings.
+  const base = fullPath.split('?')[0]
+  const byPath = allNavItems.find((i) => i.path.split('?')[0] === base)
+  return byPath?.label || 'Dashboard'
 }
 
 export default function Layout({ children }: LayoutProps) {
@@ -106,27 +181,15 @@ export default function Layout({ children }: LayoutProps) {
 
         {/* Navigation */}
         <nav className="flex-1 py-4">
-          {navItems.map((item) => {
-            const isActive = location.pathname === item.path
-            const Icon = item.icon
-            return (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={`flex items-center gap-3 px-5 py-3 text-sm font-sans transition-colors relative ${
-                  isActive
-                    ? 'text-white bg-transparent'
-                    : 'text-[#777] hover:text-white hover:bg-bg-hover'
-                }`}
-              >
-                {isActive && (
-                  <div className="absolute right-0 top-0 bottom-0 w-[2px] bg-[#f59e0b]" />
-                )}
-                <Icon size={16} />
-                {item.label}
-              </Link>
-            )
-          })}
+          {topNavItems.map((item) => renderNavItem(item, location.pathname, location.search))}
+          {navGroups.map((group) => (
+            <div key={group.header} className="mt-4">
+              <div className="px-5 pt-2 pb-1 text-[10px] font-sans font-semibold uppercase tracking-wider text-[#555]">
+                {group.header}
+              </div>
+              {group.items.map((item) => renderNavItem(item, location.pathname, location.search))}
+            </div>
+          ))}
         </nav>
 
         {/* Connection status */}
@@ -155,7 +218,7 @@ export default function Layout({ children }: LayoutProps) {
         {/* Header */}
         <header className="h-14 flex-shrink-0 border-b border-border bg-bg-card flex items-center justify-between px-6">
           <h1 className="text-lg font-sans font-semibold text-white">
-            {getPageTitle(location.pathname)}
+            {getPageTitle(location.pathname + location.search)}
           </h1>
           <div className="flex items-center gap-6">
             {/* Live indicator */}

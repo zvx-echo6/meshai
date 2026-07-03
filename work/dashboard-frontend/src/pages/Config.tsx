@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { notifyRestartRequired } from '@/components/RestartBanner'
 import NodePicker from '@/components/NodePicker'
 import ChannelPicker from '@/components/ChannelPicker'
@@ -710,23 +711,9 @@ function BotSection({ data, onChange }: { data: BotConfig; onChange: (d: BotConf
 }
 
 function ConnectionSection({ data, onChange }: { data: ConnectionConfig; onChange: (d: ConnectionConfig) => void }) {
-  const transport = data.transport ?? 'meshtastic'
-  const showMeshCore = transport === 'meshcore' || transport === 'both'
   return (
     <div className="space-y-4">
       <SectionDescription text={SECTION_DESCRIPTIONS.connection} />
-      <SelectInput
-        label="Transport Mode"
-        value={transport}
-        onChange={(v) => onChange({ ...data, transport: v })}
-        options={[
-          { value: 'meshtastic', label: 'Meshtastic' },
-          { value: 'meshcore', label: 'MeshCore' },
-          { value: 'both', label: 'Both' },
-        ]}
-        helper="Which radio transport(s) MeshAI uses"
-        info="Meshtastic: connect to a Meshtastic radio only. MeshCore: connect to a MeshCore node only. Both: connect to both simultaneously for dual-transport operation."
-      />
       <SelectInput
         label="Connection Type"
         value={data.type}
@@ -766,29 +753,21 @@ function ConnectionSection({ data, onChange }: { data: ConnectionConfig; onChang
           />
         </div>
       )}
-      {showMeshCore && (
-        <div className="space-y-4 pt-2 border-t border-[#1e2a3a]">
-          <div className="text-xs text-slate-500 uppercase tracking-wide">MeshCore Connection</div>
-          <div className="grid grid-cols-2 gap-4">
-            <TextInput
-              label="MeshCore Host"
-              value={data.meshcore_host ?? ''}
-              onChange={(v) => onChange({ ...data, meshcore_host: v })}
-              placeholder="192.168.1.100"
-              helper="IP or hostname of the MeshCore node"
-              info="Address of the MeshCore node to connect to."
-            />
-            <NumberInput
-              label="MeshCore Port"
-              value={data.meshcore_port ?? 5525}
-              onChange={(v) => onChange({ ...data, meshcore_port: v })}
-              min={1}
-              max={65535}
-              helper="MeshCore TCP port (default 5525)"
-            />
-          </div>
-        </div>
-      )}
+      {/* MeshCore transport mode + host/port now live on their own first-class
+          page (/meshcore/connection) to avoid two divergent live-editing copies. */}
+      <div className="pt-2 border-t border-[#1e2a3a]">
+        <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">MeshCore Connection</div>
+        <Link
+          to="/meshcore/connection"
+          className="inline-flex items-center gap-2 px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-accent hover:border-accent transition-colors"
+        >
+          <ExternalLink size={14} />
+          Configure MeshCore transport, host &amp; port
+        </Link>
+        <p className="text-xs text-slate-600 mt-2">
+          Transport mode (Meshtastic / MeshCore / Both) and the MeshCore host &amp; port are managed on the MeshCore &rarr; Connection page.
+        </p>
+      </div>
     </div>
   )
 }
@@ -1831,6 +1810,16 @@ export default function Config() {
   const [config, setConfig] = useState<FullConfig | null>(null)
   const [originalConfig, setOriginalConfig] = useState<FullConfig | null>(null)
   const [activeSection, setActiveSection] = useState<SectionKey>('bot')
+  const [searchParams] = useSearchParams()
+
+  // Deep-link support: nav items like /config?section=connection pre-select a
+  // section. Runs on mount and whenever the query param changes.
+  useEffect(() => {
+    const section = searchParams.get('section')
+    if (section && SECTIONS.some((s) => s.key === section)) {
+      setActiveSection(section as SectionKey)
+    }
+  }, [searchParams])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
