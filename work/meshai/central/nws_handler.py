@@ -374,6 +374,45 @@ def _collapse_certainty(text: str) -> str:
     return (text or "").strip()
 
 
+def _tighten_hazard(text: str) -> str:
+    """Compact a free-form NWS hazard sentence into the terse mesh idiom the
+    SVR branch already uses, so no product type (SPS/WSW/FFW/FLW/else) carries a
+    bloated line 3. Drops filler ('in excess of' -> '>'), collapses '45 mph' ->
+    '45mph', rewrites wind-gust phrasings to 'Nmph gusts', and converts hail
+    descriptors ('pea size hail') to numeric inches ('0.25" hail')."""
+    if not text:
+        return ""
+    t = text.strip().rstrip(".")
+    # Hail: '<descriptor> size hail' -> 'N" hail' (keep any leading connector).
+    low = t.lower()
+    for k in sorted(_HAIL_DESCRIPTORS, key=len, reverse=True):
+        for variant in (f"{k} size hail", f"{k}-size hail", f"{k} sized hail"):
+            idx = low.find(variant)
+            if idx != -1:
+                repl = _fmt_hail(k)
+                if repl:
+                    t = t[:idx] + repl + t[idx + len(variant):]
+                    low = t.lower()
+                break
+    # Numeric hail: 'N inch hail' / 'N-inch hail' -> 'N" hail'.
+    t = re.sub(r"(\d+(?:\.\d+)?)[\- ]inch(?:es)?\s+hail",
+               lambda m: _fmt_hail(m.group(1)) or m.group(0), t,
+               flags=re.IGNORECASE)
+    # Wind-gust phrasings -> 'Nmph gusts'.
+    t = re.sub(r"wind gusts?\s+(?:in excess of|up to|to|of|reaching|near|around)"
+               r"\s+(\d+)\s*mph", r"\1mph gusts", t, flags=re.IGNORECASE)
+    t = re.sub(r"winds?\s+gusting\s+(?:up\s+)?to\s+(\d+)\s*mph",
+               r"\1mph gusts", t, flags=re.IGNORECASE)
+    # Sustained winds -> 'Nmph winds'.
+    t = re.sub(r"(?:damaging\s+)?winds?\s+(?:in excess of|up to|to|of)\s+"
+               r"(\d+)\s*mph", r"\1mph winds", t, flags=re.IGNORECASE)
+    # Remaining generic filler + spacing.
+    t = re.sub(r"\bin excess of\b", ">", t, flags=re.IGNORECASE)
+    t = re.sub(r"(\d+)\s*mph", r"\1mph", t, flags=re.IGNORECASE)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
 def _render(*, event_type, area_desc, geocoder_city, county, state,
              expires_epoch, lat, lon, now, prefix: str = "", d: dict = None) -> str:
     d = d or {}
@@ -443,9 +482,10 @@ def _render(*, event_type, area_desc, geocoder_city, county, state,
         line3 = f"{hazard} · {confirm}" if hazard else confirm
     elif same_code in ("FFW", "FLW"):
         hazard_text = desc.get("hazard") or ""
-        # First sentence only
+        # First sentence only, then tighten to the terse SVR idiom.
         if ". " in hazard_text:
             hazard_text = hazard_text.split(". ")[0]
+        hazard_text = _tighten_hazard(hazard_text)
         # Infer flood cause from description
         desc_lower = (d.get("description") or "").lower()
         flood_cause = ""
@@ -459,10 +499,12 @@ def _render(*, event_type, area_desc, geocoder_city, county, state,
         cause_seg = f" · {flood_cause}" if flood_cause else ""
         line3 = f"{hazard_text}{cause_seg}" if hazard_text else flood_cause
     else:
-        # SPS, WSW, etc.: first hazard sentence + certainty if Observed/Likely
+        # SPS, WSW, etc.: first hazard sentence (tightened) + certainty if
+        # Observed/Likely.
         hazard_text = desc.get("hazard") or ""
         if ". " in hazard_text:
             hazard_text = hazard_text.split(". ")[0]
+        hazard_text = _tighten_hazard(hazard_text)
         cert_seg = ""
         if certainty in ("Observed", "Likely"):
             cert_seg = f" · {_collapse_certainty(certainty)}"
@@ -481,6 +523,15 @@ def _render(*, event_type, area_desc, geocoder_city, county, state,
         towns[-1] = re.sub(r"^and\s+", "", towns[-1], flags=re.IGNORECASE).strip()
         towns = [t for t in towns if t]
 
+    def _dedup(seq):
+        """Drop consecutive repeats (a short list can make first == middle),
+        so we never render 'Buhl → Buhl → Shoshone'."""
+        out = []
+        for t in seq:
+            if not out or out[-1] != t:
+                out.append(t)
+        return out
+
     def _line4(locs: str) -> str:
         if motion and locs:
             return f"{motion} — {locs}"
@@ -490,32 +541,39 @@ def _render(*, event_type, area_desc, geocoder_city, county, state,
 
     PACKET_LIMIT = budget_for("nws")
 
-    # Prefer the FULL town list; use it verbatim if the whole message fits.
-    full_locs = ", ".join(towns)
-    line4 = _line4(full_locs)
-    msg = "\n".join(l for l in (line1, line2, line3, line4) if l)
+    # Location representations from richest to poorest: full comma list ->
+    # first→middle→last path sample -> first→last -> first-only -> none. The
+    # WHOLE message is measured against the budget for each and the first form
+    # that fits wins. Crucially the "— {locs}" segment is only ever attached
+    # when the full message fits, so we can never emit a dangling "— …": if no
+    # location form fits we fall through to motion-only, then (if even that
+    # overflows) drop line 4 entirely.
+    loc_options = [", ".join(towns)]                      # full comma list
+    if len(towns) >= 3:
+        loc_options.append(" → ".join(
+            _dedup([towns[0], towns[len(towns) // 2], towns[-1]])))
+    if len(towns) >= 2:
+        loc_options.append(" → ".join(_dedup([towns[0], towns[-1]])))
+    if towns:
+        loc_options.append(towns[0])
+    loc_options.append("")                                # motion only / empty
 
-    if len(msg) > PACKET_LIMIT:
-        # Won't fit: collapse locations to a path sample that never loses the
-        # endpoints -> soonest-impact -> midway -> farthest-along.
-        if len(towns) >= 3:
-            sampled = [towns[0], towns[len(towns) // 2], towns[-1]]
-        elif len(towns) == 2:
-            sampled = [towns[0], towns[-1]]
-        else:
-            sampled = list(towns)
-        # De-dup consecutive repeats (a short list can make first == middle),
-        # so we never render "Buhl → Buhl → Shoshone".
-        deduped = []
-        for t in sampled:
-            if not deduped or deduped[-1] != t:
-                deduped.append(t)
-        path = " → ".join(deduped)
-        line4 = _line4(path)
-        msg = "\n".join(l for l in (line1, line2, line3, line4) if l)
+    base_lines = [l for l in (line1, line2, line3) if l]
+    msg = None
+    for locs in loc_options:
+        cand4 = _line4(locs)
+        lines = base_lines + ([cand4] if cand4 else [])
+        candidate = "\n".join(lines)
+        if len(candidate) <= PACKET_LIMIT:
+            msg = candidate
+            break
+    if msg is None:
+        # Even motion-only line 4 overflows: drop line 4 entirely.
+        msg = "\n".join(base_lines)
 
-    # Final hard-cap safety net for the pathological case (extremely long town
-    # names overflow even the first->middle->last sample plus the other lines).
+    # Final hard-cap safety net for the pathological case where lines 1-3 alone
+    # overflow. Line 4 is already budget-fitted above, so this only ever trims
+    # the leading lines — it can never manufacture a dangling "— …".
     return fit_to_budget(msg, PACKET_LIMIT)
 
 

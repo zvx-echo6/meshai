@@ -378,3 +378,166 @@ def test_svr_worst_case_fits_140(mem_db):
     assert "70mph winds" in rendered                    # tightened hazard (wind)
     assert '1.75" hail' in rendered                     # golf ball -> 1.75"
     assert "Buhl" in rendered                           # >=1 town present
+
+
+# ---- no dangling "— …" across ALL product types ----
+
+
+def _assert_no_dangling_separator(rendered: str):
+    """The L4 motion/locations line must never end in a stray separator:
+    no trailing '—…', '— …', or a bare '—'. Either a real location list
+    follows the em-dash, or the em-dash (and its locations) are absent."""
+    for line in rendered.splitlines():
+        stripped = line.rstrip()
+        assert not stripped.endswith("—…"), f"dangling '—…': {line!r}"
+        assert not stripped.endswith("— …"), f"dangling '— …': {line!r}"
+        assert not stripped.endswith("—"), f"bare trailing '—': {line!r}"
+        # And the "— …" fragment must not appear mid-line either.
+        assert "—…" not in stripped, f"'—…' fragment: {line!r}"
+        assert "— …" not in stripped, f"'— …' fragment: {line!r}"
+
+
+def test_sps_worst_case_tightened_and_no_dangling(mem_db):
+    """The reported live-log bug: a Special Weather Statement (SPS) with wind
+    gusts + motion + a long town list previously collapsed L4 to
+    'Moving SW 24 mph —…' (all towns lost, dangling separator). After the fix:
+    hazard is tightened, output fits 140, and L4 is either
+    'Moving … — <towns>' or 'Moving …' — never a trailing '—…'."""
+    long_locations = (
+        "Twin Falls, Kimberly, Filer, Buhl, Hansen, Murtaugh, Hollister, "
+        "Eden, Hazelton, and Rogerson"
+    )
+    description = (
+        "HAZARD...Wind gusts in excess of 45 mph and pea size hail.\n\n"
+        "SOURCE...Radar indicated.\n\n"
+        f"Locations impacted include...{long_locations}"
+    )
+    d = {
+        "eventCode": {"SAME": ["SPS"]},
+        "certainty": "Observed",
+        "parameters": {
+            # 225 DEG 21 KT -> "Moving SW 24 mph"
+            "eventMotionDescription": ["2200000T225DEG...21KT 42.5,-114.5"],
+        },
+        "description": description,
+    }
+    rendered = _render(
+        event_type="Special Weather Statement", area_desc="Twin Falls County",
+        geocoder_city=None, county="Twin Falls", state="ID",
+        expires_epoch=1_751_400_000, lat=42.5, lon=-114.46,
+        now=1_751_400_000, d=d,
+    )
+    assert len(rendered) <= 140, f"{len(rendered)} chars:\n{rendered!r}"
+    assert "Special Weather Statement" in rendered
+    # (a) hazard tightened: "Wind gusts in excess of 45 mph" -> "45mph gusts",
+    #     "pea size hail" -> '0.25" hail'; filler dropped.
+    assert "45mph gusts" in rendered, f"wind not tightened:\n{rendered!r}"
+    assert '0.25" hail' in rendered, f"hail not numeric:\n{rendered!r}"
+    assert "in excess of" not in rendered, "filler 'in excess of' survived"
+    assert "· observed" in rendered, "certainty not collapsed"
+    # (b) NEVER a dangling separator.
+    _assert_no_dangling_separator(rendered)
+    # (c) the motion line, when present, either carries a town or stands alone.
+    last = rendered.splitlines()[-1]
+    if last.startswith("Moving"):
+        assert last == "Moving SW 24 mph" or " — " in last, (
+            f"L4 neither motion-only nor motion+towns:\n{last!r}")
+        if " — " in last:
+            # A real town must follow the em-dash.
+            tail = last.split(" — ", 1)[1].strip()
+            assert tail and tail != "…", f"empty tail after em-dash:\n{last!r}"
+
+
+def test_wsw_hazard_tightened_and_no_dangling(mem_db):
+    """Winter Weather product (WSW SAME code): wind-gust hazard is tightened and
+    no dangling '—…' can appear."""
+    long_locations = (
+        "Sun Valley, Ketchum, Hailey, Bellevue, Carey, Picabo, Fairfield, "
+        "and Gooding"
+    )
+    description = (
+        "HAZARD...Wind gusts up to 45 mph and heavy snow.\n\n"
+        f"Locations impacted include...{long_locations}"
+    )
+    d = {
+        "eventCode": {"SAME": ["WSW"]},
+        "certainty": "Observed",
+        "parameters": {
+            "eventMotionDescription": ["2200000T225DEG...21KT 42.5,-114.5"],
+        },
+        "description": description,
+    }
+    rendered = _render(
+        event_type="Winter Weather Advisory", area_desc="Blaine County",
+        geocoder_city=None, county="Blaine", state="ID",
+        expires_epoch=1_751_400_000, lat=43.5, lon=-114.3,
+        now=1_751_400_000, d=d,
+    )
+    assert len(rendered) <= 140, f"{len(rendered)} chars:\n{rendered!r}"
+    assert "45mph gusts" in rendered, f"WSW wind not tightened:\n{rendered!r}"
+    assert "heavy snow" in rendered
+    assert "up to" not in rendered, "filler 'up to' survived"
+    _assert_no_dangling_separator(rendered)
+
+
+def test_sps_pathological_towns_degrade_to_motion_only(mem_db):
+    """When even a single sampled town cannot fit the remaining budget, L4 must
+    degrade to motion-only ('Moving …') with NO trailing separator — never
+    'Moving … —…'."""
+    # One absurdly long town name that cannot coexist with the em-dash + motion
+    # in the leftover budget.
+    long_town = "Averyverylongimpossibletownnamethatwillnotfitthebudgetatall" * 2
+    description = (
+        "HAZARD...Wind gusts in excess of 45 mph.\n\n"
+        f"Locations impacted include...{long_town}"
+    )
+    d = {
+        "eventCode": {"SAME": ["SPS"]},
+        "certainty": "Observed",
+        "parameters": {
+            "eventMotionDescription": ["2200000T225DEG...21KT 42.5,-114.5"],
+        },
+        "description": description,
+    }
+    rendered = _render(
+        event_type="Special Weather Statement", area_desc="Twin Falls County",
+        geocoder_city=None, county="Twin Falls", state="ID",
+        expires_epoch=1_751_400_000, lat=42.5, lon=-114.46,
+        now=1_751_400_000, d=d,
+    )
+    assert len(rendered) <= 140
+    _assert_no_dangling_separator(rendered)
+    last = rendered.splitlines()[-1]
+    # The town can't fit, so L4 (if present) is bare motion.
+    if last.startswith("Moving"):
+        assert " — " not in last, f"expected motion-only, got:\n{last!r}"
+
+
+def test_svr_no_dangling_separator(mem_db):
+    """Re-verify SVR (the branch tightened earlier) still never dangles."""
+    long_locations = (
+        "Buhl, Eden, Hazelton, Murtaugh, Richfield, Dietrich, Gooding, "
+        "Hagerman, Wendell, Jerome, Kimberly, Hansen, Filer, and Shoshone"
+    )
+    description = (
+        "HAZARD...Damaging winds to 70 mph and golf ball size hail.\n\n"
+        f"Locations impacted include...{long_locations}"
+    )
+    d = {
+        "eventCode": {"SAME": ["SVR"]},
+        "certainty": "Observed",
+        "parameters": {
+            "maxWindGust": ["70 MPH"], "maxHailSize": ["1.75"],
+            "eventMotionDescription": ["2200000T254DEG...35KT 42.5,-114.5"],
+        },
+        "description": description,
+    }
+    rendered = _render(
+        event_type="Severe Thunderstorm Warning", area_desc="Twin Falls County",
+        geocoder_city=None, county="Twin Falls", state="ID",
+        expires_epoch=1_751_400_000, lat=42.5, lon=-114.46,
+        now=1_751_400_000, d=d,
+    )
+    assert len(rendered) <= 140
+    assert "70mph winds" in rendered
+    _assert_no_dangling_separator(rendered)
