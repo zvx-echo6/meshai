@@ -118,6 +118,28 @@ class MeshCoreTransport(MeshTransport):
         self._loop = None
         self._loop_thread = None
 
+    def _resolve_contact(self, dest: str):
+        """Resolve a pubkey prefix (or key) to the full MeshCore contact dict.
+
+        Refreshes the roster first (ensure_contacts) so the lib can upgrade the
+        6-byte prefix to the full 32-byte key and run reset_path->flood. Returns
+        None if the contact can't be resolved. This mirrors what every working
+        meshcore project does before send_msg_with_retry (never send to a bare prefix).
+        """
+        if self._mc is None:
+            return None
+        ensure = getattr(self._mc, "ensure_contacts", None)
+        if ensure is not None:
+            try:
+                self._run_coro(ensure(), timeout=15)
+            except Exception:
+                logger.debug("MeshCore: ensure_contacts (resolve) failed", exc_info=True)
+        try:
+            return self._mc.get_contact_by_key_prefix(dest)
+        except Exception:
+            logger.debug("MeshCore: get_contact_by_key_prefix failed for %s", dest, exc_info=True)
+            return None
+
     # ------------------------------------------------------------------
     # Channel table enumeration
     # ------------------------------------------------------------------
@@ -322,6 +344,7 @@ class MeshCoreTransport(MeshTransport):
         self._mc.subscribe(EventType.CHANNEL_MSG_RECV, self._on_channel_event)
         self._mc.subscribe(EventType.DISCONNECTED, self._on_disconnect_event)
         self._mc.subscribe(EventType.CONNECTED, self._on_connect_event)
+        self._mc.subscribe(EventType.ACK, self._on_ack_event)
         try:
             await self._mc.ensure_contacts()
         except Exception:
@@ -468,21 +491,23 @@ class MeshCoreTransport(MeshTransport):
 
         try:
             if destination:
-                # DM: use the retry/flood-capable send so replies actually deliver.
-                # Plain send_msg is fire-and-forget (MSG_SENT != delivered) with no flood
-                # fallback, so DMs to nodes without an established direct path silently drop.
-                # send_msg_with_retry resolves the contact, floods when needed, waits for ACK,
-                # and returns None if no ACK (delivery not confirmed).
-                logger.debug("MeshCore: sending DM to %s", destination[:40])
+                contact = self._resolve_contact(destination)
+                if contact is None:
+                    logger.warning(
+                        "MeshCore: could not resolve a contact for DM dest %s; cannot address reply "
+                        "(recipient not in roster)", destination,
+                    )
+                    return False
+                label = contact.get("adv_name") or contact.get("name") or destination
+                logger.debug("MeshCore: sending DM to %s via resolved contact", label)
+                # Pass the CONTACT OBJECT (not the bare prefix) so the lib can upgrade to the
+                # full key and reset_path->flood works — the pattern used by all working projects.
                 result = self._run_coro(
-                    self._mc.commands.send_msg_with_retry(destination, text),
+                    self._mc.commands.send_msg_with_retry(contact, text),
                     timeout=40,
                 )
                 if result is None:
-                    logger.warning(
-                        "MeshCoreTransport: DM to %s not ACKed (delivery not confirmed)",
-                        destination,
-                    )
+                    logger.warning("MeshCoreTransport: DM to %s not ACKed (delivery not confirmed)", label)
                     return False
                 success = not result.is_error()
                 if not success:
@@ -660,6 +685,9 @@ class MeshCoreTransport(MeshTransport):
             logger.debug("MeshCoreTransport: dispatched message to meshai")
         except Exception as exc:
             logger.error("MeshCoreTransport: error dispatching message: %s", exc)
+
+    def _on_ack_event(self, event) -> None:
+        logger.info("MeshCore: ACK event received: %r", getattr(event, "payload", None))
 
     def _on_disconnect_event(self, event=None) -> None:
         """Track link state: DISCONNECTED."""
