@@ -164,6 +164,28 @@ MeshAI pulls real-time situational data and turns it into LoRa broadcasts and qu
 
 Everything is switched on/off and tuned from the dashboard's **Data Feeds** page — enable a source, set thresholds and geography, and route its output per-mesh on the **Routing** page. Broadcast wording is tightened to fit a single LoRa packet without dropping the important details (e.g. affected towns on a weather alert).
 
+### Native adapters vs. Central
+
+Each hazard feed can get its data one of two ways, chosen per-feed with a `feed_source` switch:
+
+- **`native`** — MeshAI fetches the source's public API **directly** (api.weather.gov, NIFC, USGS, NOAA SWPC, NASA FIRMS, TomTom, 511, avalanche centers). Self-contained — no extra infrastructure. This is the default and the original data path.
+- **`central`** — MeshAI subscribes to **Central**, a companion service that pre-aggregates the same hazard data and republishes it as a **NATS JetStream** firehose, so many bots/nodes can share one set of upstream API calls and geo/severity filtering instead of each hammering the source APIs.
+
+```yaml
+environmental:
+  central:
+    enabled: true
+    url: "nats://central.echo6.mesh:4222"   # NATS server (tailnet-gated, no auth)
+    durable: "meshai-consumer"              # durable consumer name prefix
+    region: "us.id"                         # server-side subject filtering
+    connect_timeout: 10
+  nws:   { feed_source: central }           # this feed comes from Central …
+  fires: { feed_source: native }            # … this one is fetched directly
+  # …one feed_source per hazard adapter
+```
+
+Native and Central are **mutually exclusive per feed** — flip any adapter between them independently. Two special cases: **`satpass`** is Central-only (there's no native predictor), and **`ducting`** (VHF tropo) is native-only (no Central equivalent). If Central drops **at runtime** the NATS client auto-reconnects and durable consumers resume where they left off; the LLM bot, both transports, and mesh-health keep running regardless — only the Central-sourced hazard feeds pause. (Note: with feeds set to `central`, MeshAI currently expects Central reachable at startup — run the affected feeds as `native` if you don't have a Central instance.)
+
 ---
 
 ## Knowledge base (RAG)
