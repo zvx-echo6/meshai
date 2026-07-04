@@ -312,13 +312,22 @@ class MeshCoreTransport(MeshTransport):
         return mc
 
     async def _setup_subscriptions(self) -> None:
-        """Start auto message fetching and subscribe to inbound events."""
+        """Subscribe to inbound events, then start auto message fetching."""
         from meshcore import EventType  # noqa: PLC0415
-        await self._mc.start_auto_message_fetching()
+        # Subscribe BEFORE starting auto-fetch: start_auto_message_fetching() drains
+        # the companion queue immediately, which would dispatch CONTACT_MSG_RECV before
+        # our handler is registered and silently lose a DM queued at connect time.
+        # (Canonical lib order: subscribe -> ensure_contacts -> start fetching.)
         self._mc.subscribe(EventType.CONTACT_MSG_RECV, self._on_dm_event)
         self._mc.subscribe(EventType.CHANNEL_MSG_RECV, self._on_channel_event)
         self._mc.subscribe(EventType.DISCONNECTED, self._on_disconnect_event)
         self._mc.subscribe(EventType.CONNECTED, self._on_connect_event)
+        try:
+            await self._mc.ensure_contacts()
+        except Exception:
+            logger.debug("MeshCore: ensure_contacts failed (non-fatal)", exc_info=True)
+        await self._mc.start_auto_message_fetching()
+        logger.info("MeshCore: subscriptions registered; auto message-fetch started")
 
     async def _do_disconnect(self) -> None:
         """Stop fetching and close the meshcore connection."""
@@ -459,10 +468,26 @@ class MeshCoreTransport(MeshTransport):
 
         try:
             if destination:
-                # DM: meshcore_channel is irrelevant; route by pubkey.
+                # DM: use the retry/flood-capable send so replies actually deliver.
+                # Plain send_msg is fire-and-forget (MSG_SENT != delivered) with no flood
+                # fallback, so DMs to nodes without an established direct path silently drop.
+                # send_msg_with_retry resolves the contact, floods when needed, waits for ACK,
+                # and returns None if no ACK (delivery not confirmed).
+                logger.debug("MeshCore: sending DM to %s", destination[:40])
                 result = self._run_coro(
-                    self._mc.commands.send_msg(destination, text)
+                    self._mc.commands.send_msg_with_retry(destination, text),
+                    timeout=40,
                 )
+                if result is None:
+                    logger.warning(
+                        "MeshCoreTransport: DM to %s not ACKed (delivery not confirmed)",
+                        destination,
+                    )
+                    return False
+                success = not result.is_error()
+                if not success:
+                    logger.warning("MeshCoreTransport: DM send returned error event")
+                return success
             else:
                 # Channel broadcast.
                 # Channel-index semantics do NOT cross transports: the passed
@@ -587,10 +612,22 @@ class MeshCoreTransport(MeshTransport):
 
     def _on_dm_event(self, event) -> None:
         """Handle CONTACT_MSG_RECV: normalize, filter, and dispatch to meshai."""
+        try:
+            _p = event.payload or {}
+            _sender = _p.get("pubkey_prefix", "?")
+            _preview = str(_p.get("text", ""))[:40]
+        except Exception:
+            _sender = repr(event)[:40]
+            _preview = ""
+        logger.info("MeshCore: inbound DM from %s: %r", _sender, _preview)
         msg = self._normalize_dm_event(event)
-        if msg is None or not mc_context_allows(
+        if msg is None:
+            logger.debug("MeshCore: DM from %s dropped (normalize returned None)", _sender)
+            return
+        if not mc_context_allows(
             self._mc_context, msg, {v: k for k, v in self._chan_name_to_idx.items()}
         ):
+            logger.debug("MeshCore: DM from %s dropped by context gate", _sender)
             return
         self._dispatch_message(msg)
 
@@ -610,11 +647,17 @@ class MeshCoreTransport(MeshTransport):
             loop.call_soon_threadsafe(lambda m=msg: asyncio.create_task(cb(m)))
         """
         if msg is None or self._message_callback is None or self._callback_loop is None:
+            logger.debug(
+                "MeshCoreTransport: _dispatch_message dropped (msg=%s callback=%s loop=%s)",
+                msg is not None, self._message_callback is not None,
+                self._callback_loop is not None,
+            )
             return
         try:
             self._callback_loop.call_soon_threadsafe(
                 lambda m=msg: asyncio.create_task(self._message_callback(m))
             )
+            logger.debug("MeshCoreTransport: dispatched message to meshai")
         except Exception as exc:
             logger.error("MeshCoreTransport: error dispatching message: %s", exc)
 

@@ -218,8 +218,11 @@ async def test_llm_connection(request: Request):
         else:
             return {"success": False, "error": f"Unknown backend: {backend_name}"}
 
-        # Send test prompt
-        response = await backend.generate("Reply with 'OK' if you can read this.", [])
+        # Send test prompt — generate(messages: list[dict], system_prompt: str)
+        response = await backend.generate(
+            [{"role": "user", "content": "Reply with 'OK' if you can read this."}],
+            "",
+        )
         await backend.close()
 
         return {"success": True, "response": response}
