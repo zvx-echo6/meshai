@@ -45,7 +45,7 @@ context:
   enabled: true                  # Observe channel traffic for LLM context
   observe_channels: []           # Channel indices to observe (empty = all)
   ignore_nodes: []               # Node IDs to exclude from observation
-  max_age: 2592000               # Max age in seconds (default 30 days)
+  max_age: 1209600               # Max age in seconds (default 14 days)
   max_context_items: 20          # Max observations injected into LLM context
 
 # === LLM BACKEND ===

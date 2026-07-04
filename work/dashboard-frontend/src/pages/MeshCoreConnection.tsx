@@ -303,7 +303,7 @@ export default function MeshCoreConnection() {
                 </div>
               )}
             </div>
-            <p className="text-xs text-slate-600">Channels to monitor (none selected = observe all)</p>
+            <p className="text-xs text-slate-600">Choose which MeshCore channels feed MeshAI's context. Empty = none are watched — pick channels to include their chatter in what the bot knows about the mesh. Leave busy/public channels out to keep them out of context.</p>
           </div>
           <ListInput
             label="Ignore MeshCore Contacts"
@@ -313,11 +313,10 @@ export default function MeshCoreConnection() {
             info="Messages from these MeshCore contacts won't be included in passive context. Enter contact names or public-key prefixes."
           />
           <Toggle
-            label="Respond to DMs"
+            label="Answer direct messages"
             checked={!!mcContext.respond_to_dms}
             onChange={(v) => setMcContext({ ...mcContext, respond_to_dms: v })}
-            helper="Reply when someone sends a MeshCore direct message"
-            info="When enabled, the bot responds to MeshCore direct messages. When disabled, it only responds to channel messages that mention its name."
+            helper="When on, MeshAI replies to MeshCore direct messages using the LLM. Applies to MeshCore only."
           />
         </div>
       )}

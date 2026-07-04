@@ -23,6 +23,7 @@ class MeshObservation:
     channel: int
     is_dm: bool
     text: str
+    transport: str = "meshtastic"
 
 
 class MeshContext:
@@ -58,6 +59,7 @@ class MeshContext:
         text: str,
         channel: int,
         is_dm: bool,
+        transport: str = "meshtastic",
     ) -> None:
         """Record an observed mesh message.
 
@@ -67,14 +69,19 @@ class MeshContext:
             text: Message text
             channel: Channel index
             is_dm: Whether this was a DM
+            transport: Origin transport ("meshtastic" or "meshcore")
         """
         # Filter by node
         if sender_id in self._ignore_nodes:
             return
 
-        # Filter by channel (None = observe all)
-        if self._observe_channels is not None and channel not in self._observe_channels:
-            return
+        # Filter by channel (None = observe all) — applies ONLY to Meshtastic
+        # observations because _observe_channels contains Meshtastic channel
+        # indices which have no relationship to MeshCore slot indices.
+        # MeshCore channel filtering is handled at the transport layer.
+        if transport == "meshtastic":
+            if self._observe_channels is not None and channel not in self._observe_channels:
+                return
 
         obs = MeshObservation(
             timestamp=time.time(),
@@ -83,9 +90,10 @@ class MeshContext:
             channel=channel,
             is_dm=is_dm,
             text=text,
+            transport=transport,
         )
         self._buffer.append(obs)
-        logger.debug(f"Observed: ch{channel} {sender_name}: {text[:40]}...")
+        logger.debug(f"Observed: ch{channel} {sender_name} [{transport}]: {text[:40]}...")
 
     def prune(self) -> int:
         """Remove observations older than max_age.
@@ -107,11 +115,14 @@ class MeshContext:
             logger.info(f"Pruned {pruned} expired mesh observations ({len(self._buffer)} remaining)")
         return pruned
 
-    def get_context_block(self, max_items: int = 20) -> str:
+    def get_context_block(self, max_items: int = 20, transport: Optional[str] = None) -> str:
         """Format recent observations as a context block for the LLM.
 
         Args:
             max_items: Maximum observations to include
+            transport: When provided, include only observations from this
+                transport ("meshtastic" or "meshcore"). When None, include
+                all observations (backward-compatible).
 
         Returns:
             Formatted context string, or empty string if no observations
@@ -123,6 +134,8 @@ class MeshContext:
         for obs in reversed(self._buffer):
             if len(recent) >= max_items:
                 break
+            if transport is not None and obs.transport != transport:
+                continue
             recent.append(obs)
 
         if not recent:

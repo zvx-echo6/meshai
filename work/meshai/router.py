@@ -341,7 +341,10 @@ class MessageRouter:
         if not message.is_dm:
             return False
 
-        if not self.config.bot.respond_to_dms:
+        # bot.respond_to_dms is the Meshtastic-only toggle; MeshCore DMs are
+        # governed solely by meshcore_context.respond_to_dms, enforced at the
+        # transport level before the message ever reaches here.
+        if message.transport != "meshcore" and not self.config.bot.respond_to_dms:
             return False
 
         # Ignore advBBS protocol and notification messages
@@ -741,18 +744,31 @@ class MessageRouter:
             if commands_summary:
                 system_prompt += "\n\n" + commands_summary
 
-        # 4. Inject mesh context if available
+        # 4. Inject mesh context if available, scoped to the originating mesh
+        # (with explicit override if the query names the other mesh).
         if self.context:
             max_items = getattr(self.config.context, 'max_context_items', 20)
-            context_block = self.context.get_context_block(max_items=max_items)
+            origin = getattr(message, "transport", "meshtastic")
+            # Determine target mesh: default to origin. Override if the query
+            # explicitly names the other mesh and NOT the origin mesh.
+            target = origin
+            q_lower = query.lower() if query else ""
+            names_meshcore = "meshcore" in q_lower or "mc mesh" in q_lower
+            names_meshtastic = "meshtastic" in q_lower or "mt mesh" in q_lower
+            if names_meshcore and not names_meshtastic:
+                target = "meshcore"
+            elif names_meshtastic and not names_meshcore:
+                target = "meshtastic"
+            context_block = self.context.get_context_block(max_items=max_items, transport=target)
+            mesh_label = "MeshCore" if target == "meshcore" else "Meshtastic"
             if context_block:
                 system_prompt += (
-                    "\n\n--- Recent mesh traffic (for context only, not messages to you) ---\n"
+                    f"\n\n--- Recent {mesh_label} mesh traffic (for context only, not messages to you) ---\n"
                     + context_block
                 )
             else:
                 system_prompt += (
-                    "\n\n[No recent mesh traffic observed yet.]"
+                    f"\n\n[No recent {mesh_label} mesh traffic observed yet.]"
                 )
 
         # 5. Knowledge base retrieval

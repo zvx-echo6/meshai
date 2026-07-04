@@ -101,7 +101,7 @@ class ContextConfig:
     use_tls: bool = False       # Enable TLS for MQTT connection
     observe_channels: list[int] = field(default_factory=list)  # Empty = all channels
     ignore_nodes: list[str] = field(default_factory=list)  # Node IDs to ignore
-    max_age: int = 2_592_000  # 30 days in seconds
+    max_age: int = 1_209_600  # 14 days in seconds
     max_context_items: int = 20  # Max observations injected into LLM context
 
 
@@ -109,7 +109,7 @@ class ContextConfig:
 class MeshCoreContextConfig:
     """MeshCore passive-context / bot-behavior settings (MeshCore-native)."""
     enable_passive_context: bool = True
-    observe_channels: list[str] = field(default_factory=list)  # channel NAMES, empty = all
+    observe_channels: list[str] = field(default_factory=list)  # channel NAMES, empty = none (opt-in): only listed channels feed context
     ignore_contacts: list[str] = field(default_factory=list)   # contact names or pubkey prefixes
     respond_to_dms: bool = True
 

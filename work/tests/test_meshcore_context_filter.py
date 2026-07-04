@@ -39,9 +39,12 @@ def test_cfg_none_always_passes():
 
 
 def test_defaults_pass_through():
+    # With opt-in semantics: empty observe_channels = observe NONE for channels.
+    # DMs still pass (respond_to_dms=True by default).
     cfg = MeshCoreContextConfig()  # empty lists, passive on, respond_to_dms on
     idx_to_name = {1: "#general"}
-    assert mc_context_allows(cfg, _chan(channel=1), idx_to_name) is True
+    # Channel: empty observe_channels now means NONE are observed (opt-in)
+    assert mc_context_allows(cfg, _chan(channel=1), idx_to_name) is False
     assert mc_context_allows(cfg, _dm(), idx_to_name) is True
 
 
@@ -67,12 +70,14 @@ def test_ignore_contacts_matches_id_or_name():
 
 
 def test_respond_to_dms_false_drops_dms_only():
-    cfg = MeshCoreContextConfig(respond_to_dms=False)
+    # observe_channels must be non-empty for channel msgs to be forwarded
+    # (opt-in: empty = none).  Only DM behavior is being tested here.
+    cfg = MeshCoreContextConfig(respond_to_dms=False, observe_channels=["#general"])
     idx_to_name = {1: "#general"}
     # any DM dropped
     assert mc_context_allows(cfg, _dm(), idx_to_name) is False
     assert mc_context_allows(cfg, _dm(sender_id="zzzz", sender_name="Zed"), idx_to_name) is False
-    # channel msgs unaffected (passive still on)
+    # channel msgs unaffected (passive still on, channel in observe list)
     assert mc_context_allows(cfg, _chan(channel=1), idx_to_name) is True
 
 
