@@ -1,10 +1,12 @@
-"""Focused tests for the MeshCore DM delivery fix.
+"""Focused tests for the MeshCore DM direct-route delivery fix.
 
 Verifies that send_message(..., destination=...) resolves the destination to
-the full contact object before calling send_msg_with_retry (never passes a bare
-prefix string), and correctly maps the return value to True/False:
-  - non-error Event returned  → True  (ACKed, delivered)
-  - None returned             → False (no ACK, delivery not confirmed)
+the full contact object, calls _establish_direct_path (path discovery via
+send_path_discovery_sync) BEFORE send_msg, uses plain send_msg (NOT
+send_msg_with_retry), and correctly maps the return value to True/False:
+  - non-error Event returned  → True  (sent, route logged)
+  - None returned             → False (no send result)
+  - error Event returned      → False
   - contact not in roster     → False (logged warning, send never called)
 
 The meshcore lib is mocked via sys.modules (same pattern as the existing
@@ -19,7 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Contact dict returned by the fake roster — 64-hex public_key, adv_name, out_path_len.
+# Contact dict returned by the fake roster — 64-hex public_key, adv_name, out_path_len=-1 (flood).
 _CONTACT_DICT = {
     "public_key": "a" * 64,
     "adv_name": "K7ZVX Matt",
@@ -82,7 +84,26 @@ def _ensure_fake_meshcore():
                 return result
 
             @staticmethod
-            async def send_msg(dst, text):
+            async def send_msg(dst, text, timestamp=None, attempt=0):
+                result = MagicMock()
+                result.is_error.return_value = False
+                result.payload = {"type": 0, "expected_ack": "00000000"}
+                return result
+
+            @staticmethod
+            async def send_path_discovery_sync(dst, timeout=0, min_timeout=0):
+                result = MagicMock()
+                result.is_error.return_value = False
+                return result
+
+            @staticmethod
+            async def get_advert_path(key):
+                result = MagicMock()
+                result.is_error.return_value = True  # default: not found
+                return result
+
+            @staticmethod
+            async def update_contact(contact, path=None, flags=None, path_hash_mode=None):
                 result = MagicMock()
                 result.is_error.return_value = False
                 return result
@@ -109,6 +130,28 @@ def _mc_config():
     return ConnectionConfig(meshcore_host="127.0.0.1", meshcore_port=5050)
 
 
+def _ok_event(route_type: int = 0):
+    """Non-error Event-like mock with MSG_SENT payload (0=direct, 1=flood)."""
+    ev = MagicMock()
+    ev.is_error.return_value = False
+    ev.payload = {"type": route_type, "expected_ack": "deadbeef"}
+    return ev
+
+
+def _err_event():
+    ev = MagicMock()
+    ev.is_error.return_value = True
+    ev.payload = {"reason": "test error"}
+    return ev
+
+
+def _path_event():
+    """Non-error PATH_RESPONSE-like Event mock."""
+    ev = MagicMock()
+    ev.is_error.return_value = False
+    return ev
+
+
 def _transport_with_mc_mock(contact=_CONTACT_DICT):
     """Return a MeshCoreTransport with _mc as a MagicMock (no loop thread).
 
@@ -119,12 +162,20 @@ def _transport_with_mc_mock(contact=_CONTACT_DICT):
     The mock exposes:
       - mc.get_contact_by_key_prefix(prefix) → contact dict (or None when contact=None)
       - mc.ensure_contacts is an AsyncMock (async, returns True)
+      - mc.commands.send_path_discovery_sync: AsyncMock → _path_event()
+      - mc.commands.send_msg: AsyncMock → _ok_event()
+      - mc.commands.get_advert_path: AsyncMock → _err_event() (not found by default)
+      - mc.commands.update_contact: AsyncMock → _ok_event()
     """
     cfg = _mc_config()
     t = MeshCoreTransport(cfg)
     mc = MagicMock()
     mc.get_contact_by_key_prefix.return_value = contact
     mc.ensure_contacts = AsyncMock(return_value=True)
+    mc.commands.send_path_discovery_sync = AsyncMock(return_value=_path_event())
+    mc.commands.send_msg = AsyncMock(return_value=_ok_event())
+    mc.commands.get_advert_path = AsyncMock(return_value=_err_event())
+    mc.commands.update_contact = AsyncMock(return_value=_ok_event())
     t._mc = mc
     t._connected = True
 
@@ -144,79 +195,144 @@ def _transport_with_mc_mock(contact=_CONTACT_DICT):
 # ---------------------------------------------------------------------------
 
 class TestMeshCoreDMDelivery:
-    """send_message with destination= must resolve the contact and use send_msg_with_retry."""
+    """send_message with destination= must call path discovery then plain send_msg."""
 
-    def test_acked_dm_returns_true_and_uses_send_msg_with_retry(self):
-        """ACK received (non-error Event) → returns True; send_msg_with_retry called with CONTACT OBJECT."""
+    def test_successful_dm_returns_true(self):
+        """Non-error send_msg result → True."""
         t, mc = _transport_with_mc_mock()
-
-        ok_event = MagicMock()
-        ok_event.is_error.return_value = False
-        mc.commands.send_msg_with_retry = AsyncMock(return_value=ok_event)
-        mc.commands.send_msg = AsyncMock()  # must NOT be called
 
         result = t.send_message("reply text", destination="aabbccdd1122")
 
         assert result is True
-        # Must pass the CONTACT OBJECT (dict), not the bare prefix string.
-        mc.commands.send_msg_with_retry.assert_awaited_once_with(_CONTACT_DICT, "reply text")
-        mc.commands.send_msg.assert_not_awaited()
 
-    def test_no_ack_returns_false(self):
-        """No ACK (send_msg_with_retry returns None) → returns False."""
+    def test_path_discovery_called_before_send_msg(self):
+        """send_path_discovery_sync must be called before send_msg."""
+        t, mc = _transport_with_mc_mock()
+        call_order = []
+
+        async def fake_pds(dst, timeout=0, min_timeout=0):
+            call_order.append("discovery")
+            return _path_event()
+
+        async def fake_send(dst, text, timestamp=None, attempt=0):
+            call_order.append("send_msg")
+            return _ok_event()
+
+        mc.commands.send_path_discovery_sync = fake_pds
+        mc.commands.send_msg = fake_send
+
+        t.send_message("hello", destination="aabbccdd1122")
+
+        assert "discovery" in call_order, "send_path_discovery_sync was never called"
+        assert "send_msg" in call_order, "send_msg was never called"
+        assert call_order.index("discovery") < call_order.index("send_msg"), (
+            "send_path_discovery_sync must be called before send_msg"
+        )
+
+    def test_send_msg_used_not_send_msg_with_retry(self):
+        """Plain send_msg (not send_msg_with_retry) must be used for DMs."""
+        t, mc = _transport_with_mc_mock()
+        mc.commands.send_msg_with_retry = AsyncMock()  # must NOT be called
+
+        t.send_message("reply text", destination="aabbccdd1122")
+
+        mc.commands.send_msg.assert_awaited()
+        mc.commands.send_msg_with_retry.assert_not_awaited()
+
+    def test_send_msg_receives_contact_dict(self):
+        """send_msg must receive the resolved contact dict as its first argument."""
         t, mc = _transport_with_mc_mock()
 
-        mc.commands.send_msg_with_retry = AsyncMock(return_value=None)
+        t.send_message("reply text", destination="aabbccdd1122")
+
+        args, _ = mc.commands.send_msg.await_args
+        assert args[0] == _CONTACT_DICT, (
+            f"send_msg first arg should be the contact dict, got {args[0]!r}"
+        )
+
+    def test_none_send_result_returns_false(self):
+        """send_msg returning None → False."""
+        t, mc = _transport_with_mc_mock()
+        mc.commands.send_msg = AsyncMock(return_value=None)
 
         result = t.send_message("reply text", destination="aabbccdd1122")
 
         assert result is False
-        mc.commands.send_msg_with_retry.assert_awaited_once_with(_CONTACT_DICT, "reply text")
+
+    def test_none_send_result_logs_warning(self, caplog):
+        """send_msg returning None → warning is logged."""
+        import logging
+        t, mc = _transport_with_mc_mock()
+        mc.commands.send_msg = AsyncMock(return_value=None)
+
+        with caplog.at_level(logging.WARNING):
+            t.send_message("msg", destination="deadbeef0011")
+
+        assert any("no send result" in r.getMessage() for r in caplog.records)
 
     def test_error_event_returns_false(self):
-        """Error event returned by send_msg_with_retry → returns False."""
+        """Error event returned by send_msg → False."""
         t, mc = _transport_with_mc_mock()
-
-        err_event = MagicMock()
-        err_event.is_error.return_value = True
-        mc.commands.send_msg_with_retry = AsyncMock(return_value=err_event)
+        mc.commands.send_msg = AsyncMock(return_value=_err_event())
 
         result = t.send_message("fail text", destination="deadbeef0011")
 
         assert result is False
 
-    def test_no_ack_logs_warning(self, caplog):
-        """No ACK → a warning mentioning the destination is logged."""
-        import logging
-        t, mc = _transport_with_mc_mock()
-        mc.commands.send_msg_with_retry = AsyncMock(return_value=None)
-
-        with caplog.at_level(logging.WARNING):
-            t.send_message("msg", destination="deadbeef0011")
-
-        assert any(
-            "not ACKed" in r.getMessage() or "delivery not confirmed" in r.getMessage()
-            for r in caplog.records
-        )
-
     def test_unresolved_contact_returns_false_without_calling_send(self):
-        """When get_contact_by_key_prefix returns None, send_message returns False and never calls send_msg_with_retry."""
+        """When get_contact_by_key_prefix returns None, returns False and never calls send_msg."""
         t, mc = _transport_with_mc_mock(contact=None)
-
-        mc.commands.send_msg_with_retry = AsyncMock()
 
         result = t.send_message("hello", destination="deadbeef0011")
 
         assert result is False
-        mc.commands.send_msg_with_retry.assert_not_awaited()
+        mc.commands.send_msg.assert_not_awaited()
 
     def test_unresolved_contact_logs_warning(self, caplog):
-        """Unresolved contact → a warning about 'not in roster' is logged."""
+        """Unresolved contact → a warning about inability to reply is logged."""
         import logging
         t, mc = _transport_with_mc_mock(contact=None)
-        mc.commands.send_msg_with_retry = AsyncMock()
 
         with caplog.at_level(logging.WARNING):
             t.send_message("hello", destination="deadbeef0011")
 
-        assert any("not in roster" in r.getMessage() for r in caplog.records)
+        assert any("cannot reply" in r.getMessage() for r in caplog.records)
+
+    def test_path_discovery_failure_does_not_prevent_send(self):
+        """If path discovery raises, send_msg is still attempted (best-effort)."""
+        t, mc = _transport_with_mc_mock()
+        mc.commands.send_path_discovery_sync = AsyncMock(
+            side_effect=RuntimeError("discovery timed out")
+        )
+
+        result = t.send_message("hello", destination="aabbccdd1122")
+
+        mc.commands.send_msg.assert_awaited()
+        assert result is True
+
+    def test_advert_path_fallback_invoked_when_still_flood(self):
+        """When contact is still flood after path discovery, get_advert_path + update_contact are called."""
+        t, mc = _transport_with_mc_mock()
+        # Path discovery returns None (no PATH_RESPONSE) — contact stays flood.
+        mc.commands.send_path_discovery_sync = AsyncMock(return_value=None)
+        # Advert path returns a real direct path.
+        ap_ev = MagicMock()
+        ap_ev.is_error.return_value = False
+        ap_ev.payload = {"path": "aabbcc1122dd", "path_len": 2, "path_hash_mode": 0}
+        mc.commands.get_advert_path = AsyncMock(return_value=ap_ev)
+
+        t.send_message("hello", destination="aabbccdd1122")
+
+        mc.commands.get_advert_path.assert_awaited()
+        mc.commands.update_contact.assert_awaited()
+
+    def test_direct_route_type_logged(self, caplog):
+        """When send_msg reports route type 0 (direct), 'direct' is logged."""
+        import logging
+        t, mc = _transport_with_mc_mock()
+        mc.commands.send_msg = AsyncMock(return_value=_ok_event(route_type=0))
+
+        with caplog.at_level(logging.INFO):
+            t.send_message("hi", destination="aabbccdd1122")
+
+        assert any("direct" in r.getMessage() for r in caplog.records)

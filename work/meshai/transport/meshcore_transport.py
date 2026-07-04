@@ -122,9 +122,8 @@ class MeshCoreTransport(MeshTransport):
         """Resolve a pubkey prefix (or key) to the full MeshCore contact dict.
 
         Refreshes the roster first (ensure_contacts) so the lib can upgrade the
-        6-byte prefix to the full 32-byte key and run reset_path->flood. Returns
-        None if the contact can't be resolved. This mirrors what every working
-        meshcore project does before send_msg_with_retry (never send to a bare prefix).
+        6-byte prefix to the full 32-byte key. Returns None if the contact can't
+        be resolved.
         """
         if self._mc is None:
             return None
@@ -139,6 +138,76 @@ class MeshCoreTransport(MeshTransport):
         except Exception:
             logger.debug("MeshCore: get_contact_by_key_prefix failed for %s", dest, exc_info=True)
             return None
+
+    def _establish_direct_path(self, contact: dict, dst: str) -> None:
+        """Best-effort: establish a DIRECT route to *contact* before replying.
+
+        Runs path discovery (CMD 52) so the recipient returns a PATH packet; the
+        lib updates the contact's out_path and subsequent send_msg goes DIRECT
+        instead of flood (flood DMs are silently rejected on this mesh).
+
+        Falls back to seeding the path from a cached advert path if discovery
+        times out and the contact is still marked as flood (out_path_len == -1).
+
+        Never raises; all steps are individually guarded.
+        """
+        label = contact.get("adv_name") or dst
+
+        # Step 1: trigger path discovery (CMD 52 → 0x34); wait for PATH_RESPONSE.
+        # The lib updates the contact's out_path internally when it receives the
+        # response, so a subsequent send_msg will use the direct route.
+        try:
+            path_event = self._run_coro(
+                self._mc.commands.send_path_discovery_sync(contact, timeout=25),
+                timeout=30,
+            )
+            if path_event is not None and not path_event.is_error():
+                logger.info(
+                    "MeshCore: path discovery to %s succeeded (PATH_RESPONSE received)", label
+                )
+            else:
+                logger.info(
+                    "MeshCore: path discovery to %s — no PATH_RESPONSE; trying advert-path fallback",
+                    label,
+                )
+        except Exception as exc:
+            logger.debug("MeshCore: send_path_discovery_sync to %s failed: %s", dst, exc)
+
+        # Step 2 (fallback): if the contact is still flood after discovery,
+        # seed the route from a cached advert path.
+        try:
+            fresh_contact = self._resolve_contact(dst) or contact
+            if fresh_contact.get("out_path_len", -1) < 0:
+                try:
+                    ap_event = self._run_coro(
+                        self._mc.commands.get_advert_path(fresh_contact),
+                        timeout=10,
+                    )
+                    if (
+                        ap_event is not None
+                        and not ap_event.is_error()
+                        and isinstance(getattr(ap_event, "payload", None), dict)
+                    ):
+                        path_hex = ap_event.payload.get("path", "")
+                        path_len = ap_event.payload.get("path_len", -1)
+                        if path_len > 0 and path_hex:
+                            self._run_coro(
+                                self._mc.commands.update_contact(fresh_contact, path=path_hex),
+                                timeout=10,
+                            )
+                            logger.info(
+                                "MeshCore: seeded direct path for %s from advert-path cache (len=%d)",
+                                fresh_contact.get("adv_name") or dst,
+                                path_len,
+                            )
+                        else:
+                            logger.debug(
+                                "MeshCore: advert-path for %s is flood/empty — leaving as flood", dst
+                            )
+                except Exception as exc:
+                    logger.debug("MeshCore: advert-path fallback for %s failed: %s", dst, exc)
+        except Exception as exc:
+            logger.debug("MeshCore: _establish_direct_path step-2 error for %s: %s", dst, exc)
 
     # ------------------------------------------------------------------
     # Channel table enumeration
@@ -494,21 +563,38 @@ class MeshCoreTransport(MeshTransport):
                 contact = self._resolve_contact(destination)
                 if contact is None:
                     logger.warning(
-                        "MeshCore: could not resolve a contact for DM dest %s; cannot address reply "
-                        "(recipient not in roster)", destination,
+                        "MeshCore: could not resolve contact for DM dest %s; cannot reply",
+                        destination,
                     )
                     return False
-                label = contact.get("adv_name") or contact.get("name") or destination
-                logger.debug("MeshCore: sending DM to %s via resolved contact", label)
-                # Pass the CONTACT OBJECT (not the bare prefix) so the lib can upgrade to the
-                # full key and reset_path->flood works — the pattern used by all working projects.
+                # Establish a real route so the reply goes DIRECT — flood DMs are
+                # silently rejected on this mesh.
+                self._establish_direct_path(contact, destination)
+                # Re-resolve so we send with the freshly-learned out_path.
+                contact = self._resolve_contact(destination) or contact
+                # Plain send_msg (NOT send_msg_with_retry — that calls reset_path
+                # which forces flood, defeating the path we just established).
                 result = self._run_coro(
-                    self._mc.commands.send_msg_with_retry(contact, text),
-                    timeout=40,
+                    self._mc.commands.send_msg(contact, text),
+                    timeout=15,
                 )
                 if result is None:
-                    logger.warning("MeshCoreTransport: DM to %s not ACKed (delivery not confirmed)", label)
+                    logger.warning("MeshCoreTransport: DM to %s — no send result", destination)
                     return False
+                # Log whether the radio sent DIRECT or FLOOD from RESP_CODE_SENT type field.
+                try:
+                    sent_type = (
+                        result.payload.get("type")
+                        if hasattr(result, "payload") and isinstance(result.payload, dict)
+                        else None
+                    )
+                    logger.info(
+                        "MeshCore: DM to %s sent (route=%s)",
+                        contact.get("adv_name") or destination,
+                        "flood" if sent_type == 1 else ("direct" if sent_type == 0 else "?"),
+                    )
+                except Exception:
+                    pass
                 success = not result.is_error()
                 if not success:
                     logger.warning("MeshCoreTransport: DM send returned error event")

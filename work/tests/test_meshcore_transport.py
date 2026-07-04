@@ -334,30 +334,40 @@ _DM_CONTACT = {"public_key": "a" * 64, "adv_name": "TestContact", "out_path_len"
 
 class TestSendMessageDM:
     def test_dispatches_send_msg_with_retry(self):
+        """DM send: path discovery then plain send_msg (not send_msg_with_retry)."""
         t, mc, _ = _transport_with_mock_mc()
         try:
             # Supply a resolved contact so _resolve_contact succeeds.
             mc.get_contact_by_key_prefix.return_value = _DM_CONTACT
             mc.ensure_contacts = AsyncMock(return_value=True)
+            # Path discovery must be awaitable.
+            path_ev = MagicMock()
+            path_ev.is_error.return_value = False
+            mc.commands.send_path_discovery_sync = AsyncMock(return_value=path_ev)
             ok = MagicMock()
             ok.is_error.return_value = False
-            mc.commands.send_msg_with_retry = AsyncMock(return_value=ok)
+            ok.payload = {"type": 0, "expected_ack": "00000000"}
+            mc.commands.send_msg = AsyncMock(return_value=ok)
             result = t.send_message("hi DM", destination="aabbcc")
             assert result is True
-            # Must pass the CONTACT OBJECT (not the bare prefix) so the lib can
-            # upgrade to the full 32-byte key and attempt reset_path->flood.
-            mc.commands.send_msg_with_retry.assert_awaited_once_with(_DM_CONTACT, "hi DM")
+            # Must use send_msg (not send_msg_with_retry) with the CONTACT OBJECT.
+            mc.commands.send_msg.assert_awaited_once_with(_DM_CONTACT, "hi DM")
         finally:
             _cleanup(t)
 
     def test_send_msg_with_retry_error_returns_false(self):
+        """Error event from send_msg → False."""
         t, mc, _ = _transport_with_mock_mc()
         try:
             mc.get_contact_by_key_prefix.return_value = _DM_CONTACT
             mc.ensure_contacts = AsyncMock(return_value=True)
+            path_ev = MagicMock()
+            path_ev.is_error.return_value = False
+            mc.commands.send_path_discovery_sync = AsyncMock(return_value=path_ev)
             err = MagicMock()
             err.is_error.return_value = True
-            mc.commands.send_msg_with_retry = AsyncMock(return_value=err)
+            err.payload = {"reason": "test"}
+            mc.commands.send_msg = AsyncMock(return_value=err)
             assert t.send_message("hi", destination="deadbeef") is False
         finally:
             _cleanup(t)
