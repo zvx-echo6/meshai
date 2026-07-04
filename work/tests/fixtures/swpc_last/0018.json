@@ -1,0 +1,35 @@
+{
+  "envelope": {
+    "id": "K05A|2026-07-04 16:14:30.417",
+    "source": "central.echo6.co",
+    "type": "central.space.alert.v1",
+    "time": "2026-07-04T16:14:30.417000+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "space.alert",
+    "centralseverity": 1,
+    "specversion": "1.0",
+    "data": {
+      "id": "K05A|2026-07-04 16:14:30.417",
+      "adapter": "swpc_alerts",
+      "category": "space.alert",
+      "time": "2026-07-04T16:14:30.417000Z",
+      "expires": null,
+      "severity": 1,
+      "geo": {
+        "centroid": null,
+        "bbox": null,
+        "regions": [],
+        "primary_region": null,
+        "geometry": null
+      },
+      "data": {
+        "product_id": "K05A",
+        "issue_datetime": "2026-07-04 16:14:30.417",
+        "message": "Space Weather Message Code: ALTK05\r\nSerial Number: 2036\r\nIssue Time: 2026 Jul 04 1614 UTC\r\n\r\nALERT: Geomagnetic K-index of 5 \nThreshold Reached: 2026 Jul 04 1610 UTC\nSynoptic Period: 1500-1800\nActive Warning: YES\nNoaa Scale: G1 - Minor\nComment: \r\n\nNOAA Scale: G1 - Minor\r\n\r\nNOAA Space Weather Scale descriptions can be found at\r\nwww.swpc.noaa.gov/noaa-scales-explanation\r\n\r\nPotential Impacts: Area of impact primarily poleward of 60 degrees Geomagnetic Latitude.\r\nInduced Currents - Weak power grid fluctuations can occur.\r\nSpacecraft - Minor impact on satellite operations possible.\r\nAurora - Aurora may be visible at high latitudes, i.e., northern tier of the U.S. such as northern Michigan and Maine."
+      }
+    }
+  },
+  "subject": "central.space.alert.k05a",
+  "captured_epoch": 1783196500
+}

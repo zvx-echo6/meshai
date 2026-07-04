@@ -1,8 +1,7 @@
 """Gating/budgeting decision registry for the Phase-1+ dispatch path.
 
-DECIDERS is intentionally empty at this phase (Phase 0 scaffold).
-No category is migrated yet — all gating logic remains in the existing
-handler modules (wfigs_handler, nws_handler, etc.).  Zero behavior change.
+Phase-1: earthquake_event registered (quake.py).
+All other categories retain their existing handler-module gating.
 
 Usage (future phases):
     from meshai.notifications.gating import register
@@ -15,7 +14,7 @@ Usage (future phases):
 
 from typing import Callable, Optional
 
-# Empty registry — populated by per-category gating modules (Phase 1+).
+# Populated by per-category gating modules imported below.
 DECIDERS: dict = {}
 
 
@@ -48,3 +47,19 @@ def get_decider(category: str) -> Optional[Callable]:
     except Exception:
         pass
     return None
+
+
+# ── Phase-1 registrations ────────────────────────────────────────────────────
+from meshai.notifications.gating import quake as _quake_gate_mod  # noqa: E402,F401
+register("earthquake_event", _quake_gate_mod.decide)
+
+from meshai.notifications.gating import avalanche as _avy_gate_mod  # noqa: E402,F401
+register("avalanche_warning", _avy_gate_mod.decide)
+register("avalanche_watch", _avy_gate_mod.decide)
+
+# SWPC: geomagnetic_storm (swpc_kindex / native G-scale) and rf_propagation_alert
+# (swpc_alerts flare / native R-scale).  solar_radiation_storm (proton) stays on
+# the legacy path — NOT registered here.
+from meshai.notifications.gating import swpc as _swpc_gate_mod  # noqa: E402,F401
+register("geomagnetic_storm", _swpc_gate_mod.decide)
+register("rf_propagation_alert", _swpc_gate_mod.decide)

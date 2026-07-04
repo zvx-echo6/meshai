@@ -92,6 +92,25 @@ def _emoji_for(mag: Optional[float], tsunami: bool) -> str:
 def handle_quake(envelope: dict, subject: str,
                   data: Optional[dict] = None,
                   now: Optional[int] = None) -> Optional[str]:
+    """Central path handler for USGS earthquake envelopes.
+
+    Phase-1 refactor: ALL gating decisions are now delegated to
+    `meshai.notifications.gating.quake.decide()`.  This function is kept as a
+    thin compatibility bridge so existing call-sites and tests remain stable
+    while the new formatter+decider architecture is established.
+
+    On broadcast:
+      - Writes canonical data fields into the shared `data` dict so the Event
+        carries structured fields (the formatter reads them at dispatch time).
+      - Applies GateResult.data_patch (distance_km, is_update, _severity_override,
+        _dedup_suffix) into the same dict.
+      - Attaches GateResult.commit + _broadcast_audit keys.
+      - Returns the _render() wire string for backward-compat (existing tests).
+        At dispatch time compose_mesh_message() intercepts via the registered
+        formatter and re-renders from event.data (tier-b changes apply there).
+
+    On suppress: returns None (default-deny unchanged).
+    """
     if not isinstance(envelope, dict): return None
     inner = envelope.get("data") or {}
     if (inner.get("adapter") or "") != "usgs_quake": return None
@@ -102,12 +121,7 @@ def handle_quake(envelope: dict, subject: str,
     category_raw = inner.get("category") or ""
     severity_word = _coerce_severity(inner.get("severity"))
 
-    try:
-        conn = get_db()
-    except Exception:
-        logger.exception("quake_handler: persistence unavailable")
-        return None
-
+    # ── Extract fields (same normalization as before) ─────────────────────
     event_id = d.get("id") or inner.get("id")
     if not event_id:
         return None
@@ -119,7 +133,7 @@ def handle_quake(envelope: dict, subject: str,
     elif isinstance(mag, (int, float)):
         mag = float(mag)
 
-    depth_km = d.get("depth_km") or d.get("depth")
+    depth_km = d.get("depth_km") if d.get("depth_km") is not None else d.get("depth")
     place = d.get("place")
     tsunami = bool(d.get("tsunami") or d.get("tsunami_warning"))
     pager_alert = d.get("alert")
@@ -137,8 +151,31 @@ def handle_quake(envelope: dict, subject: str,
     elif tms and isinstance(tms, (int, float)):
         occurred_at = int(tms)
 
-    # Filter -- gate check.
-    if not _should_broadcast(mag, lat, lon, tsunami, pager_alert):
+    # ── Build canonical data dict (written into shared `data` on broadcast) ─
+    canonical: dict = {
+        "magnitude": mag,
+        "depth_km": depth_km,
+        "lat": lat,
+        "lon": lon,
+        "place": place,
+        "tsunami": tsunami,
+        "pager": pager_alert,
+        "occurred_at": occurred_at,
+        "event_id": event_id,
+    }
+
+    # ── Delegate to gating module ─────────────────────────────────────────
+    from meshai.notifications.gating.quake import decide as _gate_decide
+    gate = _gate_decide(canonical, source="usgs_quake", now=float(now))
+
+    # ── Persistence logging (unchanged from original) ─────────────────────
+    try:
+        conn = get_db()
+    except Exception:
+        logger.exception("quake_handler: persistence unavailable")
+        return None
+
+    if not gate.broadcast:
         _log_event(conn, now=now, source="usgs_quake", category=category_raw,
                     severity_word=severity_word, event_id_external=event_id,
                     subject=subject, handled=0,
@@ -151,30 +188,46 @@ def handle_quake(envelope: dict, subject: str,
         subject=subject, handled=0,
         table_name="quake_events", table_pk=event_id)
 
-    row = conn.execute(
-        "SELECT last_broadcast_at FROM quake_events WHERE event_id=?",
-        (event_id,)).fetchone()
+    # ── Write canonical fields into shared data dict ──────────────────────
+    # Cutover gate: when the category has been explicitly cut over, write
+    # gate.data_patch and use gate.commit (new path live).  Otherwise use the
+    # old-style _attach_commit so the live broadcast stays byte-for-byte
+    # identical to pre-Phase-1 behavior while the new path bakes in shadow.
+    from meshai.notifications.cutover import is_cutover
+    if isinstance(data, dict):
+        data.update(canonical)
+        if is_cutover("earthquake_event"):
+            # NEW PATH: gate.data_patch provides distance_km, _severity_override, etc.
+            data.update(gate.data_patch)
+            data["_broadcast_audit"] = {"table": "quake_events", "pk": event_id}
 
-    if row is None:
-        conn.execute(
-            "INSERT INTO quake_events(event_id, magnitude, depth_km, place, lat, lon, "
-            "occurred_at, tsunami_warning, first_seen_at, last_broadcast_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (event_id, mag, depth_km, place, lat, lon, occurred_at,
-             1 if tsunami else 0, now, None),
-        )
-        wire = _render(mag=mag, place=place, depth_km=depth_km, lat=lat, lon=lon,
-                        tsunami=tsunami, is_update=False)
-        _attach_commit(data, event_id=event_id, event_log_row_id=log_id)
-        return wire
+            _raw_commit = gate.commit
+            _log_row_id = log_id
 
-    if row["last_broadcast_at"] is None:
-        wire = _render(mag=mag, place=place, depth_km=depth_km, lat=lat, lon=lon,
-                        tsunami=tsunami, is_update=False)
-        _attach_commit(data, event_id=event_id, event_log_row_id=log_id)
-        return wire
+            def _on_commit(committed_at: float) -> None:
+                if _raw_commit is not None:
+                    _raw_commit(committed_at)
+                if _log_row_id is not None:
+                    try:
+                        c = get_db()
+                        c.execute("UPDATE event_log SET handled=1 WHERE id=?",
+                                  (int(_log_row_id),))
+                    except Exception:
+                        logger.exception("quake commit: event_log update failed")
 
-    return None
+            data["_on_broadcast_committed"] = _on_commit
+        else:
+            # NOT cutover: old-style attach (canonical fields only, no data_patch).
+            # Preserves exact pre-Phase-1 live behavior; new formatter bakes in shadow.
+            _attach_commit(data, event_id=event_id, event_log_row_id=log_id)
+
+    # ── Return _render() wire (backward compat — existing tests check this) ─
+    # At dispatch time compose_mesh_message() calls the registered formatter
+    # (if cutover) which re-renders from event.data with tier-b changes (PAGER
+    # + update-prefix).  The _render() wire here is used by both paths and by
+    # direct handle_quake() callers (tests, legacy paths).
+    return _render(mag=mag, place=place, depth_km=depth_km, lat=lat, lon=lon,
+                    tsunami=tsunami, is_update=False)
 
 
 def _render(*, mag, place, depth_km, lat, lon, tsunami, is_update=False) -> str:

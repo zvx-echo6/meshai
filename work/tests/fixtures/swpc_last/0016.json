@@ -1,0 +1,35 @@
+{
+  "envelope": {
+    "id": "BHIS|2026-06-06 14:14:05.560",
+    "source": "central.echo6.co",
+    "type": "central.space.alert.v1",
+    "time": "2026-06-06T14:14:05.560000+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "space.alert",
+    "centralseverity": 0,
+    "specversion": "1.0",
+    "data": {
+      "id": "BHIS|2026-06-06 14:14:05.560",
+      "adapter": "swpc_alerts",
+      "category": "space.alert",
+      "time": "2026-06-06T14:14:05.560000Z",
+      "expires": null,
+      "severity": 0,
+      "geo": {
+        "centroid": null,
+        "bbox": null,
+        "regions": [],
+        "primary_region": null,
+        "geometry": null
+      },
+      "data": {
+        "product_id": "BHIS",
+        "issue_datetime": "2026-06-06 14:14:05.560",
+        "message": "Space Weather Message Code: SUM10R\r\nSerial Number: 918\r\nIssue Time: 2026 Jun 06 1414 UTC\r\n\r\nSUMMARY: 10cm Radio Burst \nBegin Time: 2026 Jun 06 1344 UTC\nMaximum Time: 2026 Jun 06 1344 UTC\nEnd Time: 2026 Jun 06 1359 UTC\nPeak Flux: 190 sfu\nDuration: 5 minutes\nLatest Penticton Noon Flux: 141 sfu\nComment: \r\n\n"
+      }
+    }
+  },
+  "subject": "central.space.alert.bhis",
+  "captured_epoch": 1783196500
+}

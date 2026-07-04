@@ -143,11 +143,60 @@ class EnvironmentalStore:
                     self._emit_event(adapter, evt)
 
     def _emit_event(self, adapter, raw_evt: dict):
-        """Convert raw event to pipeline Event and emit to bus."""
+        """Convert raw event to pipeline Event and emit to bus.
+
+        Phase-1 new-arch hook: if a gating decider is registered for the
+        event's category (via meshai.notifications.gating.DECIDERS), it is
+        called with event.data before the event reaches the bus.  The decider
+        mirrors the Central-path gate so native and Central ingestion share
+        identical broadcast decisions.
+
+        Decider contract:
+          - Returns GateResult.broadcast=False → suppress (event never emits)
+          - Returns GateResult.broadcast=True  → apply data_patch, attach
+            commit, then emit normally.
+          - Exceptions in the decider are caught; event is silently suppressed
+            to preserve the default-deny safety property.
+        """
         try:
             event = adapter.to_event(raw_evt)
             if event is None:
                 return  # adapter declined to emit (non-actionable reading)
+
+            # ── New-arch decider hook ──────────────────────────────────────
+            # Applied only when BOTH a decider is registered AND the category
+            # has been explicitly cut over via MESHAI_CUTOVER_CATEGORIES.
+            # When not cut over, the native adapter emits directly to the bus
+            # (original pre-Phase-1 behavior); shadow_gate in consumer handles
+            # dry-run comparison for the bake period.
+            try:
+                from meshai.notifications.gating import get_decider
+                from meshai.notifications.cutover import is_cutover
+                from meshai.notifications import clock as _clock
+                decider = get_decider(event.category)
+                if decider is not None and is_cutover(event.category):
+                    if event.data is None:
+                        event.data = {}
+                    gate = decider(event.data, source=event.source,
+                                   now=_clock.now())
+                    if not gate.broadcast:
+                        logger.debug(
+                            "store: decider suppressed %s event %s: %s",
+                            event.category, raw_evt.get("event_id", "?"),
+                            gate.reason,
+                        )
+                        return
+                    # Apply data_patch into event.data
+                    event.data.update(gate.data_patch)
+                    if gate.commit is not None:
+                        event.data["_on_broadcast_committed"] = gate.commit
+            except Exception as _gate_exc:
+                logger.warning(
+                    "store: decider failed for %s, suppressing: %s",
+                    event.category, _gate_exc,
+                )
+                return  # default-deny on decider error
+
             self._event_bus.emit(event)
             logger.info(
                 "Emitted %s event %s (%s) to pipeline bus",

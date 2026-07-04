@@ -1,32 +1,35 @@
 """Read-only ephemeral fixture capture from NATS JetStream.
 
 Captures real Central CloudEvents envelopes WITHOUT disturbing the live
-durable consumers by using an ephemeral pull consumer (no durable name,
-AckPolicy.none, short inactive_threshold for auto-deletion).
+durable consumers by using an ephemeral push consumer (no durable name,
+AckPolicy.none).  The consumer is subject-based, so it auto-discovers the
+correct stream (CENTRAL_QUAKE, CENTRAL_SPACE, …) exactly as the live
+CentralConsumer does in meshai/central/consumer.py.
 
 Run from inside the meshai container::
 
     docker exec meshai python /app/scripts/capture_fixtures.py \\
-        --hazard earthquake_event \\
-        --subject "central.usgs_quake.>" \\
-        --mode all --max 20
+        --hazard quake \\
+        --subject "central.quake.event.>" \\
+        --mode all --max 25
 
     # Dry-run (count only, no file writes):
     docker exec meshai python /app/scripts/capture_fixtures.py \\
-        --hazard earthquake_event \\
-        --subject "central.usgs_quake.>" \\
-        --mode all --max 20 --dry-run
+        --hazard quake \\
+        --subject "central.quake.event.>" \\
+        --mode all --max 25 --dry-run
 
     # Last-per-subject snapshot:
     docker exec meshai python /app/scripts/capture_fixtures.py \\
-        --hazard nws \\
-        --subject "central.nws.>" \\
+        --hazard swpc \\
+        --subject "central.space.>" \\
         --mode last
 
 Modes
 -----
 --mode last   DeliverPolicy.LAST_PER_SUBJECT — one message per subject key.
-              Useful for a current-state snapshot.
+              Useful for a current-state snapshot.  Script stops after a
+              short idle period (no new messages arriving).
 --mode all    DeliverPolicy.ALL — bounded history.  REQUIRED: --max N cap
               to avoid pulling 330k+ traffic messages.
 
@@ -37,16 +40,30 @@ Each captured envelope is written as::
     tests/fixtures/<hazard>/<n>.json
     {
         "envelope":       { ... },     # raw Central CloudEvents payload
-        "subject":        "central.usgs_quake.us7000xyz",
+        "subject":        "central.quake.event.minor.unknown",
         "captured_epoch": 1750000000
     }
 
 Safety
 ------
-The ephemeral consumer is created with AckPolicy.none and a 30-second
-inactive_threshold.  It is never assigned a durable name, so it never
-advances the live durable consumers' sequence pointers and is automatically
-cleaned up by the NATS server after inactivity.
+The ephemeral consumer is created with AckPolicy.none and no durable name,
+so it never advances the live durable consumers' sequence pointers and is
+automatically cleaned up by the NATS server after inactivity.  No config,
+no deploy, no restart changes are made.
+
+Bug fix (2026-07-04)
+--------------------
+The previous version called js.add_consumer(stream, cfg) with a hardcoded
+stream name "CENTRAL" that does not exist — Central partitions streams by
+domain (CENTRAL_QUAKE, CENTRAL_SPACE, CENTRAL_WX, …).  It then called
+pull_subscribe_bind() without await, making it a no-op coroutine object
+instead of an actual subscription, and the subsequent .fetch() raised
+AttributeError / NotFoundError.
+
+Fix: mirror the proven pattern from meshai/central/consumer.py — use
+js.subscribe(subject, cb=..., config=ConsumerConfig(...)) with no durable
+name.  The subject-based subscribe call auto-discovers the correct stream
+server-side, identical to how the live CentralConsumer binds.
 """
 from __future__ import annotations
 
@@ -63,6 +80,11 @@ import time
 # importable in unit-test environments without a running NATS server.
 # --------------------------------------------------------------------------
 
+# Seconds with no incoming message before the capture loop stops.
+# Sufficient for both LAST_PER_SUBJECT (snapshot drains quickly) and ALL
+# (history replay has no inter-message gaps larger than this in practice).
+_IDLE_TIMEOUT = 4.0
+
 
 def _output_dir(hazard: str) -> pathlib.Path:
     """Resolve tests/fixtures/<hazard>/ relative to the repo root."""
@@ -75,14 +97,13 @@ def _output_dir(hazard: str) -> pathlib.Path:
 async def _run(
     *,
     nats_url: str,
-    stream: str,
     subject: str,
     hazard: str,
     mode: str,
     max_msgs: int,
     dry_run: bool,
 ) -> int:
-    """Connect, create ephemeral consumer, pull messages, write fixtures.
+    """Connect, create ephemeral push consumer, collect messages, write fixtures.
 
     Returns the count of messages captured (or counted, for --dry-run).
     """
@@ -93,87 +114,81 @@ async def _run(
     try:
         js = nc.jetstream()
 
-        # Build an ephemeral consumer config (no durable_name = ephemeral).
-        # AckPolicy.none avoids needing to ack — purely read-only.
-        # inactive_threshold of 30 s ensures the NATS server auto-deletes it.
         deliver_policy = (
             DeliverPolicy.LAST_PER_SUBJECT
             if mode == "last"
             else DeliverPolicy.ALL
         )
-        cfg = ConsumerConfig(
-            # durable_name intentionally omitted → ephemeral consumer
-            filter_subject=subject,
-            deliver_policy=deliver_policy,
-            ack_policy=AckPolicy.NONE,
-            inactive_threshold=30.0,  # seconds → server auto-deletes after idle
-        )
 
-        # Create ephemeral pull consumer (server-side, no local binding name).
-        consumer_info = await js.add_consumer(stream, cfg)
-        consumer_name = consumer_info.name
+        # Funnel incoming messages into an asyncio Queue so the main loop
+        # can apply the max-msgs cap and idle-timeout without threads.
+        msg_q: asyncio.Queue = asyncio.Queue()
+
+        async def _on_msg(msg):
+            await msg_q.put(msg)
+
+        # Ephemeral push subscribe — NO durable_name → server assigns a
+        # transient consumer name and auto-deletes it after inactivity.
+        # AckPolicy.NONE means we never ack, so no sequence cursor is
+        # advanced on any durable consumer.  The subject-based call
+        # auto-discovers the correct NATS stream (CENTRAL_QUAKE,
+        # CENTRAL_SPACE, etc.) — identical to CentralConsumer.start().
+        sub = await js.subscribe(
+            subject,
+            cb=_on_msg,
+            config=ConsumerConfig(
+                deliver_policy=deliver_policy,
+                ack_policy=AckPolicy.NONE,
+            ),
+        )
 
         out_dir = _output_dir(hazard)
         if not dry_run:
             out_dir.mkdir(parents=True, exist_ok=True)
 
         captured = 0
-        fetch_batch = min(max_msgs, 50)  # pull in bounded batches
 
         while captured < max_msgs:
-            batch = min(fetch_batch, max_msgs - captured)
             try:
-                msgs = await js.pull_subscribe_bind(
-                    stream, consumer_name
-                ).fetch(batch, timeout=5.0)
-            except nats.errors.TimeoutError:
-                break  # no more messages within timeout
-
-            if not msgs:
+                msg = await asyncio.wait_for(msg_q.get(), timeout=_IDLE_TIMEOUT)
+            except asyncio.TimeoutError:
+                # No new messages within idle window — snapshot is drained
+                # (LAST_PER_SUBJECT) or history is exhausted (ALL).
                 break
 
-            for msg in msgs:
-                try:
-                    envelope = json.loads(msg.data)
-                except Exception:
-                    continue  # skip unparseable messages
+            try:
+                envelope = json.loads(msg.data)
+            except Exception:
+                continue  # skip unparseable frames
 
-                if dry_run:
-                    captured += 1
-                    print(
-                        f"  [dry-run] #{captured} subject={msg.subject!r}",
-                        file=sys.stderr,
-                    )
-                else:
-                    record = {
-                        "envelope": envelope,
-                        "subject": msg.subject,
-                        "captured_epoch": int(time.time()),
-                    }
-                    out_path = out_dir / f"{captured:04d}.json"
-                    out_path.write_text(
-                        json.dumps(record, indent=2, ensure_ascii=False),
-                        encoding="utf-8",
-                    )
-                    captured += 1
-                    print(
-                        f"  wrote {out_path.relative_to(pathlib.Path.cwd())} "
-                        f"subject={msg.subject!r}",
-                        file=sys.stderr,
-                    )
+            if dry_run:
+                captured += 1
+                print(
+                    "  [dry-run] #%d subject=%r" % (captured, msg.subject),
+                    file=sys.stderr,
+                )
+            else:
+                record = {
+                    "envelope": envelope,
+                    "subject": msg.subject,
+                    "captured_epoch": int(time.time()),
+                }
+                out_path = out_dir / ("%04d.json" % captured)
+                out_path.write_text(
+                    json.dumps(record, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                captured += 1
+                print(
+                    "  wrote %s  subject=%r" % (out_path, msg.subject),
+                    file=sys.stderr,
+                )
 
-                if captured >= max_msgs:
-                    break
-
-            # For last-per-subject: a single fetch is sufficient.
-            if mode == "last":
-                break
-
-        # Delete the ephemeral consumer explicitly (belt-and-suspenders).
+        # Unsubscribe: signals the server to clean up the ephemeral consumer.
         try:
-            await js.delete_consumer(stream, consumer_name)
+            await sub.unsubscribe()
         except Exception:
-            pass  # server already cleaned up, or error is non-fatal
+            pass
 
         return captured
 
@@ -184,7 +199,6 @@ async def _run(
 
 def _load_nats_url() -> str:
     """Read the NATS URL from meshai config or env override."""
-    # Allow an explicit env override for CI / ad-hoc use.
     if "MESHAI_NATS_URL" in os.environ:
         return os.environ["MESHAI_NATS_URL"]
     try:
@@ -202,9 +216,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--hazard", required=True,
                         help="Hazard category label (used as fixture sub-dir).")
     parser.add_argument("--subject", required=True,
-                        help="NATS subject filter, e.g. 'central.usgs_quake.>'.")
-    parser.add_argument("--stream", default="CENTRAL",
-                        help="JetStream stream name (default: CENTRAL).")
+                        help="NATS subject filter, e.g. 'central.quake.event.>'.")
     parser.add_argument("--mode", choices=["last", "all"], default="all",
                         help="DeliverPolicy: last=LAST_PER_SUBJECT, all=ALL (default: all).")
     parser.add_argument("--max", type=int, default=50, dest="max_msgs",
@@ -217,16 +229,14 @@ def main(argv: list[str] | None = None) -> int:
 
     nats_url = args.nats_url or _load_nats_url()
     print(
-        f"capture_fixtures: url={nats_url!r} stream={args.stream!r} "
-        f"subject={args.subject!r} hazard={args.hazard!r} "
-        f"mode={args.mode!r} max={args.max_msgs} dry_run={args.dry_run}",
+        "capture_fixtures: url=%r subject=%r hazard=%r mode=%r max=%d dry_run=%s"
+        % (nats_url, args.subject, args.hazard, args.mode, args.max_msgs, args.dry_run),
         file=sys.stderr,
     )
 
     count = asyncio.run(
         _run(
             nats_url=nats_url,
-            stream=args.stream,
             subject=args.subject,
             hazard=args.hazard,
             mode=args.mode,
@@ -236,7 +246,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     verb = "counted" if args.dry_run else "captured"
-    print(f"{verb} {count} envelope(s) for hazard={args.hazard!r}", file=sys.stderr)
+    print("%s %d envelope(s) for hazard=%r" % (verb, count, args.hazard), file=sys.stderr)
     return 0
 
 

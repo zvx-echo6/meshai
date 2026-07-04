@@ -1,0 +1,36 @@
+{
+  "envelope": {
+    "id": "2026-06-27T20:35:00Z|>=100 MeV",
+    "source": "central.echo6.co",
+    "type": "central.space.proton_flux.v1",
+    "time": "2026-06-27T20:35:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "space.proton_flux",
+    "centralseverity": 0,
+    "specversion": "1.0",
+    "data": {
+      "id": "2026-06-27T20:35:00Z|>=100 MeV",
+      "adapter": "swpc_protons",
+      "category": "space.proton_flux",
+      "time": "2026-06-27T20:35:00Z",
+      "expires": null,
+      "severity": 0,
+      "geo": {
+        "centroid": null,
+        "bbox": null,
+        "regions": [],
+        "primary_region": null,
+        "geometry": null
+      },
+      "data": {
+        "time_tag": "2026-06-27T20:35:00Z",
+        "satellite": 18,
+        "flux": 0.16947858035564423,
+        "energy": ">=100 MeV"
+      }
+    }
+  },
+  "subject": "central.space.proton_flux",
+  "captured_epoch": 1783196490
+}

@@ -232,18 +232,22 @@ class AvalancheAdapter:
     def to_event(self, evt: dict) -> Optional["Event"]:
         """Translate a stored avalanche advisory into a pipeline Event.
 
+        Phase-1 refactor: emits canonical structured data in event.data so the
+        registered formatters/avalanche.format() renders the wire string at
+        dispatch time.  _meshai_precomposed is NO LONGER SET -- the formatter
+        registry takes priority in compose_mesh_message().
+
         Only elevated danger is emitted: the category is chosen from
         danger_level, so a Low/Moderate/No-Rating advisory is intentionally
         NOT emitted (returns None). High/Extreme (4-5) -> avalanche_warning;
         Considerable (3) -> avalanche_watch.
 
-        Multi-line wire format (matching Fire/Roads/Quake style):
-            Line 1: emoji prefix zone — danger_name (level)
-            Line 2: travel_advice (truncated, only if present)
-            Line 3: center_id · valid today
-
         The _is_update flag is set by EnvironmentalStore when danger_level
-        rises for an existing zone; New: for first sighting, Update: for rise.
+        rises for an existing zone; the formatter renders "AVY Update:" prefix.
+
+        Canonical event.data schema (NAADS 1-5):
+            danger_level, danger_name, zone_name, center_id, travel_advice,
+            lat, lon, is_update, event_id
 
         Args:
             evt: Internal event dict from get_events()
@@ -284,17 +288,19 @@ class AvalancheAdapter:
 
             severity = evt.get("severity", "routine")
 
-            # New/Update prefix from store's danger-level-rise detection
+            # New/Update prefix from store's danger-level-rise detection.
+            # is_update flows into canonical data for the formatter.
             is_update = bool(evt.get("_is_update", False))
             prefix = "Update:" if is_update else "New:"
 
-            # Line 1: emoji + prefix + zone + danger level
+            # summary kept for backward compat (existing tests check it);
+            # formatter overrides at dispatch time from canonical data.
             emoji = "\u26f7"
             level_name = evt.get("danger_name", "Unknown")
             zone = evt.get("zone_name", "Unknown Zone")
             line1 = f"{emoji} {prefix} {zone} \u2014 {level_name} ({danger_level})"
 
-            # Line 2: travel advice (truncated to 120 chars, only if present)
+            # Line 2: travel advice (truncated to 120 chars for summary compat)
             travel = evt.get("travel_advice", "")
             line2 = travel[:120] if travel else None
 
@@ -303,7 +309,22 @@ class AvalancheAdapter:
             line3 = f"{center_id} \u00b7 valid today" if center_id else "valid today"
 
             summary = "\n".join(l for l in [line1, line2, line3] if l)
-            title = line1  # first line only for title
+
+            # Canonical data dict -- no _meshai_precomposed (formatter governs)
+            expires_val = evt.get("expires")
+            canonical_data: dict = {
+                "danger_level": int(danger_level),
+                "danger_name": level_name,
+                "zone_name": zone,
+                "center_id": center_id,
+                "travel_advice": travel,
+                "lat": lat,
+                "lon": lon,
+                "is_update": is_update,
+                "event_id": event_id,
+            }
+            if expires_val is not None:
+                canonical_data["expires"] = expires_val
 
             # event_id is already the stable "avy_{center}_{zone}" key. Re-polls
             # of the same zone coalesce on this group_key; using it as the sole
@@ -316,9 +337,9 @@ class AvalancheAdapter:
                 severity=severity,
                 title=summary,
                 summary=summary,
-                data={"_meshai_precomposed": True},
+                data=canonical_data,
                 timestamp=evt.get("fetched_at"),
-                expires=evt.get("expires"),
+                expires=expires_val,
                 lat=lat,
                 lon=lon,
                 group_key=event_id,
@@ -327,7 +348,6 @@ class AvalancheAdapter:
         except Exception:
             logger.exception(f"Avalanche to_event failed for evt: {evt.get('event_id')}")
             return None
-
     def is_off_season(self) -> bool:
         """Check if currently off season."""
         return self._off_season
