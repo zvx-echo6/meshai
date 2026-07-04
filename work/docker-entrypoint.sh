@@ -47,7 +47,7 @@ context:
   enabled: true
   observe_channels: []
   ignore_nodes: []
-  max_age: 2592000
+  max_age: 1209600
   max_context_items: 20
 
 llm:

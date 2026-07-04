@@ -636,6 +636,7 @@ class MeshAI:
                     text=message.text,
                     channel=message.channel,
                     is_dm=False,
+                    transport=message.transport,
                 )
 
             # Check if we should respond

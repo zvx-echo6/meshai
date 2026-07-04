@@ -42,10 +42,14 @@ def mc_context_allows(cfg, msg, idx_to_name):
     # channel (non-DM) message -> only relevant for passive context
     if not cfg.enable_passive_context:
         return False
-    if cfg.observe_channels:
-        name = idx_to_name.get(msg.channel)
-        if name is None or name not in cfg.observe_channels:
-            return False
+    # observe_channels is opt-in: empty = observe NONE; a channel message
+    # passes ONLY if observe_channels is non-empty AND the resolved channel
+    # name is in the list.
+    if not cfg.observe_channels:
+        return False
+    name = idx_to_name.get(msg.channel)
+    if name is None or name not in cfg.observe_channels:
+        return False
     return True
 
 

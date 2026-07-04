@@ -235,11 +235,10 @@ export default function MeshtasticConnection() {
             info="Messages from these nodes won't be included in passive context. Useful for filtering out noisy automated nodes."
           />
           <Toggle
-            label="Respond to DMs"
+            label="Answer direct messages"
             checked={!!bot.respond_to_dms}
             onChange={(v) => setBot({ ...bot, respond_to_dms: v })}
-            helper="Reply when someone sends a direct message"
-            info="When enabled, the bot responds to direct messages from any node. When disabled, the bot only responds to channel messages that mention its name."
+            helper="When on, MeshAI replies to Meshtastic direct messages using the LLM. Applies to Meshtastic only."
           />
         </div>
       )}
