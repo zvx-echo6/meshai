@@ -1,0 +1,35 @@
+{
+  "envelope": {
+    "id": "XM5A|2026-07-03 19:00:40.987",
+    "source": "central.echo6.co",
+    "type": "central.space.alert.v1",
+    "time": "2026-07-03T19:00:40.987000+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "space.alert",
+    "centralseverity": 0,
+    "specversion": "1.0",
+    "data": {
+      "id": "XM5A|2026-07-03 19:00:40.987",
+      "adapter": "swpc_alerts",
+      "category": "space.alert",
+      "time": "2026-07-03T19:00:40.987000Z",
+      "expires": null,
+      "severity": 0,
+      "geo": {
+        "centroid": null,
+        "bbox": null,
+        "regions": [],
+        "primary_region": null,
+        "geometry": null
+      },
+      "data": {
+        "product_id": "XM5A",
+        "issue_datetime": "2026-07-03 19:00:40.987",
+        "message": "Space Weather Message Code: ALTXMF\r\nSerial Number: 537\r\nIssue Time: 2026 Jul 03 1900 UTC\r\n\r\nALERT: X-Ray Flux exceeded M5 \nThreshold Reached: 2026 Jul 03 1856 UTC\nNoaa Scale: R2 - Moderate\nComment: \r\n\nNOAA Scale: R2 - Moderate\r\n\r\nNOAA Space Weather Scale descriptions can be found at\r\nwww.swpc.noaa.gov/noaa-scales-explanation\r\n\r\nPotential Impacts: Area of impact centered on sub-solar point on the sunlit side of Earth. Extent of blackout of HF (high frequency) radio communication dependent upon current X-ray Flux intensity. For real-time information on affected area and expected duration please see http://www.swpc.noaa.gov/products/d-region-absorption-predictions-d-rap."
+      }
+    }
+  },
+  "subject": "central.space.alert.xm5a",
+  "captured_epoch": 1783196500
+}

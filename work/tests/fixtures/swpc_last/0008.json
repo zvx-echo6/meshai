@@ -1,0 +1,35 @@
+{
+  "envelope": {
+    "id": "XM5S|2026-07-03 19:11:28.970",
+    "source": "central.echo6.co",
+    "type": "central.space.alert.v1",
+    "time": "2026-07-03T19:11:28.970000+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "space.alert",
+    "centralseverity": 0,
+    "specversion": "1.0",
+    "data": {
+      "id": "XM5S|2026-07-03 19:11:28.970",
+      "adapter": "swpc_alerts",
+      "category": "space.alert",
+      "time": "2026-07-03T19:11:28.970000Z",
+      "expires": null,
+      "severity": 0,
+      "geo": {
+        "centroid": null,
+        "bbox": null,
+        "regions": [],
+        "primary_region": null,
+        "geometry": null
+      },
+      "data": {
+        "product_id": "XM5S",
+        "issue_datetime": "2026-07-03 19:11:28.970",
+        "message": "Space Weather Message Code: SUMXM5\r\nSerial Number: 323\r\nIssue Time: 2026 Jul 03 1911 UTC\r\n\r\nSUMMARY: X-ray Event exceeded M5 \nBegin Time: 2026 Jul 03 1857 UTC\nMaximum Time: 2026 Jul 03 1859 UTC\nEnd Time: 2026 Jul 04 1903 UTC\nXray Class: M6.3\nOptical Class: \nLocation: S06W46\nNoaa Scale: R2 - Moderate\nComment: \r\n\nNOAA Scale: R2 - Moderate\r\n\r\nNOAA Space Weather Scale descriptions can be found at\r\nwww.swpc.noaa.gov/noaa-scales-explanation\r\n\r\nPotential Impacts: Area of impact centered primarily on sub-solar point on the sunlit side of Earth.\r\nRadio - Limited blackout of HF (high frequency) radio communication for tens of minutes."
+      }
+    }
+  },
+  "subject": "central.space.alert.xm5s",
+  "captured_epoch": 1783196500
+}

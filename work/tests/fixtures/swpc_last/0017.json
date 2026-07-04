@@ -1,0 +1,35 @@
+{
+  "envelope": {
+    "id": "TIIA|2026-06-06 14:15:12.373",
+    "source": "central.echo6.co",
+    "type": "central.space.alert.v1",
+    "time": "2026-06-06T14:15:12.373000+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "space.alert",
+    "centralseverity": 0,
+    "specversion": "1.0",
+    "data": {
+      "id": "TIIA|2026-06-06 14:15:12.373",
+      "adapter": "swpc_alerts",
+      "category": "space.alert",
+      "time": "2026-06-06T14:15:12.373000Z",
+      "expires": null,
+      "severity": 0,
+      "geo": {
+        "centroid": null,
+        "bbox": null,
+        "regions": [],
+        "primary_region": null,
+        "geometry": null
+      },
+      "data": {
+        "product_id": "TIIA",
+        "issue_datetime": "2026-06-06 14:15:12.373",
+        "message": "Space Weather Message Code: ALTTP2\r\nSerial Number: 1498\r\nIssue Time: 2026 Jun 06 1415 UTC\r\n\r\nALERT: Type II Radio Emission \nBegin Time: 2026 Jun 06 1347 UTC\nEstimate Velocity: 838 km/s\nComment: \r\n\n"
+      }
+    }
+  },
+  "subject": "central.space.alert.tiia",
+  "captured_epoch": 1783196500
+}

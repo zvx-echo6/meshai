@@ -1,0 +1,35 @@
+{
+  "envelope": {
+    "id": "A20F|2026-06-28 10:41:25.723",
+    "source": "central.echo6.co",
+    "type": "central.space.alert.v1",
+    "time": "2026-06-28T10:41:25.723000+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "space.alert",
+    "centralseverity": 0,
+    "specversion": "1.0",
+    "data": {
+      "id": "A20F|2026-06-28 10:41:25.723",
+      "adapter": "swpc_alerts",
+      "category": "space.alert",
+      "time": "2026-06-28T10:41:25.723000Z",
+      "expires": null,
+      "severity": 0,
+      "geo": {
+        "centroid": null,
+        "bbox": null,
+        "regions": [],
+        "primary_region": null,
+        "geometry": null
+      },
+      "data": {
+        "product_id": "A20F",
+        "issue_datetime": "2026-06-28 10:41:25.723",
+        "message": "Space Weather Message Code: WATA20\r\nSerial Number: 1114\r\nIssue Time: 2026 Jun 28 1041 UTC\r\n\r\nWATCH: Geomagnetic Storm Category G1 Predicted \nHighest Storm Level Predicted by Day:\nJun 28:  None (Below G1)   Jun 29:  G1 (Minor)   Jun 30:  G1 (Minor)   \nTHIS SUPERSEDES ANY/ALL PRIOR WATCHES IN EFFECT\nComment: \r\n\n\r\n\r\nNOAA Space Weather Scale descriptions can be found at\r\nwww.swpc.noaa.gov/noaa-scales-explanation\r\n\r\nPotential Impacts: Area of impact primarily poleward of 60 degrees Geomagnetic Latitude.\r\nInduced Currents - Weak power grid fluctuations can occur.\r\nSpacecraft - Minor impact on satellite operations possible.\r\nAurora - Aurora may be visible at high latitudes, i.e., northern tier of the U.S. such as northern Michigan and Maine."
+      }
+    }
+  },
+  "subject": "central.space.alert.a20f",
+  "captured_epoch": 1783196500
+}

@@ -1,0 +1,82 @@
+{
+  "envelope": {
+    "id": "uu80143601",
+    "source": "central.echo6.co",
+    "type": "central.quake.event.minor.v1",
+    "time": "2026-06-28T19:19:56.050000+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "quake.event.minor",
+    "centralseverity": 0,
+    "specversion": "1.0",
+    "data": {
+      "id": "uu80143601",
+      "adapter": "usgs_quake",
+      "category": "quake.event.minor",
+      "time": "2026-06-28T19:19:56.050000Z",
+      "expires": null,
+      "severity": 0,
+      "geo": {
+        "centroid": [
+          -112.206666666667,
+          42.2111666666667
+        ],
+        "bbox": [
+          -112.206666666667,
+          42.2111666666667,
+          -112.206666666667,
+          42.2111666666667
+        ],
+        "regions": [],
+        "primary_region": null,
+        "geometry": null
+      },
+      "data": {
+        "magnitude": 1.23,
+        "place": "4 km ENE of Malad City, Idaho",
+        "time_ms": 1782674396050,
+        "updated_ms": 1782742438530,
+        "tz": null,
+        "url": "https://earthquake.usgs.gov/earthquakes/eventpage/uu80143601",
+        "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/uu80143601.geojson",
+        "felt": null,
+        "cdi": null,
+        "mmi": null,
+        "alert": null,
+        "status": "reviewed",
+        "tsunami": 0,
+        "sig": 23,
+        "net": "uu",
+        "code": "80143601",
+        "ids": ",uu80143601,",
+        "sources": ",uu,",
+        "types": ",origin,phase-data,",
+        "nst": 10,
+        "dmin": 0.1939,
+        "rms": 0.1,
+        "gap": 160,
+        "magType": "md",
+        "type": "earthquake",
+        "title": "M 1.2 - 4 km ENE of Malad City, Idaho",
+        "longitude": -112.206666666667,
+        "latitude": 42.2111666666667,
+        "depth": 3.06,
+        "_enriched": {
+          "geocoder": {
+            "name": null,
+            "city": null,
+            "county": null,
+            "state": null,
+            "country": null,
+            "postal_code": null,
+            "timezone": "America/Boise",
+            "landclass": "Deep Creek Roadless Area",
+            "elevation_m": 1752.28515625
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.quake.event.minor.unknown",
+  "captured_epoch": 1783196478
+}

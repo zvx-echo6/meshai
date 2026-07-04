@@ -1,0 +1,35 @@
+{
+  "envelope": {
+    "id": "TIVA|2026-06-03 01:43:20.793",
+    "source": "central.echo6.co",
+    "type": "central.space.alert.v1",
+    "time": "2026-06-03T01:43:20.793000+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "space.alert",
+    "centralseverity": 0,
+    "specversion": "1.0",
+    "data": {
+      "id": "TIVA|2026-06-03 01:43:20.793",
+      "adapter": "swpc_alerts",
+      "category": "space.alert",
+      "time": "2026-06-03T01:43:20.793000Z",
+      "expires": null,
+      "severity": 0,
+      "geo": {
+        "centroid": null,
+        "bbox": null,
+        "regions": [],
+        "primary_region": null,
+        "geometry": null
+      },
+      "data": {
+        "product_id": "TIVA",
+        "issue_datetime": "2026-06-03 01:43:20.793",
+        "message": "Space Weather Message Code: ALTTP4\r\nSerial Number: 710\r\nIssue Time: 2026 Jun 03 0143 UTC\r\n\r\nALERT: Type IV Radio Emission \nBegin Time: 2026 Jun 03 0122 UTC\nComment: \r\n\n"
+      }
+    }
+  },
+  "subject": "central.space.alert.tiva",
+  "captured_epoch": 1783196500
+}

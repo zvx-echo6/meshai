@@ -1,0 +1,82 @@
+{
+  "envelope": {
+    "id": "us6000t9bn",
+    "source": "central.echo6.co",
+    "type": "central.quake.event.light.v1",
+    "time": "2026-07-01T00:35:15.247000+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "quake.event.light",
+    "centralseverity": 1,
+    "specversion": "1.0",
+    "data": {
+      "id": "us6000t9bn",
+      "adapter": "usgs_quake",
+      "category": "quake.event.light",
+      "time": "2026-07-01T00:35:15.247000Z",
+      "expires": null,
+      "severity": 1,
+      "geo": {
+        "centroid": [
+          -112.6108,
+          44.46
+        ],
+        "bbox": [
+          -112.6108,
+          44.46,
+          -112.6108,
+          44.46
+        ],
+        "regions": [],
+        "primary_region": null,
+        "geometry": null
+      },
+      "data": {
+        "magnitude": 3.3,
+        "place": "19 km S of Lima, Montana",
+        "time_ms": 1782866115247,
+        "updated_ms": 1782867341040,
+        "tz": null,
+        "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us6000t9bn",
+        "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/us6000t9bn.geojson",
+        "felt": null,
+        "cdi": null,
+        "mmi": null,
+        "alert": null,
+        "status": "reviewed",
+        "tsunami": 0,
+        "sig": 168,
+        "net": "us",
+        "code": "6000t9bn",
+        "ids": ",us6000t9bn,",
+        "sources": ",us,",
+        "types": ",origin,phase-data,",
+        "nst": 52,
+        "dmin": 0.159,
+        "rms": 0.61,
+        "gap": 45,
+        "magType": "ml",
+        "type": "earthquake",
+        "title": "M 3.3 - 19 km S of Lima, Montana",
+        "longitude": -112.6108,
+        "latitude": 44.46,
+        "depth": 11.169,
+        "_enriched": {
+          "geocoder": {
+            "name": null,
+            "city": null,
+            "county": null,
+            "state": null,
+            "country": null,
+            "postal_code": null,
+            "timezone": "America/Boise",
+            "landclass": "Upper Snake Field Office",
+            "elevation_m": 2225.02734375
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.quake.event.light.unknown",
+  "captured_epoch": 1783196478
+}

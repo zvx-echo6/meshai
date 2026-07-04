@@ -1,0 +1,82 @@
+{
+  "envelope": {
+    "id": "uu80143651",
+    "source": "central.echo6.co",
+    "type": "central.quake.event.minor.v1",
+    "time": "2026-06-29T12:09:25.630000+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "quake.event.minor",
+    "centralseverity": 0,
+    "specversion": "1.0",
+    "data": {
+      "id": "uu80143651",
+      "adapter": "usgs_quake",
+      "category": "quake.event.minor",
+      "time": "2026-06-29T12:09:25.630000Z",
+      "expires": null,
+      "severity": 0,
+      "geo": {
+        "centroid": [
+          -111.2065,
+          42.7483333333333
+        ],
+        "bbox": [
+          -111.2065,
+          42.7483333333333,
+          -111.2065,
+          42.7483333333333
+        ],
+        "regions": [],
+        "primary_region": null,
+        "geometry": null
+      },
+      "data": {
+        "magnitude": 2.37,
+        "place": "17 km WSW of Auburn, Wyoming",
+        "time_ms": 1782734965630,
+        "updated_ms": 1782764579010,
+        "tz": null,
+        "url": "https://earthquake.usgs.gov/earthquakes/eventpage/uu80143651",
+        "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/uu80143651.geojson",
+        "felt": null,
+        "cdi": null,
+        "mmi": null,
+        "alert": null,
+        "status": "reviewed",
+        "tsunami": 0,
+        "sig": 86,
+        "net": "uu",
+        "code": "80143651",
+        "ids": ",uu80143651,",
+        "sources": ",uu,",
+        "types": ",origin,phase-data,",
+        "nst": 21,
+        "dmin": 0.07998,
+        "rms": 0.18,
+        "gap": 100,
+        "magType": "ml",
+        "type": "earthquake",
+        "title": "M 2.4 - 17 km WSW of Auburn, Wyoming",
+        "longitude": -111.2065,
+        "latitude": 42.7483333333333,
+        "depth": 4.18,
+        "_enriched": {
+          "geocoder": {
+            "name": null,
+            "city": null,
+            "county": null,
+            "state": null,
+            "country": null,
+            "postal_code": null,
+            "timezone": "America/Boise",
+            "landclass": "Stump Creek Roadless Area",
+            "elevation_m": 2198.1875
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.quake.event.minor.unknown",
+  "captured_epoch": 1783196478
+}

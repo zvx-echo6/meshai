@@ -1,0 +1,35 @@
+{
+  "envelope": {
+    "id": "K04W|2026-07-04 14:21:41.873",
+    "source": "central.echo6.co",
+    "type": "central.space.alert.v1",
+    "time": "2026-07-04T14:21:41.873000+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "space.alert",
+    "centralseverity": 0,
+    "specversion": "1.0",
+    "data": {
+      "id": "K04W|2026-07-04 14:21:41.873",
+      "adapter": "swpc_alerts",
+      "category": "space.alert",
+      "time": "2026-07-04T14:21:41.873000Z",
+      "expires": null,
+      "severity": 0,
+      "geo": {
+        "centroid": null,
+        "bbox": null,
+        "regions": [],
+        "primary_region": null,
+        "geometry": null
+      },
+      "data": {
+        "product_id": "K04W",
+        "issue_datetime": "2026-07-04 14:21:41.873",
+        "message": "Space Weather Message Code: WARK04\r\nSerial Number: 5377\r\nIssue Time: 2026 Jul 04 1421 UTC\r\n\r\nEXTENDED WARNING: Geomagnetic K-index of 4 expected\nExtension to Serial Number: 5376\nValid From: 2026 Jul 03 1209 UTC\nNow Valid Until: 2026 Jul 05 0300 UTC\nWarning Condition: Persistence\n\r\n\n\r\n\r\nNOAA Space Weather Scale descriptions can be found at\r\nwww.swpc.noaa.gov/noaa-scales-explanation\r\n\r\nPotential Impacts: Area of impact primarily poleward of 65 degrees Geomagnetic Latitude.\r\nInduced Currents - Weak power grid fluctuations can occur.\r\nAurora - Aurora may be visible at high latitudes such as Canada and Alaska."
+      }
+    }
+  },
+  "subject": "central.space.alert.k04w",
+  "captured_epoch": 1783196500
+}

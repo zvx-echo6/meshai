@@ -1,0 +1,36 @@
+{
+  "envelope": {
+    "id": "2026-07-04T15:00:00",
+    "source": "central.echo6.co",
+    "type": "central.space.kindex.v1",
+    "time": "2026-07-04T15:00:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "space.kindex",
+    "centralseverity": 1,
+    "specversion": "1.0",
+    "data": {
+      "id": "2026-07-04T15:00:00",
+      "adapter": "swpc_kindex",
+      "category": "space.kindex",
+      "time": "2026-07-04T15:00:00Z",
+      "expires": null,
+      "severity": 1,
+      "geo": {
+        "centroid": null,
+        "bbox": null,
+        "regions": [],
+        "primary_region": null,
+        "geometry": null
+      },
+      "data": {
+        "time_tag": "2026-07-04T15:00:00",
+        "Kp": 5.67,
+        "a_running": 67,
+        "station_count": 7
+      }
+    }
+  },
+  "subject": "central.space.kindex",
+  "captured_epoch": 1783196500
+}
