@@ -590,6 +590,22 @@ class CentralConsumer:
         # Scheduled broadcasters (band_conditions) bypass _normalize()
         # entirely -- they enter via Dispatcher.dispatch_scheduled_broadcast()
         # and are unaffected by this gate.
+        # Phase-0b shadow gate hook — inert by default.
+        # Called RIGHT BEFORE the default-deny return so the shadow observes the
+        # same broadcast decision the legacy handler made (synthesized is not None).
+        # The OLD result is kept unchanged below; the shadow only observes.
+        try:
+            from meshai.notifications.shadow import shadow_gate as _shadow_gate
+            _shadow_gate(
+                category,
+                data,
+                source=inner.get("adapter") or "central",
+                now=time.time(),
+                old_broadcast=synthesized is not None,
+            )
+        except Exception:  # noqa: BLE001 — shadow must never affect production
+            pass
+
         if synthesized is None:
             logger.debug(
                 "consumer: default-deny -- no handler synthesized for "

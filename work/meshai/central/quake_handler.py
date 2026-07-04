@@ -31,6 +31,8 @@ import math
 import time
 from typing import Any, Optional
 
+from meshai.notifications import clock
+
 from meshai.persistence import get_db
 
 logger = logging.getLogger(__name__)
@@ -41,7 +43,7 @@ logger = logging.getLogger(__name__)
 # GUI edits take effect on the next envelope without restart.
 
 
-def _now() -> int: return int(time.time())
+def _now() -> int: return int(clock.now())
 
 
 def _haversine_mi(lat1, lon1, lat2, lon2) -> float:

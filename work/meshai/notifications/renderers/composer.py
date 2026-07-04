@@ -20,11 +20,14 @@ exceed the budget, the primary identifier is shrunk by codepoints and
 suffixed with `…` so the byte budget always holds.
 """
 
+import logging
 import re
 from html import unescape
 from typing import Optional
 
 from meshai.notifications.events import Event
+
+logger = logging.getLogger(__name__)
 
 
 # Hard byte budget for a single mesh broadcast line (Matt-approved cap).
@@ -294,6 +297,25 @@ def _context_segment(event: Event) -> Optional[str]:
     return ", ".join(bits) if bits else None
 
 
+def _resolve_budget(event: Event) -> int:
+    """Pick a per-adapter packet budget for the new formatter path.
+
+    Mirrors how the existing precomposed handlers select their budget:
+    wfigs uses budget_for("wfigs"), quake uses budget_for("usgs_quake"),
+    etc.  Here we use event.source (the adapter name) as the budget key.
+    Falls back to 140 (the universal LoRa default) when source is absent
+    or budget_for raises.
+    """
+    src = (getattr(event, "source", "") or "").strip()
+    if src:
+        try:
+            from meshai.central.budget import budget_for
+            return budget_for(src)
+        except Exception:
+            pass
+    return 140
+
+
 def compose_mesh_message(event: Event) -> str:
     """Compose a friendly mesh-broadcast string with 150-byte UTF-8 hard cap.
 
@@ -306,6 +328,22 @@ def compose_mesh_message(event: Event) -> str:
     Return it verbatim -- no family-label prefix, no region tail, no
     severity word append.
     """
+    # Phase-1+ formatter dispatch — EMPTY REGISTRY at Phase 0, so this
+    # no-ops on every call.  When a formatter is registered for the event's
+    # category (or its toggle family), it is called here and its output
+    # returned verbatim (newlines preserved, no Mode-B re-entry).
+    from meshai.notifications.formatters import get_formatter
+    from meshai.notifications import clock
+    fmt = get_formatter(event.category)
+    if fmt is not None:
+        try:
+            return fmt(event, now=clock.now(), budget=_resolve_budget(event))
+        except Exception:
+            logger.exception(
+                "formatter failed for %s; falling back to legacy", event.category
+            )
+    # ---- existing passthrough + Mode-B unchanged below ----
+
     if event.data and event.data.get("_meshai_precomposed") and event.title:
         return event.title
 

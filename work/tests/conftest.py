@@ -12,11 +12,45 @@ and clears the persistence-layer threading.local caches around each test.
 Existing tests that don't reference any fixture get isolation for free;
 tests that explicitly use a `db_path` (or similar) fixture can still
 override the env var inside their own fixture body -- last setenv wins.
+
+Phase-0 addition: a session-scoped TZ fixture validates that
+America/Boise resolves via zoneinfo, exercising the tzdata guard needed
+in CI environments.  The fixture saves and restores the original TZ so
+that existing tests running with naive datetimes are unaffected.
 """
+import os
+import time
+import zoneinfo
+
 import pytest
 
 from meshai.persistence import close_thread_connection
 from meshai.persistence import db as _persistence_db
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _tz_boise():
+    """Set TZ=America/Boise, call tzset(), assert zoneinfo resolves, then restore.
+
+    This validates that the tzdata package (or system zoneinfo) is available
+    in CI before any formatter/renderer test runs.  The original TZ is restored
+    so that existing tests using naive datetimes are not affected by the
+    Mountain Time offset.
+    """
+    original_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "America/Boise"
+    time.tzset()
+    # Assert that zoneinfo can resolve the timezone (requires tzdata package
+    # or /usr/share/zoneinfo/America/Boise on the system).
+    zoneinfo.ZoneInfo("America/Boise")
+    # Restore the original TZ so that tests using naive datetime / time.localtime()
+    # behave the same as they did before this session fixture was added.
+    if original_tz is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = original_tz
+    time.tzset()
+    yield
 
 
 @pytest.fixture(autouse=True)
