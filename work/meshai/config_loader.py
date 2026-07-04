@@ -41,6 +41,7 @@ SECTION_TO_FILE: dict[str, str] = {
     "history": "config.yaml",
     "memory": "config.yaml",
     "context": "config.yaml",
+    "meshcore_context": "config.yaml",
     "weather": "config.yaml",
     "meshmonitor": "config.yaml",
     "knowledge": "config.yaml",

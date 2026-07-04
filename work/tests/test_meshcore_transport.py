@@ -326,24 +326,24 @@ class TestSendMessageChannel:
 # ---------------------------------------------------------------------------
 
 class TestSendMessageDM:
-    def test_dispatches_send_msg(self):
+    def test_dispatches_send_msg_with_retry(self):
         t, mc, _ = _transport_with_mock_mc()
         try:
             ok = MagicMock()
             ok.is_error.return_value = False
-            mc.commands.send_msg = AsyncMock(return_value=ok)
+            mc.commands.send_msg_with_retry = AsyncMock(return_value=ok)
             result = t.send_message("hi DM", destination="aabbcc")
             assert result is True
-            mc.commands.send_msg.assert_awaited_once_with("aabbcc", "hi DM")
+            mc.commands.send_msg_with_retry.assert_awaited_once_with("aabbcc", "hi DM")
         finally:
             _cleanup(t)
 
-    def test_send_msg_error_returns_false(self):
+    def test_send_msg_with_retry_error_returns_false(self):
         t, mc, _ = _transport_with_mock_mc()
         try:
             err = MagicMock()
             err.is_error.return_value = True
-            mc.commands.send_msg = AsyncMock(return_value=err)
+            mc.commands.send_msg_with_retry = AsyncMock(return_value=err)
             assert t.send_message("hi", destination="deadbeef") is False
         finally:
             _cleanup(t)
