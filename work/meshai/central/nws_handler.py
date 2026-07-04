@@ -37,6 +37,8 @@ import zoneinfo
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from meshai.notifications import clock
+
 from meshai.persistence import get_db
 
 logger = logging.getLogger(__name__)
@@ -130,7 +132,7 @@ def _parse_motion(params: dict) -> tuple:
     return compass, mph
 
 
-def _now() -> int: return int(time.time())
+def _now() -> int: return int(clock.now())
 
 
 def _is_update(conn, d: dict) -> bool:

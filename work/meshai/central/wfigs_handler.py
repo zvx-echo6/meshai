@@ -35,6 +35,8 @@ import logging
 import time
 from typing import Any, Optional
 
+from meshai.notifications import clock
+
 from meshai.persistence import get_db
 
 logger = logging.getLogger(__name__)
@@ -62,7 +64,7 @@ def _cleanup_stale_fires(conn) -> None:
 
 
 def _now() -> int:
-    return int(time.time())
+    return int(clock.now())
 
 
 def _fire_too_old_to_announce(declared_at_epoch, now) -> bool:

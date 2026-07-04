@@ -443,6 +443,16 @@ class Dispatcher:
             self._logger.exception("mesh composer crashed; falling back to legacy message")
             friendly = None
 
+        # Phase-0b shadow render hook — inert by default.
+        # Called AFTER compose_mesh_message so old_wire is the real produced
+        # string.  The real path continues to use *friendly* unchanged below.
+        if friendly is not None:
+            try:
+                from meshai.notifications.shadow import shadow_render as _shadow_render
+                _shadow_render(event.category, event, old_wire=friendly)
+            except Exception:  # noqa: BLE001 — shadow must never affect production
+                pass
+
         delivered_any = False
         for ch_type in ch_types:
             rule = None
