@@ -172,6 +172,8 @@ async def update_config_section(section: str, request: Request):
                 setattr(request.app.state.config, section, new_value)
             except Exception:
                 pass
+            if section == "context":
+                _refresh_mesh_context(request.app, new_value)
 
         logger.info(
             "Config section %r updated, restart_required=%s changed_keys=%s",
@@ -248,6 +250,26 @@ def _refresh_toggle_filter(app) -> bool:
         return True
     except Exception:
         logger.exception("toggle_filter refresh failed")
+        return False
+
+
+def _refresh_mesh_context(app, new_ctx_cfg) -> bool:
+    """Best-effort live refresh of the running MeshContext after a context
+    config PUT. Returns True when the refresh actually fired, False if the
+    context instance is absent/None (passive context disabled, or early
+    startup). Never raises."""
+    try:
+        ctx = getattr(app.state, "mesh_context", None)
+        if ctx is None:
+            return False
+        ctx.update_settings(
+            max_age=new_ctx_cfg.max_age,
+            observe_channels=new_ctx_cfg.observe_channels,
+            ignore_nodes=new_ctx_cfg.ignore_nodes,
+        )
+        return True
+    except Exception:
+        logger.exception("mesh_context refresh failed")
         return False
 
 

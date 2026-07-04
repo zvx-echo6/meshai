@@ -161,6 +161,30 @@ class MeshContext:
 
         return "\n".join(lines)
 
+    def update_settings(
+        self,
+        *,
+        max_age: Optional[int] = None,
+        observe_channels: Optional[list] = None,
+        ignore_nodes: Optional[list] = None,
+    ) -> None:
+        """Apply config changes to the live store without a restart.
+
+        Mirrors the normalization rules of __init__ exactly:
+          - observe_channels: set(v) if v else None  (empty list → None = observe all)
+          - ignore_nodes:     set(v) if v else set() (empty list/None → empty set)
+          - max_age:          stored as-is
+
+        Only parameters that are not None are updated; omit a parameter to
+        leave its current value unchanged.
+        """
+        if max_age is not None:
+            self._max_age = max_age
+        if observe_channels is not None:
+            self._observe_channels = set(observe_channels) if observe_channels else None
+        if ignore_nodes is not None:
+            self._ignore_nodes = set(ignore_nodes) if ignore_nodes else set()
+
     @property
     def count(self) -> int:
         """Number of observations in buffer."""

@@ -918,11 +918,11 @@ function ContextSection({ data, onChange }: { data: ContextConfig; onChange: (d:
               here as general context knobs. */}
           <div className="grid grid-cols-2 gap-4">
             <NumberInput
-              label="Max Age (sec)"
-              value={data.max_age}
-              onChange={(v) => onChange({ ...data, max_age: v })}
-              min={0}
-              helper="Ignore messages older than this"
+              label="Chat context retention (days)"
+              value={Math.round((data.max_age ?? 1209600) / 86400)}
+              onChange={(v) => onChange({ ...data, max_age: v * 86400 })}
+              min={1}
+              helper="How long the bot remembers recent channel chat for context (applies to both meshes). Default 14 days."
             />
             <NumberInput
               label="Max Context Items"
