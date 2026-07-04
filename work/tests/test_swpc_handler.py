@@ -13,10 +13,13 @@ def mem_db(monkeypatch, tmp_path):
     persistence_db._initialised.clear()
     close_thread_connection()
     conn = init_db()
-    # Clear module-level geomag dedup cache between tests
+    # Clear module-level geomag dedup caches between tests.
+    # Phase-1: _geomag_recent moved to gating.swpc._geomag_window.
     from meshai.central import swpc_handler as _swpc_mod
     if hasattr(_swpc_mod, '_geomag_recent'):
         _swpc_mod._geomag_recent.clear()
+    from meshai.notifications.gating import swpc as _swpc_gate
+    _swpc_gate._geomag_window.clear()
     yield conn
     close_thread_connection()
     persistence_db._initialised.discard(db_path)

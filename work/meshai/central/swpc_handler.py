@@ -54,12 +54,11 @@ _S_SCALE_THRESHOLDS = [
 ]
 
 
-# Geomag cross-sub-adapter dedup: swpc_alerts and swpc_kindex can both
-# fire for the same G-storm. Suppress the second broadcast for the same
-# G-scale within this window.  In-memory dict keyed on scale_code;
-# cleared on process restart (acceptable — worst case one dup on restart).
+# Geomag cross-sub-adapter dedup window constant — kept for documentation.
+# The in-memory _geomag_recent dict has moved to meshai.notifications.gating.swpc
+# (_geomag_window) where the commit closure defers the stamp.
 GEOMAG_DEDUP_WINDOW_SECONDS = 600
-_geomag_recent: dict[str, float] = {}   # scale_code -> broadcast_ts
+# _geomag_recent removed: now owned by gating.swpc._geomag_window.
 
 
 def _trunc(s: str, limit: int = 120) -> str:
@@ -304,37 +303,7 @@ def handle_swpc(envelope: dict, subject: str,
                     table_name="swpc_events", table_pk=event_id)
         return None
 
-    # Geomag cross-sub-adapter coalescing guard.
-    if event_kind == "geomag" and scale_code:
-        prev_ts = _geomag_recent.get(scale_code)
-        if prev_ts is not None and (now - prev_ts) < GEOMAG_DEDUP_WINDOW_SECONDS:
-            logger.debug(
-                "swpc_handler: geomag dedup — suppressing %s from %s "
-                "(already broadcast %.0fs ago)",
-                scale_code, adapter, now - prev_ts,
-            )
-            # Still persist + log, but no broadcast.
-            _upsert_swpc(conn, event_id=event_id, adapter=adapter,
-                          payload_json=payload_json, occurred_at=occurred_at or now,
-                          first_seen_at=now, set_last_broadcast=False)
-            _log_event(conn, now=now, source="swpc", category=category_raw,
-                        severity_word=severity_word, event_id_external=event_id,
-                        subject=subject, handled=0,
-                        table_name="swpc_events", table_pk=event_id)
-            return None
-
-    # Broadcast-worthy. Per-event dedup + commit pattern.
-    log_id = _log_event_returning_id(
-        conn, now=now, source="swpc", category=category_raw,
-        severity_word=severity_word, event_id_external=event_id,
-        subject=subject, handled=0,
-        table_name="swpc_events", table_pk=event_id)
-
-    row = conn.execute(
-        "SELECT last_broadcast_at FROM swpc_events WHERE event_id=?",
-        (event_id,)).fetchone()
-
-    # Extract optional detail and time tag for multi-line render.
+    # ── Extract detail + time tag ─────────────────────────────────────────────
     _detail = d.get("message") or d.get("description") or ""
     if isinstance(_detail, str):
         _detail = _trunc(_detail.strip())
@@ -345,27 +314,130 @@ def handle_swpc(envelope: dict, subject: str,
     if isinstance(_t_raw, str) and _t_raw:
         _time_tag = _t_raw[:16].replace("T", " ")
 
+    # ── NEW ARCH: geomag + flare delegate to gating.swpc.decide() ────────────
+    if event_kind in ("geomag", "flare"):
+        # Build canonical data dict for the decider + formatter.
+        if event_kind == "geomag":
+            _kp_val = _extract_kp(d)   # idempotent re-extract
+            canonical: dict = {
+                "event_id": event_id,
+                "driver": "kp",
+                "scalar": _kp_val,
+                "scale_code": scale_code,
+                "message": _detail,
+                "issued_at": _t_raw if _t_raw else None,
+            }
+        else:  # flare — scalar_str is the class string set by classification
+            canonical = {
+                "event_id": event_id,
+                "driver": "flare",
+                "scalar": scalar_str,
+                "scale_code": scale_code,
+                "message": _detail,
+                "issued_at": _t_raw if _t_raw else None,
+            }
+
+        from meshai.notifications.gating.swpc import decide as _swpc_decide
+        gate = _swpc_decide(canonical, source="swpc", now=float(now))
+
+        if not gate.broadcast:
+            logger.debug(
+                "swpc_handler: geomag/flare suppressed by gating.swpc: %s",
+                gate.reason,
+            )
+            _upsert_swpc(conn, event_id=event_id, adapter=adapter,
+                          payload_json=payload_json, occurred_at=occurred_at or now,
+                          first_seen_at=now, set_last_broadcast=False)
+            _log_event(conn, now=now, source="swpc", category=category_raw,
+                        severity_word=severity_word, event_id_external=event_id,
+                        subject=subject, handled=0,
+                        table_name="swpc_events", table_pk=event_id)
+            return None
+
+        log_id = _log_event_returning_id(
+            conn, now=now, source="swpc", category=category_raw,
+            severity_word=severity_word, event_id_external=event_id,
+            subject=subject, handled=0,
+            table_name="swpc_events", table_pk=event_id)
+
+        # _upsert_swpc fills in event_type=adapter + payload_json via the
+        # UPDATE path (decide() already INSERT-OR-IGNOREd the row).
+        _upsert_swpc(conn, event_id=event_id, adapter=adapter,
+                      payload_json=payload_json, occurred_at=occurred_at or now,
+                      first_seen_at=now, set_last_broadcast=False)
+
+        wire = _render(event_kind, scale_code, label, scalar_str,
+                       is_update=False, detail=_detail, time_tag=_time_tag)
+
+        # Cutover gate: geomag → geomagnetic_storm; flare → rf_propagation_alert.
+        # Per-derived-category so geomag and flare can be cut over independently.
+        from meshai.notifications.cutover import is_cutover
+        _derived_cat = "geomagnetic_storm" if event_kind == "geomag" else "rf_propagation_alert"
+
+        if isinstance(data, dict):
+            data.update(canonical)
+            if is_cutover(_derived_cat):
+                # NEW PATH: gate.data_patch provides _severity_override, _cooldown_suffix.
+                data.update(gate.data_patch)
+                data["_broadcast_audit"] = {"table": "swpc_events", "pk": event_id}
+                _raw_commit = gate.commit
+                _log_row_id = log_id
+
+                def _on_commit(committed_at: float,
+                               _rc=_raw_commit, _lr=_log_row_id) -> None:
+                    if _rc is not None:
+                        _rc(committed_at)
+                    if _lr is not None:
+                        try:
+                            c = get_db()
+                            c.execute("UPDATE event_log SET handled=1 WHERE id=?",
+                                      (int(_lr),))
+                        except Exception:
+                            logger.exception("swpc commit: event_log update failed")
+
+                data["_on_broadcast_committed"] = _on_commit
+            else:
+                # NOT cutover: old-style attach (canonical only, no data_patch).
+                # gate.commit is intentionally not called; geomag window does not
+                # tick in shadow-bake mode (acceptable — worst case one extra
+                # broadcast per restart, caught by shadow_gate diff).
+                _attach_commit(data, event_id=event_id, event_log_row_id=log_id)
+
+        return wire
+
+    # ── LEGACY path: proton events (solar_radiation_storm) ───────────────────
+    # solar_radiation_storm is NOT registered in the gating/formatter
+    # registries; it stays on this inline legacy path unchanged.
+    if event_kind != "proton":
+        logger.warning("swpc_handler: unexpected event_kind=%r; suppressing", event_kind)
+        return None
+
+    log_id = _log_event_returning_id(
+        conn, now=now, source="swpc", category=category_raw,
+        severity_word=severity_word, event_id_external=event_id,
+        subject=subject, handled=0,
+        table_name="swpc_events", table_pk=event_id)
+
+    row = conn.execute(
+        "SELECT last_broadcast_at FROM swpc_events WHERE event_id=?",
+        (event_id,)).fetchone()
+
     if row is None:
         _upsert_swpc(conn, event_id=event_id, adapter=adapter,
                       payload_json=payload_json, occurred_at=occurred_at or now,
                       first_seen_at=now, set_last_broadcast=False)
         wire = _render(event_kind, scale_code, label, scalar_str,
                        is_update=False, detail=_detail, time_tag=_time_tag)
-        if event_kind == "geomag" and scale_code:
-            _geomag_recent[scale_code] = now
         _attach_commit(data, event_id=event_id, event_log_row_id=log_id)
         return wire
 
     if row["last_broadcast_at"] is None:
         wire = _render(event_kind, scale_code, label, scalar_str,
                        is_update=False, detail=_detail, time_tag=_time_tag)
-        if event_kind == "geomag" and scale_code:
-            _geomag_recent[scale_code] = now
         _attach_commit(data, event_id=event_id, event_log_row_id=log_id)
         return wire
 
-    # Already broadcast — return None (no Update re-broadcast for SWPC;
-    # space weather events are point-in-time, not evolving like fires).
+    # Already broadcast — no Update re-broadcast for SWPC point-in-time events.
     return None
 
 

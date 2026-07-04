@@ -1,8 +1,8 @@
 """Formatter registry for the Phase-1+ mesh-message dispatch path.
 
-FORMATTERS is intentionally empty at this phase (Phase 0 scaffold).
-No category is migrated yet — all events fall through to the legacy
-compose_mesh_message Mode-B path.  Zero behavior change.
+Phase-1: earthquake_event registered (quake.py).
+All other categories still fall through to the legacy compose_mesh_message
+Mode-B path.
 
 Usage (future phases):
     from meshai.notifications.formatters import register
@@ -14,7 +14,7 @@ Usage (future phases):
 
 from typing import Callable, Optional
 
-# Empty registry — populated by per-category formatter modules (Phase 1+).
+# Populated by per-category formatter modules imported below.
 FORMATTERS: dict[str, Callable] = {}
 
 
@@ -53,3 +53,22 @@ def get_formatter(category: str) -> Optional[Callable]:
     except Exception:
         pass
     return None
+
+
+# ── Phase-1 registrations ────────────────────────────────────────────────────
+# Import triggers the @register decorator (or explicit register() call) in
+# each formatter module.  Add one import per migrated category.
+
+from meshai.notifications.formatters import quake as _quake_fmt_mod  # noqa: E402,F401
+register("earthquake_event", _quake_fmt_mod.format)
+
+from meshai.notifications.formatters import avalanche as _avy_fmt_mod  # noqa: E402,F401
+register("avalanche_warning", _avy_fmt_mod.format)
+register("avalanche_watch", _avy_fmt_mod.format)
+
+# SWPC: geomagnetic_storm (swpc_kindex / native G-scale) and rf_propagation_alert
+# (swpc_alerts flare / native R-scale).  solar_radiation_storm (proton) stays on
+# the legacy Mode-B path — NOT registered here.
+from meshai.notifications.formatters import swpc as _swpc_fmt_mod  # noqa: E402,F401
+register("geomagnetic_storm", _swpc_fmt_mod.format)
+register("rf_propagation_alert", _swpc_fmt_mod.format)

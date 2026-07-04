@@ -317,6 +317,22 @@ class SWPCAdapter:
             severity = evt.get("severity", "routine")
             title = evt.get("headline") or evt.get("event_type") or f"{scale}{level} space weather"
 
+            # ── Canonical data (Phase-1 refactor) ────────────────────────────
+            # Native adapter has no per-reading Kp value or flare class; only
+            # the NOAA scale level from noaa-scales.json is available.
+            # driver: "kp" for G-scale, "flare" for R-scale, None for S-scale.
+            # scalar: None — not available from noaa-scales.json.
+            # scale_code: e.g. "G3", "R2".
+            _driver = "kp" if scale == "G" else "flare" if scale == "R" else None
+            canonical_data: dict = {
+                "event_id": event_id,
+                "driver": _driver,
+                "scalar": None,             # not available natively
+                "scale_code": f"{scale}{level}",
+                "message": "",
+                "issued_at": None,
+            }
+
             # event_id is the stable "swpc_{scale}{level}" key. A sustained
             # condition coalesces on this group_key (re-polls dedup); an
             # escalation to a higher level yields a new key and re-notifies.
@@ -334,6 +350,7 @@ class SWPCAdapter:
                 region="global",
                 group_key=event_id,
                 inhibit_keys=[event_id],
+                data=canonical_data,
             )
         except Exception:
             logger.exception(f"SWPC to_event failed for evt: {evt.get('event_id')}")

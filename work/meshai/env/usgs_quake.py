@@ -172,16 +172,28 @@ class USGSQuakeAdapter:
     def to_event(self, evt: dict) -> Optional["Event"]:
         """Translate a stored quake dict into a pipeline Event.
 
-        Category is always earthquake_event; magnitude-binned severity is
-        passed through. The stable USGS id is the group_key and sole
-        inhibit_key.
+        Phase-1 refactor: emits canonical Event.data schema so the registered
+        gating decider (store.py hook) and formatter can operate on structured
+        fields rather than baked strings.
+
+        Canonical data keys emitted:
+            magnitude, depth_km, lat, lon, place, tsunami, pager,
+            occurred_at, event_id
+
+        The native feed does not supply tsunami or PAGER fields (those come
+        from Central's enrichment pipeline).  Both default to safe no-op values.
+
+        The gating decider (meshai.notifications.gating.quake.decide) is NOT
+        called here — the store.py _emit_event hook intercepts and calls it
+        before emitting to the bus.  This preserves the single-gate-point
+        contract and ensures native + Central paths share identical gating logic.
 
         Args:
             evt: Internal event dict from get_events()
 
         Returns:
-            Event instance, or None if the dict is missing its id, coords, or
-            magnitude.
+            Event instance with canonical data dict, or None if the dict is
+            missing its id, coords, or magnitude.
         """
         try:
             event_id = evt.get("event_id")
@@ -198,27 +210,46 @@ class USGSQuakeAdapter:
                 return None
 
             severity = evt.get("severity", "routine")
-            title = evt.get("headline") or f"M{mag} earthquake"
 
-            summary_parts = [title]
-            depth = evt.get("depth_km")
-            if depth is not None:
-                summary_parts.append(f"depth {round(depth, 1)} km")
-            summary = " | ".join(summary_parts)[:300]
+            depth_km = evt.get("depth_km")
+            place = evt.get("place") or "Unknown location"
+            ts = evt.get("quake_time") or evt.get("fetched_at")
+            occurred_at = int(ts) if ts is not None else None
+
+            # Canonical data schema — identical keys to what the Central path
+            # writes into event.data so the formatter and gating decider work
+            # identically regardless of ingestion path.
+            canonical_data: dict = {
+                "magnitude": float(mag),
+                "depth_km": depth_km,
+                "lat": lat,
+                "lon": lon,
+                "place": place,
+                "tsunami": False,   # native USGS GeoJSON feed has no tsunami flag
+                "pager": None,      # PAGER comes from Central enrichment only
+                "occurred_at": occurred_at,
+                "event_id": event_id,
+            }
+
+            # Provide a minimal title for display / Mode-B fallback before the
+            # formatter fires.  Formatter re-renders from canonical_data at
+            # dispatch time (tier-b format with PAGER+update-prefix support).
+            title = f"M{mag:.1f} — {place}"
 
             return make_event(
                 source="usgs_quake",
                 category="earthquake_event",
                 severity=severity,
                 title=title,
-                summary=summary,
-                timestamp=evt.get("quake_time") or evt.get("fetched_at"),
+                summary=title,
+                timestamp=ts,
                 expires=evt.get("expires"),
                 lat=lat,
                 lon=lon,
                 region=evt.get("region"),
                 group_key=event_id,
                 inhibit_keys=[event_id],
+                data=canonical_data,
             )
         except Exception:
             logger.exception(f"USGS quake to_event failed for evt: {evt.get('event_id')}")

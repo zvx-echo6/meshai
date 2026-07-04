@@ -136,10 +136,16 @@ class TestShadowInertWhenNoDecider:
 # ---------------------------------------------------------------------------
 
 class TestShadowRenderInertWhenNoFormatter:
-    """MESHAI_SHADOW_CATEGORIES set but FORMATTERS empty → still no-op."""
+    """MESHAI_SHADOW_CATEGORIES set but no formatter registered → still no-op.
+
+    Note: earthquake_event has a formatter in Phase 1+; this class uses
+    wildfire_incident which remains un-migrated and has no formatter entry.
+    """
+
+    _CATEGORY = "wildfire_incident"
 
     def setup_method(self):
-        os.environ["MESHAI_SHADOW_CATEGORIES"] = "earthquake_event"
+        os.environ["MESHAI_SHADOW_CATEGORIES"] = self._CATEGORY
         _reset_shadow_cache()
 
     def teardown_method(self):
@@ -150,7 +156,7 @@ class TestShadowRenderInertWhenNoFormatter:
         """get_formatter returns None → shadow_render exits before any file write."""
         monkeypatch.setattr(shadow_mod, "_SHADOW_DIR", str(tmp_path / "shadow"))
         shadow_mod.shadow_render(
-            "earthquake_event",
+            self._CATEGORY,
             _FakeEvent(),
             old_wire="old wire string",
         )
@@ -160,7 +166,7 @@ class TestShadowRenderInertWhenNoFormatter:
         """shadow_render must not propagate any exception."""
         try:
             shadow_mod.shadow_render(
-                "earthquake_event",
+                self._CATEGORY,
                 None,  # intentionally bad input — must not raise
                 old_wire="anything",
             )

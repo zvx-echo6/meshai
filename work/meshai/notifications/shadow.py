@@ -107,6 +107,14 @@ def shadow_gate(
       * NEVER writes any DB table
       * All exceptions swallowed; returns None always
     """
+    # Once a category is cut over its new path IS the live path — there is
+    # nothing to shadow-compare.  Skip early so the hook is a true no-op.
+    try:
+        from meshai.notifications.cutover import is_cutover
+        if is_cutover(category):
+            return
+    except Exception:
+        pass  # belt-and-suspenders: never let cutover import block shadow
     if not enabled_for(category):
         return
     try:
@@ -182,6 +190,14 @@ def shadow_render(category: str, event: "Event", *, old_wire: str) -> None:
       * NEVER emits, commits, or writes any DB table
       * All exceptions swallowed; returns None always
     """
+    # Once a category is cut over the new formatter IS composing old_wire —
+    # there is nothing to compare against.  Skip early.
+    try:
+        from meshai.notifications.cutover import is_cutover
+        if is_cutover(category):
+            return
+    except Exception:
+        pass  # belt-and-suspenders: never let cutover import block shadow
     if not enabled_for(category):
         return
     try:

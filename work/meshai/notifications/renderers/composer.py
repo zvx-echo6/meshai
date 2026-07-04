@@ -328,14 +328,16 @@ def compose_mesh_message(event: Event) -> str:
     Return it verbatim -- no family-label prefix, no region tail, no
     severity word append.
     """
-    # Phase-1+ formatter dispatch — EMPTY REGISTRY at Phase 0, so this
-    # no-ops on every call.  When a formatter is registered for the event's
-    # category (or its toggle family), it is called here and its output
-    # returned verbatim (newlines preserved, no Mode-B re-entry).
+    # Phase-1+ formatter dispatch — gated on MESHAI_CUTOVER_CATEGORIES.
+    # A formatter registered for an event's category is only called in the
+    # LIVE path once that category has been explicitly cut over.  Until then
+    # the formatter is used only by shadow_render (dry-run comparison) and by
+    # direct unit tests — compose_mesh_message falls through to the legacy path.
     from meshai.notifications.formatters import get_formatter
+    from meshai.notifications.cutover import is_cutover
     from meshai.notifications import clock
     fmt = get_formatter(event.category)
-    if fmt is not None:
+    if fmt is not None and is_cutover(event.category):
         try:
             return fmt(event, now=clock.now(), budget=_resolve_budget(event))
         except Exception:

@@ -1,0 +1,41 @@
+{
+  "_synthetic": true,
+  "_synthetic_note": "Hand-built fixture for off-season testing. Not from a live Central CENTRAL_AVY capture. Represents a Considerable (NAADS 3 / centralseverity 2) advisory for the Sawtooth Mountains zone from SNFAC.",
+  "envelope": {
+    "id": "avy-snfac-sawtooth-considerable-2025-11-15",
+    "source": "central.echo6.co",
+    "type": "central.avy.advisory.us.id.v1",
+    "time": "2025-11-15T12:00:00.000000+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "advisory.us.id",
+    "centralseverity": 2,
+    "specversion": "1.0",
+    "data": {
+      "id": "avy-snfac-sawtooth-considerable-2025-11-15",
+      "adapter": "avalanche_org",
+      "category": "advisory.us.id",
+      "time": "2025-11-15T12:00:00.000000Z",
+      "expires": "2025-11-15T23:59:00Z",
+      "severity": 2,
+      "geo": {
+        "centroid": [-114.9, 43.8],
+        "bbox": null,
+        "regions": ["us.id"],
+        "primary_region": "us.id",
+        "geometry": null
+      },
+      "data": {
+        "danger_level": 3,
+        "danger_name": "Considerable",
+        "zone_name": "Sawtooth Mountains",
+        "center_id": "SNFAC",
+        "travel_advice": "Dangerous conditions on steep slopes. Conservative decision-making is advised.",
+        "latitude": 43.8,
+        "longitude": -114.9
+      }
+    }
+  },
+  "subject": "central.avy.advisory.us.id",
+  "captured_epoch": 1731672000
+}

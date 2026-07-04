@@ -16,17 +16,17 @@ from meshai.notifications.renderers.composer import compose_mesh_message
 
 @pytest.mark.parametrize("category", [
     "weather_warning",
-    "earthquake_event",
+    # earthquake_event removed: Phase-1 registers formatters.quake for it.
     "wildfire_incident",
     "road_closure",
     "battery_critical",
 ])
 def test_get_formatter_returns_none_while_registry_empty(category):
-    """FORMATTERS is empty; get_formatter must return None for any real category."""
-    # Guarantee the registry is empty for these categories (it starts empty at
-    # module level; tests run in isolation from each other's registrations).
+    """Un-migrated categories must still return None from get_formatter."""
+    # earthquake_event is now migrated (Phase 1); the remaining categories
+    # here have no formatter yet and must still fall through to Mode-B.
     assert category not in FORMATTERS, (
-        f"Category {category!r} should not be in FORMATTERS at Phase 0"
+        f"Category {category!r} should not be in FORMATTERS yet (not migrated)"
     )
     assert get_formatter(category) is None
 
@@ -46,7 +46,16 @@ def test_registered_formatter_returns_verbatim_multiline(monkeypatch):
     """Register a dummy for a synthetic category; compose_mesh_message must
     return the dummy's multi-line output verbatim — newlines preserved — not
     re-processed through Mode-B's single-line budget loop.
+
+    Cutover gate: the formatter is only dispatched when the category appears in
+    MESHAI_CUTOVER_CATEGORIES.  This test sets the var to verify the formatter
+    IS invoked once cut over (the complementary not-cutover case is covered by
+    test_cutover_gate.py).
     """
+    from meshai.notifications.cutover import _clear_cache as _cutover_clear
+    # Mark synthetic category as cut over for this test.
+    monkeypatch.setenv("MESHAI_CUTOVER_CATEGORIES", _SYNTHETIC_CATEGORY)
+    _cutover_clear()
     # Register the dummy (clean up afterwards to avoid cross-test pollution).
     register(_SYNTHETIC_CATEGORY, _dummy_formatter)
     try:
@@ -64,3 +73,4 @@ def test_registered_formatter_returns_verbatim_multiline(monkeypatch):
         assert "\n" in result, "Newlines must survive the formatter dispatch path"
     finally:
         FORMATTERS.pop(_SYNTHETIC_CATEGORY, None)
+        _cutover_clear()  # restore cache for subsequent tests
