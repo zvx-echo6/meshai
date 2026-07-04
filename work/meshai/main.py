@@ -51,6 +51,7 @@ class MeshAI:
         self._pipeline_scheduler = None  # DigestScheduler from start_pipeline()
         self.env_store = None  # Environmental feeds store
         self._central_consumer = None  # Central NATS consumer (v0.4)
+        self._central_retry_task = None  # Background retry for Central boot-connect
         self._fire_pacer = None  # FirePacer for rate-limited fire broadcasts
         self.router: Optional[MessageRouter] = None
         self.responder: Optional[Responder] = None
@@ -134,7 +135,7 @@ class MeshAI:
             from .central.consumer import CentralConsumer
             self._central_consumer = CentralConsumer(self.config.environmental, self.event_bus)
             self._central_consumer._pacer = self._fire_pacer
-            await self._central_consumer.start()
+            await self._start_central_consumer_guarded()
 
         logger.info("MeshAI started successfully")
 
@@ -283,6 +284,64 @@ class MeshAI:
                 await asyncio.sleep(1.0)
         logger.info("watchdog loop exited")
 
+    async def _start_central_consumer_guarded(self) -> None:
+        """Start the Central NATS consumer, degrading gracefully on failure.
+
+        If Central is unreachable at boot, logs a WARNING and schedules a
+        background retry task instead of propagating the exception. The NATS
+        client's own allow_reconnect handles runtime drops once the initial
+        connect succeeds, so the retry loop is only for the boot-time window.
+        """
+        try:
+            await self._central_consumer.start()
+        except Exception as exc:
+            logger.warning(
+                "Central unreachable at startup (%s); continuing without hazard "
+                "firehose, will retry in background", exc,
+            )
+            # Only spin the retry loop when there are subjects to subscribe to;
+            # mirrors the no-op guard in CentralConsumer.start() so we never
+            # retry a no-op (all-native or disabled) configuration.
+            if self._central_consumer.subjects():
+                self._central_retry_task = asyncio.create_task(
+                    self._central_retry_loop()
+                )
+
+    async def _central_retry_loop(self) -> None:
+        """Background task: retry the Central NATS boot-connect with exponential backoff.
+
+        Delay sequence: 30s → 60s → 120s → 240s → 300s (capped). Exits as
+        soon as connect succeeds or the bot shuts down. Double-start is guarded
+        by checking _nc before each attempt.
+        """
+        delay = 30.0
+        max_delay = 300.0
+        while self._running:
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                return
+            if not self._running:
+                return
+            # Guard against a racing success (e.g. two retries overlapping).
+            if self._central_consumer._nc is not None:
+                logger.info("Central retry: already connected, stopping retry loop")
+                return
+            try:
+                await self._central_consumer.start()
+                logger.info(
+                    "Central connected after delayed boot (retry backoff was %.0fs)", delay
+                )
+                return
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                next_delay = min(delay * 2, max_delay)
+                logger.warning(
+                    "Central retry failed (%s); next attempt in %.0fs", exc, next_delay,
+                )
+                delay = next_delay
+
     async def stop(self) -> None:
         """Stop the bot."""
         logger.info("Stopping MeshAI...")
@@ -291,6 +350,13 @@ class MeshAI:
         if self._pipeline_scheduler is not None:
             from .notifications.pipeline import stop_pipeline
             await stop_pipeline(self._pipeline_scheduler)
+
+        if self._central_retry_task is not None:
+            self._central_retry_task.cancel()
+            try:
+                await self._central_retry_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
         if self._central_consumer is not None:
             await self._central_consumer.stop()
