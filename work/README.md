@@ -184,7 +184,7 @@ environmental:
   # …one feed_source per hazard adapter
 ```
 
-Native and Central are **mutually exclusive per feed** — flip any adapter between them independently. Two special cases: **`satpass`** is Central-only (there's no native predictor), and **`ducting`** (VHF tropo) is native-only (no Central equivalent). If Central drops **at runtime** the NATS client auto-reconnects and durable consumers resume where they left off; the LLM bot, both transports, and mesh-health keep running regardless — only the Central-sourced hazard feeds pause. (Note: with feeds set to `central`, MeshAI currently expects Central reachable at startup — run the affected feeds as `native` if you don't have a Central instance.)
+Native and Central are **mutually exclusive per feed** — flip any adapter between them independently. Two special cases: **`satpass`** is Central-only (there's no native predictor), and **`ducting`** (VHF tropo) is native-only (no Central equivalent). MeshAI keeps running whether or not Central is up: a **runtime** drop auto-reconnects (durable consumers resume where they left off), and a **startup** outage is logged and retried in the background rather than blocking boot — the LLM bot, both transports, mesh-health, and any `native` feeds all come up regardless; only the Central-sourced hazard feeds wait for Central to return. Feeds set to `native` don't depend on Central at all.
 
 ---
 
