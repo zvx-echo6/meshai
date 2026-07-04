@@ -1,10 +1,11 @@
 """Focused tests for the MeshCore DM delivery fix.
 
-Verifies that send_message(..., destination=...) calls send_msg_with_retry
-(not the old fire-and-forget send_msg) and correctly maps its return value
-to True/False:
+Verifies that send_message(..., destination=...) resolves the destination to
+the full contact object before calling send_msg_with_retry (never passes a bare
+prefix string), and correctly maps the return value to True/False:
   - non-error Event returned  → True  (ACKed, delivered)
   - None returned             → False (no ACK, delivery not confirmed)
+  - contact not in roster     → False (logged warning, send never called)
 
 The meshcore lib is mocked via sys.modules (same pattern as the existing
 transport test module).  _run_coro is patched to execute the coroutine
@@ -17,6 +18,13 @@ import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+# Contact dict returned by the fake roster — 64-hex public_key, adv_name, out_path_len.
+_CONTACT_DICT = {
+    "public_key": "a" * 64,
+    "adv_name": "K7ZVX Matt",
+    "out_path_len": -1,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -35,6 +43,7 @@ def _ensure_fake_meshcore():
         CHANNEL_MSG_RECV = "CHANNEL_MSG_RECV"
         DISCONNECTED = "DISCONNECTED"
         CONNECTED = "CONNECTED"
+        ACK = "ACK"
 
     mod.EventType = EventType
 
@@ -55,7 +64,10 @@ def _ensure_fake_meshcore():
             pass
 
         def get_contact_by_key_prefix(self, prefix):
-            return None
+            return _CONTACT_DICT
+
+        async def ensure_contacts(self, follow=False):
+            return True
 
         @classmethod
         async def create_tcp(cls, host, port,
@@ -97,16 +109,22 @@ def _mc_config():
     return ConnectionConfig(meshcore_host="127.0.0.1", meshcore_port=5050)
 
 
-def _transport_with_mc_mock():
+def _transport_with_mc_mock(contact=_CONTACT_DICT):
     """Return a MeshCoreTransport with _mc as a MagicMock (no loop thread).
 
     _run_coro is patched on the instance to run the coroutine synchronously via
-    asyncio.get_event_loop().run_until_complete(), bypassing the thread bridge.
+    asyncio.new_event_loop().run_until_complete(), bypassing the thread bridge.
     This keeps tests fast and deterministic.
+
+    The mock exposes:
+      - mc.get_contact_by_key_prefix(prefix) → contact dict (or None when contact=None)
+      - mc.ensure_contacts is an AsyncMock (async, returns True)
     """
     cfg = _mc_config()
     t = MeshCoreTransport(cfg)
     mc = MagicMock()
+    mc.get_contact_by_key_prefix.return_value = contact
+    mc.ensure_contacts = AsyncMock(return_value=True)
     t._mc = mc
     t._connected = True
 
@@ -126,10 +144,10 @@ def _transport_with_mc_mock():
 # ---------------------------------------------------------------------------
 
 class TestMeshCoreDMDelivery:
-    """send_message with destination= must use send_msg_with_retry, not send_msg."""
+    """send_message with destination= must resolve the contact and use send_msg_with_retry."""
 
     def test_acked_dm_returns_true_and_uses_send_msg_with_retry(self):
-        """ACK received (non-error Event) → returns True; send_msg_with_retry called."""
+        """ACK received (non-error Event) → returns True; send_msg_with_retry called with CONTACT OBJECT."""
         t, mc = _transport_with_mc_mock()
 
         ok_event = MagicMock()
@@ -140,7 +158,8 @@ class TestMeshCoreDMDelivery:
         result = t.send_message("reply text", destination="aabbccdd1122")
 
         assert result is True
-        mc.commands.send_msg_with_retry.assert_awaited_once_with("aabbccdd1122", "reply text")
+        # Must pass the CONTACT OBJECT (dict), not the bare prefix string.
+        mc.commands.send_msg_with_retry.assert_awaited_once_with(_CONTACT_DICT, "reply text")
         mc.commands.send_msg.assert_not_awaited()
 
     def test_no_ack_returns_false(self):
@@ -152,7 +171,7 @@ class TestMeshCoreDMDelivery:
         result = t.send_message("reply text", destination="aabbccdd1122")
 
         assert result is False
-        mc.commands.send_msg_with_retry.assert_awaited_once_with("aabbccdd1122", "reply text")
+        mc.commands.send_msg_with_retry.assert_awaited_once_with(_CONTACT_DICT, "reply text")
 
     def test_error_event_returns_false(self):
         """Error event returned by send_msg_with_retry → returns False."""
@@ -179,3 +198,25 @@ class TestMeshCoreDMDelivery:
             "not ACKed" in r.getMessage() or "delivery not confirmed" in r.getMessage()
             for r in caplog.records
         )
+
+    def test_unresolved_contact_returns_false_without_calling_send(self):
+        """When get_contact_by_key_prefix returns None, send_message returns False and never calls send_msg_with_retry."""
+        t, mc = _transport_with_mc_mock(contact=None)
+
+        mc.commands.send_msg_with_retry = AsyncMock()
+
+        result = t.send_message("hello", destination="deadbeef0011")
+
+        assert result is False
+        mc.commands.send_msg_with_retry.assert_not_awaited()
+
+    def test_unresolved_contact_logs_warning(self, caplog):
+        """Unresolved contact → a warning about 'not in roster' is logged."""
+        import logging
+        t, mc = _transport_with_mc_mock(contact=None)
+        mc.commands.send_msg_with_retry = AsyncMock()
+
+        with caplog.at_level(logging.WARNING):
+            t.send_message("hello", destination="deadbeef0011")
+
+        assert any("not in roster" in r.getMessage() for r in caplog.records)

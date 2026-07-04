@@ -28,6 +28,7 @@ def _build_fake_meshcore():
         CHANNEL_MSG_RECV = "CHANNEL_MSG_RECV"
         DISCONNECTED = "DISCONNECTED"
         CONNECTED = "CONNECTED"
+        ACK = "ACK"
 
     mod.EventType = EventType
 
@@ -45,6 +46,9 @@ def _build_fake_meshcore():
 
         async def disconnect(self):
             pass
+
+        async def ensure_contacts(self, follow=False):
+            return True
 
         def subscribe(self, event_type, callback):
             pass
@@ -325,22 +329,32 @@ class TestSendMessageChannel:
 # 3. send_message — DM (destination provided)
 # ---------------------------------------------------------------------------
 
+_DM_CONTACT = {"public_key": "a" * 64, "adv_name": "TestContact", "out_path_len": -1}
+
+
 class TestSendMessageDM:
     def test_dispatches_send_msg_with_retry(self):
         t, mc, _ = _transport_with_mock_mc()
         try:
+            # Supply a resolved contact so _resolve_contact succeeds.
+            mc.get_contact_by_key_prefix.return_value = _DM_CONTACT
+            mc.ensure_contacts = AsyncMock(return_value=True)
             ok = MagicMock()
             ok.is_error.return_value = False
             mc.commands.send_msg_with_retry = AsyncMock(return_value=ok)
             result = t.send_message("hi DM", destination="aabbcc")
             assert result is True
-            mc.commands.send_msg_with_retry.assert_awaited_once_with("aabbcc", "hi DM")
+            # Must pass the CONTACT OBJECT (not the bare prefix) so the lib can
+            # upgrade to the full 32-byte key and attempt reset_path->flood.
+            mc.commands.send_msg_with_retry.assert_awaited_once_with(_DM_CONTACT, "hi DM")
         finally:
             _cleanup(t)
 
     def test_send_msg_with_retry_error_returns_false(self):
         t, mc, _ = _transport_with_mock_mc()
         try:
+            mc.get_contact_by_key_prefix.return_value = _DM_CONTACT
+            mc.ensure_contacts = AsyncMock(return_value=True)
             err = MagicMock()
             err.is_error.return_value = True
             mc.commands.send_msg_with_retry = AsyncMock(return_value=err)
