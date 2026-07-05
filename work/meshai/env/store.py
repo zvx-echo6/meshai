@@ -12,6 +12,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ── Received-delta key format ────────────────────────────────────────────────
+# A single, shared key format used by BOTH the live emit path (_seen_key) and
+# the durable startup pre-seed (_seed_from_persistent). Keeping the two on one
+# helper guarantees they can never drift apart — a drift would silently defeat
+# the pre-seed (keys wouldn't match), which is exactly the leak we are fixing.
+_SEP = "\x1e"
+
+
+def _key_ext(source: str, external_id) -> str:
+    """Seen-key for an item identified by its upstream external_id."""
+    return f"{source}{_SEP}ext:{external_id}"
+
+
+def _key_eid(source: str, event_id) -> str:
+    """Seen-key for an item identified by the adapter's stable event_id."""
+    return f"{source}{_SEP}eid:{event_id}"
+
 
 class EnvironmentalStore:
     """Cache and tick-driver for all environmental feed adapters."""
@@ -32,19 +49,31 @@ class EnvironmentalStore:
         self._region_anchors = region_anchors or []
 
         # ── Received-delta gate (NATIVE-only) ────────────────────────────
-        # Per-adapter set of item keys seen in PRIOR polls, plus the set of
-        # adapters whose first poll has completed. The model the operator
-        # demanded: a native adapter broadcasts an item ONLY when it was newly
-        # RECEIVED from the API this poll — never by scanning an accumulated
-        # backlog. So the FIRST poll for an adapter records every current key
-        # as "seen" and emits NOTHING (that batch is pre-existing backlog, not
-        # ours to announce); every later poll emits only keys not already
-        # seen. In-memory only (per process) — a restart empties the sets, so
-        # the next poll is a fresh "first poll" that re-seeds silently. This
-        # makes broadcasting a backlog item structurally impossible on cold
-        # start, restart, or after the adapter was disabled for days.
-        self._seen: dict[str, set] = {}   # adapter name -> set of item keys
-        self._seeded: set[str] = set()    # adapters past their first poll
+        # The model the operator demanded: a native adapter broadcasts an item
+        # ONLY when it was newly RECEIVED from the API this poll — never by
+        # scanning an accumulated backlog. Two layers enforce this:
+        #
+        #   1. DURABLE pre-seed (_seed_from_persistent, below). meshai already
+        #      has a durable record of everything it has ever received: the
+        #      persistent hazard tables. At startup we load the identifying
+        #      keys of every already-received item into `self._seen`, so nothing
+        #      ever received can re-broadcast — immune to fetch staging AND to
+        #      restarts. Keyed by the event's `source` (NOT adapter name) so the
+        #      seed and the live-emit key line up on the same value.
+        #   2. IN-MEMORY first-poll seed. The FIRST *non-empty* poll for a
+        #      source records every current key as "seen" and emits NOTHING
+        #      (that batch is pre-existing backlog); later polls emit only keys
+        #      not already seen. Belt-and-suspenders: a source is marked
+        #      "seeded" ONLY after a non-empty ingest, so an empty first poll
+        #      (e.g. wzdx's registry-only tick) can never mark it seeded and
+        #      then leak the real batch on the next tick.
+        #
+        # `self._seen` is keyed by SOURCE (evt["source"]), matching the durable
+        # pre-seed. Durable keys added at startup are never removed, so they
+        # suppress a backlog item even AFTER the source is marked seeded (this
+        # is what closes cross-tick, non-empty staging leaks).
+        self._seen: dict[str, set] = {}   # source -> set of item keys
+        self._seeded: set[str] = set()    # sources past their first non-empty poll
 
         # Create adapter instances with error isolation
         self._register_adapter("nws", config.nws, ".nws", "NWSAlertsAdapter",
@@ -97,6 +126,11 @@ class EnvironmentalStore:
             logger.warning("Failed adapters: %s", list(self._failed_adapters.keys()))
         logger.info(f"EnvironmentalStore initialized with {len(self._adapters)} adapters")
 
+        # Durable pre-seed: load every already-received item key from the
+        # persistent hazard tables into `self._seen` so nothing ever received
+        # can re-broadcast, regardless of fetch staging or process restarts.
+        self._seed_from_persistent()
+
 
     def _register_adapter(self, name: str, cfg, module_path: str, class_name: str, args_fn):
         """Register a single adapter with error isolation."""
@@ -129,7 +163,7 @@ class EnvironmentalStore:
         self._purge_expired()
         return changed
 
-    def _seen_key(self, name: str, raw_evt: dict) -> str:
+    def _seen_key(self, raw_evt: dict) -> str:
         """Derive a STABLE per-item key for the received-delta gate.
 
         Stability across polls is the whole point: the SAME real-world item
@@ -144,16 +178,23 @@ class EnvironmentalStore:
              ``avy_<center>_<zone>``, etc. — all stable across polls).
           3. content hash — last-resort fallback if an item somehow carries no
              id at all.
-        Namespaced by adapter so two feeds never cross-contaminate.
+
+        Namespaced by the event's ``source`` (NOT the adapter name). The
+        persistent hazard tables key on ``source`` (e.g. ``wzdx``), so keying
+        the live-emit path on the same value is what lets the durable startup
+        pre-seed line up with what the adapter emits. Every native raw event
+        carries a stable ``source``; if one somehow does not, fall back to a
+        neutral namespace so two feeds still never cross-contaminate.
         """
+        source = raw_evt.get("source") or "?"
         ext = raw_evt.get("external_id")
         if ext:
-            return f"{name}\x1eext:{ext}"
+            return _key_ext(source, ext)
         eid = raw_evt.get("event_id")
         if eid:
-            return f"{name}\x1eeid:{eid}"
+            return _key_eid(source, eid)
         blob = json.dumps(raw_evt, sort_keys=True, default=str)
-        return f"{name}\x1ehash:" + hashlib.sha1(blob.encode()).hexdigest()[:16]
+        return f"{source}{_SEP}hash:" + hashlib.sha1(blob.encode()).hexdigest()[:16]
 
     def _delta_emit(self, name: str, adapter, raw_evt: dict, force: bool = False):
         """Received-delta gate — emit ONLY items newly received THIS poll.
@@ -172,15 +213,16 @@ class EnvironmentalStore:
         content filtering (severity/threshold/impact, decider gates) still runs
         downstream in ``_emit_event``.
         """
-        seen = self._seen.setdefault(name, set())
-        key = self._seen_key(name, raw_evt)
-        first_poll = name not in self._seeded
+        source = raw_evt.get("source") or name
+        seen = self._seen.setdefault(source, set())
+        key = self._seen_key(raw_evt)
+        first_poll = source not in self._seeded
 
         if first_poll:
             seen.add(key)            # seed silently — this is backlog
             return
         if key in seen and not force:
-            return                   # already received in a prior poll
+            return                   # already received (prior poll OR durable pre-seed)
         seen.add(key)
 
         if self._event_bus is not None and hasattr(adapter, "to_event"):
@@ -193,19 +235,30 @@ class EnvironmentalStore:
         adapter's FIRST data-bearing poll seeds the seen-set and broadcasts
         nothing; only items that newly appear on later polls are broadcast.
         ``self._events`` is still maintained for state/queries as before.
+
+        Belt-and-suspenders: a source is marked "seeded" (past its first poll)
+        ONLY after a NON-EMPTY ingest for that source. An empty poll — e.g.
+        wzdx's registry-only tick that yields 0 events but returns ``tick()``
+        True — must never mark a source seeded, or the next tick's real batch
+        would be treated as "new" and leak. We collect the sources that
+        actually carried ≥1 event this ingest and mark only those.
         """
+        touched: set[str] = set()
+
         if name == "swpc":
             self._swpc_status = adapter.get_status()
             # Also ingest any alert events (R-scale >= 3)
             for evt in adapter.get_events():
                 key = (evt["source"], evt["event_id"])
                 self._events[key] = evt
+                touched.add(evt.get("source") or name)
                 self._delta_emit(name, adapter, evt)
         elif name == "ducting":
             self._ducting_status = adapter.get_status()
             for evt in adapter.get_events():
                 key = (evt["source"], evt["event_id"])
                 self._events[key] = evt
+                touched.add(evt.get("source") or name)
                 self._delta_emit(name, adapter, evt)
         elif name == "avalanche":
             # Avalanche: re-emit on danger_level rise (Update:) not just new
@@ -219,16 +272,118 @@ class EnvironmentalStore:
                 level_rose = (prior is not None) and (
                     evt.get("danger_level", -1) > prior_level)
                 evt["_is_update"] = level_rose   # signal to to_event()
+                touched.add(evt.get("source") or name)
                 self._delta_emit(name, adapter, evt, force=level_rose)
                 self._events[key] = evt   # always update stored state
         else:
             for evt in adapter.get_events():
                 key = (evt["source"], evt["event_id"])
                 self._events[key] = evt
+                touched.add(evt.get("source") or name)
                 self._delta_emit(name, adapter, evt)
 
-        # First poll for this adapter is now complete: later polls may emit.
-        self._seeded.add(name)
+        # First (non-empty) poll for these sources is now complete: later polls
+        # may emit. Empty ingests touch nothing and so never mark a source
+        # seeded — the leak-proof invariant behind the wzdx staging fix.
+        self._seeded.update(touched)
+
+    def _seed_from_persistent(self) -> None:
+        """Pre-seed ``self._seen`` from the durable hazard tables at startup.
+
+        A row exists in these tables iff meshai has ALREADY RECEIVED that item,
+        so loading their identifying keys guarantees a native adapter can never
+        re-broadcast a previously-received item — immune to fetch staging and
+        to process restarts. Durable keys are added to ``self._seen`` and,
+        when ≥1 key is loaded for a source, that source is marked ``_seeded``
+        so the durable set becomes its baseline: the very next poll emits ONLY
+        items NOT already received (the operator's "newly received → send it
+        now") and suppresses everything in the table — no silent first-poll
+        needed, and no dependency on how the fetch is staged. Because durable
+        keys are never removed, they keep suppressing backlog across every
+        later poll, which is what closes cross-tick, non-empty staging leaks.
+        (When a source has 0 durable rows we do NOT mark it seeded, so it falls
+        back to the leak-proof in-memory silent first-poll seed — a fresh DB
+        can never cause the first real batch to be treated as new.)
+
+        Only sources whose native emit key PROVABLY equals the persistent key
+        are seeded here (verified against the live schema + adapter code):
+
+          * ``wzdx``       — the native WZDx adapter carries a stable
+            ``external_id`` on its raw event and the incident decider persists
+            it as ``traffic_events(source='wzdx', external_id)``. Same value on
+            both sides → ``_key_ext('wzdx', external_id)`` matches exactly.
+          * ``usgs_quake`` — the native adapter's raw ``event_id`` is the bare
+            USGS id (e.g. ``us6000t9bn``) and the quake decider persists it as
+            ``quake_events.event_id`` verbatim → ``_key_eid('usgs_quake', id)``
+            matches exactly.
+
+        DELIBERATELY NOT seeded here (native emit key ≠ any persistent key —
+        see the report; these stay protected by the in-memory first-poll +
+        non-empty-seed guard, which is sufficient because each fetches
+        atomically per tick rather than across ticks):
+          roads511 / traffic (persistent rows are Central-keyed:
+          itd_511/tomtom_incidents with idaho_511:event:* external_ids, but the
+          native adapters emit source '511'/'traffic' with derived event_ids),
+          fires (native ``nifc_<name>_<state>`` vs persistent IRWIN GUID),
+          firms (native ``firms_<lat>_<lon>_<date>_<time>`` — no matching PK),
+          satpass (native ``<norad>:<bucket>`` vs persistent
+          ``<norad>:<observer>:<bucket>``), nws (native CAP url vs persistent
+          bare urn:oid), swpc (native ``swpc_<scale><level>`` vs timestamped
+          persistent ids), usgs hydro (time-series, no per-item PK).
+
+        Resilient by construction: each table is loaded in its own try/except
+        so a missing/renamed table (or an unavailable DB) logs and continues —
+        startup never crashes. The SELECTs are cheap key-only scans of bounded
+        tables.
+        """
+        try:
+            from meshai.persistence import get_db
+            conn = get_db()
+        except Exception as e:
+            logger.warning("received-delta pre-seed skipped (DB unavailable): %s", e)
+            return
+
+        # (source, description, SQL, row->key) — one spec per verified source.
+        specs = [
+            (
+                "wzdx",
+                "traffic_events(source='wzdx')",
+                "SELECT external_id FROM traffic_events "
+                "WHERE source='wzdx' AND external_id IS NOT NULL",
+                lambda row: _key_ext("wzdx", row[0]),
+            ),
+            (
+                "usgs_quake",
+                "quake_events",
+                "SELECT event_id FROM quake_events WHERE event_id IS NOT NULL",
+                lambda row: _key_eid("usgs_quake", row[0]),
+            ),
+        ]
+
+        total = 0
+        for source, desc, sql, key_fn in specs:
+            try:
+                seen = self._seen.setdefault(source, set())
+                n = 0
+                for row in conn.execute(sql).fetchall():
+                    seen.add(key_fn(row))
+                    n += 1
+                total += n
+                if n:
+                    # Durable baseline established → skip the silent first-poll
+                    # seed; the next poll emits only genuinely-new items.
+                    self._seeded.add(source)
+                logger.info(
+                    "received-delta pre-seed: %d key(s) from %s -> source %r%s",
+                    n, desc, source, " (marked seeded)" if n else "",
+                )
+            except Exception as e:
+                # Missing/renamed table or bad row — never fatal at startup.
+                logger.warning(
+                    "received-delta pre-seed: %s failed (continuing): %s",
+                    desc, e,
+                )
+        logger.info("received-delta pre-seed complete: %d durable key(s) loaded", total)
 
     def _emit_event(self, adapter, raw_evt: dict):
         """Convert raw event to pipeline Event and emit to bus.
