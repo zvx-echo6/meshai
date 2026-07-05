@@ -63,11 +63,6 @@ class HistoryConfig:
     max_messages_per_user: int = 50
     conversation_timeout: int = 86400  # 24 hours
 
-    # Cleanup settings
-    auto_cleanup: bool = True
-    cleanup_interval_hours: int = 24
-    max_age_days: int = 30  # Delete conversations older than this
-
 
 @dataclass
 class MemoryConfig:
@@ -75,13 +70,6 @@ class MemoryConfig:
 
     enabled: bool = True  # Enable memory optimization
 
-    # MQTT-specific fields (type=mqtt only)
-    host: str = ""              # MQTT broker hostname
-    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
-    username: str = ""         # MQTT username (optional)
-    password: str = ""         # MQTT password (optional, supports )
-    topic_root: str = "msh/US"  # Topic root to subscribe to
-    use_tls: bool = False       # Enable TLS for MQTT connection
     window_size: int = 4  # Recent message pairs to keep in full
     summarize_threshold: int = 8  # Messages before re-summarizing
 
@@ -92,13 +80,6 @@ class ContextConfig:
 
     enabled: bool = True
 
-    # MQTT-specific fields (type=mqtt only)
-    host: str = ""              # MQTT broker hostname
-    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
-    username: str = ""         # MQTT username (optional)
-    password: str = ""         # MQTT password (optional, supports )
-    topic_root: str = "msh/US"  # Topic root to subscribe to
-    use_tls: bool = False       # Enable TLS for MQTT connection
     observe_channels: list[int] = field(default_factory=list)  # Empty = all channels
     ignore_nodes: list[str] = field(default_factory=list)  # Node IDs to ignore
     max_age: int = 1_209_600  # 14 days in seconds
@@ -120,13 +101,6 @@ class CommandsConfig:
 
     enabled: bool = True
 
-    # MQTT-specific fields (type=mqtt only)
-    host: str = ""              # MQTT broker hostname
-    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
-    username: str = ""         # MQTT username (optional)
-    password: str = ""         # MQTT password (optional, supports )
-    topic_root: str = "msh/US"  # Topic root to subscribe to
-    use_tls: bool = False       # Enable TLS for MQTT connection
     prefix: str = "!"
     disabled_commands: list[str] = field(default_factory=list)
     custom_commands: dict = field(default_factory=dict)
@@ -253,7 +227,6 @@ class RegionAnchor:
     description: str = ""          # e.g., "Twin Falls, Burley, Jerome along I-84/US-93"
     aliases: list[str] = field(default_factory=list)  # e.g., ["southern Idaho", "magic valley"]
     cities: list[str] = field(default_factory=list)   # e.g., ["Twin Falls", "Burley", "Jerome"]
-    nws_zones: list[str] = field(default_factory=list)  # NWS zone codes (e.g., ["IDZ016", "IDZ030"])
 
 
 @dataclass
@@ -273,10 +246,6 @@ class AlertRulesConfig:
     battery_warning_threshold: int = 30
     battery_critical_threshold: int = 15
     battery_emergency_threshold: int = 5
-    # Voltage-based thresholds (more accurate than percentage)
-    battery_warning_voltage: float = 3.60
-    battery_critical_voltage: float = 3.50
-    battery_emergency_voltage: float = 3.40
     power_source_change: bool = True
     solar_not_charging: bool = True
 
@@ -314,7 +283,6 @@ class MeshIntelligenceConfig:
     # Alert settings
     critical_nodes: list[str] = field(default_factory=list)  # Short names of critical nodes (e.g., ["MHR", "HPR"])
     alert_channel: int = -1  # Channel to broadcast alerts on. -1 = disabled, 0+ = channel index
-    alert_cooldown_minutes: int = 30  # Min minutes between repeated alerts for same condition
     alert_rules: AlertRulesConfig = field(default_factory=AlertRulesConfig)
 
 
@@ -337,13 +305,6 @@ class NWSConfig(_SourcedFeed):
 
     enabled: bool = True
 
-    # MQTT-specific fields (type=mqtt only)
-    host: str = ""              # MQTT broker hostname
-    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
-    username: str = ""         # MQTT username (optional)
-    password: str = ""         # MQTT password (optional, supports )
-    topic_root: str = "msh/US"  # Topic root to subscribe to
-    use_tls: bool = False       # Enable TLS for MQTT connection
     tick_seconds: int = 60
     areas: list = field(default_factory=lambda: ["ID"])
     severity_min: str = "moderate"
@@ -356,14 +317,6 @@ class SWPCConfig(_SourcedFeed):
 
     enabled: bool = True
 
-    # MQTT-specific fields (type=mqtt only)
-    host: str = ""              # MQTT broker hostname
-    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
-    username: str = ""         # MQTT username (optional)
-    password: str = ""         # MQTT password (optional, supports )
-    topic_root: str = "msh/US"  # Topic root to subscribe to
-    use_tls: bool = False       # Enable TLS for MQTT connection
-
 
 @dataclass
 class DuctingConfig(_SourcedFeed):
@@ -371,13 +324,6 @@ class DuctingConfig(_SourcedFeed):
 
     enabled: bool = True
 
-    # MQTT-specific fields (type=mqtt only)
-    host: str = ""              # MQTT broker hostname
-    port: int = 1883            # MQTT broker port (1883 plain, 8883 TLS)
-    username: str = ""         # MQTT username (optional)
-    password: str = ""         # MQTT password (optional, supports )
-    topic_root: str = "msh/US"  # Topic root to subscribe to
-    use_tls: bool = False       # Enable TLS for MQTT connection
     tick_seconds: int = 10800  # 3 hours
     latitude: float = 42.56  # Twin Falls area default
     longitude: float = -114.47
@@ -419,6 +365,11 @@ class USGSQuakeConfig(_SourcedFeed):
     enabled: bool = False
     tick_seconds: int = 300
     feed_url: str = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson"
+    # Native-path broadcast magnitude floor: the native adapter
+    # (env/usgs_quake.py) gates on this. THIS is the GUI-editable quake
+    # magnitude floor for the native feed_source. (The adapter_config
+    # REGISTRY keys usgs_quake.global_mag_floor / regional_mag_floor apply
+    # only to the Central-firehose path in central/quake_handler.py.)
     min_magnitude: float = 2.5
     # [west, south, east, north] -- Magic Valley -> Borah Peak -> Yellowstone
     bbox: list = field(default_factory=lambda: [-115.5, 42.0, -110.0, 45.2])
@@ -758,7 +709,18 @@ class DangerZoneHazardConfig:
 
     enabled: bool = True
     buffer_mi: float = 5.0
-    min_acres: float = 0.0  # fire-only; ignored by other families
+
+
+@dataclass
+class DangerZoneFireConfig(DangerZoneHazardConfig):
+    """Fire-family danger-zone tuning; adds an acreage floor.
+
+    ``min_acres`` is fire-only (read at danger_zone_correlator.py in the
+    ``fam == "fire"`` branch); the non-fire families use the plain
+    DangerZoneHazardConfig, which no longer carries it.
+    """
+
+    min_acres: float = 0.0  # skip fires smaller than this (0 = no floor)
 
 
 @dataclass
@@ -778,7 +740,7 @@ class DangerZonesConfig:
 
     # Per-family sub-configs. snow->weather, flood->seismic resolved in the
     # correlator; both still exposed here for distinct GUI tuning.
-    fire: DangerZoneHazardConfig = field(default_factory=DangerZoneHazardConfig)
+    fire: DangerZoneFireConfig = field(default_factory=DangerZoneFireConfig)
     weather: DangerZoneHazardConfig = field(default_factory=DangerZoneHazardConfig)
     snow: DangerZoneHazardConfig = field(default_factory=DangerZoneHazardConfig)
     flood: DangerZoneHazardConfig = field(default_factory=DangerZoneHazardConfig)

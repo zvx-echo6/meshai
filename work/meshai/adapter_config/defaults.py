@@ -73,22 +73,15 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     },
 
     # =================================================================
-    # NWS -- 3 settings (severity gate, tombstone msgTypes, suffix-promote toggle)
+    # NWS -- tombstone msgTypes (severity gate + suffix-promote were removed
+    # in the v0.x config-schema cleanup: both were [DEPRECATED — no longer
+    # enforced]; NWS breadth is governed by the per-toggle dispatcher
+    # severity threshold)
     # =================================================================
-    ("nws", "broadcast_severities"): {
-        "default": ["Extreme", "Severe"],   # nws_handler.py:43
-        "type": "json",
-        "description": "CAP severity strings allowed onto the mesh. [DEPRECATED — no longer enforced; NWS breadth is governed by the per-toggle dispatcher severity threshold]",
-    },
     ("nws", "tombstone_msgtypes"): {
         "default": ["Cancel", "Expire"],    # nws_handler.py:46
         "type": "json",
         "description": "CAP msgType values that mark an alert as gone.",
-    },
-    ("nws", "warning_suffix_promotes"): {
-        "default": True,                    # nws_handler.py:172
-        "type": "bool",
-        "description": "Promote category-name-ending-in-_warning to Severe when CAP severity is missing. [DEPRECATED — no longer enforced; NWS breadth is governed by the per-toggle dispatcher severity threshold]",
     },
 
     # =================================================================
@@ -112,12 +105,12 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     ("usgs_quake", "global_mag_floor"): {
         "default": 3.0,                     # quake_handler.py:69
         "type": "float",
-        "description": "Global magnitude floor for unconditional broadcasts.",
+        "description": "Global magnitude floor for unconditional broadcasts. CENTRAL-PATH ONLY (central/quake_handler.py); the native feed_source gates on environmental.usgs_quake.min_magnitude instead.",
     },
     ("usgs_quake", "regional_mag_floor"): {
         "default": 2.5,                     # quake_handler.py:70
         "type": "float",
-        "description": "Reduced magnitude floor for quakes within regional_radius_mi of centroid.",
+        "description": "Reduced magnitude floor for quakes within regional_radius_mi of centroid. CENTRAL-PATH ONLY (central/quake_handler.py); the native feed_source gates on environmental.usgs_quake.min_magnitude instead.",
     },
     ("usgs_quake", "escalate_mag_floor"): {
         "default": 5.0,                     # quake_handler.py:76

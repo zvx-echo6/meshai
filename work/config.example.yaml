@@ -30,9 +30,6 @@ history:
   database: /data/conversations.db
   max_messages_per_user: 50      # Messages to keep per user
   conversation_timeout: 86400    # Conversation expiry (seconds, 86400=24h)
-  auto_cleanup: true             # Auto-delete old conversations
-  cleanup_interval_hours: 24     # How often to run cleanup
-  max_age_days: 30               # Delete conversations older than this
 
 # === MEMORY OPTIMIZATION ===
 memory:

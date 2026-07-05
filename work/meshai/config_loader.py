@@ -79,6 +79,8 @@ SECRET_FIELDS: set[str] = {
     "mesh_sources.*.password",
     "environmental.traffic.api_key",
     "environmental.firms.map_key",
+    "environmental.roads511.api_key",
+    "environmental.wzdx.api_key",
     "notifications.rules.*.smtp_password",
     "notifications.toggles.*.smtp_password",
     "danger_zones.webhook_url",
