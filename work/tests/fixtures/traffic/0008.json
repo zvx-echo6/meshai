@@ -1,0 +1,82 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14784413868015000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-28T00:41:30+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14784413868015000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-28T00:41:30Z",
+      "expires": "2026-06-28T01:03:00Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -116.5129307603,
+          43.5403110514
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -116.5129307603,
+              43.5403110514
+            ],
+            [
+              -116.5135221874,
+              43.5403110514
+            ],
+            [
+              -116.5137689506,
+              43.5403123881
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Stationary traffic",
+        "event_code": 101,
+        "from": "South Happy Valley Road",
+        "to": "East Brooklyn Drive",
+        "magnitude_of_delay": 3,
+        "icon_category": 6,
+        "length": 67.5621131966,
+        "delay": 104,
+        "road_numbers": [],
+        "start_time": "2026-06-28T00:41:30Z",
+        "end_time": "2026-06-28T01:03:00Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "treasure_valley_ext",
+        "latitude": 43.5403110514,
+        "longitude": -116.5129307603,
+        "_enriched": {
+          "geocoder": {
+            "name": "East Walcott Street",
+            "city": "Nampa",
+            "county": "Canyon",
+            "state": "Idaho",
+            "country": "United States",
+            "postal_code": null,
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 776.4609375
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

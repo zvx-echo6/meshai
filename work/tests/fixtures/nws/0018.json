@@ -1,0 +1,127 @@
+{
+  "envelope": {
+    "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.e553cac82421c22dbb9a50e020945b77a8d14ced.001.1",
+    "source": "central.echo6.co",
+    "type": "central.wx.alert.special_weather_statement.v1",
+    "time": "2026-07-02T22:39:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "wx.alert.special_weather_statement",
+    "centralseverity": 2,
+    "specversion": "1.0",
+    "data": {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.e553cac82421c22dbb9a50e020945b77a8d14ced.001.1",
+      "adapter": "nws",
+      "category": "wx.alert.special_weather_statement",
+      "time": "2026-07-02T22:39:00Z",
+      "expires": "2026-07-02T23:30:00Z",
+      "severity": 2,
+      "geo": {
+        "centroid": [
+          -113.005,
+          41.3725
+        ],
+        "bbox": [
+          -113.9,
+          40.64,
+          -112.62,
+          41.93
+        ],
+        "regions": [
+          "US-UT-FIPS49003",
+          "US-UT-FIPS49035",
+          "US-UT-FIPS49045",
+          "US-UT-FIPS49049",
+          "US-UT-Z101",
+          "US-UT-Z102"
+        ],
+        "primary_region": "US-UT-FIPS49003",
+        "geometry": null
+      },
+      "data": {
+        "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.e553cac82421c22dbb9a50e020945b77a8d14ced.001.1",
+        "@type": "wx:Alert",
+        "id": "urn:oid:2.49.0.1.840.0.e553cac82421c22dbb9a50e020945b77a8d14ced.001.1",
+        "areaDesc": "Great Salt Lake Desert and Mountains; Tooele and Rush Valleys",
+        "geocode": {
+          "SAME": [
+            "049003",
+            "049035",
+            "049045",
+            "049049"
+          ],
+          "UGC": [
+            "UTZ101",
+            "UTZ102"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/forecast/UTZ101",
+          "https://api.weather.gov/zones/forecast/UTZ102"
+        ],
+        "references": [],
+        "sent": "2026-07-02T16:39:00-06:00",
+        "effective": "2026-07-02T16:39:00-06:00",
+        "onset": "2026-07-02T16:39:00-06:00",
+        "expires": "2026-07-02T17:30:00-06:00",
+        "ends": null,
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Moderate",
+        "certainty": "Observed",
+        "urgency": "Expected",
+        "event": "Special Weather Statement",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Salt Lake City UT",
+        "headline": "Special Weather Statement issued July 2 at 4:39PM MDT by NWS Salt Lake City UT",
+        "description": "At 438 PM MDT, Doppler radar was tracking strong outflow winds along\na line extending from 6 miles south of Park Valley to 27 miles west\nof Great Salt Lake North of the Causeway to 6 miles east of Utah\nTest and Training Range North to 7 miles north of Clive. Movement\nwas east at 25 mph.\n\nHAZARD...Wind gusts up to 50 mph.\n\nSOURCE...Radar indicated.\n\nIMPACT...Gusty winds could knock down tree limbs and blow around\nunsecured objects.\n\nLocations impacted include...\nDelle, Knolls, Utah Test and Training Range North, Great Salt Lake\nNorth of the Causeway, Great Salt Lake South of the Causeway,\nLocomotive Springs, Lakeside, Gunnison Island, and Bonneville Salt\nFlats.\n\nThis includes the following highways...\nInterstate 80 in Utah between mile markers 20 and 78.\nUtah Route 30 between mile markers 11 and 41, and between mile\nmarkers 60 and 65.",
+        "instruction": "If outdoors, consider seeking shelter inside a building.",
+        "response": "Execute",
+        "note": null,
+        "parameters": {
+          "AWIPSidentifier": [
+            "SPSSLC"
+          ],
+          "WMOidentifier": [
+            "WWUS85 KSLC 022239"
+          ],
+          "NWSheadline": [
+            "Strong thunderstorm outflow winds will impact portions of western Box Elder and northwestern Tooele Counties through 530 PM MDT"
+          ],
+          "eventMotionDescription": [
+            "2026-07-02T22:38:00-00:00...storm...247DEG...21KT...41.73,-113.35 41.47,-113.25 41.25,-113.18 41.0,-113.1 40.78,-113.06"
+          ],
+          "maxWindGust": [
+            "50 MPH"
+          ],
+          "maxHailSize": [
+            "0.00"
+          ],
+          "BLOCKCHANNEL": [
+            "EAS",
+            "NWEM",
+            "CMAS"
+          ],
+          "EAS-ORG": [
+            "WXR"
+          ]
+        },
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov",
+        "eventCode": {
+          "SAME": [
+            "SPS"
+          ],
+          "NationalWeatherService": [
+            "SPS"
+          ]
+        }
+      }
+    }
+  },
+  "subject": "central.wx.alert.us.ut.county.fips49003",
+  "captured_epoch": 1783206513
+}

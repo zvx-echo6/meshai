@@ -1,0 +1,84 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTR15673123080002000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-28T01:17:30+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 1,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTR15673123080002000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-28T01:17:30Z",
+      "expires": null,
+      "severity": 1,
+      "geo": {
+        "centroid": [
+          -113.7932781069,
+          42.5386869925
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -113.7932781069,
+              42.5386869925
+            ],
+            [
+              -113.7932781069,
+              42.5386212803
+            ],
+            [
+              -113.7932781069,
+              42.5386159689
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Roadworks",
+        "event_code": 701,
+        "from": "5th St (Overland Ave/ID-27)",
+        "to": "US-30/Main St (Overland Ave/ID-27)",
+        "magnitude_of_delay": 0,
+        "icon_category": 9,
+        "length": 7.8974647221,
+        "delay": null,
+        "road_numbers": [
+          "I-84 Business"
+        ],
+        "start_time": "2026-06-28T01:17:30Z",
+        "end_time": null,
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "magic_valley_burley",
+        "latitude": 42.5386869925,
+        "longitude": -113.7932781069,
+        "_enriched": {
+          "geocoder": {
+            "name": "U.S. Bank",
+            "city": "Burley",
+            "county": "Cassia",
+            "state": "Idaho",
+            "country": "United States",
+            "postal_code": "83318",
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 1268.1796875
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

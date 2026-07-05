@@ -1,0 +1,151 @@
+{
+  "envelope": {
+    "id": "idaho_511:event:11488",
+    "source": "central.echo6.co",
+    "type": "central.closure.itd_511.v1",
+    "time": "2026-07-01T21:57:23+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "closure.itd_511",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "idaho_511:event:11488",
+      "adapter": "itd_511",
+      "category": "closure.itd_511",
+      "time": "2026-07-01T21:57:23Z",
+      "expires": "2026-07-04T20:00:00Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -114.31901,
+          43.52443
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -114.31901,
+              43.52443
+            ],
+            [
+              -114.31862,
+              43.5239
+            ],
+            [
+              -114.31828,
+              43.52348
+            ],
+            [
+              -114.31755,
+              43.52253
+            ],
+            [
+              -114.3168,
+              43.52155
+            ],
+            [
+              -114.31608,
+              43.52059
+            ],
+            [
+              -114.31573,
+              43.52013
+            ],
+            [
+              -114.31536,
+              43.51965
+            ],
+            [
+              -114.31461,
+              43.51867
+            ],
+            [
+              -114.31316,
+              43.51676
+            ],
+            [
+              -114.3131,
+              43.51669
+            ],
+            [
+              -114.3128,
+              43.51629
+            ],
+            [
+              -114.31242,
+              43.51579
+            ]
+          ]
+        }
+      },
+      "data": {
+        "event_type_short": "closure",
+        "event_sub_type": "parade",
+        "roadway_name": "SH-75",
+        "direction": "Both",
+        "description": "Parade on SH-75 Both Directions from E Myrtle St to W Elm St. All lanes closed. 7/4/2026 11:00 AM to 7/4/2026 2:00 PM Sat: Active all day Activities: Consider Alternative Route, Look Out for Flagger, Use Caution.",
+        "lanes_affected": "All lanes closed",
+        "is_full_closure": true,
+        "itd_severity": "None",
+        "comment": "Annual 4th of July Parade on Main Street in Hailey, Starting at non and ending around 1:30pm.\nTraffic Control: Chief Steve England 208-309-1323, Hailey Police Dept. 208-788-3531, ITD- KC Marcroft, 986-200-9260.",
+        "cause": "specialEvents",
+        "organization": "ERS",
+        "recurrence_text": "<b>Sat:</b><br/>Active all day<br/><br/>",
+        "recurrence_schedules": [
+          {
+            "StartDate": "7/4/2026 11:00:00 AM-06:00:00",
+            "EndDate": "7/4/2026 2:00:00 PM-06:00:00",
+            "Times": [
+              {
+                "StartTime": "00:00:00-06:00:00",
+                "EndTime": "23:59:59-06:00:00"
+              }
+            ],
+            "DaysOfWeek": [
+              "Saturday"
+            ]
+          }
+        ],
+        "restrictions": {
+          "Width": null,
+          "Height": null,
+          "Length": null,
+          "Weight": null,
+          "Speed": null
+        },
+        "detour_polyline": null,
+        "detour_instructions": null,
+        "encoded_polyline": "uzshGx|vxThBmArAcA|DqCbEuC~DoCzAeA~AiAbEuC|JaHLKnA{@bBkA",
+        "id_internal": 40283,
+        "source_id": "11488",
+        "reported_epoch": 1783184400,
+        "last_updated_epoch": 1782943043,
+        "start_epoch": 1783184400,
+        "planned_end_epoch": 1783195200,
+        "latitude": 43.5244347035805,
+        "longitude": -114.319013292506,
+        "_enriched": {
+          "geocoder": {
+            "name": null,
+            "city": "Hailey",
+            "county": "Blaine",
+            "state": "ID",
+            "country": "United States",
+            "postal_code": "83333",
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 1625.5703125
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.closure.us.id",
+  "captured_epoch": 1783206522
+}

@@ -1,0 +1,106 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL15211454176023000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-28T04:11:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL15211454176023000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-28T04:11:00Z",
+      "expires": "2026-06-28T04:33:00Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -115.3002893122,
+          42.9539855173
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -115.3002893122,
+              42.9539855173
+            ],
+            [
+              -115.3000988754,
+              42.9535120988
+            ],
+            [
+              -115.3000090214,
+              42.9533136386
+            ],
+            [
+              -115.3000063392,
+              42.95330824
+            ],
+            [
+              -115.2999929281,
+              42.9532800813
+            ],
+            [
+              -115.2999124618,
+              42.9531137668
+            ],
+            [
+              -115.2999057563,
+              42.9530963439
+            ],
+            [
+              -115.2997542115,
+              42.9527583761
+            ],
+            [
+              -115.2995691391,
+              42.9523466651
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Stationary traffic",
+        "event_code": 101,
+        "from": "East 1st Avenue / West 1st Avenue",
+        "to": "Shrum Avenue",
+        "magnitude_of_delay": 3,
+        "icon_category": 6,
+        "length": 191.4564024773,
+        "delay": 184,
+        "road_numbers": [],
+        "start_time": "2026-06-28T04:11:00Z",
+        "end_time": "2026-06-28T04:33:00Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "mountain_home_corridor",
+        "latitude": 42.9539855173,
+        "longitude": -115.3002893122,
+        "_enriched": {
+          "geocoder": {
+            "name": null,
+            "city": "Glenns Ferry",
+            "county": "Elmore",
+            "state": "ID",
+            "country": "United States",
+            "postal_code": "83623",
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 780.3828125
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

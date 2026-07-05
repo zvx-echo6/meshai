@@ -1,0 +1,136 @@
+{
+  "envelope": {
+    "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.e1a929f5a667f978203865e862ad31f369d5466a.001.1",
+    "source": "central.echo6.co",
+    "type": "central.wx.alert.special_weather_statement.v1",
+    "time": "2026-07-02T00:33:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "wx.alert.special_weather_statement",
+    "centralseverity": 2,
+    "specversion": "1.0",
+    "data": {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.e1a929f5a667f978203865e862ad31f369d5466a.001.1",
+      "adapter": "nws",
+      "category": "wx.alert.special_weather_statement",
+      "time": "2026-07-02T00:33:00Z",
+      "expires": "2026-07-02T01:00:00Z",
+      "severity": 2,
+      "geo": {
+        "centroid": [
+          -112.37,
+          43.882
+        ],
+        "bbox": [
+          -112.64,
+          43.69,
+          -111.99,
+          44.18
+        ],
+        "regions": [
+          "US-ID-FIPS16011",
+          "US-ID-FIPS16019",
+          "US-ID-FIPS16023",
+          "US-ID-FIPS16033",
+          "US-ID-FIPS16043",
+          "US-ID-FIPS16051",
+          "US-ID-FIPS16065",
+          "US-ID-Z052",
+          "US-ID-Z053",
+          "US-ID-Z067"
+        ],
+        "primary_region": "US-ID-FIPS16011",
+        "geometry": null
+      },
+      "data": {
+        "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.e1a929f5a667f978203865e862ad31f369d5466a.001.1",
+        "@type": "wx:Alert",
+        "id": "urn:oid:2.49.0.1.840.0.e1a929f5a667f978203865e862ad31f369d5466a.001.1",
+        "areaDesc": "Arco/Mud Lake Desert; Upper Snake River Plain; Beaverhead/Lemhi Highlands",
+        "geocode": {
+          "SAME": [
+            "016011",
+            "016019",
+            "016023",
+            "016051",
+            "016043",
+            "016065",
+            "016033"
+          ],
+          "UGC": [
+            "IDZ052",
+            "IDZ053",
+            "IDZ067"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/forecast/IDZ052",
+          "https://api.weather.gov/zones/forecast/IDZ053",
+          "https://api.weather.gov/zones/forecast/IDZ067"
+        ],
+        "references": [],
+        "sent": "2026-07-01T18:33:00-06:00",
+        "effective": "2026-07-01T18:33:00-06:00",
+        "onset": "2026-07-01T18:33:00-06:00",
+        "expires": "2026-07-01T19:00:00-06:00",
+        "ends": null,
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Moderate",
+        "certainty": "Observed",
+        "urgency": "Expected",
+        "event": "Special Weather Statement",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Pocatello ID",
+        "headline": "Special Weather Statement issued July 1 at 6:33PM MDT by NWS Pocatello ID",
+        "description": "At 633 PM MDT, Doppler radar was tracking a cluster of strong\nthunderstorms over Terreton, moving northeast at 20 mph.\n\nHAZARD...Wind gusts in excess of 45 mph and half inch hail.\n\nSOURCE...Radar indicated.\n\nIMPACT...Gusty winds could knock down tree limbs and blow around\nunsecured objects. Minor hail damage to outdoor objects is\npossible.\n\nLocations impacted include...\nTerreton, Mud Lake, and Hamer.",
+        "instruction": "If outdoors, consider seeking shelter inside a building.",
+        "response": "Execute",
+        "note": null,
+        "parameters": {
+          "AWIPSidentifier": [
+            "SPSPIH"
+          ],
+          "WMOidentifier": [
+            "WWUS85 KPIH 020033"
+          ],
+          "NWSheadline": [
+            "STRONG THUNDERSTORMS WILL IMPACT SOUTHWESTERN FREMONT...WESTERN JEFFERSON AND SOUTH CENTRAL CLARK COUNTIES THROUGH 700 PM MDT"
+          ],
+          "eventMotionDescription": [
+            "2026-07-02T00:33:00-00:00...storm...211DEG...20KT...43.86,-112.43"
+          ],
+          "maxWindGust": [
+            "45 MPH"
+          ],
+          "maxHailSize": [
+            "0.50"
+          ],
+          "BLOCKCHANNEL": [
+            "EAS",
+            "NWEM",
+            "CMAS"
+          ],
+          "EAS-ORG": [
+            "WXR"
+          ]
+        },
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov",
+        "eventCode": {
+          "SAME": [
+            "SPS"
+          ],
+          "NationalWeatherService": [
+            "SPS"
+          ]
+        }
+      }
+    }
+  },
+  "subject": "central.wx.alert.us.id.county.fips16011",
+  "captured_epoch": 1783206513
+}

@@ -1,0 +1,137 @@
+{
+  "envelope": {
+    "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.e58c2f30c093ce7defdf71a90e452af5ec568023.001.1",
+    "source": "central.echo6.co",
+    "type": "central.wx.alert.special_weather_statement.v1",
+    "time": "2026-07-02T23:30:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "wx.alert.special_weather_statement",
+    "centralseverity": 2,
+    "specversion": "1.0",
+    "data": {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.e58c2f30c093ce7defdf71a90e452af5ec568023.001.1",
+      "adapter": "nws",
+      "category": "wx.alert.special_weather_statement",
+      "time": "2026-07-02T23:30:00Z",
+      "expires": "2026-07-03T00:15:00Z",
+      "severity": 2,
+      "geo": {
+        "centroid": [
+          -112.62,
+          41.378571428571426
+        ],
+        "bbox": [
+          -113.15,
+          40.64,
+          -112.25,
+          42.0
+        ],
+        "regions": [
+          "US-UT-FIPS49003",
+          "US-UT-FIPS49011",
+          "US-UT-FIPS49035",
+          "US-UT-FIPS49045",
+          "US-UT-FIPS49049",
+          "US-UT-FIPS49057",
+          "US-UT-Z101",
+          "US-UT-Z102",
+          "US-UT-Z103",
+          "US-UT-Z104"
+        ],
+        "primary_region": "US-UT-FIPS49003",
+        "geometry": null
+      },
+      "data": {
+        "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.e58c2f30c093ce7defdf71a90e452af5ec568023.001.1",
+        "@type": "wx:Alert",
+        "id": "urn:oid:2.49.0.1.840.0.e58c2f30c093ce7defdf71a90e452af5ec568023.001.1",
+        "areaDesc": "Great Salt Lake Desert and Mountains; Tooele and Rush Valleys; Eastern Box Elder County; Northern Wasatch Front",
+        "geocode": {
+          "SAME": [
+            "049003",
+            "049035",
+            "049045",
+            "049049",
+            "049011",
+            "049057"
+          ],
+          "UGC": [
+            "UTZ101",
+            "UTZ102",
+            "UTZ103",
+            "UTZ104"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/forecast/UTZ101",
+          "https://api.weather.gov/zones/forecast/UTZ102",
+          "https://api.weather.gov/zones/forecast/UTZ103",
+          "https://api.weather.gov/zones/forecast/UTZ104"
+        ],
+        "references": [],
+        "sent": "2026-07-02T17:30:00-06:00",
+        "effective": "2026-07-02T17:30:00-06:00",
+        "onset": "2026-07-02T17:30:00-06:00",
+        "expires": "2026-07-02T18:15:00-06:00",
+        "ends": null,
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Moderate",
+        "certainty": "Observed",
+        "urgency": "Expected",
+        "event": "Special Weather Statement",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Salt Lake City UT",
+        "headline": "Special Weather Statement issued July 2 at 5:30PM MDT by NWS Salt Lake City UT",
+        "description": "At 528 PM MDT, Doppler radar was tracking strong thunderstorm\noutflow winds along a line extending from 16 miles east of Park\nValley to 27 miles southwest of Howell to near Great Salt Lake North\nof the Causeway to 17 miles west of Great Salt Lake South of the\nCauseway to 8 miles northeast of Delle. Movement was east at 25 mph.\n\nHAZARD...Wind gusts up to 50 mph.\n\nSOURCE...Radar indicated.\n\nIMPACT...Gusty winds could knock down tree limbs and blow around\nunsecured objects.\n\nLocations impacted include...\nSnowville, Stansbury Park, Howell, Delle, Great Salt Lake North of\nthe Causeway, Great Salt Lake South of the Causeway, Hat Island,\nPromontory, Gunnison Island, Locomotive Springs, Curlew Junction,\nLake Point, Golden Spike Historic Site, and Antelope Island State\nPark.\n\nThis includes the following highways...\nInterstate 84 between mile markers 1 and 21.\nInterstate 80 in Utah between mile markers 67 and 99.\nUtah Route 30 between mile markers 69 and 90.",
+        "instruction": "If outdoors, consider seeking shelter inside a building.",
+        "response": "Execute",
+        "note": null,
+        "parameters": {
+          "AWIPSidentifier": [
+            "SPSSLC"
+          ],
+          "WMOidentifier": [
+            "WWUS85 KSLC 022330"
+          ],
+          "NWSheadline": [
+            "Strong thunderstorm outflow winds will impact portions of southwestern Weber, central Box Elder, western Davis and northeastern Tooele Counties through 615 PM MDT"
+          ],
+          "eventMotionDescription": [
+            "2026-07-02T23:28:00-00:00...storm...247DEG...21KT...41.83,-113.01 41.58,-112.9 41.36,-112.83 41.11,-112.75 40.89,-112.71"
+          ],
+          "maxWindGust": [
+            "50 MPH"
+          ],
+          "maxHailSize": [
+            "0.00"
+          ],
+          "BLOCKCHANNEL": [
+            "EAS",
+            "NWEM",
+            "CMAS"
+          ],
+          "EAS-ORG": [
+            "WXR"
+          ]
+        },
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov",
+        "eventCode": {
+          "SAME": [
+            "SPS"
+          ],
+          "NationalWeatherService": [
+            "SPS"
+          ]
+        }
+      }
+    }
+  },
+  "subject": "central.wx.alert.us.ut.county.fips49003",
+  "captured_epoch": 1783206518
+}

@@ -1,0 +1,131 @@
+{
+  "envelope": {
+    "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.7e01dcbcd5953d0339f08bda5175bd1a6c17f915.001.1",
+    "source": "central.echo6.co",
+    "type": "central.wx.alert.special_weather_statement.v1",
+    "time": "2026-07-02T20:35:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "wx.alert.special_weather_statement",
+    "centralseverity": 2,
+    "specversion": "1.0",
+    "data": {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.7e01dcbcd5953d0339f08bda5175bd1a6c17f915.001.1",
+      "adapter": "nws",
+      "category": "wx.alert.special_weather_statement",
+      "time": "2026-07-02T20:35:00Z",
+      "expires": "2026-07-02T21:00:00Z",
+      "severity": 2,
+      "geo": {
+        "centroid": [
+          -112.35,
+          42.598
+        ],
+        "bbox": [
+          -112.62,
+          42.47,
+          -112.12,
+          42.79
+        ],
+        "regions": [
+          "US-ID-FIPS16005",
+          "US-ID-FIPS16011",
+          "US-ID-FIPS16029",
+          "US-ID-FIPS16041",
+          "US-ID-FIPS16071",
+          "US-ID-FIPS16077",
+          "US-ID-Z058",
+          "US-ID-Z059"
+        ],
+        "primary_region": "US-ID-FIPS16005",
+        "geometry": null
+      },
+      "data": {
+        "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.7e01dcbcd5953d0339f08bda5175bd1a6c17f915.001.1",
+        "@type": "wx:Alert",
+        "id": "urn:oid:2.49.0.1.840.0.7e01dcbcd5953d0339f08bda5175bd1a6c17f915.001.1",
+        "areaDesc": "Marsh and Arbon Highlands; Franklin/Eastern Oneida Region",
+        "geocode": {
+          "SAME": [
+            "016005",
+            "016011",
+            "016029",
+            "016077",
+            "016041",
+            "016071"
+          ],
+          "UGC": [
+            "IDZ058",
+            "IDZ059"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/forecast/IDZ058",
+          "https://api.weather.gov/zones/forecast/IDZ059"
+        ],
+        "references": [],
+        "sent": "2026-07-02T14:35:00-06:00",
+        "effective": "2026-07-02T14:35:00-06:00",
+        "onset": "2026-07-02T14:35:00-06:00",
+        "expires": "2026-07-02T15:00:00-06:00",
+        "ends": null,
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Moderate",
+        "certainty": "Observed",
+        "urgency": "Expected",
+        "event": "Special Weather Statement",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Pocatello ID",
+        "headline": "Special Weather Statement issued July 2 at 2:35PM MDT by NWS Pocatello ID",
+        "description": "At 235 PM MDT, Doppler radar was tracking a strong thunderstorm 12\nmiles west of Arimo, or 13 miles southwest of McCammon, moving north\nat 25 mph.\n\nHAZARD...Wind gusts in excess of 45 mph and nickel size hail.\n\nSOURCE...Radar indicated.\n\nIMPACT...Gusty winds could knock down tree limbs and blow around\nunsecured objects. Minor hail damage to outdoor objects is\npossible.\n\nLocations impacted include...\nMcCammon, Hawkins Reservoir, Mink Creek Pass, and Pauline.",
+        "instruction": "If outdoors, consider seeking shelter inside a building.\n\nFrequent cloud to ground lightning is occurring with this storm.\nLightning can strike 10 miles away from a thunderstorm. Seek a safe\nshelter inside a building or vehicle.",
+        "response": "Execute",
+        "note": null,
+        "parameters": {
+          "AWIPSidentifier": [
+            "SPSPIH"
+          ],
+          "WMOidentifier": [
+            "WWUS85 KPIH 022035"
+          ],
+          "NWSheadline": [
+            "A STRONG THUNDERSTORM WILL IMPACT WESTERN CARIBOU...NORTHERN ONEIDA...CENTRAL BANNOCK AND SOUTHEASTERN POWER COUNTIES THROUGH 300 PM MDT"
+          ],
+          "eventMotionDescription": [
+            "2026-07-02T20:35:00-00:00...storm...199DEG...20KT...42.55,-112.42"
+          ],
+          "maxWindGust": [
+            "45 MPH"
+          ],
+          "maxHailSize": [
+            "0.88"
+          ],
+          "BLOCKCHANNEL": [
+            "EAS",
+            "NWEM",
+            "CMAS"
+          ],
+          "EAS-ORG": [
+            "WXR"
+          ]
+        },
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov",
+        "eventCode": {
+          "SAME": [
+            "SPS"
+          ],
+          "NationalWeatherService": [
+            "SPS"
+          ]
+        }
+      }
+    }
+  },
+  "subject": "central.wx.alert.us.id.county.fips16005",
+  "captured_epoch": 1783206513
+}

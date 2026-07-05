@@ -1,0 +1,125 @@
+{
+  "envelope": {
+    "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.5c7f541457ac9d46793ef42667626fce15a685a7.001.1",
+    "source": "central.echo6.co",
+    "type": "central.wx.alert.special_weather_statement.v1",
+    "time": "2026-07-01T22:47:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "wx.alert.special_weather_statement",
+    "centralseverity": 2,
+    "specversion": "1.0",
+    "data": {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.5c7f541457ac9d46793ef42667626fce15a685a7.001.1",
+      "adapter": "nws",
+      "category": "wx.alert.special_weather_statement",
+      "time": "2026-07-01T22:47:00Z",
+      "expires": "2026-07-01T23:30:00Z",
+      "severity": 2,
+      "geo": {
+        "centroid": [
+          -114.81199999999998,
+          42.492000000000004
+        ],
+        "bbox": [
+          -115.05,
+          42.27,
+          -114.36,
+          42.8
+        ],
+        "regions": [
+          "US-ID-FIPS16047",
+          "US-ID-FIPS16053",
+          "US-ID-FIPS16083",
+          "US-ID-Z016",
+          "US-ID-Z030"
+        ],
+        "primary_region": "US-ID-FIPS16047",
+        "geometry": null
+      },
+      "data": {
+        "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.5c7f541457ac9d46793ef42667626fce15a685a7.001.1",
+        "@type": "wx:Alert",
+        "id": "urn:oid:2.49.0.1.840.0.5c7f541457ac9d46793ef42667626fce15a685a7.001.1",
+        "areaDesc": "Western Magic Valley; Southern Twin  Falls County",
+        "geocode": {
+          "SAME": [
+            "016047",
+            "016053",
+            "016083"
+          ],
+          "UGC": [
+            "IDZ016",
+            "IDZ030"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/forecast/IDZ016",
+          "https://api.weather.gov/zones/forecast/IDZ030"
+        ],
+        "references": [],
+        "sent": "2026-07-01T16:47:00-06:00",
+        "effective": "2026-07-01T16:47:00-06:00",
+        "onset": "2026-07-01T16:47:00-06:00",
+        "expires": "2026-07-01T17:30:00-06:00",
+        "ends": null,
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Moderate",
+        "certainty": "Observed",
+        "urgency": "Expected",
+        "event": "Special Weather Statement",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Boise ID",
+        "headline": "Special Weather Statement issued July 1 at 4:47PM MDT by NWS Boise ID",
+        "description": "At 447 PM MDT, Doppler radar was tracking a strong thunderstorm near\nRoseworth, or 20 miles southwest of Twin Falls, moving northeast at\n20 mph.\n\nHAZARD...Wind gusts up to 40 mph and pea size hail.\n\nSOURCE...Radar indicated.\n\nIMPACT...Gusty winds could knock down tree limbs and blow around\nunsecured objects. Areas of blowing dust possible. Minor\ndamage to outdoor objects is possible.\n\nLocations impacted include...\nTwin Falls, Buhl, Kimberly, Filer, Castleford, Magic Valley Regional\nAirport, and Roseworth.",
+        "instruction": "If outdoors, consider seeking shelter inside a building.\n\nFrequent cloud to ground lightning is occurring with this storm.\nLightning can strike 10 miles away from a thunderstorm. Seek a safe\nshelter inside a building or vehicle.",
+        "response": "Execute",
+        "note": null,
+        "parameters": {
+          "AWIPSidentifier": [
+            "SPSBOI"
+          ],
+          "WMOidentifier": [
+            "WWUS85 KBOI 012247"
+          ],
+          "NWSheadline": [
+            "A STRONG THUNDERSTORM WILL IMPACT WEST CENTRAL TWIN FALLS... WESTERN JEROME AND SOUTHEASTERN GOODING COUNTIES THROUGH 530 PM MDT"
+          ],
+          "eventMotionDescription": [
+            "2026-07-01T22:47:00-00:00...storm...214DEG...18KT...42.43,-114.82"
+          ],
+          "maxWindGust": [
+            "40 MPH"
+          ],
+          "maxHailSize": [
+            "0.25"
+          ],
+          "BLOCKCHANNEL": [
+            "EAS",
+            "NWEM",
+            "CMAS"
+          ],
+          "EAS-ORG": [
+            "WXR"
+          ]
+        },
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov",
+        "eventCode": {
+          "SAME": [
+            "SPS"
+          ],
+          "NationalWeatherService": [
+            "SPS"
+          ]
+        }
+      }
+    }
+  },
+  "subject": "central.wx.alert.us.id.county.fips16047",
+  "captured_epoch": 1783206513
+}

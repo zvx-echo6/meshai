@@ -1,0 +1,86 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL15528849480028000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-28T01:41:30+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL15528849480028000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-28T01:41:30Z",
+      "expires": "2026-06-28T02:03:30Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -114.4015481263,
+          42.5380164647
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -114.4015481263,
+              42.5380164647
+            ],
+            [
+              -114.4015454441,
+              42.5375028023
+            ],
+            [
+              -114.401544103,
+              42.5373539586
+            ],
+            [
+              -114.4015347153,
+              42.5357151105
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Stationary traffic",
+        "event_code": 101,
+        "from": "Jayco Avenue",
+        "to": "East 3700 North",
+        "magnitude_of_delay": 3,
+        "icon_category": 6,
+        "length": 255.9013201715,
+        "delay": 147,
+        "road_numbers": [],
+        "start_time": "2026-06-28T01:41:30Z",
+        "end_time": "2026-06-28T02:03:30Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "magic_valley_burley",
+        "latitude": 42.5380164647,
+        "longitude": -114.4015481263,
+        "_enriched": {
+          "geocoder": {
+            "name": "Jayco Avenue",
+            "city": "Twin Falls",
+            "county": "Twin Falls",
+            "state": "Idaho",
+            "country": "United States",
+            "postal_code": "83341",
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 1169.60546875
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

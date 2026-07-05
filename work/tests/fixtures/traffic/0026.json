@@ -1,0 +1,90 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14795958064015000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-28T01:35:30+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14795958064015000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-28T01:35:30Z",
+      "expires": "2026-06-28T02:03:30Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -116.3128486966,
+          43.6850845875
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -116.3128486966,
+              43.6850845875
+            ],
+            [
+              -116.3135527764,
+              43.6851865393
+            ],
+            [
+              -116.3137405311,
+              43.6852119969
+            ],
+            [
+              -116.313893417,
+              43.6852321205
+            ],
+            [
+              -116.3140114342,
+              43.6852227254
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Stationary traffic",
+        "event_code": 101,
+        "from": "Jennie Lane",
+        "to": "Horseshoe Bend Road",
+        "magnitude_of_delay": 3,
+        "icon_category": 6,
+        "length": 95.1421760956,
+        "delay": 73,
+        "road_numbers": [],
+        "start_time": "2026-06-28T01:35:30Z",
+        "end_time": "2026-06-28T02:03:30Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "treasure_valley_ext",
+        "latitude": 43.6850845875,
+        "longitude": -116.3128486966,
+        "_enriched": {
+          "geocoder": {
+            "name": null,
+            "city": "Boise",
+            "county": "Ada",
+            "state": "ID",
+            "country": "United States",
+            "postal_code": "83714",
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 787.5
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

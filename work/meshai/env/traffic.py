@@ -282,6 +282,37 @@ class TomTomTrafficAdapter:
             # higher-severity one is active for the same corridor.
             corridor_key = f"traffic_{str(corridor).replace(' ', '_').lower()}"
 
+            # Canonical data for the Phase-2 formatter (incident path).
+            # TomTom Flow lacks structured road/direction/county; degrade
+            # gracefully (None fields) — formatter uses headline as comment.
+            canonical_data = {
+                "external_id":    None,   # native adapter, no Central dedup
+                "source":         "traffic",
+                "sub_type":       "road_closed" if props.get("roadClosure") else "jam",
+                "road":           str(corridor).replace("_", " ") if corridor else None,
+                "direction":      None,
+                "from_loc":       None,
+                "to_loc":         None,
+                "mile_start":     None,
+                "mile_end":       None,
+                "mile_marker":    None,
+                "lanes_affected": None,
+                "cause":          None,
+                "comment":        title,
+                "impact":         "all lanes closed" if props.get("roadClosure") else None,
+                "county":         None,
+                "state":          None,
+                "lat":            lat,
+                "lon":            lon,
+                "geocoder_city":  None,
+                "landclass":      None,
+                "start_at":       None,
+                "end_at":         None,
+                "magnitude":      None,
+                "delay_seconds":  None,
+                "icon_category":  "road_closed" if props.get("roadClosure") else "jam",
+            }
+
             return make_event(
                 source="traffic",
                 category="traffic_congestion",
@@ -294,6 +325,7 @@ class TomTomTrafficAdapter:
                 lon=lon,
                 group_key=corridor_key,
                 inhibit_keys=[corridor_key],
+                data=canonical_data,
             )
         except Exception:
             logger.exception(f"Traffic to_event failed for evt: {evt.get('event_id')}")

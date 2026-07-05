@@ -1,0 +1,129 @@
+{
+  "envelope": {
+    "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.4a8bcccd7e28d4b55d4612e168328b9ed78fdf84.001.1",
+    "source": "central.echo6.co",
+    "type": "central.wx.alert.special_weather_statement.v1",
+    "time": "2026-06-30T23:39:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "wx.alert.special_weather_statement",
+    "centralseverity": 2,
+    "specversion": "1.0",
+    "data": {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.4a8bcccd7e28d4b55d4612e168328b9ed78fdf84.001.1",
+      "adapter": "nws",
+      "category": "wx.alert.special_weather_statement",
+      "time": "2026-06-30T23:39:00Z",
+      "expires": "2026-07-01T00:30:00Z",
+      "severity": 2,
+      "geo": {
+        "centroid": [
+          -111.854,
+          42.99400000000001
+        ],
+        "bbox": [
+          -112.08,
+          42.84,
+          -111.52,
+          43.27
+        ],
+        "regions": [
+          "US-ID-FIPS16005",
+          "US-ID-FIPS16011",
+          "US-ID-FIPS16019",
+          "US-ID-FIPS16029",
+          "US-ID-FIPS16077",
+          "US-ID-Z058",
+          "US-ID-Z062"
+        ],
+        "primary_region": "US-ID-FIPS16005",
+        "geometry": null
+      },
+      "data": {
+        "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.4a8bcccd7e28d4b55d4612e168328b9ed78fdf84.001.1",
+        "@type": "wx:Alert",
+        "id": "urn:oid:2.49.0.1.840.0.4a8bcccd7e28d4b55d4612e168328b9ed78fdf84.001.1",
+        "areaDesc": "Marsh and Arbon Highlands; Blackfoot Mountains",
+        "geocode": {
+          "SAME": [
+            "016005",
+            "016011",
+            "016029",
+            "016077",
+            "016019"
+          ],
+          "UGC": [
+            "IDZ058",
+            "IDZ062"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/forecast/IDZ058",
+          "https://api.weather.gov/zones/forecast/IDZ062"
+        ],
+        "references": [],
+        "sent": "2026-06-30T17:39:00-06:00",
+        "effective": "2026-06-30T17:39:00-06:00",
+        "onset": "2026-06-30T17:39:00-06:00",
+        "expires": "2026-06-30T18:30:00-06:00",
+        "ends": null,
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Moderate",
+        "certainty": "Observed",
+        "urgency": "Expected",
+        "event": "Special Weather Statement",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Pocatello ID",
+        "headline": "Special Weather Statement issued June 30 at 5:39PM MDT by NWS Pocatello ID",
+        "description": "At 538 PM MDT, Doppler radar was tracking a strong thunderstorm near\nChesterfield Reservoir, moving northeast at 15 mph.\n\nHAZARD...Wind gusts in excess of 35 mph and pea size hail.\n\nSOURCE...Radar indicated.\n\nIMPACT...Gusty winds could knock down tree limbs and blow around\nunsecured objects. Minor hail damage to outdoor objects is\npossible.\n\nLocations impacted include...\nChesterfield Reservoir, northern Blackfoot Reservoir, Chesterfield,\nCutthroat Trout Campground, and Trail Creek Campground.",
+        "instruction": "If outdoors, consider seeking shelter inside a building.\n\nIf on or near Blackfoot Reservoir, get out of the water and move\nindoors or inside a vehicle. Strong winds will create rough chop.\nRemember, lightning can strike out to 10 miles from the parent\nthunderstorm. If you can hear thunder, you are close enough to be\nstruck by lightning. Move to safe shelter now! Do not be caught on\nthe water in a thunderstorm.",
+        "response": "Execute",
+        "note": null,
+        "parameters": {
+          "AWIPSidentifier": [
+            "SPSPIH"
+          ],
+          "WMOidentifier": [
+            "WWUS85 KPIH 302339"
+          ],
+          "NWSheadline": [
+            "A STRONG THUNDERSTORM WILL IMPACT NORTHWESTERN CARIBOU...NORTHERN BANNOCK...SOUTHERN BONNEVILLE AND SOUTHEASTERN BINGHAM COUNTIES THROUGH 630 PM MDT"
+          ],
+          "eventMotionDescription": [
+            "2026-06-30T23:38:00-00:00...storm...236DEG...15KT...42.99,-111.93"
+          ],
+          "maxWindGust": [
+            "35 MPH"
+          ],
+          "maxHailSize": [
+            "0.25"
+          ],
+          "BLOCKCHANNEL": [
+            "EAS",
+            "NWEM",
+            "CMAS"
+          ],
+          "EAS-ORG": [
+            "WXR"
+          ]
+        },
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov",
+        "eventCode": {
+          "SAME": [
+            "SPS"
+          ],
+          "NationalWeatherService": [
+            "SPS"
+          ]
+        }
+      }
+    }
+  },
+  "subject": "central.wx.alert.us.id.county.fips16005",
+  "captured_epoch": 1783206513
+}

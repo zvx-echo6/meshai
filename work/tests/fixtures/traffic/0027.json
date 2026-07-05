@@ -1,0 +1,86 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL15508651644023000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-28T01:37:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL15508651644023000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-28T01:37:00Z",
+      "expires": "2026-06-28T02:03:30Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -114.4463101715,
+          42.5667523455
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -114.4463101715,
+              42.5667523455
+            ],
+            [
+              -114.4464442819,
+              42.5667523455
+            ],
+            [
+              -114.4471362919,
+              42.5667536419
+            ],
+            [
+              -114.448536405,
+              42.566755
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Stationary traffic",
+        "event_code": 101,
+        "from": "Sunrise Boulevard North",
+        "to": "Teton Street",
+        "magnitude_of_delay": 3,
+        "icon_category": 6,
+        "length": 182.3152714831,
+        "delay": 203,
+        "road_numbers": [],
+        "start_time": "2026-06-28T01:37:00Z",
+        "end_time": "2026-06-28T02:03:30Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "magic_valley_burley",
+        "latitude": 42.5667523455,
+        "longitude": -114.4463101715,
+        "_enriched": {
+          "geocoder": {
+            "name": "Sunrise Boulevard North",
+            "city": "Twin Falls",
+            "county": "Twin Falls",
+            "state": "Idaho",
+            "country": "United States",
+            "postal_code": "83301",
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 1139.76953125
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

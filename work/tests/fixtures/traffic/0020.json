@@ -1,0 +1,172 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14746903664017000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-28T01:43:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14746903664017000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-28T01:43:00Z",
+      "expires": "2026-06-28T02:03:30Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -116.6074330305,
+          43.6049777402
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -116.6074330305,
+              43.6049777402
+            ],
+            [
+              -116.6070897078,
+              43.6049750696
+            ],
+            [
+              -116.6070052182,
+              43.6049737344
+            ],
+            [
+              -116.6067906415,
+              43.6049710638
+            ],
+            [
+              -116.6065639948,
+              43.6049697285
+            ],
+            [
+              -116.6060396229,
+              43.6049643267
+            ],
+            [
+              -116.6058921014,
+              43.6049629915
+            ],
+            [
+              -116.6058156585,
+              43.604965662
+            ],
+            [
+              -116.605027089,
+              43.6049898184
+            ],
+            [
+              -116.604808489,
+              43.6049965554
+            ],
+            [
+              -116.6047789847,
+              43.6049965554
+            ],
+            [
+              -116.6045563614,
+              43.6050032318
+            ],
+            [
+              -116.6044195687,
+              43.60501531
+            ],
+            [
+              -116.604359219,
+              43.6050193158
+            ],
+            [
+              -116.6042841171,
+              43.6050260529
+            ],
+            [
+              -116.6040909981,
+              43.6050555503
+            ],
+            [
+              -116.6040655171,
+              43.6050582209
+            ],
+            [
+              -116.6040118729,
+              43.6050662932
+            ],
+            [
+              -116.6038361882,
+              43.605102467
+            ],
+            [
+              -116.6038120484,
+              43.6051078688
+            ],
+            [
+              -116.6037704741,
+              43.6051158804
+            ],
+            [
+              -116.6035465097,
+              43.6051748752
+            ],
+            [
+              -116.6032916998,
+              43.6052714395
+            ],
+            [
+              -116.6032286679,
+              43.605303668
+            ],
+            [
+              -116.6030730998,
+              43.6053827523
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Stationary traffic",
+        "event_code": 101,
+        "from": "N Middleton Rd (ID-55)",
+        "to": "I-84 Bus (ID-55)",
+        "magnitude_of_delay": 3,
+        "icon_category": 6,
+        "length": 360.2418990839,
+        "delay": 132,
+        "road_numbers": [
+          "ID-55"
+        ],
+        "start_time": "2026-06-28T01:43:00Z",
+        "end_time": "2026-06-28T02:03:30Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "treasure_valley_ext",
+        "latitude": 43.6049777402,
+        "longitude": -116.6074330305,
+        "_enriched": {
+          "geocoder": {
+            "name": "West Karcher Road",
+            "city": "Nampa",
+            "county": "Canyon",
+            "state": "Idaho",
+            "country": "United States",
+            "postal_code": "83651",
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 749.34375
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

@@ -72,3 +72,17 @@ register("avalanche_watch", _avy_fmt_mod.format)
 from meshai.notifications.formatters import swpc as _swpc_fmt_mod  # noqa: E402,F401
 register("geomagnetic_storm", _swpc_fmt_mod.format)
 register("rf_propagation_alert", _swpc_fmt_mod.format)
+
+# Phase-2: NWS weather alerts (weather_warning + weather_statement).
+# weather_watch and weather_advisory are not yet migrated (Phase-2 scope).
+from meshai.notifications.formatters import nws as _nws_fmt_mod  # noqa: E402,F401
+register("weather_warning", _nws_fmt_mod.format)
+register("weather_statement", _nws_fmt_mod.format)
+
+# Phase-2: incident / roads categories.
+# One formatter handles all four; event.category drives the render path.
+from meshai.notifications.formatters import incident as _incident_fmt_mod  # noqa: E402,F401
+register("work_zone",          _incident_fmt_mod.format)
+register("road_incident",      _incident_fmt_mod.format)
+register("road_closure",       _incident_fmt_mod.format)
+register("traffic_congestion", _incident_fmt_mod.format)

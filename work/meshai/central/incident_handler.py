@@ -602,6 +602,87 @@ def handle_incident(envelope: dict, subject: str,
     source = n["source"]
     pk_combined = f"{source}|{external_id}"
 
+    # ── Phase-2 cutover branch ────────────────────────────────────────────
+    # When the relevant category has been explicitly cut over, delegate
+    # traffic_events management to gating.incident.decide() and write
+    # canonical data into the shared `data` dict so the formatter can
+    # render from it at dispatch time.  NOT-cutover path is unchanged.
+    _kind_to_cat = {
+        "incident":      "road_incident",
+        "closure":       "road_closure",
+        "special_event": "road_incident",
+        "work_zone":     "work_zone",
+    }
+    _event_cat = _kind_to_cat.get(n.get("category_kind", "incident"), "road_incident")
+
+    from meshai.notifications.cutover import is_cutover as _is_cutover
+    if _is_cutover(_event_cat) and isinstance(data, dict):
+        # Build canonical data from parsed dict n.
+        _canonical = {
+            "external_id":    n["external_id"],
+            "source":         n["source"],
+            "sub_type":       n.get("sub_type"),
+            "road":           n.get("road"),
+            "direction":      n.get("direction"),
+            "from_loc":       n.get("from_loc"),
+            "to_loc":         n.get("to_loc"),
+            "mile_start":     n.get("mile_start"),
+            "mile_end":       n.get("mile_end"),
+            "mile_marker":    n.get("mile_marker"),
+            "lanes_affected": n.get("lanes_affected"),
+            "cause":          n.get("cause"),
+            "comment":        n.get("comment"),
+            "impact":         n.get("impact"),
+            "county":         n.get("county"),
+            "state":          n.get("state"),
+            "lat":            n.get("lat"),
+            "lon":            n.get("lon"),
+            "geocoder_city":  n.get("geocoder_city"),
+            "landclass":      n.get("landclass"),
+            "start_at":       n.get("start_at"),
+            "end_at":         n.get("end_at"),
+            "magnitude":      n.get("magnitude"),
+            "delay_seconds":  n.get("delay_seconds"),
+            "icon_category":  n.get("icon_category"),
+        }
+
+        _log_id_co = _log_event_returning_id(
+            conn, now=now, source=source, category=category_raw,
+            severity_word=severity_word,
+            event_id_external=external_id,
+            subject=subject, handled=0,
+            table_name="traffic_events", table_pk=pk_combined)
+
+        from meshai.notifications.gating.incident import decide as _gate_decide
+        _gate = _gate_decide(_canonical, source=source, now=float(now))
+
+        if not _gate.broadcast:
+            return None
+
+        data.update(_canonical)
+        data.update(_gate.data_patch)
+        data["_broadcast_audit"] = {"table": "traffic_events", "pk": pk_combined}
+
+        _raw_commit = _gate.commit
+        _log_row_id_co = _log_id_co
+
+        def _on_commit_cutover(committed_at: float) -> None:
+            if _raw_commit is not None:
+                _raw_commit(committed_at)
+            if _log_row_id_co is not None:
+                try:
+                    _c = get_db()
+                    _c.execute("UPDATE event_log SET handled=1 WHERE id=?",
+                               (int(_log_row_id_co),))
+                except Exception:
+                    logger.exception(
+                        "incident cutover commit: event_log update failed")
+
+        data["_on_broadcast_committed"] = _on_commit_cutover
+        return _render(n)
+
+    # ── Legacy path (not cutover): exact original logic below ─────────────
+
     log_id = _log_event_returning_id(
         conn, now=now, source=source, category=category_raw,
         severity_word=severity_word,

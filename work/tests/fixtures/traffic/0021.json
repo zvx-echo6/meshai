@@ -1,0 +1,166 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14746903848011000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-28T01:14:02+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14746903848011000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-28T01:14:02Z",
+      "expires": "2026-06-28T02:04:30Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -116.5932159816,
+          43.6158903249
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -116.5932159816,
+              43.6158903249
+            ],
+            [
+              -116.5932106172,
+              43.6157951126
+            ],
+            [
+              -116.5932106172,
+              43.6156958344
+            ],
+            [
+              -116.5932092761,
+              43.615500069
+            ],
+            [
+              -116.593207935,
+              43.615382039
+            ],
+            [
+              -116.5932065939,
+              43.6151232217
+            ],
+            [
+              -116.593207935,
+              43.6144405821
+            ],
+            [
+              -116.5932092761,
+              43.6144003481
+            ],
+            [
+              -116.5932092761,
+              43.6143172098
+            ],
+            [
+              -116.5932092761,
+              43.6141991775
+            ],
+            [
+              -116.593207935,
+              43.6138692926
+            ],
+            [
+              -116.593207935,
+              43.6138558811
+            ],
+            [
+              -116.5932092761,
+              43.613713695
+            ],
+            [
+              -116.5932186638,
+              43.6133220899
+            ],
+            [
+              -116.5932790135,
+              43.6131316571
+            ],
+            [
+              -116.5933554565,
+              43.6128849068
+            ],
+            [
+              -116.5933728909,
+              43.6128299249
+            ],
+            [
+              -116.5934251939,
+              43.6127467844
+            ],
+            [
+              -116.593438605,
+              43.6127253014
+            ],
+            [
+              -116.5934962725,
+              43.6126341502
+            ],
+            [
+              -116.5937296247,
+              43.6122666308
+            ],
+            [
+              -116.5941587781,
+              43.6119125817
+            ],
+            [
+              -116.594247291,
+              43.6118401816
+            ],
+            [
+              -116.5943854248,
+              43.6117248754
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Stationary traffic",
+        "event_code": 101,
+        "from": "Cherry Lane",
+        "to": "Karcher Connector",
+        "magnitude_of_delay": 3,
+        "icon_category": 6,
+        "length": 490.7193235348,
+        "delay": 137,
+        "road_numbers": [],
+        "start_time": "2026-06-28T01:14:02Z",
+        "end_time": "2026-06-28T02:04:30Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "treasure_valley_ext",
+        "latitude": 43.6158903249,
+        "longitude": -116.5932159816,
+        "_enriched": {
+          "geocoder": {
+            "name": "Midland Boulevard",
+            "city": "Nampa",
+            "county": "Canyon",
+            "state": "Idaho",
+            "country": "United States",
+            "postal_code": "83652",
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 749.484375
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

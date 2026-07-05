@@ -1,0 +1,128 @@
+{
+  "envelope": {
+    "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.dfad3eef33e0c76c3d80f75f404dcd3e2e8b00a8.001.1",
+    "source": "central.echo6.co",
+    "type": "central.wx.alert.special_weather_statement.v1",
+    "time": "2026-06-30T20:09:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "wx.alert.special_weather_statement",
+    "centralseverity": 2,
+    "specversion": "1.0",
+    "data": {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.dfad3eef33e0c76c3d80f75f404dcd3e2e8b00a8.001.1",
+      "adapter": "nws",
+      "category": "wx.alert.special_weather_statement",
+      "time": "2026-06-30T20:09:00Z",
+      "expires": "2026-06-30T21:00:00Z",
+      "severity": 2,
+      "geo": {
+        "centroid": [
+          -113.244,
+          43.95
+        ],
+        "bbox": [
+          -113.38,
+          43.81,
+          -113.03,
+          44.09
+        ],
+        "regions": [
+          "US-ID-FIPS16023",
+          "US-ID-FIPS16033",
+          "US-ID-FIPS16037",
+          "US-ID-Z067",
+          "US-ID-Z068",
+          "US-ID-Z069"
+        ],
+        "primary_region": "US-ID-FIPS16023",
+        "geometry": null
+      },
+      "data": {
+        "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.dfad3eef33e0c76c3d80f75f404dcd3e2e8b00a8.001.1",
+        "@type": "wx:Alert",
+        "id": "urn:oid:2.49.0.1.840.0.dfad3eef33e0c76c3d80f75f404dcd3e2e8b00a8.001.1",
+        "areaDesc": "Beaverhead/Lemhi Highlands; Lost River Valleys; Lost River Range",
+        "geocode": {
+          "SAME": [
+            "016023",
+            "016033",
+            "016037"
+          ],
+          "UGC": [
+            "IDZ067",
+            "IDZ068",
+            "IDZ069"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/forecast/IDZ067",
+          "https://api.weather.gov/zones/forecast/IDZ068",
+          "https://api.weather.gov/zones/forecast/IDZ069"
+        ],
+        "references": [],
+        "sent": "2026-06-30T14:09:00-06:00",
+        "effective": "2026-06-30T14:09:00-06:00",
+        "onset": "2026-06-30T14:09:00-06:00",
+        "expires": "2026-06-30T15:00:00-06:00",
+        "ends": null,
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Moderate",
+        "certainty": "Observed",
+        "urgency": "Expected",
+        "event": "Special Weather Statement",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Pocatello ID",
+        "headline": "Special Weather Statement issued June 30 at 2:09PM MDT by NWS Pocatello ID",
+        "description": "At 209 PM MDT, Doppler radar was tracking a strong thunderstorm 13\nmiles northeast of Darlington, or 17 miles east of Mackay, moving\neast at 5 mph.\n\nHAZARD...Wind gusts in excess of 45 mph and half inch hail.\n\nSOURCE...Radar indicated.\n\nIMPACT...Gusty winds could knock down tree limbs and blow around\nunsecured objects. Minor hail damage to outdoor objects is\npossible.\n\nThis storm will remain over mainly rural areas of north central Butte\nCounty.",
+        "instruction": "If outdoors, consider seeking shelter inside a building.",
+        "response": "Execute",
+        "note": null,
+        "parameters": {
+          "AWIPSidentifier": [
+            "SPSPIH"
+          ],
+          "WMOidentifier": [
+            "WWUS85 KPIH 302009"
+          ],
+          "NWSheadline": [
+            "A STRONG THUNDERSTORM WILL IMPACT NORTH CENTRAL BUTTE COUNTY THROUGH 300 PM MDT"
+          ],
+          "eventMotionDescription": [
+            "2026-06-30T20:09:00-00:00...storm...275DEG...5KT...43.98,-113.28"
+          ],
+          "maxWindGust": [
+            "45 MPH"
+          ],
+          "maxHailSize": [
+            "0.50"
+          ],
+          "BLOCKCHANNEL": [
+            "EAS",
+            "NWEM",
+            "CMAS"
+          ],
+          "EAS-ORG": [
+            "WXR"
+          ]
+        },
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov",
+        "eventCode": {
+          "SAME": [
+            "SPS"
+          ],
+          "NationalWeatherService": [
+            "SPS"
+          ]
+        }
+      }
+    }
+  },
+  "subject": "central.wx.alert.us.id.county.fips16023",
+  "captured_epoch": 1783206513
+}

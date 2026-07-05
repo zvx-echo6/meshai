@@ -1,0 +1,82 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTR14951767488044001",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-05-27T14:05:30+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 1,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTR14951767488044001",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-05-27T14:05:30Z",
+      "expires": null,
+      "severity": 1,
+      "geo": {
+        "centroid": [
+          -116.0401029084,
+          43.3074604053
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -116.0401029084,
+              43.3074604053
+            ],
+            [
+              -116.0422030781,
+              43.30674159
+            ],
+            [
+              -116.0451803301,
+              43.3054997305
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Roadworks",
+        "event_code": 701,
+        "from": "East Monroe Avenue",
+        "to": "E Humvee Lane",
+        "magnitude_of_delay": 0,
+        "icon_category": 9,
+        "length": 465.4730178013,
+        "delay": null,
+        "road_numbers": [],
+        "start_time": "2026-05-27T14:05:30Z",
+        "end_time": null,
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "treasure_valley_ext",
+        "latitude": 43.3074604053,
+        "longitude": -116.0401029084,
+        "_enriched": {
+          "geocoder": {
+            "name": null,
+            "city": null,
+            "county": null,
+            "state": null,
+            "country": null,
+            "postal_code": null,
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 956.5390625
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

@@ -1,0 +1,114 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14752673928028000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-28T00:40:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14752673928028000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-28T00:40:00Z",
+      "expires": "2026-06-28T01:03:00Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -116.6187076961,
+          43.5655211212
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -116.6187076961,
+              43.5655211212
+            ],
+            [
+              -116.6188525354,
+              43.5656525497
+            ],
+            [
+              -116.619116733,
+              43.5660320755
+            ],
+            [
+              -116.6191757416,
+              43.5661836057
+            ],
+            [
+              -116.6191945171,
+              43.566426357
+            ],
+            [
+              -116.6191462373,
+              43.5666704434
+            ],
+            [
+              -116.6190389489,
+              43.566889021
+            ],
+            [
+              -116.6188967919,
+              43.5671813879
+            ],
+            [
+              -116.6188270544,
+              43.5673610951
+            ],
+            [
+              -116.6188149845,
+              43.5675757227
+            ],
+            [
+              -116.6188123023,
+              43.5677325934
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Stationary traffic",
+        "event_code": 101,
+        "from": "S Pine River Way",
+        "to": "Roosevelt Avenue",
+        "magnitude_of_delay": 3,
+        "icon_category": 6,
+        "length": 260.2802031929,
+        "delay": 249,
+        "road_numbers": [],
+        "start_time": "2026-06-28T00:40:00Z",
+        "end_time": "2026-06-28T01:03:00Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "treasure_valley_ext",
+        "latitude": 43.5655211212,
+        "longitude": -116.6187076961,
+        "_enriched": {
+          "geocoder": {
+            "name": "Copper River Basin",
+            "city": "Nampa",
+            "county": "Canyon",
+            "state": "Idaho",
+            "country": "United States",
+            "postal_code": null,
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 756.8046875
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

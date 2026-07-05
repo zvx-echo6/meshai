@@ -1,0 +1,110 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14821924028004000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-28T01:43:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14821924028004000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-28T01:43:00Z",
+      "expires": "2026-06-28T02:03:30Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -116.4137453531,
+          43.4836923011
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -116.4137453531,
+              43.4836923011
+            ],
+            [
+              -116.4137560819,
+              43.4845935355
+            ],
+            [
+              -116.4137587641,
+              43.4847584674
+            ],
+            [
+              -116.4137601052,
+              43.4848710977
+            ],
+            [
+              -116.4137627875,
+              43.4850172977
+            ],
+            [
+              -116.4137627875,
+              43.4850307379
+            ],
+            [
+              -116.4137654697,
+              43.4851768768
+            ],
+            [
+              -116.4137654697,
+              43.4852023583
+            ],
+            [
+              -116.4137668108,
+              43.4853364554
+            ],
+            [
+              -116.413769493,
+              43.4855229137
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Stationary traffic",
+        "event_code": 101,
+        "from": "W Kuna Mora Rd (S Swan Falls Rd)",
+        "to": "E Avalon St/N Linder Ave (S Swan Falls Rd)",
+        "magnitude_of_delay": 3,
+        "icon_category": 6,
+        "length": 203.5647239426,
+        "delay": 193,
+        "road_numbers": [],
+        "start_time": "2026-06-28T01:43:00Z",
+        "end_time": "2026-06-28T02:03:30Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "treasure_valley_ext",
+        "latitude": 43.4836923011,
+        "longitude": -116.4137453531,
+        "_enriched": {
+          "geocoder": {
+            "name": null,
+            "city": "Kuna",
+            "county": "Ada",
+            "state": "ID",
+            "country": "United States",
+            "postal_code": "83634",
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 824.18359375
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

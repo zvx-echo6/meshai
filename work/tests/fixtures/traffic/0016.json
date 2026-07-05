@@ -1,0 +1,84 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTR15355727568011000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-26T19:54:44+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 4,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTR15355727568011000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-26T19:54:44Z",
+      "expires": null,
+      "severity": 4,
+      "geo": {
+        "centroid": [
+          -114.7129096777,
+          42.943797166
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -114.7129096777,
+              42.943797166
+            ],
+            [
+              -114.7129096777,
+              42.9438695677
+            ],
+            [
+              -114.7129083366,
+              42.9444582885
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Closed",
+        "event_code": 401,
+        "from": "4th Avenue East / 4th Avenue West",
+        "to": "North Main Street / 1st Avenue East",
+        "magnitude_of_delay": 4,
+        "icon_category": 8,
+        "length": 73.5135560313,
+        "delay": null,
+        "road_numbers": [
+          "ID-46"
+        ],
+        "start_time": "2026-06-26T19:54:44Z",
+        "end_time": null,
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "magic_valley_burley",
+        "latitude": 42.943797166,
+        "longitude": -114.7129096777,
+        "_enriched": {
+          "geocoder": {
+            "name": "Main Street",
+            "city": "Gooding",
+            "county": "Gooding",
+            "state": "Idaho",
+            "country": "United States",
+            "postal_code": "83330",
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 1089.28515625
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

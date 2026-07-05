@@ -1,0 +1,102 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14732476596036000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-28T03:28:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14732476596036000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-28T03:28:00Z",
+      "expires": "2026-06-28T04:03:00Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -116.6494766568,
+          43.6265373683
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -116.6494766568,
+              43.6265373683
+            ],
+            [
+              -116.6485821401,
+              43.626550777
+            ],
+            [
+              -116.6483943855,
+              43.6265547814
+            ],
+            [
+              -116.6482106542,
+              43.626557451
+            ],
+            [
+              -116.6481449401,
+              43.6265547814
+            ],
+            [
+              -116.6478324627,
+              43.6265427075
+            ],
+            [
+              -116.6468708908,
+              43.6265239597
+            ],
+            [
+              -116.6445105468,
+              43.6265842682
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Stationary traffic",
+        "event_code": 101,
+        "from": "South Lake Avenue",
+        "to": "Highgarden Way",
+        "magnitude_of_delay": 3,
+        "icon_category": 6,
+        "length": 399.9312183663,
+        "delay": 159,
+        "road_numbers": [],
+        "start_time": "2026-06-28T03:28:00Z",
+        "end_time": "2026-06-28T04:03:00Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "treasure_valley_ext",
+        "latitude": 43.6265373683,
+        "longitude": -116.6494766568,
+        "_enriched": {
+          "geocoder": {
+            "name": "Kane Avenue",
+            "city": "Caldwell",
+            "county": "Canyon",
+            "state": "Idaho",
+            "country": "United States",
+            "postal_code": "83652",
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 735.08984375
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}
