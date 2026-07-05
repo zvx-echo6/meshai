@@ -98,12 +98,13 @@ def _ingest_envelope(norad_id=25544, observer="Boise", max_el=72.5,
 
 # ── schema / migration ───────────────────────────────────────────────
 
-def test_schema_version_is_22():
-    assert SCHEMA_VERSION == 22
+def test_schema_version_is_current():
+    # Bumped to 23 by the native-satpass observer_locations migration (v23).
+    assert SCHEMA_VERSION == 23
 
 
 def test_v22_migration_applies_and_adds_due_at_column(tmp_path, monkeypatch):
-    """Fresh DB migrates cleanly to v22 and satpass_pending has due_at."""
+    """Fresh DB migrates cleanly and satpass_pending has due_at (v22 column)."""
     from meshai.persistence import close_thread_connection
     from meshai.persistence import db as persistence_db
     db = str(tmp_path / "fresh-v22.sqlite")
@@ -112,7 +113,7 @@ def test_v22_migration_applies_and_adds_due_at_column(tmp_path, monkeypatch):
     close_thread_connection()
     conn = init_db()
     row = conn.execute("SELECT value FROM schema_meta WHERE key='version'").fetchone()
-    assert int(row["value"]) == 22
+    assert int(row["value"]) == 23
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(satpass_pending)")}
     assert "due_at" in cols
     close_thread_connection()
