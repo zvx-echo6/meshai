@@ -75,6 +75,23 @@ _US_STATES = {
 }
 
 
+def _unwrap_url(v) -> str:
+    """Coerce a registry URL field to a clean string.
+
+    Socrata's "URL" column type serializes as a nested object
+    (``{"url": "https://…"}``) — e.g. Idaho's row in the live FHWA registry —
+    while plain-text columns come back as a bare string. Unwrap the nested
+    form, pass strings through, and treat anything else (None, numbers) as
+    empty so callers never trip over ``.strip()``.
+    """
+    if isinstance(v, dict):
+        inner = v.get("url")
+        return inner.strip() if isinstance(inner, str) else ""
+    if isinstance(v, str):
+        return v.strip()
+    return ""
+
+
 class WZDxAdapter:
     """FHWA WZDx work-zone polling adapter (native ``work_zone`` source)."""
 
@@ -199,7 +216,9 @@ class WZDxAdapter:
             fmt = str(row.get("format") or "").strip().lower()
             if fmt and "geojson" not in fmt:
                 continue  # only GeoJSON WZDx feeds; skip xml/other
-            url = (row.get("url") or row.get("apiurl") or row.get("feed_url") or "").strip()
+            url = (_unwrap_url(row.get("url"))
+                   or _unwrap_url(row.get("apiurl"))
+                   or _unwrap_url(row.get("feed_url")))
             if url and url not in urls:
                 urls.append(url)
         return urls
