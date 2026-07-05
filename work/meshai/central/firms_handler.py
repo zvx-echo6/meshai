@@ -200,7 +200,7 @@ def handle_firms(envelope: dict, subject: str,
                     table_name=None, table_pk=None)
         return None
 
-    # ---- persist (INSERT OR IGNORE via v4.sql unique partial index) ------
+    # ---- persist + attribute + fuse (source-agnostic core) --------------
 
     satellite = d.get("satellite") or ""
     brightness_raw = d.get("bright_ti4") if d.get("bright_ti4") is not None \
@@ -209,6 +209,69 @@ def handle_firms(envelope: dict, subject: str,
         brightness = float(brightness_raw) if brightness_raw is not None else None
     except (TypeError, ValueError):
         brightness = None
+
+    # The INSERT-OR-IGNORE into firms_pixels + attribution + growth/spotting/
+    # halt fusion now live in the shared _ingest_pixel_core so the native
+    # env/firms.py adapter feeds the SAME engine. handle_firms keeps the
+    # envelope-specific concerns (field extraction, filtering, event_log
+    # accounting) here so the Central path stays byte-identical. `data` is the
+    # consumer's mutable Event.data dict; core stamps it in place on a fusion
+    # broadcast exactly as the old inline path did.
+    stored, rowid, wire = _ingest_pixel_core(
+        conn, lat=lat, lon=lon, acq_epoch=acq_epoch, frp=frp,
+        confidence=conf, brightness=brightness, satellite=satellite,
+        data=data, now=now,
+    )
+
+    # event_log row regardless of dedup outcome -- both "stored" and
+    # "dedup-hit" count as "handled" for accounting; the suffix tells them
+    # apart for ops grep. (Written after the core call: event_log is a
+    # distinct table with its own rowid sequence, so ordering it after the
+    # attribution INSERTs leaves the row content + relative order identical.)
+    cat_tag = category_raw if stored else category_raw + "|dedup_hit"
+    _log_event(conn, now=now, source="firms", category=cat_tag,
+                severity_word=severity_word,
+                event_id_external=event_id_external,
+                subject=subject, handled=1,
+                table_name="firms_pixels" if stored else None,
+                table_pk=(str(rowid) if stored else None))
+
+    # Dedup hits skip broadcast -- the original insert already had its chance.
+    if not stored:
+        return None
+    return wire
+
+
+# ============================================================================
+# Source-agnostic pixel ingest (Central + native env/firms.py share this)
+# ============================================================================
+
+
+def _ingest_pixel_core(conn, *, lat, lon, acq_epoch, frp, confidence,
+                        brightness, satellite, data, now):
+    """INSERT one canonical hotspot pixel + run attribution/fusion.
+
+    This is the source-agnostic heart of the fire-fusion engine, extracted so
+    the Central NATS handler (``handle_firms``) and the native FIRMS adapter
+    (``env/firms.py``) drive IDENTICAL attribution/fusion from a bare pixel.
+
+    Steps (exactly what the old inline ``handle_firms`` tail did per pixel):
+      1. Compute the v7 meters-quantized ``dedup_key`` and ``INSERT OR IGNORE``
+         into ``firms_pixels`` (unique on ``dedup_key, acq_time, satellite``).
+         A dedup hit is a no-op -- the original insert already ran attribution.
+      2. For a NEWLY-stored pixel, run ``_attribute_or_cluster`` -> writes
+         ``fire_pixels`` / ``fire_passes`` / ``fires`` centroid+cursor and runs
+         the growth / spotting / halt fusion (honoring the Phase-3c deferred
+         latches). The dead unattributed-cluster path stays dead -- NO
+         raw-hotspot / cluster broadcast is ever produced here.
+
+    Determinism: ``now`` is threaded explicitly; there is no hidden clock read.
+
+    Returns ``(stored, rowid, wire)`` where ``wire`` is the fusion broadcast
+    string (or ``None``). ``data`` is mutated in place with the Phase-3c
+    broadcast stamps when a fusion wire is produced.
+    """
+    satellite = satellite or ""
 
     # v0.6-3b: dedup_key from meters-based quantization (v7 schema).
     dedup_distance_m = float(adapter_config.firms.dedup_distance_m)
@@ -224,37 +287,83 @@ def handle_firms(envelope: dict, subject: str,
         "frp, confidence, satellite, brightness, dedup_key) "
         "VALUES (?,?,?,?,?,?,?,?,?)",
         (None, lat, lon, acq_epoch, frp,
-         (str(conf) if conf is not None else None),
+         (str(confidence) if confidence is not None else None),
          satellite, brightness, dedup_key),
     )
     stored = cur.rowcount > 0
-
-    # event_log row regardless of dedup outcome -- both "stored" and
-    # "dedup-hit" count as "handled" for accounting; the suffix tells them
-    # apart for ops grep.
-    handled = 1 if stored else 1   # dedup hit is still handled-success
-    cat_tag = category_raw if stored else category_raw + "|dedup_hit"
-    _log_event(conn, now=now, source="firms", category=cat_tag,
-                severity_word=severity_word,
-                event_id_external=event_id_external,
-                subject=subject, handled=handled,
-                table_name="firms_pixels" if stored else None,
-                table_pk=(str(cur.lastrowid) if stored else None))
-
-    # ---- v0.7-fire-tracker-1: attribution + cluster -------------------
-    # Dedup hits skip attribution -- the original insert already had its
-    # chance. Only newly-stored pixels run through here.
+    rowid = int(cur.lastrowid)
     if not stored:
-        return None
+        return (False, rowid, None)
 
-    return _attribute_or_cluster(
+    wire = _attribute_or_cluster(
         conn,
-        pixel_row_id=int(cur.lastrowid),
+        pixel_row_id=rowid,
         lat=lat, lon=lon,
         acq_epoch=acq_epoch,
         frp=frp, satellite=satellite,
         data=data, now=now,
     )
+    return (True, rowid, wire)
+
+
+def ingest_hotspot_pixel(pixel: dict, *, now) -> list[tuple[str, dict]]:
+    """Source-agnostic entrypoint: ingest ONE canonical FIRMS pixel into the
+    fire-fusion engine and return the fusion broadcasts it produced.
+
+    ``pixel`` is the canonical FIRMS schema::
+
+        {lat, lon, frp, confidence, brightness, satellite, acq_epoch}
+
+    (``lat``/``lon``/``acq_epoch`` required; the rest optional.) This INSERTs
+    the pixel into ``firms_pixels`` (dedup-safe), runs attribution, and runs the
+    growth / spotting / halt fusion -- the same pipeline the Central handler
+    runs -- honoring the Phase-3c deferred latches.
+
+    Returns a list of ``(wire, data)`` fusion broadcasts, where ``wire`` is the
+    mesh text and ``data`` carries the Phase-3c category/severity stamps (and,
+    under cutover, the deferred commit hook). A dedup hit or a pixel that
+    triggers no fusion returns ``[]``. This NEVER returns a raw-hotspot,
+    ``wildfire_hotspot``, ``new_ignition``, or cluster broadcast -- the only
+    outputs are ``wildfire_growth`` / ``wildfire_spotting`` / ``wildfire_halted``
+    (the cluster path is dead). Callers must therefore NEVER broadcast the raw
+    pixel itself -- only these returned fusion wires.
+
+    Determinism: ``now`` (epoch) is required and threaded straight through.
+    """
+    try:
+        conn = get_db()
+    except Exception:
+        logger.exception("ingest_hotspot_pixel: persistence unavailable; dropping")
+        return []
+
+    lat = pixel.get("lat")
+    lon = pixel.get("lon")
+    acq_epoch = pixel.get("acq_epoch")
+    if not (isinstance(lat, (int, float)) and isinstance(lon, (int, float))):
+        return []
+    if acq_epoch is None:
+        return []
+
+    try:
+        frp = float(pixel["frp"]) if pixel.get("frp") is not None else None
+    except (TypeError, ValueError):
+        frp = None
+    try:
+        brightness = float(pixel["brightness"]) \
+            if pixel.get("brightness") is not None else None
+    except (TypeError, ValueError):
+        brightness = None
+
+    data: dict = {}
+    _stored, _rowid, wire = _ingest_pixel_core(
+        conn,
+        lat=float(lat), lon=float(lon), acq_epoch=int(acq_epoch),
+        frp=frp, confidence=pixel.get("confidence"), brightness=brightness,
+        satellite=pixel.get("satellite") or "", data=data, now=now,
+    )
+    if wire is None:
+        return []
+    return [(wire, data)]
 
 
 # ============================================================================
