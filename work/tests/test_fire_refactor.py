@@ -310,10 +310,14 @@ class TestRegistration:
 
     @pytest.mark.parametrize(
         "cat", ["wildfire_hotspot", "new_ignition",
-                "unattributed_hotspot_cluster", "wildfire_growth"])
+                "unattributed_hotspot_cluster"])
     def test_firms_categories_not_captured(self, cat):
-        # FIRMS is deferred; its categories must NOT resolve to the fire
-        # formatter/decider via the "fire" toggle family fallback.
+        # These native FIRMS categories remain deferred; they must NOT resolve
+        # to the fire formatter/decider via the "fire" toggle family fallback.
+        # (Phase-3c migrated the FIRMS FUSION categories wildfire_growth /
+        # wildfire_spotting / wildfire_halted — covered in test_firms_refactor.py
+        # — but growth reuses the fire FORMATTER while keeping its OWN firms
+        # DECIDER, so it is intentionally not asserted here.)
         from meshai.notifications.formatters import get_formatter
         from meshai.notifications.gating import get_decider
         assert get_formatter(cat) is not fire_format

@@ -100,3 +100,18 @@ from meshai.notifications.gating import fire as _fire_gate_mod  # noqa: E402,F40
 register("wildfire_declared", _fire_gate_mod.decide)
 register("wildfire_incident", _fire_gate_mod.decide)
 register("wildfire_closed",   _fire_gate_mod.decide)
+
+# Phase-3c: FIRMS fusion broadcasts (wildfire_growth / wildfire_spotting /
+# wildfire_halted). One decider handles all three; it keys off the handler-
+# stamped internal `_kind` (firms_growth / firms_spotting / firms_halt). The
+# growth/spotting/halt DECISIONS move here; the eager latch writes
+# (last_spotting_broadcast_at / halt_broadcast_at) move into the deferred commit
+# closures (an intended tier-b change). All attribution / pass / centroid /
+# perimeter plumbing stays INLINE in firms_handler. NOTE: wildfire_growth's
+# FORMATTER is fire.py but its DECIDER is firms.py (own decision math). The dead
+# unattributed_hotspot_cluster path and native env/fires.py hotspot broadcasts
+# are NOT migrated. NOT cut over this phase.
+from meshai.notifications.gating import firms as _firms_gate_mod  # noqa: E402,F401
+register("wildfire_growth",   _firms_gate_mod.decide)
+register("wildfire_spotting", _firms_gate_mod.decide)
+register("wildfire_halted",   _firms_gate_mod.decide)
