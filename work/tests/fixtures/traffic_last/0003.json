@@ -1,0 +1,65 @@
+{
+  "envelope": {
+    "id": "ERS:AHtuy8Ufz5L4obSzLmwqIYYcPDk=",
+    "source": "central.echo6.co",
+    "type": "central.work_zone.wzdx.v1",
+    "time": "2026-07-01T14:06:45+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "work_zone.wzdx",
+    "centralseverity": 1,
+    "specversion": "1.0",
+    "data": {
+      "id": "ERS:AHtuy8Ufz5L4obSzLmwqIYYcPDk=",
+      "adapter": "wzdx",
+      "category": "work_zone.wzdx",
+      "time": "2026-07-01T14:06:45Z",
+      "expires": "2026-07-19T00:59:59Z",
+      "severity": 1,
+      "geo": {
+        "centroid": [
+          -116.91195,
+          43.66669
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": null
+      },
+      "data": {
+        "road_names": [
+          "US-95"
+        ],
+        "direction": "southbound",
+        "description": " Paving Operations on US-95 Both Directions from Junction of US-95 and SH-19 to N Roswell Blvd. 6/22/2026 7:00 AM to 7/20/2026 7:00 AM Mon, Tue, Wed, Thu, Fri, Sat, Sun: 7:00 AM - 7:00 PM Width Restriction: 12ft ",
+        "vehicle_impact": "all-lanes-open",
+        "event_status": null,
+        "start_date": "2026-07-18T13:00:00Z",
+        "end_date": "2026-07-19T00:59:59Z",
+        "data_source_id": "ERS",
+        "feed_name": "iddot",
+        "feed_state": "idaho",
+        "feed_state_code": "ID",
+        "latitude": 43.66669,
+        "longitude": -116.91195,
+        "_enriched": {
+          "geocoder": {
+            "name": "5th Street",
+            "city": "Wilder",
+            "county": "Canyon",
+            "state": "Idaho",
+            "country": "United States",
+            "postal_code": "83676",
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 754.3125
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.work_zone.id",
+  "captured_epoch": 1783206522
+}

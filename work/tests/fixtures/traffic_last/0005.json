@@ -1,0 +1,140 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-b6f6bc37-311b-4087-aa8a-6b7f6113bb59-TTL15306674364011000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-07-04T22:44:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-b6f6bc37-311b-4087-aa8a-6b7f6113bb59-TTL15306674364011000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-07-04T22:44:00Z",
+      "expires": "2026-07-04T23:06:30Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -114.9407834501,
+          42.9236671751
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -114.9407834501,
+              42.9236671751
+            ],
+            [
+              -114.9410422833,
+              42.9236671751
+            ],
+            [
+              -114.9413225741,
+              42.9236671751
+            ],
+            [
+              -114.9417235644,
+              42.9236685254
+            ],
+            [
+              -114.94239814,
+              42.923672515
+            ],
+            [
+              -114.9424477608,
+              42.923672515
+            ],
+            [
+              -114.9424558075,
+              42.923672515
+            ],
+            [
+              -114.9424893351,
+              42.923672515
+            ],
+            [
+              -114.942681113,
+              42.9236738653
+            ],
+            [
+              -114.9428500922,
+              42.9236738653
+            ],
+            [
+              -114.9437392445,
+              42.9236805554
+            ],
+            [
+              -114.9441858323,
+              42.9236873069
+            ],
+            [
+              -114.9443454237,
+              42.9236885959
+            ],
+            [
+              -114.944361517,
+              42.9236899462
+            ],
+            [
+              -114.944669971,
+              42.9236939971
+            ],
+            [
+              -114.9450146349,
+              42.9236926468
+            ],
+            [
+              -114.9451822729,
+              42.9236912965
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Stationary traffic",
+        "event_code": 101,
+        "from": "Highway 30 / South 750 East",
+        "to": "US Highway 30 / 2nd Avenue",
+        "magnitude_of_delay": 3,
+        "icon_category": 6,
+        "length": 358.1977801718,
+        "delay": 154,
+        "road_numbers": [
+          "I-84 Business"
+        ],
+        "start_time": "2026-07-04T22:44:00Z",
+        "end_time": "2026-07-04T23:06:30Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "mountain_home_corridor",
+        "latitude": 42.9236671751,
+        "longitude": -114.9407834501,
+        "_enriched": {
+          "geocoder": {
+            "name": "Love's",
+            "city": "Bliss",
+            "county": "Gooding",
+            "state": "Idaho",
+            "country": "United States",
+            "postal_code": "83314",
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 993.83984375
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206522
+}

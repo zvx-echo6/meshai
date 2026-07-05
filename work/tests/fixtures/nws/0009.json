@@ -1,0 +1,137 @@
+{
+  "envelope": {
+    "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.d854d25f06637c7ac4dc7614f2d6254a7f227873.001.1",
+    "source": "central.echo6.co",
+    "type": "central.wx.alert.severe_thunderstorm_warning.v1",
+    "time": "2026-07-01T22:04:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "wx.alert.severe_thunderstorm_warning",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.d854d25f06637c7ac4dc7614f2d6254a7f227873.001.1",
+      "adapter": "nws",
+      "category": "wx.alert.severe_thunderstorm_warning",
+      "time": "2026-07-01T22:04:00Z",
+      "expires": "2026-07-01T22:30:00Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -113.902,
+          42.257999999999996
+        ],
+        "bbox": [
+          -114.11,
+          42.16,
+          -113.58,
+          42.47
+        ],
+        "regions": [
+          "US-ID-C031",
+          "US-ID-FIPS16031"
+        ],
+        "primary_region": "US-ID-C031",
+        "geometry": null
+      },
+      "data": {
+        "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.d854d25f06637c7ac4dc7614f2d6254a7f227873.001.1",
+        "@type": "wx:Alert",
+        "id": "urn:oid:2.49.0.1.840.0.d854d25f06637c7ac4dc7614f2d6254a7f227873.001.1",
+        "areaDesc": "Cassia, ID",
+        "geocode": {
+          "SAME": [
+            "016031"
+          ],
+          "UGC": [
+            "IDC031"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/county/IDC031"
+        ],
+        "references": [
+          {
+            "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.c6add6b54c87dec0372f5cac3b3e3da2c46c6320.001.1",
+            "identifier": "urn:oid:2.49.0.1.840.0.c6add6b54c87dec0372f5cac3b3e3da2c46c6320.001.1",
+            "sender": "w-nws.webmaster@noaa.gov",
+            "sent": "2026-07-01T15:50:00-06:00"
+          }
+        ],
+        "sent": "2026-07-01T16:04:00-06:00",
+        "effective": "2026-07-01T16:04:00-06:00",
+        "onset": "2026-07-01T16:04:00-06:00",
+        "expires": "2026-07-01T16:30:00-06:00",
+        "ends": "2026-07-01T16:30:00-06:00",
+        "status": "Actual",
+        "messageType": "Update",
+        "category": "Met",
+        "severity": "Severe",
+        "certainty": "Observed",
+        "urgency": "Immediate",
+        "event": "Severe Thunderstorm Warning",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Pocatello ID",
+        "headline": "Severe Thunderstorm Warning issued July 1 at 4:04PM MDT until July 1 at 4:30PM MDT by NWS Pocatello ID",
+        "description": "At 403 PM MDT, a severe thunderstorm was located over Oakley, or near\nOakley Reservoir, moving northeast at 20 mph.\n\nHAZARD...Quarter size hail.\n\nSOURCE...Radar indicated.\n\nIMPACT...Damage to vehicles is expected.\n\nLocations impacted include...\nOakley Reservoir and Oakley.",
+        "instruction": "For your protection move to an interior room on the lowest floor of a\nbuilding.\n\nTorrential rainfall is occurring with this storm, and may lead to\nflash flooding. Do not drive your vehicle through flooded roadways.",
+        "response": "Shelter",
+        "note": null,
+        "parameters": {
+          "AWIPSidentifier": [
+            "SVSPIH"
+          ],
+          "WMOidentifier": [
+            "WWUS55 KPIH 012204"
+          ],
+          "NWSheadline": [
+            "A SEVERE THUNDERSTORM WARNING REMAINS IN EFFECT UNTIL 430 PM MDT FOR WEST CENTRAL CASSIA COUNTY"
+          ],
+          "eventMotionDescription": [
+            "2026-07-01T22:03:00-00:00...storm...246DEG...17KT...42.25,-113.93"
+          ],
+          "windThreat": [
+            "RADAR INDICATED"
+          ],
+          "maxWindGust": [
+            "Up to 50 MPH"
+          ],
+          "hailThreat": [
+            "RADAR INDICATED"
+          ],
+          "maxHailSize": [
+            "1.00"
+          ],
+          "BLOCKCHANNEL": [
+            "EAS",
+            "NWEM",
+            "CMAS"
+          ],
+          "EAS-ORG": [
+            "WXR"
+          ],
+          "VTEC": [
+            "/O.CON.KPIH.SV.W.0027.000000T0000Z-260701T2230Z/"
+          ],
+          "eventEndingTime": [
+            "2026-07-01T16:30:00-06:00"
+          ]
+        },
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov",
+        "eventCode": {
+          "SAME": [
+            "SVS"
+          ],
+          "NationalWeatherService": [
+            "SVW"
+          ]
+        }
+      }
+    }
+  },
+  "subject": "central.wx.alert.us.id.county.c031",
+  "captured_epoch": 1783206513
+}

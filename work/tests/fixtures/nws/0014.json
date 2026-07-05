@@ -1,0 +1,144 @@
+{
+  "envelope": {
+    "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.257d509d12328e220896c10ef7243f1ea48a41c8.001.1",
+    "source": "central.echo6.co",
+    "type": "central.wx.alert.special_weather_statement.v1",
+    "time": "2026-07-02T01:22:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "wx.alert.special_weather_statement",
+    "centralseverity": 2,
+    "specversion": "1.0",
+    "data": {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.257d509d12328e220896c10ef7243f1ea48a41c8.001.1",
+      "adapter": "nws",
+      "category": "wx.alert.special_weather_statement",
+      "time": "2026-07-02T01:22:00Z",
+      "expires": "2026-07-02T01:45:00Z",
+      "severity": 2,
+      "geo": {
+        "centroid": [
+          -113.186,
+          42.562
+        ],
+        "bbox": [
+          -113.47,
+          42.33,
+          -112.77,
+          42.94
+        ],
+        "regions": [
+          "US-ID-FIPS16005",
+          "US-ID-FIPS16011",
+          "US-ID-FIPS16013",
+          "US-ID-FIPS16029",
+          "US-ID-FIPS16031",
+          "US-ID-FIPS16067",
+          "US-ID-FIPS16071",
+          "US-ID-FIPS16077",
+          "US-ID-Z054",
+          "US-ID-Z055",
+          "US-ID-Z056",
+          "US-ID-Z057",
+          "US-ID-Z058"
+        ],
+        "primary_region": "US-ID-FIPS16005",
+        "geometry": null
+      },
+      "data": {
+        "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.257d509d12328e220896c10ef7243f1ea48a41c8.001.1",
+        "@type": "wx:Alert",
+        "id": "urn:oid:2.49.0.1.840.0.257d509d12328e220896c10ef7243f1ea48a41c8.001.1",
+        "areaDesc": "Lower Snake River Plain; Eastern Magic Valley; Southern Hills/Albion Mountains; Raft River Region; Marsh and Arbon Highlands",
+        "geocode": {
+          "SAME": [
+            "016005",
+            "016011",
+            "016077",
+            "016013",
+            "016031",
+            "016067",
+            "016071",
+            "016029"
+          ],
+          "UGC": [
+            "IDZ054",
+            "IDZ055",
+            "IDZ056",
+            "IDZ057",
+            "IDZ058"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/forecast/IDZ054",
+          "https://api.weather.gov/zones/forecast/IDZ055",
+          "https://api.weather.gov/zones/forecast/IDZ056",
+          "https://api.weather.gov/zones/forecast/IDZ057",
+          "https://api.weather.gov/zones/forecast/IDZ058"
+        ],
+        "references": [],
+        "sent": "2026-07-01T19:22:00-06:00",
+        "effective": "2026-07-01T19:22:00-06:00",
+        "onset": "2026-07-01T19:22:00-06:00",
+        "expires": "2026-07-01T19:45:00-06:00",
+        "ends": null,
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Moderate",
+        "certainty": "Observed",
+        "urgency": "Expected",
+        "event": "Special Weather Statement",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Pocatello ID",
+        "headline": "Special Weather Statement issued July 1 at 7:22PM MDT by NWS Pocatello ID",
+        "description": "At 722 PM MDT, Doppler radar was tracking gusty showers 9 miles\nsouthwest of Cold Water Rest Area, or 12 miles southeast of Lake\nWalcott, moving north at 35 mph.\n\nHAZARD...Wind gusts of 50 to 55 mph.\n\nSOURCE...Radar indicated.\n\nIMPACT...Gusty winds could knock down tree limbs and blow around\nunsecured objects.\n\nLocations impacted include...\nAmerican Falls, Neeley, Lake Walcott, Cold Water Rest Area, Yale Rest\nArea, Pilar Butte, Idahome, and Massacre Rocks.",
+        "instruction": "If outdoors, consider seeking shelter inside a building.\n\nIf on or near American Falls Reservoir, get out of the water and\nmove indoors or inside a vehicle. Strong winds will create rough\nchop.\nRemember, lightning can strike out to 10 miles from the parent\nthunderstorm. If you can hear thunder, you are close enough to be\nstruck by lightning. Move to safe shelter now! Do not be caught on\nthe water in a thunderstorm.",
+        "response": "Execute",
+        "note": null,
+        "parameters": {
+          "AWIPSidentifier": [
+            "SPSPIH"
+          ],
+          "WMOidentifier": [
+            "WWUS85 KPIH 020122"
+          ],
+          "NWSheadline": [
+            "GUSTY SHOWERS WILL IMPACT SOUTHEASTERN BLAINE...SOUTHWESTERN POWER...NORTHEASTERN CASSIA AND EASTERN MINIDOKA COUNTIES THROUGH 745 PM MDT"
+          ],
+          "eventMotionDescription": [
+            "2026-07-02T01:22:00-00:00...storm...202DEG...32KT...42.52,-113.27"
+          ],
+          "maxWindGust": [
+            "55 MPH"
+          ],
+          "maxHailSize": [
+            "0.00"
+          ],
+          "BLOCKCHANNEL": [
+            "EAS",
+            "NWEM",
+            "CMAS"
+          ],
+          "EAS-ORG": [
+            "WXR"
+          ]
+        },
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov",
+        "eventCode": {
+          "SAME": [
+            "SPS"
+          ],
+          "NationalWeatherService": [
+            "SPS"
+          ]
+        }
+      }
+    }
+  },
+  "subject": "central.wx.alert.us.id.county.fips16005",
+  "captured_epoch": 1783206513
+}

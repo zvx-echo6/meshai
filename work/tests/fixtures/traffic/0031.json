@@ -1,0 +1,114 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL15765457940017000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-28T02:35:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL15765457940017000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-28T02:35:00Z",
+      "expires": "2026-06-28T03:03:00Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -113.421596357,
+          42.5161497433
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -113.421596357,
+              42.5161497433
+            ],
+            [
+              -113.4216365901,
+              42.5161725408
+            ],
+            [
+              -113.4218042282,
+              42.5162342609
+            ],
+            [
+              -113.4218645779,
+              42.5162556992
+            ],
+            [
+              -113.4219718663,
+              42.5162959191
+            ],
+            [
+              -113.4220348982,
+              42.51631606
+            ],
+            [
+              -113.4230098811,
+              42.5166285513
+            ],
+            [
+              -113.4232687143,
+              42.516726413
+            ],
+            [
+              -113.4234886555,
+              42.5168203205
+            ],
+            [
+              -113.4236911622,
+              42.5169182437
+            ],
+            [
+              -113.4237716285,
+              42.5169611198
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Stationary traffic",
+        "event_code": 101,
+        "from": "North Yale Road",
+        "to": "I-84",
+        "magnitude_of_delay": 3,
+        "icon_category": 6,
+        "length": 200.3039255056,
+        "delay": 220,
+        "road_numbers": [],
+        "start_time": "2026-06-28T02:35:00Z",
+        "end_time": "2026-06-28T03:03:00Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "magic_valley_burley",
+        "latitude": 42.5161497433,
+        "longitude": -113.421596357,
+        "_enriched": {
+          "geocoder": {
+            "name": "Yale Road",
+            "city": null,
+            "county": "Cassia",
+            "state": "Idaho",
+            "country": "United States",
+            "postal_code": null,
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 1375.94140625
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

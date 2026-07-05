@@ -1,0 +1,162 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL15462486252051000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-27T23:42:30+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL15462486252051000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-27T23:42:30Z",
+      "expires": "2026-06-28T00:03:00Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -114.5080640108,
+          42.6950973548
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -114.5080640108,
+              42.6950973548
+            ],
+            [
+              -114.509093979,
+              42.6951027144
+            ],
+            [
+              -114.5093863398,
+              42.6951040697
+            ],
+            [
+              -114.5096572429,
+              42.6951067187
+            ],
+            [
+              -114.5103063375,
+              42.6951121399
+            ],
+            [
+              -114.5105262786,
+              42.695108074
+            ],
+            [
+              -114.5109473855,
+              42.6951013591
+            ],
+            [
+              -114.5109970063,
+              42.6951013591
+            ],
+            [
+              -114.5110332161,
+              42.6951000654
+            ],
+            [
+              -114.5110882014,
+              42.6950987101
+            ],
+            [
+              -114.5113027782,
+              42.6950947058
+            ],
+            [
+              -114.5113591045,
+              42.6950933505
+            ],
+            [
+              -114.5113872677,
+              42.6950919952
+            ],
+            [
+              -114.511454323,
+              42.6950906399
+            ],
+            [
+              -114.5114757806,
+              42.6950906399
+            ],
+            [
+              -114.5121047586,
+              42.6950678461
+            ],
+            [
+              -114.5128825993,
+              42.6950718504
+            ],
+            [
+              -114.5143444032,
+              42.6950692014
+            ],
+            [
+              -114.5143604964,
+              42.6950692014
+            ],
+            [
+              -114.5147856266,
+              42.6950678461
+            ],
+            [
+              -114.5151799113,
+              42.6950678461
+            ],
+            [
+              -114.5158625335,
+              42.6950664908
+            ],
+            [
+              -114.5158960611,
+              42.6950664908
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Stationary traffic",
+        "event_code": 101,
+        "from": "South Garfield Street",
+        "to": "South Lincoln Avenue",
+        "magnitude_of_delay": 3,
+        "icon_category": 6,
+        "length": 640.1840094512,
+        "delay": 180,
+        "road_numbers": [],
+        "start_time": "2026-06-27T23:42:30Z",
+        "end_time": "2026-06-28T00:03:00Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "magic_valley_burley",
+        "latitude": 42.6950973548,
+        "longitude": -114.5080640108,
+        "_enriched": {
+          "geocoder": {
+            "name": "South Garfield Street",
+            "city": "Jerome",
+            "county": "Jerome",
+            "state": "Idaho",
+            "country": "United States",
+            "postal_code": "83338",
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 1147.796875
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

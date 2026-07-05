@@ -1,0 +1,106 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14568011240023000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-28T03:32:30+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14568011240023000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-28T03:32:30Z",
+      "expires": "2026-06-28T04:03:00Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -116.9280267453,
+          44.0298678061
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -116.9280267453,
+              44.0298678061
+            ],
+            [
+              -116.9285605049,
+              44.0298772073
+            ],
+            [
+              -116.9289923406,
+              44.0298731696
+            ],
+            [
+              -116.9293195701,
+              44.0298235723
+            ],
+            [
+              -116.9295609689,
+              44.0297886794
+            ],
+            [
+              -116.9297540879,
+              44.0297699373
+            ],
+            [
+              -116.9301349616,
+              44.0297658996
+            ],
+            [
+              -116.930794785,
+              44.0297538467
+            ],
+            [
+              -116.9310630059,
+              44.0297149161
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Stationary traffic",
+        "event_code": 101,
+        "from": "North Whitley Drive",
+        "to": "Vista Avenue",
+        "magnitude_of_delay": 3,
+        "icon_category": 6,
+        "length": 244.3089232858,
+        "delay": 219,
+        "road_numbers": [],
+        "start_time": "2026-06-28T03:32:30Z",
+        "end_time": "2026-06-28T04:03:00Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "treasure_valley_ext",
+        "latitude": 44.0298678061,
+        "longitude": -116.9280267453,
+        "_enriched": {
+          "geocoder": {
+            "name": "Spring Creek Drive",
+            "city": "Fruitland",
+            "county": "Payette",
+            "state": "Idaho",
+            "country": "United States",
+            "postal_code": "83619",
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 667.46875
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

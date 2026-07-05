@@ -15,16 +15,15 @@ from meshai.notifications.renderers.composer import compose_mesh_message
 # ── (a) empty registry returns None for known categories ──────────────────────
 
 @pytest.mark.parametrize("category", [
-    "weather_warning",
     # earthquake_event removed: Phase-1 registers formatters.quake for it.
+    # weather_warning/weather_statement removed: Phase-2 registers formatters.nws.
+    # road_closure/work_zone/road_incident/traffic_congestion removed: Phase-2 registers formatters.incident.
     "wildfire_incident",
-    "road_closure",
     "battery_critical",
 ])
 def test_get_formatter_returns_none_while_registry_empty(category):
     """Un-migrated categories must still return None from get_formatter."""
-    # earthquake_event is now migrated (Phase 1); the remaining categories
-    # here have no formatter yet and must still fall through to Mode-B.
+    # Only categories not yet migrated to the formatter+gater architecture.
     assert category not in FORMATTERS, (
         f"Category {category!r} should not be in FORMATTERS yet (not migrated)"
     )

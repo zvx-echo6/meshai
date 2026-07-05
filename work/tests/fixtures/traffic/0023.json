@@ -1,0 +1,142 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14781529848047000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-28T01:38:30+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 2,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14781529848047000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-28T01:38:30Z",
+      "expires": "2026-06-28T02:03:30Z",
+      "severity": 2,
+      "geo": {
+        "centroid": [
+          -116.4176332151,
+          43.6361758949
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -116.4176332151,
+              43.6361758949
+            ],
+            [
+              -116.4177257513,
+              43.6361731651
+            ],
+            [
+              -116.4178933893,
+              43.6361678268
+            ],
+            [
+              -116.4181669747,
+              43.636217449
+            ],
+            [
+              -116.4181790446,
+              43.6362187836
+            ],
+            [
+              -116.4187047576,
+              43.6363153587
+            ],
+            [
+              -116.4194611405,
+              43.6364950415
+            ],
+            [
+              -116.419968078,
+              43.6366693854
+            ],
+            [
+              -116.4202590977,
+              43.6367901034
+            ],
+            [
+              -116.4203114008,
+              43.6368129124
+            ],
+            [
+              -116.4208867346,
+              43.6371227137
+            ],
+            [
+              -116.4220910464,
+              43.6378791024
+            ],
+            [
+              -116.4223284219,
+              43.6380279647
+            ],
+            [
+              -116.4224477802,
+              43.6381338787
+            ],
+            [
+              -116.4225000833,
+              43.6382063078
+            ],
+            [
+              -116.4225443398,
+              43.6383068833
+            ],
+            [
+              -116.4226006662,
+              43.6386368161
+            ],
+            [
+              -116.4226100539,
+              43.6386998422
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Queuing traffic",
+        "event_code": 108,
+        "from": "North Sirocco Avenue / West Winddrift Street",
+        "to": "North Towerbridge Way / West Teano Drive",
+        "magnitude_of_delay": 2,
+        "icon_category": 6,
+        "length": 520.771513768,
+        "delay": 122,
+        "road_numbers": [],
+        "start_time": "2026-06-28T01:38:30Z",
+        "end_time": "2026-06-28T02:03:30Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "treasure_valley_ext",
+        "latitude": 43.6361758949,
+        "longitude": -116.4176332151,
+        "_enriched": {
+          "geocoder": {
+            "name": null,
+            "city": "Meridian",
+            "county": "Ada",
+            "state": "ID",
+            "country": "United States",
+            "postal_code": "83646",
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 781.5
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

@@ -215,6 +215,15 @@ def _location_anchor(area_desc: Optional[str], geocoder_city: Optional[str],
 def handle_nws(envelope: dict, subject: str,
                 data: Optional[dict] = None,
                 now: Optional[int] = None) -> Optional[str]:
+    """Central path handler for NWS weather-alert envelopes.
+
+    Phase-2 refactor: when the category is cut over (MESHAI_CUTOVER_CATEGORIES
+    contains weather_warning or weather_statement), gating is delegated to
+    meshai.notifications.gating.nws.decide() and canonical data is written
+    into the shared `data` dict for the formatter.
+
+    On NOT-cutover: exact legacy code path, byte-for-byte unchanged.
+    """
     if not isinstance(envelope, dict): return None
     inner = envelope.get("data") or {}
     if (inner.get("adapter") or "") != "nws": return None
@@ -226,18 +235,125 @@ def handle_nws(envelope: dict, subject: str,
     category_raw = inner.get("category") or ""
     severity_word = _coerce_severity(inner.get("severity"))
 
+    cap_id = d.get("id") or inner.get("id")
+    if not cap_id:
+        return None
+
+    # ── Field extraction (shared by both paths) ───────────────────────────────
+    msg_type = d.get("msgType")
+    event_type = d.get("event") or _category_to_event_type(category_raw)
+    area_desc = d.get("areaDesc")
+    headline = d.get("headline")
+    description = d.get("description")
+    cap_severity = d.get("severity")
+    county = d.get("areaDesc") or ge.get("county")
+    state = ge.get("state") or d.get("state")
+    expires_epoch = _parse_iso(d.get("expires"))
+    same_code = ((d.get("eventCode") or {}).get("SAME") or [""])[0]
+    certainty = d.get("certainty") or ""
+    references = d.get("references") or []
+    parameters = d.get("parameters") or {}
+
+    lat = lon = None
+    cent = geo.get("centroid") or []
+    if isinstance(cent, list) and len(cent) >= 2:
+        lon, lat = cent[0], cent[1]
+
+    # ── Cutover gate ──────────────────────────────────────────────────────────
+    from meshai.notifications.cutover import is_cutover
+    _cutover = is_cutover("weather_warning") or is_cutover("weather_statement")
+
+    if _cutover:
+        # ── NEW PATH: delegate to gating/nws.py decide() ─────────────────────
+        try:
+            conn = get_db()
+        except Exception:
+            logger.exception("nws_handler: persistence unavailable")
+            return None
+
+        # Tombstone: log handled=0, return None (before canonical/decide).
+        if msg_type in set(adapter_config.nws.tombstone_msgtypes):
+            _log_event(conn, now=now, source="nws", category=category_raw,
+                        severity_word=severity_word, event_id_external=cap_id,
+                        subject=subject, handled=0,
+                        table_name="nws_alerts", table_pk=cap_id)
+            return None
+
+        # Always log the event (both broadcast and suppress paths).
+        log_id = _log_event_returning_id(
+            conn, now=now, source="nws", category=category_raw,
+            severity_word=severity_word, event_id_external=cap_id,
+            subject=subject, handled=0,
+            table_name="nws_alerts", table_pk=cap_id)
+
+        # Build canonical data dict for decide() and the formatter.
+        canonical: dict = {
+            "cap_id": cap_id,
+            "event": event_type,
+            "same_code": same_code,
+            "cap_severity": cap_severity,
+            "certainty": certainty,
+            "expires_at": expires_epoch,
+            "area_desc": area_desc,
+            "geocoder": {
+                "city": ge.get("city"),
+                "county": county,
+                "state": state,
+            },
+            "description": description,
+            "parameters": parameters,
+            "msgType": msg_type,
+            "references": references,
+            "category": category_raw,
+            "headline": headline,
+        }
+
+        from meshai.notifications.gating.nws import decide as _gate_decide
+        gate = _gate_decide(canonical, source="nws", now=float(now))
+
+        if not gate.broadcast:
+            return None
+
+        # Write canonical fields + gate data_patch into shared data dict.
+        if isinstance(data, dict):
+            data.update(canonical)
+            data.update(gate.data_patch)
+            data["_broadcast_audit"] = {"table": "nws_alerts", "pk": cap_id}
+
+            _raw_commit = gate.commit
+            _log_row_id = log_id
+
+            def _on_commit(committed_at: float) -> None:
+                if _raw_commit is not None:
+                    _raw_commit(committed_at)
+                if _log_row_id is not None:
+                    try:
+                        c = get_db()
+                        c.execute("UPDATE event_log SET handled=1 WHERE id=?",
+                                  (int(_log_row_id),))
+                    except Exception:
+                        logger.exception("nws commit: event_log update failed")
+
+            data["_on_broadcast_committed"] = _on_commit
+
+        # Return _render() wire for backward compat with existing call-sites.
+        # At dispatch time compose_mesh_message() will use the registered
+        # formatter (formatters/nws.py) which re-renders from event.data
+        # producing byte-identical output (tier-a).
+        _prefix = gate.data_patch.get("_nws_prefix", "")
+        return _render(event_type=event_type, area_desc=area_desc,
+                        geocoder_city=ge.get("city"), county=county, state=state,
+                        expires_epoch=expires_epoch, lat=lat, lon=lon, now=now,
+                        prefix=_prefix, d=d)
+
+    # ── NOT cutover: exact legacy path (byte-for-byte unchanged) ─────────────
     try:
         conn = get_db()
     except Exception:
         logger.exception("nws_handler: persistence unavailable")
         return None
 
-    cap_id = d.get("id") or inner.get("id")
-    if not cap_id:
-        return None
-
     # Tombstone: msgType in {Cancel, Expire} -> log handled=0, no broadcast.
-    msg_type = d.get("msgType")
     if msg_type in set(adapter_config.nws.tombstone_msgtypes):
         _log_event(conn, now=now, source="nws", category=category_raw,
                     severity_word=severity_word, event_id_external=cap_id,
@@ -267,20 +383,6 @@ def handle_nws(envelope: dict, subject: str,
     row = conn.execute(
         "SELECT last_broadcast_at FROM nws_alerts WHERE event_id=?",
         (cap_id,)).fetchone()
-
-    event_type = d.get("event") or _category_to_event_type(category_raw)
-    area_desc = d.get("areaDesc")
-    headline = d.get("headline")
-    description = d.get("description")
-    cap_severity = d.get("severity")
-    county = d.get("areaDesc") or ge.get("county")
-    state = ge.get("state") or d.get("state")
-    expires_epoch = _parse_iso(d.get("expires"))
-
-    lat = lon = None
-    cent = geo.get("centroid") or []
-    if isinstance(cent, list) and len(cent) >= 2:
-        lon, lat = cent[0], cent[1]
 
     if row is None:
         conn.execute(

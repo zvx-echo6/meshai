@@ -1,0 +1,130 @@
+{
+  "envelope": {
+    "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.7726eacdfa9d6f06287272c0cf5f5d4b01afcaad.001.1",
+    "source": "central.echo6.co",
+    "type": "central.wx.alert.special_weather_statement.v1",
+    "time": "2026-07-03T22:46:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "wx.alert.special_weather_statement",
+    "centralseverity": 2,
+    "specversion": "1.0",
+    "data": {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.7726eacdfa9d6f06287272c0cf5f5d4b01afcaad.001.1",
+      "adapter": "nws",
+      "category": "wx.alert.special_weather_statement",
+      "time": "2026-07-03T22:46:00Z",
+      "expires": "2026-07-03T23:30:00Z",
+      "severity": 2,
+      "geo": {
+        "centroid": [
+          -111.46199999999999,
+          42.146
+        ],
+        "bbox": [
+          -111.7,
+          42.0,
+          -111.07,
+          42.39
+        ],
+        "regions": [
+          "US-ID-FIPS16007",
+          "US-ID-FIPS16019",
+          "US-ID-FIPS16029",
+          "US-ID-FIPS16041",
+          "US-ID-Z060",
+          "US-ID-Z061",
+          "US-ID-Z063"
+        ],
+        "primary_region": "US-ID-FIPS16007",
+        "geometry": null
+      },
+      "data": {
+        "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.7726eacdfa9d6f06287272c0cf5f5d4b01afcaad.001.1",
+        "@type": "wx:Alert",
+        "id": "urn:oid:2.49.0.1.840.0.7726eacdfa9d6f06287272c0cf5f5d4b01afcaad.001.1",
+        "areaDesc": "Bear River Range; Bear Lake Valley; Caribou Range",
+        "geocode": {
+          "SAME": [
+            "016007",
+            "016029",
+            "016041",
+            "016019"
+          ],
+          "UGC": [
+            "IDZ060",
+            "IDZ061",
+            "IDZ063"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/forecast/IDZ060",
+          "https://api.weather.gov/zones/forecast/IDZ061",
+          "https://api.weather.gov/zones/forecast/IDZ063"
+        ],
+        "references": [],
+        "sent": "2026-07-03T16:46:00-06:00",
+        "effective": "2026-07-03T16:46:00-06:00",
+        "onset": "2026-07-03T16:46:00-06:00",
+        "expires": "2026-07-03T17:30:00-06:00",
+        "ends": null,
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Moderate",
+        "certainty": "Observed",
+        "urgency": "Expected",
+        "event": "Special Weather Statement",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Pocatello ID",
+        "headline": "Special Weather Statement issued July 3 at 4:46PM MDT by NWS Pocatello ID",
+        "description": "At 446 PM MDT, Doppler radar was tracking a cluster of strong\nthunderstorms 9 miles west of Saint Charles, or 12 miles west of Bear\nLake Idaho Portion, moving east at 25 mph.\n\nHAZARD...Wind gusts in excess of 35 mph.\n\nSOURCE...Radar indicated.\n\nIMPACT...Gusty winds could knock down tree limbs and blow around\nunsecured objects.\n\nLocations impacted include...\nMontpelier, Bear Lake Idaho Portion, Saint Charles, Dingle, Paris,\nBloomington, Minnetonka Cave, Ovid, Fish Haven, and Pegram.",
+        "instruction": "If outdoors, consider seeking shelter inside a building.\n\nIf on or near Bear Lake, get out of the water and move indoors or\ninside a vehicle. Strong winds will create rough chop.\nRemember, lightning can strike out to 10 miles from the parent\nthunderstorm. If you can hear thunder, you are close enough to be\nstruck by lightning. Move to safe shelter now! Do not be caught on\nthe water in a thunderstorm.",
+        "response": "Execute",
+        "note": null,
+        "parameters": {
+          "AWIPSidentifier": [
+            "SPSPIH"
+          ],
+          "WMOidentifier": [
+            "WWUS85 KPIH 032246"
+          ],
+          "NWSheadline": [
+            "STRONG THUNDERSTORMS WILL IMPACT SOUTHEASTERN FRANKLIN AND SOUTHERN BEAR LAKE COUNTIES THROUGH 530 PM MDT"
+          ],
+          "eventMotionDescription": [
+            "2026-07-03T22:46:00-00:00...storm...255DEG...22KT...42.09,-111.57"
+          ],
+          "maxWindGust": [
+            "35 MPH"
+          ],
+          "maxHailSize": [
+            "0.00"
+          ],
+          "BLOCKCHANNEL": [
+            "EAS",
+            "NWEM",
+            "CMAS"
+          ],
+          "EAS-ORG": [
+            "WXR"
+          ]
+        },
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov",
+        "eventCode": {
+          "SAME": [
+            "SPS"
+          ],
+          "NationalWeatherService": [
+            "SPS"
+          ]
+        }
+      }
+    }
+  },
+  "subject": "central.wx.alert.us.id.county.fips16007",
+  "captured_epoch": 1783206513
+}

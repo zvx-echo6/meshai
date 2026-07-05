@@ -240,7 +240,12 @@ def test_to_event_watch_no_inhibit_keys(adapter):
 
 
 def test_to_event_preserves_raw_in_data(adapter):
-    """to_event preserves raw event dict in data field."""
+    """Phase-2: to_event emits canonical data schema for formatter+gater.
+
+    event.data is now the canonical dict (cap_id, event, area_desc, …) rather
+    than the verbatim raw dict.  Verify the canonical keys are present and that
+    source fields from raw are correctly mapped.
+    """
     raw = {
         "event_id": "test-123",
         "event_type": "Wind Advisory",
@@ -249,8 +254,14 @@ def test_to_event_preserves_raw_in_data(adapter):
         "custom_field": "custom_value",
     }
     event = adapter.to_event(raw)
-    assert event.data == raw
-    assert event.data["custom_field"] == "custom_value"
+    # Canonical schema keys required by formatters/nws.py
+    assert event.data["cap_id"] == "test-123"
+    assert event.data["event"] == "Wind Advisory"
+    assert event.data["category"] == "weather_advisory"
+    assert "geocoder" in event.data
+    # Raw source field not directly in canonical (stored in raw, not data)
+    # — the body/title still come from raw via make_event kwargs
+    assert event.title == "Wind Advisory"
 
 
 # ============================================================

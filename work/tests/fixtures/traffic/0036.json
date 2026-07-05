@@ -1,0 +1,86 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14813270316014000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-28T03:33:30+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14813270316014000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-28T03:33:30Z",
+      "expires": "2026-06-28T04:03:00Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -116.2734631394,
+          43.6507000468
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -116.2734631394,
+              43.6507000468
+            ],
+            [
+              -116.2735234891,
+              43.6507321904
+            ],
+            [
+              -116.2736079787,
+              43.6507402566
+            ],
+            [
+              -116.2745024954,
+              43.6507362538
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Stationary traffic",
+        "event_code": 101,
+        "from": "North Paddock Drive",
+        "to": "Kent Lane",
+        "magnitude_of_delay": 3,
+        "icon_category": 6,
+        "length": 84.8566896918,
+        "delay": 62,
+        "road_numbers": [],
+        "start_time": "2026-06-28T03:33:30Z",
+        "end_time": "2026-06-28T04:03:00Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "treasure_valley_ext",
+        "latitude": 43.6507000468,
+        "longitude": -116.2734631394,
+        "_enriched": {
+          "geocoder": {
+            "name": "West Paddock Drive",
+            "city": null,
+            "county": "Ada",
+            "state": "Idaho",
+            "country": "United States",
+            "postal_code": "83704",
+            "timezone": "America/Boise",
+            "landclass": "Expo Idaho",
+            "elevation_m": 799.83984375
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

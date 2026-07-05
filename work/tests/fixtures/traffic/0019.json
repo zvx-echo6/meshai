@@ -1,0 +1,102 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14720934188027000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-28T01:40:30+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14720934188027000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-28T01:40:30Z",
+      "expires": "2026-06-28T02:03:30Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -116.723612914,
+          43.5925524427
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -116.723612914,
+              43.5925524427
+            ],
+            [
+              -116.7240259742,
+              43.5923056686
+            ],
+            [
+              -116.724844048,
+              43.5918631119
+            ],
+            [
+              -116.7250586247,
+              43.5917531097
+            ],
+            [
+              -116.7256111597,
+              43.5914701504
+            ],
+            [
+              -116.7257077193,
+              43.5914205519
+            ],
+            [
+              -116.7258525586,
+              43.591340053
+            ],
+            [
+              -116.7262830531,
+              43.5911026838
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Stationary traffic",
+        "event_code": 101,
+        "from": "Orchard Ave (Riverside Rd)",
+        "to": "Marsing Rd (Riverside Rd)",
+        "magnitude_of_delay": 3,
+        "icon_category": 6,
+        "length": 268.8367110723,
+        "delay": 138,
+        "road_numbers": [],
+        "start_time": "2026-06-28T01:40:30Z",
+        "end_time": "2026-06-28T02:03:30Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "treasure_valley_ext",
+        "latitude": 43.5925524427,
+        "longitude": -116.723612914,
+        "_enriched": {
+          "geocoder": {
+            "name": "Lower Dam Recreation Area--Deer Flat NWR",
+            "city": null,
+            "county": "Canyon",
+            "state": "Idaho",
+            "country": "United States",
+            "postal_code": null,
+            "timezone": "America/Boise",
+            "landclass": "Deer Flat National Wildlife Refuge",
+            "elevation_m": 781.33984375
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

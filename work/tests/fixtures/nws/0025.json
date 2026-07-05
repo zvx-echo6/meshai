@@ -1,0 +1,147 @@
+{
+  "envelope": {
+    "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.e17d529642f7f75871d50c7b18b4212065361ee2.001.1",
+    "source": "central.echo6.co",
+    "type": "central.wx.alert.special_weather_statement.v1",
+    "time": "2026-07-03T22:22:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "wx.alert.special_weather_statement",
+    "centralseverity": 2,
+    "specversion": "1.0",
+    "data": {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.e17d529642f7f75871d50c7b18b4212065361ee2.001.1",
+      "adapter": "nws",
+      "category": "wx.alert.special_weather_statement",
+      "time": "2026-07-03T22:22:00Z",
+      "expires": "2026-07-03T23:15:00Z",
+      "severity": 2,
+      "geo": {
+        "centroid": [
+          -111.606,
+          42.312
+        ],
+        "bbox": [
+          -111.92,
+          42.13,
+          -111.16,
+          42.62
+        ],
+        "regions": [
+          "US-ID-FIPS16005",
+          "US-ID-FIPS16007",
+          "US-ID-FIPS16011",
+          "US-ID-FIPS16019",
+          "US-ID-FIPS16029",
+          "US-ID-FIPS16041",
+          "US-ID-FIPS16071",
+          "US-ID-FIPS16077",
+          "US-ID-Z058",
+          "US-ID-Z059",
+          "US-ID-Z060",
+          "US-ID-Z061",
+          "US-ID-Z062",
+          "US-ID-Z063"
+        ],
+        "primary_region": "US-ID-FIPS16005",
+        "geometry": null
+      },
+      "data": {
+        "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.e17d529642f7f75871d50c7b18b4212065361ee2.001.1",
+        "@type": "wx:Alert",
+        "id": "urn:oid:2.49.0.1.840.0.e17d529642f7f75871d50c7b18b4212065361ee2.001.1",
+        "areaDesc": "Marsh and Arbon Highlands; Franklin/Eastern Oneida Region; Bear River Range; Bear Lake Valley; Blackfoot Mountains; Caribou Range",
+        "geocode": {
+          "SAME": [
+            "016005",
+            "016011",
+            "016029",
+            "016077",
+            "016041",
+            "016071",
+            "016007",
+            "016019"
+          ],
+          "UGC": [
+            "IDZ058",
+            "IDZ059",
+            "IDZ060",
+            "IDZ061",
+            "IDZ062",
+            "IDZ063"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/forecast/IDZ058",
+          "https://api.weather.gov/zones/forecast/IDZ059",
+          "https://api.weather.gov/zones/forecast/IDZ060",
+          "https://api.weather.gov/zones/forecast/IDZ061",
+          "https://api.weather.gov/zones/forecast/IDZ062",
+          "https://api.weather.gov/zones/forecast/IDZ063"
+        ],
+        "references": [],
+        "sent": "2026-07-03T16:22:00-06:00",
+        "effective": "2026-07-03T16:22:00-06:00",
+        "onset": "2026-07-03T16:22:00-06:00",
+        "expires": "2026-07-03T17:15:00-06:00",
+        "ends": null,
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Moderate",
+        "certainty": "Observed",
+        "urgency": "Expected",
+        "event": "Special Weather Statement",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Pocatello ID",
+        "headline": "Special Weather Statement issued July 3 at 4:22PM MDT by NWS Pocatello ID",
+        "description": "At 422 PM MDT, Doppler radar was tracking a strong thunderstorm near\nOneida Narrows Reservoir, or 12 miles northeast of Preston, moving\nnortheast at 35 mph.\n\nHAZARD...Wind gusts in excess of 45 mph and half inch hail.\n\nSOURCE...Radar indicated.\n\nIMPACT...Gusty winds could knock down tree limbs and blow around\nunsecured objects. Minor hail damage to outdoor objects is\npossible.\n\nLocations impacted include...\nGeorgetown, Oneida Narrows Reservoir, Bern, Mink Creek, Georgetown\nSummit, Emmigrant Summit, Liberty, and Bennington.",
+        "instruction": "If outdoors, consider seeking shelter inside a building.",
+        "response": "Execute",
+        "note": null,
+        "parameters": {
+          "AWIPSidentifier": [
+            "SPSPIH"
+          ],
+          "WMOidentifier": [
+            "WWUS85 KPIH 032222"
+          ],
+          "NWSheadline": [
+            "A STRONG THUNDERSTORM WILL IMPACT SOUTH CENTRAL CARIBOU... SOUTHEASTERN BANNOCK...NORTHEASTERN FRANKLIN AND NORTHERN BEAR LAKE COUNTIES THROUGH 515 PM MDT"
+          ],
+          "eventMotionDescription": [
+            "2026-07-03T22:22:00-00:00...storm...233DEG...29KT...42.26,-111.77"
+          ],
+          "maxWindGust": [
+            "45 MPH"
+          ],
+          "maxHailSize": [
+            "0.50"
+          ],
+          "BLOCKCHANNEL": [
+            "EAS",
+            "NWEM",
+            "CMAS"
+          ],
+          "EAS-ORG": [
+            "WXR"
+          ]
+        },
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov",
+        "eventCode": {
+          "SAME": [
+            "SPS"
+          ],
+          "NationalWeatherService": [
+            "SPS"
+          ]
+        }
+      }
+    }
+  },
+  "subject": "central.wx.alert.us.id.county.fips16005",
+  "captured_epoch": 1783206513
+}

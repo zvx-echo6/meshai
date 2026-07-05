@@ -1,0 +1,139 @@
+{
+  "envelope": {
+    "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.07401e524299157e1996cee02a06844d3767d56b.001.1",
+    "source": "central.echo6.co",
+    "type": "central.wx.alert.special_weather_statement.v1",
+    "time": "2026-07-03T20:28:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "wx.alert.special_weather_statement",
+    "centralseverity": 2,
+    "specversion": "1.0",
+    "data": {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.07401e524299157e1996cee02a06844d3767d56b.001.1",
+      "adapter": "nws",
+      "category": "wx.alert.special_weather_statement",
+      "time": "2026-07-03T20:28:00Z",
+      "expires": "2026-07-03T21:15:00Z",
+      "severity": 2,
+      "geo": {
+        "centroid": [
+          -111.91599999999998,
+          42.54
+        ],
+        "bbox": [
+          -112.19,
+          42.39,
+          -111.53,
+          42.81
+        ],
+        "regions": [
+          "US-ID-FIPS16005",
+          "US-ID-FIPS16007",
+          "US-ID-FIPS16011",
+          "US-ID-FIPS16019",
+          "US-ID-FIPS16029",
+          "US-ID-FIPS16041",
+          "US-ID-FIPS16077",
+          "US-ID-Z058",
+          "US-ID-Z060",
+          "US-ID-Z061",
+          "US-ID-Z062"
+        ],
+        "primary_region": "US-ID-FIPS16005",
+        "geometry": null
+      },
+      "data": {
+        "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.07401e524299157e1996cee02a06844d3767d56b.001.1",
+        "@type": "wx:Alert",
+        "id": "urn:oid:2.49.0.1.840.0.07401e524299157e1996cee02a06844d3767d56b.001.1",
+        "areaDesc": "Marsh and Arbon Highlands; Bear River Range; Bear Lake Valley; Blackfoot Mountains",
+        "geocode": {
+          "SAME": [
+            "016005",
+            "016011",
+            "016029",
+            "016077",
+            "016007",
+            "016041",
+            "016019"
+          ],
+          "UGC": [
+            "IDZ058",
+            "IDZ060",
+            "IDZ061",
+            "IDZ062"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/forecast/IDZ058",
+          "https://api.weather.gov/zones/forecast/IDZ060",
+          "https://api.weather.gov/zones/forecast/IDZ061",
+          "https://api.weather.gov/zones/forecast/IDZ062"
+        ],
+        "references": [],
+        "sent": "2026-07-03T14:28:00-06:00",
+        "effective": "2026-07-03T14:28:00-06:00",
+        "onset": "2026-07-03T14:28:00-06:00",
+        "expires": "2026-07-03T15:15:00-06:00",
+        "ends": null,
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Moderate",
+        "certainty": "Observed",
+        "urgency": "Expected",
+        "event": "Special Weather Statement",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Pocatello ID",
+        "headline": "Special Weather Statement issued July 3 at 2:28PM MDT by NWS Pocatello ID",
+        "description": "At 227 PM MDT, Doppler radar was tracking a strong thunderstorm near\nVirginia, or 7 miles south of Lava Hot Springs, moving northeast at\n25 mph.\n\nHAZARD...Wind gusts in excess of 45 mph.\n\nSOURCE...Radar indicated.\n\nIMPACT...Gusty winds could knock down tree limbs and blow around\nunsecured objects.\n\nLocations impacted include...\nSoda Springs, Lava Hot Springs, Grace, and Niter.",
+        "instruction": "If outdoors, consider seeking shelter inside a building.",
+        "response": "Execute",
+        "note": null,
+        "parameters": {
+          "AWIPSidentifier": [
+            "SPSPIH"
+          ],
+          "WMOidentifier": [
+            "WWUS85 KPIH 032028"
+          ],
+          "NWSheadline": [
+            "A STRONG THUNDERSTORM WILL IMPACT SOUTHWESTERN CARIBOU... SOUTHEASTERN BANNOCK AND NORTHWESTERN BEAR LAKE COUNTIES THROUGH 315 PM MDT"
+          ],
+          "eventMotionDescription": [
+            "2026-07-03T20:27:00-00:00...storm...238DEG...21KT...42.51,-112.05"
+          ],
+          "maxWindGust": [
+            "45 MPH"
+          ],
+          "maxHailSize": [
+            "0.00"
+          ],
+          "BLOCKCHANNEL": [
+            "EAS",
+            "NWEM",
+            "CMAS"
+          ],
+          "EAS-ORG": [
+            "WXR"
+          ]
+        },
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov",
+        "eventCode": {
+          "SAME": [
+            "SPS"
+          ],
+          "NationalWeatherService": [
+            "SPS"
+          ]
+        }
+      }
+    }
+  },
+  "subject": "central.wx.alert.us.id.county.fips16005",
+  "captured_epoch": 1783206513
+}

@@ -1,0 +1,87 @@
+{
+  "envelope": {
+    "id": "idaho_511:event:11503",
+    "source": "central.echo6.co",
+    "type": "central.incident.itd_511.v1",
+    "time": "2026-07-04T18:24:09+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.itd_511",
+    "centralseverity": 1,
+    "specversion": "1.0",
+    "data": {
+      "id": "idaho_511:event:11503",
+      "adapter": "itd_511",
+      "category": "incident.itd_511",
+      "time": "2026-07-04T18:24:09Z",
+      "expires": null,
+      "severity": 1,
+      "geo": {
+        "centroid": [
+          -115.925124696356,
+          43.7434489175347
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -115.925124696356,
+            43.7434489175347
+          ]
+        }
+      },
+      "data": {
+        "event_type_short": "incident",
+        "event_sub_type": "roadwayBlocked",
+        "roadway_name": "SH-21",
+        "direction": "Both",
+        "description": "Roadway Blocked on SH-21 Both Directions near MM (31). Lane Blocked.",
+        "lanes_affected": "Lane Blocked",
+        "is_full_closure": false,
+        "itd_severity": "None",
+        "comment": null,
+        "cause": "Incident",
+        "organization": "ERS",
+        "recurrence_text": null,
+        "recurrence_schedules": [],
+        "restrictions": {
+          "Width": null,
+          "Height": null,
+          "Length": null,
+          "Weight": null,
+          "Speed": null
+        },
+        "detour_polyline": null,
+        "detour_instructions": null,
+        "encoded_polyline": null,
+        "id_internal": 40654,
+        "source_id": "11503",
+        "reported_epoch": 1783189260,
+        "last_updated_epoch": 1783189449,
+        "start_epoch": 1783189260,
+        "planned_end_epoch": null,
+        "latitude": 43.7434489175347,
+        "longitude": -115.925124696356,
+        "_enriched": {
+          "geocoder": {
+            "name": null,
+            "city": "Boise",
+            "county": "Boise",
+            "state": "ID",
+            "country": "United States",
+            "postal_code": "83716",
+            "timezone": "America/Boise",
+            "landclass": "Boise National Forest",
+            "elevation_m": 1048.578125
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.us.id",
+  "captured_epoch": 1783206522
+}

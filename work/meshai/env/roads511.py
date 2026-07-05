@@ -391,6 +391,41 @@ class Roads511Adapter:
             # sole inhibit_key lets the pipeline Inhibitor suppress
             # lower-severity re-emissions while a higher-severity one is active
             # for the same incident (severity tiering delegated to Inhibitor).
+
+            # Canonical data for the Phase-2 formatter (incident path).
+            # Native 511 adapter has a description-based format; road/direction
+            # are parsed best-effort from the headline/description.
+            _roadway = props.get("roadway")
+            _desc = evt.get("description", "") or ""
+            _is_closure = bool(props.get("is_closure"))
+            canonical_data = {
+                "external_id":    None,   # native adapter, no Central dedup
+                "source":         "511",
+                "sub_type":       "road_closed" if _is_closure else "incident",
+                "road":           _roadway or None,
+                "direction":      None,   # not structured in native 511 feed
+                "from_loc":       None,
+                "to_loc":         None,
+                "mile_start":     None,
+                "mile_end":       None,
+                "mile_marker":    None,
+                "lanes_affected": None,
+                "cause":          None,
+                "comment":        _desc[:200] if _desc else title,
+                "impact":         "all lanes closed" if _is_closure else None,
+                "county":         None,
+                "state":          None,
+                "lat":            lat,
+                "lon":            lon,
+                "geocoder_city":  None,
+                "landclass":      None,
+                "start_at":       None,
+                "end_at":         None,
+                "magnitude":      None,
+                "delay_seconds":  None,
+                "icon_category":  "road_closed" if _is_closure else "incident",
+            }
+
             return make_event(
                 source="511",
                 category="road_closure",
@@ -403,6 +438,7 @@ class Roads511Adapter:
                 lon=lon,
                 group_key=event_id,
                 inhibit_keys=[event_id],
+                data=canonical_data,
             )
         except Exception:
             logger.exception(f"511 to_event failed for evt: {evt.get('event_id')}")

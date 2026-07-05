@@ -1,0 +1,102 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14784415164028000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-28T03:27:30+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14784415164028000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-28T03:27:30Z",
+      "expires": "2026-06-28T04:03:00Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -116.4291975592,
+          43.62507957
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -116.4291975592,
+              43.62507957
+            ],
+            [
+              -116.4298721348,
+              43.6250849093
+            ],
+            [
+              -116.4302275275,
+              43.6250876396
+            ],
+            [
+              -116.4317040836,
+              43.6250997138
+            ],
+            [
+              -116.4317107891,
+              43.6250997138
+            ],
+            [
+              -116.4327434396,
+              43.6251077227
+            ],
+            [
+              -116.4327997659,
+              43.6251090576
+            ],
+            [
+              -116.4328654801,
+              43.6251090576
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Stationary traffic",
+        "event_code": 101,
+        "from": "North Morello Avenue",
+        "to": "North Ten Mile Road",
+        "magnitude_of_delay": 3,
+        "icon_category": 6,
+        "length": 295.2529502763,
+        "delay": 184,
+        "road_numbers": [],
+        "start_time": "2026-06-28T03:27:30Z",
+        "end_time": "2026-06-28T04:03:00Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "treasure_valley_ext",
+        "latitude": 43.62507957,
+        "longitude": -116.4291975592,
+        "_enriched": {
+          "geocoder": {
+            "name": null,
+            "city": "Meridian",
+            "county": "Ada",
+            "state": "ID",
+            "country": "United States",
+            "postal_code": "83646",
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 781.5
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}

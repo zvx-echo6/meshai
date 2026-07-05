@@ -1,0 +1,118 @@
+{
+  "envelope": {
+    "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.7e35e313802db63f4b33f772a2597b4078600350.001.1",
+    "source": "central.echo6.co",
+    "type": "central.wx.alert.special_weather_statement.v1",
+    "time": "2026-06-27T23:15:00+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "wx.alert.special_weather_statement",
+    "centralseverity": 2,
+    "specversion": "1.0",
+    "data": {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.7e35e313802db63f4b33f772a2597b4078600350.001.1",
+      "adapter": "nws",
+      "category": "wx.alert.special_weather_statement",
+      "time": "2026-06-27T23:15:00Z",
+      "expires": "2026-06-27T23:45:00Z",
+      "severity": 2,
+      "geo": {
+        "centroid": [
+          -116.15599999999999,
+          41.730000000000004
+        ],
+        "bbox": [
+          -116.32,
+          41.66,
+          -115.93,
+          41.86
+        ],
+        "regions": [
+          "US-NV-FIPS32007",
+          "US-NV-Z031"
+        ],
+        "primary_region": "US-NV-FIPS32007",
+        "geometry": null
+      },
+      "data": {
+        "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.7e35e313802db63f4b33f772a2597b4078600350.001.1",
+        "@type": "wx:Alert",
+        "id": "urn:oid:2.49.0.1.840.0.7e35e313802db63f4b33f772a2597b4078600350.001.1",
+        "areaDesc": "Northern Elko County",
+        "geocode": {
+          "SAME": [
+            "032007"
+          ],
+          "UGC": [
+            "NVZ031"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/forecast/NVZ031"
+        ],
+        "references": [],
+        "sent": "2026-06-27T16:15:00-07:00",
+        "effective": "2026-06-27T16:15:00-07:00",
+        "onset": "2026-06-27T16:15:00-07:00",
+        "expires": "2026-06-27T16:45:00-07:00",
+        "ends": null,
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Moderate",
+        "certainty": "Observed",
+        "urgency": "Expected",
+        "event": "Special Weather Statement",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Elko NV",
+        "headline": "Special Weather Statement issued June 27 at 4:15PM PDT by NWS Elko NV",
+        "description": "At 415 PM PDT, Doppler radar was tracking a strong thunderstorm\ncapable of producing a landspout 16 miles southwest of Owyhee, moving\neast at 25 mph.\n\nHAZARD...Landspouts, wind gusts up to 40 mph, and half inch hail.\n\nSOURCE...Radar indicated.\n\nIMPACT...Minor damage to outdoor objects is possible. Gusty winds\ncould knock down tree limbs and blow around unsecured\nobjects.\n\nLocations impacted include...\nMountain City.",
+        "instruction": "If outdoors, consider seeking shelter inside a building.",
+        "response": "Execute",
+        "note": null,
+        "parameters": {
+          "AWIPSidentifier": [
+            "SPSLKN"
+          ],
+          "WMOidentifier": [
+            "WWUS85 KLKN 272315 RRA"
+          ],
+          "NWSheadline": [
+            "A STRONG THUNDERSTORM WILL IMPACT NORTHWESTERN ELKO COUNTY THROUGH 445 PM PDT"
+          ],
+          "eventMotionDescription": [
+            "2026-06-27T23:15:00-00:00...storm...258DEG...20KT...41.73,-116.26"
+          ],
+          "maxWindGust": [
+            "40 MPH"
+          ],
+          "maxHailSize": [
+            "0.50"
+          ],
+          "BLOCKCHANNEL": [
+            "EAS",
+            "NWEM",
+            "CMAS"
+          ],
+          "EAS-ORG": [
+            "WXR"
+          ]
+        },
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov",
+        "eventCode": {
+          "SAME": [
+            "SPS"
+          ],
+          "NationalWeatherService": [
+            "SPS"
+          ]
+        }
+      }
+    }
+  },
+  "subject": "central.wx.alert.us.nv.county.fips32007",
+  "captured_epoch": 1783206513
+}

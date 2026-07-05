@@ -68,6 +68,10 @@ class NWSAlertsAdapter:
     def to_event(self, raw: dict) -> Event:
         """Convert internal event dict to pipeline Event.
 
+        Phase-2: emits canonical event.data schema so the formatter+gater
+        architecture (formatters/nws.py, gating/nws.py) can operate on
+        native events identically to Central-sourced events.
+
         Args:
             raw: Internal event dict from get_events()
 
@@ -89,6 +93,34 @@ class NWSAlertsAdapter:
             base = event_type.rsplit(" ", 1)[0] if " " in event_type else event_type
             inhibit_keys = [f"nws:{base} Watch", f"nws:{base} Advisory"]
 
+        area_desc = raw.get("area_desc", "")
+
+        # Build canonical data dict for the formatter+gater.
+        # Keys match the Central-bridge canonical schema so both paths render
+        # identically.  Native has no geocoder enrichment (city/state=None);
+        # county falls back to areaDesc, mirroring the handler's:
+        #     county = d.get("areaDesc") or ge.get("county")
+        canonical = {
+            "cap_id": raw.get("cap_id") or raw.get("event_id", ""),
+            "event": event_type,
+            "same_code": raw.get("same_code", ""),
+            "cap_severity": raw.get("cap_severity") or raw.get("severity", "Unknown"),
+            "certainty": raw.get("certainty", ""),
+            "expires_at": raw.get("expires_at") or raw.get("expires") or None,
+            "area_desc": area_desc,
+            "geocoder": {
+                "city": None,
+                "county": area_desc,  # areaDesc as county fallback (no enrichment)
+                "state": None,
+            },
+            "description": raw.get("description", ""),  # FULL — not truncated
+            "parameters": raw.get("parameters") or {},
+            "msgType": raw.get("msgType") or raw.get("messageType", "Alert"),
+            "references": raw.get("references") or [],
+            "category": category,
+            "headline": raw.get("headline", ""),
+        }
+
         return make_event(
             source="nws",
             category=category,
@@ -103,7 +135,7 @@ class NWSAlertsAdapter:
             nws_zones=raw.get("areas", []),
             group_key=group_key,
             inhibit_keys=inhibit_keys,
-            data=raw,
+            data=canonical,
         )
 
     def tick(self) -> bool:
@@ -200,12 +232,23 @@ class NWSAlertsAdapter:
                 "event_type": props.get("event", "Unknown"),
                 "severity": severity,
                 "headline": props.get("headline", ""),
-                "description": (props.get("description") or "")[:500],
+                "description": props.get("description") or "",  # FULL — not truncated
                 "onset": onset,
                 "expires": expires,
                 "areas": props.get("geocode", {}).get("UGC", []),
                 "area_desc": props.get("areaDesc", ""),
                 "fetched_at": time.time(),
+                # ── Canonical schema fields (Phase-2) ────────────────────────
+                # These are read by to_event() to build the canonical data dict
+                # for the formatter+gater architecture.
+                "cap_id": props.get("id", ""),
+                "same_code": ((props.get("eventCode") or {}).get("SAME") or [""])[0],
+                "cap_severity": props.get("severity", "Unknown"),
+                "certainty": props.get("certainty", "Unknown"),
+                "expires_at": expires,
+                "parameters": props.get("parameters") or {},
+                "msgType": props.get("messageType", "Alert"),
+                "references": props.get("references") or [],
             }
 
             # Try to get centroid from geometry

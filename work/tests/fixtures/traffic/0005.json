@@ -1,0 +1,102 @@
+{
+  "envelope": {
+    "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14570896572030000",
+    "source": "central.echo6.co",
+    "type": "central.incident.tomtom_incidents.v1",
+    "time": "2026-06-28T00:42:30+00:00",
+    "datacontenttype": "application/json",
+    "centralschemaversion": "1.0",
+    "centralcategory": "incident.tomtom_incidents",
+    "centralseverity": 3,
+    "specversion": "1.0",
+    "data": {
+      "id": "ID:tomtom:TTI-4ee2bdba-b112-4223-894d-2b10d1a81de0-TTL14570896572030000",
+      "adapter": "tomtom_incidents",
+      "category": "incident.tomtom_incidents",
+      "time": "2026-06-28T00:42:30Z",
+      "expires": "2026-06-28T01:03:00Z",
+      "severity": 3,
+      "geo": {
+        "centroid": [
+          -116.9250763154,
+          44.0236169542
+        ],
+        "bbox": null,
+        "regions": [
+          "US-ID"
+        ],
+        "primary_region": "US-ID",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              -116.9250763154,
+              44.0236169542
+            ],
+            [
+              -116.9255282676,
+              44.0236156282
+            ],
+            [
+              -116.9256543314,
+              44.0236156282
+            ],
+            [
+              -116.925893048,
+              44.023614242
+            ],
+            [
+              -116.9260298407,
+              44.023614242
+            ],
+            [
+              -116.9263409769,
+              44.0236129161
+            ],
+            [
+              -116.9284626043,
+              44.0235941117
+            ],
+            [
+              -116.9286315834,
+              44.0235927858
+            ]
+          ]
+        }
+      },
+      "data": {
+        "description": "Stationary traffic",
+        "event_code": 101,
+        "from": "North Whitley Drive",
+        "to": "North Arizona Avenue",
+        "magnitude_of_delay": 3,
+        "icon_category": 6,
+        "length": 284.2768770846,
+        "delay": 154,
+        "road_numbers": [],
+        "start_time": "2026-06-28T00:42:30Z",
+        "end_time": "2026-06-28T01:03:00Z",
+        "time_validity": "present",
+        "state_code": "ID",
+        "bbox_name": "treasure_valley_ext",
+        "latitude": 44.0236169542,
+        "longitude": -116.9250763154,
+        "_enriched": {
+          "geocoder": {
+            "name": "Ogawa's Sushi",
+            "city": "Fruitland",
+            "county": "Payette",
+            "state": "Idaho",
+            "country": "United States",
+            "postal_code": "83619",
+            "timezone": "America/Boise",
+            "landclass": null,
+            "elevation_m": 669.35546875
+          }
+        }
+      }
+    }
+  },
+  "subject": "central.traffic.incident.id",
+  "captured_epoch": 1783206527
+}
