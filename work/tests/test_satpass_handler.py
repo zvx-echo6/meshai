@@ -53,6 +53,7 @@ def mock_adapter_config():
     cfg.norad_ids = [25544]  # must be non-empty for opt-in
     cfg.dry_run = False
     cfg.max_broadcasts_per_hour = 4
+    cfg.max_aos_horizon_hours = 24
     with patch("meshai.central.satpass_handler.adapter_config") as mock:
         mock.satpass = cfg
         from meshai.central.satpass_handler import handle_satpass
@@ -63,18 +64,38 @@ def mock_adapter_config():
         yield cfg
 
 
+def _ingest_and_consolidate(env, subject, *, now, data=None):
+    """Drive the two-call async satpass contract (ingest -> consolidate).
+
+    handle_satpass() ingests the pass into satpass_pending and ALWAYS
+    returns None; the consumer then runs consolidate_satpass_pending(),
+    which returns the (wire, data) to broadcast (or None if suppressed).
+    Returns the consolidation result so a test can assert on the real wire.
+    """
+    from meshai.central.satpass_handler import (
+        handle_satpass, consolidate_satpass_pending,
+        drain_pending_consolidation_ids)
+    drain_pending_consolidation_ids()
+    assert handle_satpass(
+        env, subject, data=data if data is not None else {}, now=now) is None
+    for cid in drain_pending_consolidation_ids():
+        res = consolidate_satpass_pending(cid)
+        if res is not None:
+            return res
+    return None
+
+
 class TestSatpassHandler:
     """Tests for handle_satpass function."""
 
-    def test_high_elevation_pass_broadcasts(self, mock_db, mock_adapter_config):
-        """A pass with high elevation should broadcast."""
-        from meshai.central.satpass_handler import handle_satpass
-
+    def test_high_elevation_pass_broadcasts(self, mock_adapter_config):
+        """A pass with high elevation should broadcast (via consolidation)."""
         env = _envelope(max_el=75.0)
-        result = handle_satpass(env, "central.sat.pass.iss", data={}, now=1718163120)
-
+        result = _ingest_and_consolidate(env, "central.sat.pass.iss",
+                                         now=1781235000)
         assert result is not None
-        assert "ISS" in result
+        wire, _ = result
+        assert "ISS" in wire
 
     def test_low_elevation_pass_filtered(self, mock_db, mock_adapter_config):
         """A pass below min_elevation should be filtered."""
@@ -96,14 +117,12 @@ class TestSatpassHandler:
 
         assert result is None
 
-    def test_observer_filter_allows_match(self, mock_db, mock_adapter_config):
+    def test_observer_filter_allows_match(self, mock_adapter_config):
         """A pass for configured observer should broadcast."""
-        from meshai.central.satpass_handler import handle_satpass
-
         mock_adapter_config.observers = ["Boise", "Magic Valley"]
         env = _envelope(observer="Boise", max_el=45.0)
-        result = handle_satpass(env, "central.sat.pass.iss", data={}, now=1718163120)
-
+        result = _ingest_and_consolidate(env, "central.sat.pass.iss",
+                                         now=1781235000)
         assert result is not None
 
     def test_norad_id_filter(self, mock_db, mock_adapter_config):
@@ -116,48 +135,49 @@ class TestSatpassHandler:
 
         assert result is None
 
-    def test_dedup_blocks_second_broadcast(self, mock_db, mock_adapter_config):
+    def test_dedup_blocks_second_broadcast(self, mock_adapter_config):
         """Second pass in same hour bucket should be deduplicated."""
-        from meshai.central.satpass_handler import handle_satpass
-
-        # First call returns no existing broadcast
-        mock_db.execute.return_value.fetchone.return_value = None
-
         env = _envelope(max_el=60.0)
-        result1 = handle_satpass(env, "central.sat.pass.iss", data={}, now=1718163120)
+
+        # First pass consolidates into a real broadcast.
+        result1 = _ingest_and_consolidate(env, "central.sat.pass.iss",
+                                          now=1781235000)
         assert result1 is not None
 
-        # Second call simulates existing broadcast
-        mock_db.execute.return_value.fetchone.return_value = {"last_broadcast_at": 1718163120}
+        # Simulate the broadcast committing (marks satpass_events broadcast).
+        _wire, data1 = result1
+        data1["_on_broadcast_committed"](1781235010)
 
-        result2 = handle_satpass(env, "central.sat.pass.iss", data={}, now=1718163180)
+        # Second pass in the same (norad, aos-hour) bucket must be deduped.
+        result2 = _ingest_and_consolidate(env, "central.sat.pass.iss",
+                                          now=1781235060)
         assert result2 is None
 
-    def test_wire_format(self, mock_db, mock_adapter_config):
+    def test_wire_format(self, mock_adapter_config):
         """Wire format should have 2 lines with correct info."""
-        from meshai.central.satpass_handler import handle_satpass
-
         env = _envelope(sat_name="ISS", max_el=75, observer="Boise",
-                        direction="NW-SE", aos_compass="SW", los_compass="NE")
-        result = handle_satpass(env, "central.sat.pass.iss", data={}, now=1718163120)
+                        direction="S", aos_compass="SW", los_compass="NE")
+        result = _ingest_and_consolidate(env, "central.sat.pass.iss",
+                                         now=1781235000)
+        assert result is not None
+        wire, _ = result
 
-        lines = result.split("\n")
+        lines = wire.split("\n")
         assert len(lines) == 2
         assert "ISS" in lines[0]
         assert "overhead" in lines[0]
-        assert "SW" in lines[0]
-        assert "NE" in lines[0]
-        assert "minute window" in lines[1]
+        assert "SW" in lines[0]        # aos_compass
+        assert "S" in lines[0]         # peak_compass (new)
+        assert "NE" in lines[0]        # los_compass
+        assert "min window" in lines[1]
 
-    def test_commit_callback_attached(self, mock_db, mock_adapter_config):
-        """Broadcast should attach commit callback."""
-        from meshai.central.satpass_handler import handle_satpass
-
-        data = {}
+    def test_commit_callback_attached(self, mock_adapter_config):
+        """Broadcast should attach commit callback (on the consolidation data)."""
         env = _envelope(max_el=60.0)
-        result = handle_satpass(env, "central.sat.pass.iss", data=data, now=1718163120)
-
+        result = _ingest_and_consolidate(env, "central.sat.pass.iss",
+                                         now=1781235000)
         assert result is not None
+        _wire, data = result
         assert "_on_broadcast_committed" in data
         assert "_broadcast_audit" in data
         assert data["_broadcast_audit"]["table"] == "satpass_events"
