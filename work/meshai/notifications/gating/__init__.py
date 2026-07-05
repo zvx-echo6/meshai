@@ -77,3 +77,12 @@ register("work_zone",          _incident_gate_mod.decide)
 register("road_incident",      _incident_gate_mod.decide)
 register("road_closure",       _incident_gate_mod.decide)
 register("traffic_congestion", _incident_gate_mod.decide)
+
+# Phase-3: USGS NWIS stream-gauge hydro. Registered under `stream_flow` — the
+# flat category the Central nwis path produces for every `central.hydro.*`
+# envelope (map_category "hydro." -> "stream_flow"). Native usgs categories
+# (stream_flood_warning / stream_high_water, emitted only by env/usgs.py) are a
+# deferred follow-up: env/usgs.py is NOT migrated this phase and, since hydro is
+# NOT cut over, store._emit_event's native decider hook won't run it.
+from meshai.notifications.gating import hydro as _hydro_gate_mod  # noqa: E402,F401
+register("stream_flow", _hydro_gate_mod.decide)

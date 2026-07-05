@@ -86,3 +86,11 @@ register("work_zone",          _incident_fmt_mod.format)
 register("road_incident",      _incident_fmt_mod.format)
 register("road_closure",       _incident_fmt_mod.format)
 register("traffic_congestion", _incident_fmt_mod.format)
+
+# Phase-3: USGS NWIS stream-gauge hydro. The Central nwis path maps every
+# `central.hydro.*` envelope to the flat category `stream_flow` (see
+# central.consumer.map_category / category_from_subject), so that is the real
+# registry key. Native env/usgs.py categories (stream_flood_warning /
+# stream_high_water) are deferred — see gating/__init__.py note.
+from meshai.notifications.formatters import hydro as _hydro_fmt_mod  # noqa: E402,F401
+register("stream_flow", _hydro_fmt_mod.format)
