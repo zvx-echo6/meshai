@@ -37,6 +37,7 @@ class FIRMSAdapter:
 
         self._last_tick = 0.0
         self._events = []
+        self._fusion_events = []  # fire-fusion broadcasts (growth/spotting/halt)
         self._consecutive_errors = 0
         self._last_error = None
         self._is_loaded = False
@@ -119,10 +120,19 @@ class FIRMSAdapter:
         # Parse CSV response
         new_events = self._parse_csv(csv_data)
 
-        # Check if data changed
+        # Feed every fetched pixel into the SHARED source-agnostic fusion engine
+        # (central.firms_handler.ingest_hotspot_pixel): attribution + growth /
+        # spotting / halt. DB-level dedup (firms_pixels unique key) makes this
+        # idempotent across ticks, so re-fetched pixels never double-count.
+        # NEVER broadcasts raw hotspots -- only the fusion wires it returns.
+        self._fusion_events = self._run_fusion(new_events)
+
+        # Check if data changed. Fusion output also counts as "changed" so the
+        # store ingests + emits the broadcast on this tick (store dedups its own
+        # emission by event_id, so an already-emitted fusion won't re-fire).
         old_ids = {e["event_id"] for e in self._events}
         new_ids = {e["event_id"] for e in new_events}
-        changed = old_ids != new_ids
+        changed = (old_ids != new_ids) or bool(self._fusion_events)
 
         self._events = new_events
         self._consecutive_errors = 0
@@ -344,48 +354,163 @@ class FIRMSAdapter:
 
         return (None, None)
 
+    def _satellite_code(self) -> str:
+        """Map the FIRMS source product to the satellite code the fusion
+        engine uses for pass bucketing + the firms_pixels dedup key.
+
+        Consistency across pixels of one fetch is what matters (pass_id groups
+        an overpass); the exact code just needs to be stable per product."""
+        s = (self._source or "").upper()
+        if "NOAA20" in s or "N20" in s or "J1" in s:
+            return "N20"
+        if "NOAA21" in s or "N21" in s or "J2" in s:
+            return "N21"
+        if "SNPP" in s or "SUOMI" in s or "NPP" in s:
+            return "N"
+        if "MODIS" in s:
+            return "MODIS"
+        return self._source or "?"
+
+    def _run_fusion(self, raw_events: list) -> list:
+        """Feed each fetched hotspot pixel into the SHARED attribution/fusion
+        engine and collect the fire-fusion broadcasts.
+
+        Every parsed pixel is mapped to the canonical FIRMS schema and passed to
+        ``central.firms_handler.ingest_hotspot_pixel`` -- the exact same engine
+        the Central NATS handler drives. The engine INSERTs the pixel, runs
+        attribution, and runs the growth / spotting / halt fusion; it returns
+        ONLY fusion wires (never a raw-hotspot / cluster broadcast). DB-level
+        dedup makes re-fetched pixels no-ops, so nothing double-counts.
+        """
+        try:
+            from meshai.central.firms_handler import (
+                ingest_hotspot_pixel, _parse_acq_epoch,
+            )
+        except Exception:
+            logger.exception("FIRMS fusion: handler import failed; skipping")
+            return []
+
+        now = time.time()
+        satellite = self._satellite_code()
+        fusion: list = []
+        for evt in raw_events:
+            props = evt.get("properties", {}) or {}
+            acq_epoch = _parse_acq_epoch(props.get("acq_date"),
+                                         props.get("acq_time"))
+            if acq_epoch is None:
+                continue
+            pixel = {
+                "lat": evt.get("lat"),
+                "lon": evt.get("lon"),
+                "frp": props.get("frp"),
+                "confidence": props.get("confidence"),
+                "brightness": props.get("brightness"),
+                "satellite": satellite,
+                "acq_epoch": acq_epoch,
+            }
+            try:
+                broadcasts = ingest_hotspot_pixel(pixel, now=int(now))
+            except Exception:
+                logger.exception("FIRMS fusion: ingest failed for %s",
+                                 evt.get("event_id"))
+                continue
+            for wire, data in broadcasts:
+                fusion.append(self._make_fusion_event(wire, data, evt, now))
+        return fusion
+
+    def _make_fusion_event(self, wire: str, data: dict, source_evt: dict,
+                           now: float) -> dict:
+        """Wrap a fusion broadcast (wire, data) in an adapter event dict.
+
+        Carries source ``firms_fusion`` (distinct from raw ``firms`` so it never
+        pollutes the hotspot LLM summary / get_active(source="firms")) and a
+        ``_fusion`` payload that ``to_event`` turns into a precomposed Event."""
+        category = data.get("category")
+        severity = (data.get("severity")
+                    or data.get("_severity_override") or "routine")
+        base_id = source_evt.get("event_id") \
+            or f"{source_evt.get('lat')}_{source_evt.get('lon')}"
+        # Precomposed marker: the composer passes event.title through verbatim
+        # (same contract satpass native + the Central consumer use), so the wire
+        # the shared engine produced is what the mesh sees.
+        data["_meshai_precomposed"] = True
+        return {
+            "source": "firms_fusion",
+            "event_id": f"{category}:{base_id}",
+            "event_type": "Fire Fusion",
+            "severity": severity,
+            "headline": wire,
+            "lat": source_evt.get("lat"),
+            "lon": source_evt.get("lon"),
+            "expires": now + 21600,
+            "fetched_at": now,
+            "properties": {"new_ignition": False, "category": category},
+            "_fusion": {"wire": wire, "data": data, "category": category,
+                        "severity": severity},
+        }
+
     def to_event(self, evt: dict) -> Optional["Event"]:
-        """Attribution-only: the native FIRMS adapter NEVER broadcasts hotspots.
+        """Emit ONLY fire-fusion broadcasts; NEVER a raw hotspot.
 
         Firm rule (Matt): "we do NOT broadcast hotspots." A raw satellite
-        thermal pixel -- a single-pixel ``wildfire_hotspot`` or
-        ``new_ignition`` detection -- is noisy and not actionable on its own;
-        broadcasting it would flood the mesh with unattributed heat. This
-        mirrors the Central path (``central/firms_handler.py``), which is
-        storage-only and returns None for every raw pixel. The ONLY FIRMS
-        signals that ever reach the mesh are the fire-tracker FUSION outputs
-        (``wildfire_growth`` / ``wildfire_spotting`` / ``wildfire_halted``),
-        produced by the Central handler's attribution engine -- NOT here.
+        thermal pixel is noisy and not actionable on its own, so a bare
+        ``wildfire_hotspot`` / ``new_ignition`` is NEVER emitted -- this returns
+        None for every raw pixel (identical to the Central storage-only path).
 
-        This method therefore ALWAYS returns None. The neutralization is
-        UNCONDITIONAL (not behind any config flag): the no-hotspots rule is
-        absolute. Previously this emitted ``make_event(category="new_ignition"
-        if new_ignition else "wildfire_hotspot", ...)``, and because
-        ``store._emit_event`` only consults a gating decider for cut-over
-        categories -- and NO decider is registered for the raw hotspot
-        categories (see ``notifications/gating/__init__.py``: "native
-        env/fires.py hotspot broadcasts ... are NOT migrated") -- those Events
-        went straight to the bus and out to the mesh. Returning None removes
-        that broadcast on the native path entirely.
+        What DID change: native FIRMS now feeds the SHARED attribution/fusion
+        engine (see ``_run_fusion`` -> ``firms_handler.ingest_hotspot_pixel``).
+        The fire-tracker FUSION outputs (``wildfire_growth`` /
+        ``wildfire_spotting`` / ``wildfire_halted``) it produces ARE emitted
+        here, as precomposed Events, so the native/standalone deployment gets
+        the same fire signals the Central handler produces. Raw hotspots are
+        distinguished by the absence of a ``_fusion`` payload on the event dict
+        (they carry source ``firms``; fusion dicts carry source
+        ``firms_fusion``); the raw dicts remain available via ``get_events()`` /
+        ``get_new_ignitions()`` for LLM context and health reporting.
 
-        The raw hotspot dicts remain available in-memory via ``get_events()``
-        / ``get_new_ignitions()`` for LLM context and health reporting; they
-        just never become a broadcastable Event.
-
-        STANDALONE GAP (not fixed here): unlike the Central handler, the native
-        adapter has NO fusion wiring -- it does not persist ``firms_pixels`` or
-        run attribution / clustering / pass-boundary growth. Native FIRMS
-        therefore feeds NOTHING into the fire tracker today; the cross-ref to
-        known NIFC fires only sets the (now unused for broadcast)
-        ``new_ignition`` flag on the in-memory dict. Wiring native pixels into
-        the attribution engine so growth/spotting/halt can eventually fire is a
-        separate, larger effort.
+        The fusion categories render via the EXISTING Phase-3c
+        formatters/gating; when they are NOT cut over (the default, and FIRMS's
+        documented state) ``store._emit_event`` emits directly and the decision
+        already made inside the engine stands. (If those categories were cut
+        over, ``store._emit_event`` would re-run the decider on event.data --
+        which lacks the internal ``_kind`` -- and suppress; FIRMS shadow/cutover
+        remains a deferred follow-up, unchanged by this wiring.)
         """
-        return None
+        fusion = evt.get("_fusion")
+        if not fusion:
+            return None  # raw hotspot -- never broadcast
+        try:
+            wire = fusion["wire"]
+            data = fusion["data"]
+            category = fusion["category"]
+            severity = fusion["severity"]
+            event_id = evt.get("event_id")
+            return make_event(
+                source="firms",
+                category=category,
+                severity=severity,
+                title=wire,        # precomposed: composer passes it verbatim
+                summary=wire,
+                lat=evt.get("lat"),
+                lon=evt.get("lon"),
+                timestamp=evt.get("fetched_at"),
+                expires=evt.get("expires"),
+                group_key=event_id,
+                inhibit_keys=[event_id] if event_id else [],
+                data=data,         # carries Phase-3c stamps + precomposed marker
+            )
+        except Exception:
+            logger.exception("FIRMS fusion: to_event failed")
+            return None
 
     def get_events(self) -> list:
-        """Get current hotspot events."""
-        return self._events
+        """Get current hotspot events + fire-fusion broadcasts.
+
+        Raw hotspots (source ``firms``) render None from ``to_event`` and are
+        kept only for LLM context / health; fire-fusion broadcasts (source
+        ``firms_fusion``) render real Events. The store keys on
+        ``(source, event_id)`` and emits each once."""
+        return self._events + self._fusion_events
 
     def get_new_ignitions(self) -> list:
         """Get only potential new ignitions (not near known fires)."""
