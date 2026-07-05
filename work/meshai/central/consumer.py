@@ -749,6 +749,63 @@ class CentralConsumer:
         except Exception:
             logger.exception("satpass consolidation failed for %s", consolidated_id)
 
+    def _sweep_pending_satpass(self, now: Optional[float] = None) -> None:
+        """Reconstruct consolidation timers for satpass_pending rows that a
+        restart orphaned.
+
+        The live in-memory scheduler (_check_satpass_consolidation) loses its
+        asyncio TimerHandles when the process exits, but the satpass_pending
+        rows and their persisted due_at survive. Without this sweep those rows
+        would sit forever, never consolidated or broadcast. Run once at
+        startup, it re-arms a timer for each pending consolidated_id off its
+        durable due_at, reusing the SAME _satpass_consolidation_fire path so
+        the emit logic is byte-identical to normal operation.
+
+        Idempotent and additive: it SKIPS any cid already armed by the live
+        path (present in _pending_satpass_timers), so it can never
+        double-schedule and is safe to call once alongside the module-set
+        drain path (which covers the live case this sweep cannot).
+        """
+        try:
+            from meshai.central.satpass_handler import load_pending_schedule
+            schedule = load_pending_schedule()
+        except Exception:
+            logger.exception("satpass sweep: failed to load pending schedule")
+            return
+        if not schedule:
+            return
+        try:
+            loop = asyncio.get_event_loop()
+        except Exception:
+            logger.exception("satpass sweep: no event loop for timer reconstruction")
+            return
+        now = time.time() if now is None else now
+        recovered = 0
+        overdue = 0
+        for cid, due_at in schedule:
+            try:
+                if cid in self._pending_satpass_timers:
+                    # Live path already armed this cid; never double-schedule.
+                    continue
+                if due_at <= now:
+                    # Orphan already past due: fire soon, with a small
+                    # increasing stagger so a backlog doesn't emit in one burst.
+                    delay = 0.5 + overdue * 2.0
+                    overdue += 1
+                else:
+                    # Not yet due: reconstruct the remaining wait exactly.
+                    delay = due_at - now
+                handle = loop.call_later(
+                    delay, self._satpass_consolidation_fire, cid)
+                self._pending_satpass_timers[cid] = handle
+                recovered += 1
+            except Exception:
+                logger.exception("satpass sweep: failed to re-arm timer for %s", cid)
+        if recovered:
+            logger.info(
+                "satpass sweep: reconstructed %d consolidation timer(s) after restart",
+                recovered)
+
     async def _on_message(self, msg, owned=None) -> None:
         """JetStream callback: normalize + emit, then ack.
 
@@ -820,6 +877,12 @@ class CentralConsumer:
             logger.info("CentralConsumer subscribed %s owned-sources=%s", subj, sorted(owned))
         logger.info("CentralConsumer started; %d subjects subscribed (drain mode active)",
                     len(subject_owned))
+
+        # Reboot recovery: re-arm consolidation timers for any satpass_pending
+        # rows the previous process left behind (in-memory TimerHandles don't
+        # survive a restart). Additive to the live module-set path; guarded
+        # against double-scheduling; a bad row never aborts startup.
+        self._sweep_pending_satpass()
 
         # Schedule drain timeout: if no messages trigger drain completion
         # within the window (e.g. empty backlog), auto-exit drain mode.
