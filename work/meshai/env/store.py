@@ -50,6 +50,15 @@ class EnvironmentalStore:
             lambda cfg: (cfg,))
         self._register_adapter("wzdx", config.wzdx, ".wzdx", "WZDxAdapter",
             lambda cfg: (cfg,))
+        # Native satpass TLE fetcher (storage-only: populates sat_tles, emits
+        # no events). Gated on satpass.feed_source=="native" like the rest.
+        self._register_adapter("satpass_tle", config.satpass, ".tle_fetch", "TLEFetchAdapter",
+            lambda cfg: (cfg,))
+        # Native SGP4 pass predictor (broadcasts consolidated passes locally,
+        # no Central dependency). SEPARATE from the satpass_tle fetcher above;
+        # both are gated on satpass.enabled and feed_source=="native".
+        self._register_adapter("satpass", config.satpass, ".satpass", "SatpassAdapter",
+            lambda cfg: (cfg,))
 
         # FIRMS needs reference to NIFC adapter for cross-referencing
         if config.firms.enabled and config.firms.feed_source == "native":
@@ -63,7 +72,7 @@ class EnvironmentalStore:
                 logger.warning("Failed to initialize firms adapter: %s", err_msg)
                 self._failed_adapters["firms"] = err_msg
 
-        _central = [n for n in ("nws", "swpc", "ducting", "fires", "avalanche", "usgs", "usgs_quake", "traffic", "roads511", "wzdx", "firms")
+        _central = [n for n in ("nws", "swpc", "ducting", "fires", "avalanche", "usgs", "usgs_quake", "traffic", "roads511", "wzdx", "firms", "satpass")
                     if getattr(getattr(config, n, None), "feed_source", "native") == "central"]
         if _central:
             logger.debug("Adapters sourced from Central (native skipped): %s", _central)

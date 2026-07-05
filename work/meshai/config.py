@@ -489,10 +489,30 @@ class FIRMSConfig(_SourcedFeed):
 
 @dataclass
 class SatpassConfig(_SourcedFeed):
-    """Satellite pass prediction settings (central-only feed)."""
+    """Satellite pass prediction settings.
+
+    Historically a Central-only feed (`feed_source="central"`). The native
+    path (`feed_source="native"`) adds a Celestrak TLE fetcher
+    (`env.tle_fetch`) and a native SGP4 predictor; the fields below feed
+    those. `feed_source` default stays "central" — the flip to "native"
+    happens at cutover, not here.
+    """
 
     enabled: bool = False
     feed_source: str = "central"
+
+    # -- native path (TLE fetch + SGP4 predictor) -----------------------------
+    # Ground stations the predictor computes passes for; each entry is a
+    # dict {slug, name, lat, lon, alt_m}. Seeded into observer_locations.
+    observers: list = field(default_factory=list)
+    # Celestrak GP selectors the fetcher pulls (env.tle_fetch):
+    tle_groups: list = field(default_factory=lambda: ["weather", "stations"])
+    norad_ids: list = field(default_factory=list)
+    # TLE refresh cadence — TLEs update ~daily, so poll every 6h.
+    tle_refresh_seconds: int = 21600
+    # Predictor pass filters (used by the next task):
+    min_elevation_deg: float = 10.0
+    window_hours: int = 24
 
 
 @dataclass

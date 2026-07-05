@@ -400,6 +400,14 @@ class MeshAI:
         except Exception:
             logger.exception("persistence init_db failed at startup")
 
+        # Native satpass: seed observer_locations from SatpassConfig.observers
+        # (config is the source of truth; the table is the predictor's store).
+        try:
+            from meshai.persistence.observer_locations import seed_observers_from_config
+            seed_observers_from_config(self.config.environmental.satpass)
+        except Exception:
+            logger.exception("observer_locations seed failed at startup")
+
         # v0.6-3b: Initialize geocoder config from config.yaml
         try:
             gc = self.config.environmental.geocoder

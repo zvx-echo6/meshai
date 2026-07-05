@@ -73,15 +73,36 @@ def handle_tle(envelope: dict, subject: str,
         logger.exception("tle_handler: persistence unavailable")
         return None
 
-    # Upsert: latest-wins on epoch
+    upsert_tle(conn, norad_id, name, line1, line2, epoch, now=now)
+
+    return None  # storage-only, never broadcast
+
+
+def upsert_tle(conn, norad_id: int, name: str, line1: str, line2: str,
+               epoch, now: Optional[int] = None) -> bool:
+    """Upsert one TLE into sat_tles with latest-epoch-wins semantics.
+
+    Shared by BOTH ingest paths — the Central envelope handler
+    (`handle_tle`) and the native Celestrak fetcher (`env.tle_fetch`) — so
+    the predictor reads TLEs identically regardless of source. `epoch` is a
+    lexicographically-sortable string (ISO 8601 for Central, ISO 8601
+    derived from the TLE line-1 epoch field for the native fetch); a cached
+    row whose epoch is >= the incoming epoch is left untouched.
+
+    Returns True if a row was written (insert or update), False if the
+    cached epoch was same-or-newer and the write was skipped.
+    """
+    now = now if now is not None else int(time.time())
+    epoch = str(epoch)
+
     existing = conn.execute(
         "SELECT epoch FROM sat_tles WHERE norad_id = ?",
         (norad_id,),
     ).fetchone()
 
-    if existing is not None and existing["epoch"] >= str(epoch):
-        # Cached epoch is same or newer — skip
-        return None
+    if existing is not None and existing["epoch"] >= epoch:
+        # Cached epoch is same or newer — skip.
+        return False
 
     conn.execute(
         "INSERT INTO sat_tles(norad_id, name, line1, line2, epoch, updated_at) "
@@ -89,10 +110,9 @@ def handle_tle(envelope: dict, subject: str,
         "ON CONFLICT(norad_id) DO UPDATE SET "
         "name=excluded.name, line1=excluded.line1, line2=excluded.line2, "
         "epoch=excluded.epoch, updated_at=excluded.updated_at",
-        (norad_id, name, line1, line2, str(epoch), now),
+        (norad_id, name, line1, line2, epoch, now),
     )
-
-    return None  # storage-only, never broadcast
+    return True
 
 
 def get_fresh_tles(conn=None, max_age_days: int = STALE_DAYS) -> list[dict]:

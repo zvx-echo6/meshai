@@ -438,8 +438,105 @@ def handle_satpass(envelope: dict, subject: str,
     return None
 
 
+def gate_consolidated_pass(consolidated: dict, *,
+                           now: int) -> tuple[str, dict] | None:
+    """Source-agnostic broadcast gate for an already-consolidated pass.
+
+    Both the Central consumer path (`consolidate_satpass_pending`, which
+    merges buffered per-observer rows from `satpass_pending`) and the native
+    env.satpass adapter (which consolidates in-memory across observers in one
+    tick) call THIS single function so the broadcast decision is byte-identical
+    regardless of source. It deliberately does NOT touch `satpass_pending` —
+    that buffer is a Central-consumer implementation detail owned by the caller.
+
+    `consolidated` is a dict describing one merged pass with keys:
+        consolidated_id (str, = {norad}:{aos_epoch//3600}),
+        norad_id, sat_name, max_elevation,
+        aos_epoch, los_epoch (int epoch seconds),
+        aos_compass, los_compass, peak_compass,
+        entry_observer, exit_observer,
+        observer_list (comma-joined observer slugs for the audit column).
+
+    Applies, in order: dedup-vs-`satpass_events`, rate cap, wire build,
+    dry-run gate, `satpass_events` upsert, and the deferred `_attach_commit`
+    that upserts last/first_broadcast_at on delivery. Returns (wire, data) to
+    broadcast, or None if suppressed. `now` is threaded explicitly for
+    determinism (rate-cap window + first_seen_at).
+    """
+    try:
+        conn = get_db()
+    except Exception:
+        logger.exception("satpass gate: persistence unavailable")
+        return None
+
+    cfg = adapter_config.satpass
+
+    consolidated_id = consolidated["consolidated_id"]
+    norad_id = consolidated["norad_id"]
+    sat_name = consolidated["sat_name"]
+    max_el = consolidated["max_elevation"]
+    aos_epoch = consolidated["aos_epoch"]
+    los_epoch = consolidated["los_epoch"]
+    aos_compass = consolidated["aos_compass"]
+    los_compass = consolidated["los_compass"]
+    peak_compass = consolidated.get("peak_compass")
+    entry_obs = consolidated.get("entry_observer")
+    exit_obs = consolidated.get("exit_observer")
+    observer_list = consolidated.get("observer_list") or (entry_obs or "")
+
+    # Dedup against satpass_events
+    existing = conn.execute(
+        "SELECT last_broadcast_at FROM satpass_events WHERE event_id=?",
+        (consolidated_id,)).fetchone()
+    if existing and existing["last_broadcast_at"] is not None:
+        return None
+
+    # Rate cap
+    max_per_hour = int(getattr(cfg, "max_broadcasts_per_hour", 4))
+    allowed, count = _check_rate_cap(conn, now, max_per_hour)
+    if not allowed:
+        logger.info("satpass: rate cap reached (%d/%d), suppressing consolidated pass %s",
+                     count, max_per_hour, consolidated_id)
+        return None
+
+    # Build consolidated wire — always pass observer names for region context
+    wire = format_pass(sat_name=sat_name, max_el=max_el,
+                      aos_epoch=aos_epoch, los_epoch=los_epoch,
+                      aos_compass=aos_compass, los_compass=los_compass,
+                      peak_compass=peak_compass,
+                      entry_observer=entry_obs, exit_observer=exit_obs)
+
+    # Dry-run gate
+    dry_run = getattr(cfg, "dry_run", True)
+    if dry_run:
+        logger.info("DRY-RUN would air (consolidated): %s", wire)
+        return None
+
+    # Upsert consolidated record into satpass_events
+    _upsert_satpass(conn, event_id=consolidated_id, norad_id=norad_id,
+                    sat_name=sat_name, observer=observer_list,
+                    max_elevation=max_el, aos_at=aos_epoch,
+                    los_at=los_epoch, payload_json=None,
+                    first_seen_at=now, set_last_broadcast=False)
+
+    # Prepare data dict with callbacks
+    severity_word = _map_severity(max_el)
+    data = {"_meshai_precomposed": True, "_severity_override": severity_word}
+    _attach_commit(data, event_id=consolidated_id, event_log_row_id=None)
+
+    return wire, data
+
+
 def consolidate_satpass_pending(consolidated_id: str) -> tuple[str, dict] | None:
     """Called by consumer when 5s consolidation timer fires.
+
+    Reads the buffered per-observer rows for this canonical id, merges them
+    across observers (earliest AOS / latest LOS / max-elevation observer
+    supplies max_elevation + peak_compass / entry+exit observers), then
+    delegates the actual broadcast decision to the shared, source-agnostic
+    `gate_consolidated_pass`. Pending rows are cleaned up afterward regardless
+    of the gate's decision (dedup, rate-cap, dry-run, and success all consume
+    the buffer identically, as before).
 
     Returns (wire_string, data_dict) or None if suppressed.
     """
@@ -455,9 +552,6 @@ def consolidate_satpass_pending(consolidated_id: str) -> tuple[str, dict] | None
     if not rows:
         return None
 
-    cfg = adapter_config.satpass
-    now = _now()
-
     # Consolidate observers
     sorted_by_aos = sorted(rows, key=lambda r: r["aos_at"])
     sorted_by_los = sorted(rows, key=lambda r: r["los_at"])
@@ -465,67 +559,28 @@ def consolidate_satpass_pending(consolidated_id: str) -> tuple[str, dict] | None
     exit_ = sorted_by_los[-1]   # latest LOS
     best = max(rows, key=lambda r: r["max_elevation"])
 
-    norad_id = best["norad_id"]
-    sat_name = best["sat_name"]
-    max_el = best["max_elevation"]
-    aos_epoch = entry["aos_at"]
-    los_epoch = exit_["los_at"]
-    aos_compass = entry["aos_compass"]
-    los_compass = exit_["los_compass"]
-    # Peak belongs to whoever saw the highest elevation.
-    peak_compass = best["peak_compass"]
-    entry_obs = entry["observer"]
-    exit_obs = exit_["observer"]
+    consolidated = {
+        "consolidated_id": consolidated_id,
+        "norad_id": best["norad_id"],
+        "sat_name": best["sat_name"],
+        "max_elevation": best["max_elevation"],
+        "aos_epoch": entry["aos_at"],
+        "los_epoch": exit_["los_at"],
+        "aos_compass": entry["aos_compass"],
+        "los_compass": exit_["los_compass"],
+        # Peak belongs to whoever saw the highest elevation.
+        "peak_compass": best["peak_compass"],
+        "entry_observer": entry["observer"],
+        "exit_observer": exit_["observer"],
+        "observer_list": ",".join(r["observer"] for r in sorted_by_aos),
+    }
 
-    # Dedup against satpass_events
-    existing = conn.execute(
-        "SELECT last_broadcast_at FROM satpass_events WHERE event_id=?",
-        (consolidated_id,)).fetchone()
-    if existing and existing["last_broadcast_at"] is not None:
-        _cleanup_pending(conn, consolidated_id)
-        return None
+    result = gate_consolidated_pass(consolidated, now=_now())
 
-    # Rate cap
-    max_per_hour = int(getattr(cfg, "max_broadcasts_per_hour", 4))
-    allowed, count = _check_rate_cap(conn, now, max_per_hour)
-    if not allowed:
-        logger.info("satpass: rate cap reached (%d/%d), suppressing consolidated pass %s",
-                     count, max_per_hour, consolidated_id)
-        _cleanup_pending(conn, consolidated_id)
-        return None
-
-    # Build consolidated wire — always pass observer names for region context
-    wire = format_pass(sat_name=sat_name, max_el=max_el,
-                      aos_epoch=aos_epoch, los_epoch=los_epoch,
-                      aos_compass=aos_compass, los_compass=los_compass,
-                      peak_compass=peak_compass,
-                      entry_observer=entry_obs, exit_observer=exit_obs)
-
-    # Dry-run gate
-    dry_run = getattr(cfg, "dry_run", True)
-    if dry_run:
-        logger.info("DRY-RUN would air (consolidated, %d observers): %s",
-                     len(rows), wire)
-        _cleanup_pending(conn, consolidated_id)
-        return None
-
-    # Upsert consolidated record into satpass_events
-    observer_list = ",".join(r["observer"] for r in sorted_by_aos)
-    _upsert_satpass(conn, event_id=consolidated_id, norad_id=norad_id,
-                    sat_name=sat_name, observer=observer_list,
-                    max_elevation=max_el, aos_at=aos_epoch,
-                    los_at=los_epoch, payload_json=None,
-                    first_seen_at=now, set_last_broadcast=False)
-
-    # Clean up pending rows
+    # Clean up pending rows regardless of the gate's decision.
     _cleanup_pending(conn, consolidated_id)
 
-    # Prepare data dict with callbacks
-    severity_word = _map_severity(max_el)
-    data = {"_meshai_precomposed": True, "_severity_override": severity_word}
-    _attach_commit(data, event_id=consolidated_id, event_log_row_id=None)
-
-    return wire, data
+    return result
 
 
 def _upsert_satpass(conn, *, event_id, norad_id, sat_name, observer,
