@@ -136,7 +136,7 @@ def shadow_gate(
         # Phase 1 deciders that require a full Event object will need Hook 1
         # to be relocated to post-normalize; Phase 0 never reaches here.
         try:
-            new_result = decider(data, now=now)
+            new_result = decider(data, source=source, now=now)
         except Exception:
             logger.debug(
                 "shadow_gate: decider raised for category=%s", category, exc_info=True
