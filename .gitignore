@@ -78,3 +78,8 @@ local.yaml
 data/*.sqlite
 data/*.sqlite-wal
 data/*.sqlite-shm
+
+# Secrets (values live here, never committed)
+/data/secrets/.env
+data/secrets/.env
+work/data/secrets/.env
