@@ -345,64 +345,43 @@ class FIRMSAdapter:
         return (None, None)
 
     def to_event(self, evt: dict) -> Optional["Event"]:
-        """Translate a stored FIRMS event dict into a pipeline Event.
+        """Attribution-only: the native FIRMS adapter NEVER broadcasts hotspots.
 
-        Args:
-            evt: Internal event dict from get_events()
+        Firm rule (Matt): "we do NOT broadcast hotspots." A raw satellite
+        thermal pixel -- a single-pixel ``wildfire_hotspot`` or
+        ``new_ignition`` detection -- is noisy and not actionable on its own;
+        broadcasting it would flood the mesh with unattributed heat. This
+        mirrors the Central path (``central/firms_handler.py``), which is
+        storage-only and returns None for every raw pixel. The ONLY FIRMS
+        signals that ever reach the mesh are the fire-tracker FUSION outputs
+        (``wildfire_growth`` / ``wildfire_spotting`` / ``wildfire_halted``),
+        produced by the Central handler's attribution engine -- NOT here.
 
-        Returns:
-            Event instance ready for EventBus emission, or None if
-            the dict is missing required fields (lat/lon).
+        This method therefore ALWAYS returns None. The neutralization is
+        UNCONDITIONAL (not behind any config flag): the no-hotspots rule is
+        absolute. Previously this emitted ``make_event(category="new_ignition"
+        if new_ignition else "wildfire_hotspot", ...)``, and because
+        ``store._emit_event`` only consults a gating decider for cut-over
+        categories -- and NO decider is registered for the raw hotspot
+        categories (see ``notifications/gating/__init__.py``: "native
+        env/fires.py hotspot broadcasts ... are NOT migrated") -- those Events
+        went straight to the bus and out to the mesh. Returning None removes
+        that broadcast on the native path entirely.
+
+        The raw hotspot dicts remain available in-memory via ``get_events()``
+        / ``get_new_ignitions()`` for LLM context and health reporting; they
+        just never become a broadcastable Event.
+
+        STANDALONE GAP (not fixed here): unlike the Central handler, the native
+        adapter has NO fusion wiring -- it does not persist ``firms_pixels`` or
+        run attribution / clustering / pass-boundary growth. Native FIRMS
+        therefore feeds NOTHING into the fire tracker today; the cross-ref to
+        known NIFC fires only sets the (now unused for broadcast)
+        ``new_ignition`` flag on the in-memory dict. Wiring native pixels into
+        the attribution engine so growth/spotting/halt can eventually fire is a
+        separate, larger effort.
         """
-        try:
-            lat = evt.get("lat")
-            lon = evt.get("lon")
-            if lat is None or lon is None:
-                return None  # Can't make a useful Event without coords
-
-            props = evt.get("properties", {}) or {}
-            is_new_ignition = bool(props.get("new_ignition", False))
-            # v0.5.7-fire: 'wildfire_proximity' was removed from ALERT_CATEGORIES
-            # (parametric: distance threshold isn't configurable on rules until
-            # v0.5.8). Emit 'wildfire_hotspot' to align with the central FIRMS
-            # path -- both native and central FIRMS now produce the same category.
-            category = "new_ignition" if is_new_ignition else "wildfire_hotspot"
-
-            severity = evt.get("severity", "routine")
-
-            title = evt.get("headline", "") or "Fire Hotspot"
-
-            # Build a richer summary including FRP, confidence, distance
-            summary_parts = [title]
-            if props.get("frp") is not None:
-                summary_parts.append(f"FRP {int(props['frp'])} MW")
-            if props.get("confidence"):
-                summary_parts.append(f"conf {props['confidence']}")
-            if props.get("distance_km") is not None and props.get("nearest_anchor"):
-                summary_parts.append(
-                    f"{int(props['distance_km'])} km from {props['nearest_anchor']}"
-                )
-            summary = " | ".join(summary_parts)[:300]
-
-            spatial_key = f"firms:{round(lat, 2):.2f}:{round(lon, 2):.2f}"
-
-            return make_event(
-                source="firms",
-                category=category,
-                severity=severity,
-                title=title,
-                summary=summary,
-                timestamp=evt.get("fetched_at"),
-                expires=evt.get("expires"),
-                region=props.get("nearest_anchor"),
-                lat=lat,
-                lon=lon,
-                group_key=spatial_key,
-                inhibit_keys=[spatial_key],
-            )
-        except Exception:
-            logger.exception(f"FIRMS to_event failed for evt: {evt.get('event_id')}")
-            return None
+        return None
 
     def get_events(self) -> list:
         """Get current hotspot events."""
