@@ -29,9 +29,35 @@ interface EnvConfig {
  usgs_quake: { enabled: boolean; tick_seconds: number; feed_url: string; global_mag_floor: number; regional_mag_floor: number; regional_radius_mi: number; escalate_mag_floor: number; broadcast_pager_alerts: string[]; region: string; feed_source?: FeedSource }
  traffic: { enabled: boolean; tick_seconds: number; api_key: string; corridors: { name: string; lat: number; lon: number }[]; feed_source?: FeedSource }
  roads511: { enabled: boolean; tick_seconds: number; api_key: string; base_url: string; endpoints: string[]; bbox: number[]; feed_source?: FeedSource }
- wzdx: { enabled: boolean; tick_seconds: number; api_key: string; base_url: string; endpoints: string[]; bbox: number[]; feed_source?: FeedSource }
+ wzdx: { enabled: boolean; tick_seconds: number; api_key: string; base_url: string; endpoints: string[]; bbox: number[]; states: string[]; registry_url: string; feed_source?: FeedSource }
  firms: { enabled: boolean; tick_seconds: number; map_key: string; source: string; bbox: number[]; day_range: number; confidence_min: string; proximity_km: number; feed_source?: FeedSource }
+ // Native satpass (SGP4) YAML layer — drives env/satpass.py + env/tle_fetch.py.
+ // Distinct from the Central adapter_config/satpass layer (see SatpassConfig
+ // interface + satpassConfig state below). `observers` seeds observer_locations.
+ satpass: {
+  enabled: boolean
+  observers: { slug: string; name: string; lat: number; lon: number; alt_m: number }[]
+  tle_groups: string[]
+  norad_ids: number[]
+  min_elevation_deg: number
+  window_hours: number
+  tle_refresh_seconds: number
+  feed_source?: FeedSource
+ }
  central?: { enabled: boolean; url: string; durable: string; region: string }
+}
+
+// Sane defaults for the native satpass block so a GET payload predating
+// phase-4c (no `environmental.satpass`) doesn't crash the editors.
+const SATPASS_NATIVE_DEFAULT: EnvConfig['satpass'] = {
+ enabled: false,
+ observers: [],
+ tle_groups: ['weather', 'stations'],
+ norad_ids: [],
+ min_elevation_deg: 10,
+ window_hours: 24,
+ tle_refresh_seconds: 21600,
+ feed_source: 'central',
 }
 
 // WFIGS adapter config shape
@@ -361,6 +387,11 @@ export default function Environment() {
    try {
     const res = await fetch('/api/config/environmental')
     const data = await res.json()
+    // Backfill native-adapter fields that older payloads may omit, so the
+    // GUI editors always have a concrete shape to bind to (and so the
+    // round-trip PUT restores them rather than dropping them).
+    data.satpass = { ...SATPASS_NATIVE_DEFAULT, ...(data.satpass ?? {}) }
+    data.wzdx = { states: ['ID'], registry_url: '', ...(data.wzdx ?? {}) }
     setEnv(data)
     setOriginal(JSON.stringify(data))
 
@@ -1232,6 +1263,11 @@ const save = async () => {
        ))}
       </div>
       <div className="text-xs text-[#666]">Bounding box [W,S,E,N] geographic filter</div>
+      <ListInput label="States" value={env.wzdx?.states ?? []} onChange={(v) => up({ wzdx: { ...env.wzdx!, states: v } })}
+       helper="2-letter state codes to include from the WZDx Feed Registry, e.g. ID, OR" />
+      <TextInput label="Registry URL" value={env.wzdx?.registry_url ?? ''} onChange={(v) => up({ wzdx: { ...env.wzdx!, registry_url: v } })}
+       placeholder="https://datahub.transportation.gov/resource/69qe-yiui.json?$limit=200"
+       helper="FHWA WZDx Feed Registry (Socrata) URL — lists every state DOT feed" />
      </>
     )}
     <div className="border-t border-border pt-4 mt-4">
@@ -1291,7 +1327,11 @@ const save = async () => {
     </div>
    </>)
    case 'satpass': {
-    const armedState = !satpassConfig.enabled
+    // Armed state keys off the NATIVE enable (environmental.satpass.enabled),
+    // which is what actually gates the native SGP4 broadcaster — consistent
+    // with the enable-toggle bug fix. dry_run is a Central adapter_config field
+    // (no native equivalent), so it still comes from satpassConfig.
+    const armedState = !env.satpass.enabled
      ? { label: 'OFF', color: 'text-[#777] bg-[#1a1a1a]', desc: '' }
      : satpassConfig.dry_run
       ? { label: 'DRY RUN', color: 'text-sky-400 bg-sky-400/10 border border-sky-400/30', desc: ' — logging only, nothing transmits' }
@@ -1343,6 +1383,56 @@ const save = async () => {
      <ListInput label="NORAD IDs" value={satpassConfig.norad_ids}
       onChange={(v) => setSatpassConfig({ ...satpassConfig, norad_ids: v })}
       helper="NORAD catalog IDs to broadcast (empty = broadcast nothing, opt-in only)" />
+
+     {/* ── Native satpass (SGP4) ─────────────────────────────────────────
+         Fields on the environmental.satpass YAML layer that drive the local
+         TLE fetcher (env/tle_fetch.py) + SGP4 predictor (env/satpass.py).
+         Only used when this adapter's source = native. `Observers` seeds the
+         observer_locations table (persistence/observer_locations.py). */}
+     <div className="border-t border-border pt-4 mt-2 space-y-6">
+      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666]">
+       Native satpass (SGP4) — no Central required
+      </div>
+
+      {/* Observers — list of {slug, name, lat, lon, alt_m}; seeds observer_locations */}
+      <div>
+       <div className="text-xs text-[#777] mb-2">Observers (ground stations the predictor computes passes for)</div>
+       <div className="space-y-2">
+        {(env.satpass.observers || []).map((o, i) => (
+         <div key={i} className="grid grid-cols-6 gap-2 items-end">
+          <TextInput label="Slug" value={o.slug} onChange={(v) => { const n = [...env.satpass.observers]; n[i] = { ...o, slug: v }; up({ satpass: { ...env.satpass, observers: n } }) }} placeholder="tvly" />
+          <TextInput label="Name" value={o.name} onChange={(v) => { const n = [...env.satpass.observers]; n[i] = { ...o, name: v }; up({ satpass: { ...env.satpass, observers: n } }) }} placeholder="Treasure Valley" />
+          <NumberInput label="Lat" value={o.lat} onChange={(v) => { const n = [...env.satpass.observers]; n[i] = { ...o, lat: v }; up({ satpass: { ...env.satpass, observers: n } }) }} step={0.0001} />
+          <NumberInput label="Lon" value={o.lon} onChange={(v) => { const n = [...env.satpass.observers]; n[i] = { ...o, lon: v }; up({ satpass: { ...env.satpass, observers: n } }) }} step={0.0001} />
+          <NumberInput label="Alt (m)" value={o.alt_m} onChange={(v) => { const n = [...env.satpass.observers]; n[i] = { ...o, alt_m: v }; up({ satpass: { ...env.satpass, observers: n } }) }} step={1} />
+          <button onClick={() => up({ satpass: { ...env.satpass, observers: env.satpass.observers.filter((_, j) => j !== i) } })} className="px-2 py-2 text-xs text-red-400 hover:text-red-300 border border-red-400/30">Remove</button>
+         </div>
+        ))}
+       </div>
+       <button onClick={() => up({ satpass: { ...env.satpass, observers: [...(env.satpass.observers || []), { slug: '', name: '', lat: 0, lon: 0, alt_m: 0 }] } })} className="text-xs text-accent hover:underline mt-2">+ Add Observer</button>
+      </div>
+
+      <ListInput label="TLE Groups" value={env.satpass.tle_groups}
+       onChange={(v) => up({ satpass: { ...env.satpass, tle_groups: v } })}
+       helper="Celestrak GP group selectors, e.g. weather, stations, amateur"
+       infoLink="https://celestrak.org/NORAD/elements/" />
+
+      <NumberListInput label="NORAD IDs (native)" value={env.satpass.norad_ids}
+       onChange={(v) => up({ satpass: { ...env.satpass, norad_ids: v } })}
+       helper="Specific NORAD catalog IDs to also fetch/predict, e.g. 25544, 33591" />
+
+      <div className="grid grid-cols-3 gap-4">
+       <NumberInput label="Min Elevation (deg)" value={env.satpass.min_elevation_deg}
+        onChange={(v) => up({ satpass: { ...env.satpass, min_elevation_deg: v } })}
+        min={0} max={90} helper="Native SGP4 pass filter (separate from Central min elevation above)" />
+       <NumberInput label="Window (hours)" value={env.satpass.window_hours}
+        onChange={(v) => up({ satpass: { ...env.satpass, window_hours: v } })}
+        min={1} max={168} helper="Hours ahead to predict passes" />
+       <NumberInput label="TLE Refresh (sec)" value={env.satpass.tle_refresh_seconds}
+        onChange={(v) => up({ satpass: { ...env.satpass, tle_refresh_seconds: v } })}
+        min={3600} helper="How often to re-fetch TLEs (default 21600 = 6h)" />
+      </div>
+     </div>
     </div>
    )}
   }
@@ -1566,8 +1656,16 @@ const save = async () => {
      <AdapterPanel
       title={META[activeAdapter].label}
       subtitle={META[activeAdapter].subtitle}
-      enabled={activeAdapter === 'satpass' ? satpassConfig.enabled : (a[activeAdapter]?.enabled ?? false)}
-      onEnabled={(v) => activeAdapter === 'satpass' ? setSatpassConfig({ ...satpassConfig, enabled: v }) : setAdapterField(activeAdapter, { enabled: v })}
+      /* BUG FIX: the native satpass adapter is gated on
+         environmental.satpass.enabled AND feed_source=="native" (see
+         meshai/env/store.py::_register_adapter). The enable toggle previously
+         wrote adapter_config.satpass.enabled (the Central layer), which never
+         reached the native gate. All adapters — satpass included — now drive
+         their YAML `enabled` via the generic setAdapterField path. The native
+         enable is authoritative for the native adapter; the Central
+         adapter_config/satpass panel below is unchanged. */
+      enabled={a[activeAdapter]?.enabled ?? false}
+      onEnabled={(v) => setAdapterField(activeAdapter, { enabled: v })}
       feedSource={a[activeAdapter]?.feed_source ?? 'native'}
       onFeedSource={(v) => setAdapterField(activeAdapter, { feed_source: v })}
       hasCentral={META[activeAdapter].hasCentral}
