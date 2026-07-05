@@ -46,11 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     # For process management
     procps \
-    && rm -rf /var/lib/apt/lists/* \
-    # Install ttyd for web-based config interface (arch-aware)
-    && TTYD_ARCH=$(dpkg --print-architecture | sed 's/amd64/x86_64/' | sed 's/arm64/aarch64/') \
-    && curl -sL "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.${TTYD_ARCH}" -o /usr/local/bin/ttyd \
-    && chmod +x /usr/local/bin/ttyd
+    && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
 RUN groupadd -g ${GID} meshai && \
@@ -88,12 +84,12 @@ USER meshai
 # Data volume mount point
 VOLUME ["/data"]
 
-# Expose ttyd web config port
-EXPOSE 7682 8080
+# Expose dashboard port
+EXPOSE 8080
 
 # Health check - verify bot process is alive via PID file
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD test -f /tmp/meshai.pid && kill -0 $(cat /tmp/meshai.pid) 2>/dev/null && [ "$(cat /tmp/meshai.link 2>/dev/null)" = up ] || exit 1
 
-# Entrypoint handles config and ttyd
+# Entrypoint writes default config on first run, then starts the bot
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

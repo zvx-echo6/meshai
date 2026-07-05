@@ -1137,6 +1137,20 @@ function WeatherSection({ data, onChange }: { data: WeatherConfig; onChange: (d:
         placeholder="Your city, state"
         helper="Location when none specified"
       />
+      <TextInput
+        label="Open-Meteo base URL (advanced)"
+        value={data.openmeteo.url}
+        onChange={(v) => onChange({ ...data, openmeteo: { ...data.openmeteo, url: v } })}
+        placeholder="https://api.open-meteo.com/v1"
+        helper="Override the Open-Meteo API endpoint (leave default unless self-hosting)"
+      />
+      <TextInput
+        label="wttr.in base URL (advanced)"
+        value={data.wttr.url}
+        onChange={(v) => onChange({ ...data, wttr: { ...data.wttr, url: v } })}
+        placeholder="https://wttr.in"
+        helper="Override the wttr.in endpoint (leave default unless self-hosting)"
+      />
     </div>
   )
 }

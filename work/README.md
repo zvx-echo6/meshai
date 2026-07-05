@@ -56,7 +56,7 @@ Everything is driven from the web UI, organized into **General**, **Meshtastic**
 git clone https://github.com/zvx-echo6/meshai.git
 cd meshai
 pip install -e .
-meshai --config     # interactive setup TUI
+cp config.example.yaml config.yaml   # then edit config.yaml (or use the dashboard)
 meshai
 ```
 

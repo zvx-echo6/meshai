@@ -1,6 +1,6 @@
 #!/bin/bash
 # MeshAI Docker Entrypoint
-# Runs ttyd for web config access and the bot
+# Writes a default config on first run, then runs the bot
 
 export MESHAI_CONFIG="/data/config.yaml"
 export TERM="${TERM:-xterm-256color}"
@@ -10,7 +10,7 @@ if [ ! -f "$MESHAI_CONFIG" ]; then
     mkdir -p /data
     cat > "$MESHAI_CONFIG" << 'EOF'
 # MeshAI Configuration
-# Configure via http://localhost:7682
+# Edit this file directly, or configure via the dashboard
 
 bot:
   name: ai
@@ -66,21 +66,9 @@ meshmonitor:
   enabled: false
   inject_into_prompt: true
 EOF
-    echo "Default config created. Configure via http://localhost:7682"
+    echo "Default config created at $MESHAI_CONFIG. Edit it or configure via the dashboard."
 fi
 
-
-# Start ttyd for web-based config access
-echo "Starting web config interface on port 7682..."
-ttyd -W -p 7682 \
-    -t enableClipboard=true \
-    -t titleFixed="MeshAI Config" \
-    -t 'theme={"background":"#0d1117","foreground":"#c9d1d9","cursor":"#58a6ff","selectionBackground":"#388bfd"}' \
-    -t fontSize=14 \
-    /bin/bash -c 'while true; do python3 -m meshai --config-file "$MESHAI_CONFIG" --config; sleep 1; done' &
-
-# Keep ttyd running even if bot fails
-trap "kill %1 2>/dev/null" EXIT
 
 # Kill bot gracefully with SIGKILL fallback
 kill_bot() {

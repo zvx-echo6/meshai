@@ -83,8 +83,8 @@ knowledge:
 
 # === MESH DATA SOURCES ===
 # Connect to Meshview and/or MeshMonitor instances for live mesh
-# network analysis. Supports multiple sources. Configure via TUI
-# with meshai --config (Mesh Sources menu).
+# network analysis. Supports multiple sources. Configure via the
+# dashboard (Mesh Sources) or by editing this file directly.
 #
 # mesh_sources:
 #   - name: "my-meshview"
