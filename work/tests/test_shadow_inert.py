@@ -90,10 +90,14 @@ class TestShadowInertWhenEnvUnset:
 # ---------------------------------------------------------------------------
 
 class TestShadowInertWhenNoDecider:
-    """MESHAI_SHADOW_CATEGORIES set but DECIDERS empty → still no-op."""
+    """MESHAI_SHADOW_CATEGORIES set but no decider registered → still no-op."""
+
+    # A category name with NO decider and NO formatter registered, so the
+    # "no decider" premise is genuinely true regardless of migration phase.
+    _CATEGORY = "__no_such_category__"
 
     def setup_method(self):
-        os.environ["MESHAI_SHADOW_CATEGORIES"] = "earthquake_event"
+        os.environ["MESHAI_SHADOW_CATEGORIES"] = self._CATEGORY
         _reset_shadow_cache()
 
     def teardown_method(self):
@@ -101,15 +105,15 @@ class TestShadowInertWhenNoDecider:
         _reset_shadow_cache()
 
     def test_enabled_for_returns_true(self):
-        assert shadow_mod.enabled_for("earthquake_event") is True
+        assert shadow_mod.enabled_for(self._CATEGORY) is True
 
     def test_shadow_gate_no_filesystem_when_no_decider(self, tmp_path, monkeypatch):
         """get_decider returns None → shadow_gate exits before any file write."""
         monkeypatch.setattr(shadow_mod, "_SHADOW_DIR", str(tmp_path / "shadow"))
-        # DECIDERS is empty (Phase 0 scaffold), so get_decider("earthquake_event")
-        # returns None and shadow_gate returns early without writing anything.
+        # No decider is registered for this category, so get_decider(...) returns
+        # None and shadow_gate returns early without writing anything.
         shadow_mod.shadow_gate(
-            "earthquake_event",
+            self._CATEGORY,
             {"_dedup_suffix": "M4.2"},
             source="usgs_quake",
             now=1_700_000_000.0,
@@ -121,7 +125,7 @@ class TestShadowInertWhenNoDecider:
         """shadow_gate must not propagate any exception."""
         try:
             shadow_mod.shadow_gate(
-                "earthquake_event",
+                self._CATEGORY,
                 None,  # intentionally bad input — must not raise
                 source="usgs_quake",
                 now=1_700_000_000.0,
@@ -203,3 +207,72 @@ class TestShadowPartialEnable:
             "fire", {}, source="wfigs", now=0.0, old_broadcast=True
         )
         assert not (tmp_path / "shadow").exists()
+
+
+# ---------------------------------------------------------------------------
+# Case 5: shadow_gate forwards `source` to the decider (regression guard)
+# ---------------------------------------------------------------------------
+
+class TestShadowGateForwardsSource:
+    """shadow_gate must call the decider with the keyword-only `source` arg.
+
+    The decider contract is `decide(data, *, source, now) -> GateResult`.
+    A prior bug called `decider(data, now=now)`, omitting `source`, so every
+    decider raised TypeError (swallowed by shadow_gate) and zero mismatch
+    records were ever written.  This test registers a fake decider that
+    asserts `source` was forwarded and returns broadcast=True; with
+    old_broadcast=False that is a mismatch, so exactly one record must be
+    captured.
+    """
+
+    _CATEGORY = "__shadow_test_cat__"
+
+    def setup_method(self):
+        # Enable shadow for the test-only category; ensure it is NOT cut over
+        # (so is_cutover is False and shadow_gate does not early-return).
+        os.environ["MESHAI_SHADOW_CATEGORIES"] = self._CATEGORY
+        os.environ.pop("MESHAI_CUTOVER_CATEGORIES", None)
+        _reset_shadow_cache()
+        from meshai.notifications.cutover import _clear_cache as _clear_cutover_cache
+        _clear_cutover_cache()
+
+        # Register a fake decider that asserts the forwarded source.
+        from meshai.notifications.gating import DECIDERS, register
+        from meshai.notifications.gating.base import GateResult
+
+        def _fake_decider(data, *, source, now):
+            assert source == "test-src", f"source not forwarded: {source!r}"
+            return GateResult(broadcast=True)
+
+        self._DECIDERS = DECIDERS
+        register(self._CATEGORY, _fake_decider)
+
+    def teardown_method(self):
+        # Pop the fake decider so it never leaks into other tests.
+        self._DECIDERS.pop(self._CATEGORY, None)
+        os.environ.pop("MESHAI_SHADOW_CATEGORIES", None)
+        os.environ.pop("MESHAI_CUTOVER_CATEGORIES", None)
+        _reset_shadow_cache()
+        from meshai.notifications.cutover import _clear_cache as _clear_cutover_cache
+        _clear_cutover_cache()
+
+    def test_source_forwarded_and_mismatch_recorded(self, monkeypatch):
+        # Capture records locally instead of touching the real shadow dir.
+        captured = []
+        monkeypatch.setattr(
+            shadow_mod, "_append_jsonl",
+            lambda category, record: captured.append(record),
+        )
+
+        result = shadow_mod.shadow_gate(
+            self._CATEGORY, {}, source="test-src", now=0.0, old_broadcast=False
+        )
+
+        # Contract: returns None, does not raise.
+        assert result is None
+        # Exactly one mismatch record captured (new=True vs old=False).
+        assert len(captured) == 1
+        record = captured[0]
+        assert record["new_broadcast"] is True
+        assert record["old_broadcast"] is False
+        assert record["source"] == "test-src"
