@@ -142,11 +142,13 @@ class TestShadowInertWhenNoDecider:
 class TestShadowRenderInertWhenNoFormatter:
     """MESHAI_SHADOW_CATEGORIES set but no formatter registered → still no-op.
 
-    Note: earthquake_event has a formatter in Phase 1+; this class uses
-    wildfire_incident which remains un-migrated and has no formatter entry.
+    Note: earthquake_event has a formatter in Phase 1+; Phase-3b migrated the
+    WFIGS categories (wildfire_declared / wildfire_incident / wildfire_closed),
+    so this class uses wildfire_hotspot — a FIRMS category that remains
+    un-migrated (deferred) and has no formatter entry.
     """
 
-    _CATEGORY = "wildfire_incident"
+    _CATEGORY = "wildfire_hotspot"
 
     def setup_method(self):
         os.environ["MESHAI_SHADOW_CATEGORIES"] = self._CATEGORY

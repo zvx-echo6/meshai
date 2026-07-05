@@ -94,3 +94,17 @@ register("traffic_congestion", _incident_fmt_mod.format)
 # stream_high_water) are deferred — see gating/__init__.py note.
 from meshai.notifications.formatters import hydro as _hydro_fmt_mod  # noqa: E402,F401
 register("stream_flow", _hydro_fmt_mod.format)
+
+# Phase-3b: WFIGS wildfire. The Central wfigs_handler emits THREE explicit
+# categories, all under toggle "fire": `wildfire_declared` (first-sight New,
+# cases i/ii), `wildfire_incident` (growth/containment Update, case iii — the
+# envelope-derived category with no override), and `wildfire_closed` (tombstone
+# all-clear). One formatter handles all three; event.category selects the wire
+# shape (wildfire_closed -> all-clear, else incident/growth). Registered under
+# the explicit strings — NOT the "fire" toggle — so FIRMS categories
+# (wildfire_hotspot / new_ignition / unattributed_hotspot_cluster /
+# wildfire_growth) are NOT captured by the family fallback. FIRMS is deferred.
+from meshai.notifications.formatters import fire as _fire_fmt_mod  # noqa: E402,F401
+register("wildfire_declared", _fire_fmt_mod.format)
+register("wildfire_incident", _fire_fmt_mod.format)
+register("wildfire_closed",   _fire_fmt_mod.format)
