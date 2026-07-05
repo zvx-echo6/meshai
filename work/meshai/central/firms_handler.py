@@ -714,13 +714,25 @@ def _handle_pass_boundary(conn, *, irwin_id, pass_id, lat, lon,
     if spotting_wire is not None:
         return spotting_wire
 
-    if last_pass_id == pass_id or last_pass_id is None or prev is None:
-        # No boundary (same pass), or this is the fire's first pass --
-        # nothing to compare drift against.
-        return None
+    # Phase-3c: the growth broadcast DECISION (pass boundary + drift threshold)
+    # is delegated to gating.firms.decide; the wire is still rendered inline via
+    # the WFIGS _render for byte-identity. The boundary predicate reproduces the
+    # legacy guard (`last_pass_id == pass_id or last_pass_id is None or prev is
+    # None` -> suppress) exactly. Growth has no latch, so there is nothing to
+    # defer -- only the data stamping differs between the cutover and legacy
+    # paths.
+    from meshai.notifications.cutover import is_cutover
+    from meshai.notifications.gating.firms import decide as _firms_decide
 
-    threshold = float(adapter_config.fires.growth_drift_threshold_mi)
-    if drift_mi is None or drift_mi < threshold:
+    boundary_growth = ((last_pass_id != pass_id) and (last_pass_id is not None)
+                       and (prev is not None))
+    gate = _firms_decide(
+        {"_kind": "firms_growth", "irwin_id": irwin_id,
+         "boundary": boundary_growth, "drift_mi": drift_mi,
+         "drift_direction": drift_direction,
+         "drift_mi_per_hour": drift_mi_per_hour},
+        source="firms", now=float(now))
+    if not gate.broadcast:
         return None
 
     # Drift exceeded the threshold -- emit wildfire_growth via WFIGS renderer.
@@ -737,9 +749,25 @@ def _handle_pass_boundary(conn, *, irwin_id, pass_id, lat, lon,
     normalized = dict(fire)
     normalized["irwin_id"] = irwin_id
     if isinstance(data, dict):
-        data["category"] = "wildfire_growth"
-        data["_severity_override"] = "immediate"
-        data["_cooldown_suffix"] = irwin_id
+        if is_cutover("wildfire_growth"):
+            # NEW PATH: fire formatter re-renders from these hints. Feed ONLY the
+            # fields _render actually reads on the growth path (incident_name,
+            # lat/lon for the anchor, movement, is_update) so the wire matches.
+            data.update(gate.data_patch)
+            data["incident_name"] = fire["incident_name"]
+            data["lat"] = fire["lat"]
+            data["lon"] = fire["lon"]
+            data["_broadcast_audit"] = {"table": "fires", "pk": irwin_id}
+            _raw_commit = gate.commit
+            if _raw_commit is not None:
+                def _on_commit(committed_at: float) -> None:
+                    _raw_commit(committed_at)
+                data["_on_broadcast_committed"] = _on_commit
+        else:
+            # LEGACY verbatim (byte-for-byte identical live output).
+            data["category"] = "wildfire_growth"
+            data["_severity_override"] = "immediate"
+            data["_cooldown_suffix"] = irwin_id
     return _render(normalized, prefix="Update", movement=movement)
 
 
@@ -769,35 +797,51 @@ def _maybe_emit_halt(conn, *, data, now):
     """Find one fire matching the halt criteria, latch + broadcast.
 
     Returns the wire string when a halt event fires; otherwise None.
-    Latching is via fires.halt_broadcast_at -- a fire that came back
-    to life (last_pass_at updated to a fresher value) becomes re-
-    eligible because we filter on `halt_broadcast_at IS NULL OR
-    halt_broadcast_at < last_pass_at`.
+
+    Phase-3c: the DECISION (the halt-eligibility SELECT) is delegated to
+    ``gating.firms.decide``; the wire is still rendered inline here for
+    byte-identity.  On the not-cutover live path the eager
+    ``fires.halt_broadcast_at`` latch is kept VERBATIM (stamped with the handler
+    ``now``) so the live broadcast stays byte-for-byte identical; on the cutover
+    path the latch is deferred into ``gate.commit`` (tier-b change).  Halt
+    re-eligibility is unchanged: a fire whose ``last_pass_at`` advances past
+    ``halt_broadcast_at`` becomes eligible again.
     """
-    minimum_s = int(adapter_config.fires.halt_minimum_seconds)
-    cutoff = float(now) - float(minimum_s)
-    row = conn.execute(
-        "SELECT irwin_id, incident_name, last_pass_at FROM fires "
-        "WHERE tombstoned_at IS NULL "
-        "AND last_pass_at IS NOT NULL AND last_pass_at <= ? "
-        "AND (halt_broadcast_at IS NULL "
-        "     OR halt_broadcast_at < last_pass_at) "
-        "ORDER BY last_pass_at ASC LIMIT 1",
-        (cutoff,),
-    ).fetchone()
-    if row is None:
+    from meshai.notifications.cutover import is_cutover
+    from meshai.notifications.gating.firms import decide as _firms_decide
+
+    gate = _firms_decide({"_kind": "firms_halt"}, source="firms", now=float(now))
+    if not gate.broadcast:
         return None
 
-    conn.execute(
-        "UPDATE fires SET halt_broadcast_at=? WHERE irwin_id=?",
-        (float(now), row["irwin_id"]),
-    )
+    p = gate.data_patch
+    irwin_id = p["irwin_id"]
+    name = p["incident_name"]
+    hours = p["hours"]
+    wire = f"🔥 {name} no growth in {hours}h"
+
     if isinstance(data, dict):
-        data["category"] = "wildfire_halted"
-        data["severity"] = "routine"
-    hours = max(0, int((float(now) - float(row["last_pass_at"])) / 3600.0))
-    name = row["incident_name"] or "(unnamed fire)"
-    return f"🔥 {name} no growth in {hours}h"
+        if is_cutover("wildfire_halted"):
+            # NEW PATH: formatter re-renders from data_patch; latch deferred.
+            data.update(gate.data_patch)
+            data["_broadcast_audit"] = {"table": "fires", "pk": irwin_id}
+            _raw_commit = gate.commit
+
+            def _on_commit(committed_at: float) -> None:
+                if _raw_commit is not None:
+                    _raw_commit(committed_at)
+
+            data["_on_broadcast_committed"] = _on_commit
+        else:
+            # LEGACY verbatim (byte-for-byte identical live output): eager latch
+            # with the handler `now`, plain category/severity stamps.
+            conn.execute(
+                "UPDATE fires SET halt_broadcast_at=? WHERE irwin_id=?",
+                (float(now), irwin_id),
+            )
+            data["category"] = "wildfire_halted"
+            data["severity"] = "routine"
+    return wire
 
 
 def _bearing(lat1: float, lon1: float,
@@ -878,7 +922,8 @@ def _check_spotting(conn, *, irwin_id, pixel_lat, pixel_lon,
                       current_pass_id, incident_name, data, now):
     """Return spotting wire if criteria met, else None."""
     threshold_mi = float(adapter_config.fires.spotting_distance_threshold_mi)
-    cooldown_s = int(adapter_config.fires.spotting_cooldown_seconds)
+    # Phase-3c: the cooldown gate (and its latch) moved into gating.firms.decide;
+    # the cooldown seconds are read there. The geometry below stays inline.
 
     # Most recent CLOSED pass with a perimeter (i.e. not the current pass).
     prev = conn.execute(
@@ -926,16 +971,6 @@ def _check_spotting(conn, *, irwin_id, pixel_lat, pixel_lon,
     if dist_mi < threshold_mi:
         return None
 
-    # Cooldown gate.
-    fires_row = conn.execute(
-        "SELECT last_spotting_broadcast_at FROM fires WHERE irwin_id=?",
-        (irwin_id,),
-    ).fetchone()
-    if fires_row is not None:
-        last_ts = fires_row["last_spotting_broadcast_at"]
-        if last_ts is not None and (float(now) - float(last_ts)) < cooldown_s:
-            return None
-
     # Direction is FROM the perimeter centroid (the previous pass's
     # pass_centroid_lat/lon, already on the row) TO this pixel.
     direction = _direction_8(_bearing(
@@ -943,19 +978,49 @@ def _check_spotting(conn, *, irwin_id, pixel_lat, pixel_lon,
         pixel_lat, pixel_lon,
     ))
 
-    # Stamp the latch + tag data.
-    conn.execute(
-        "UPDATE fires SET last_spotting_broadcast_at=? WHERE irwin_id=?",
-        (float(now), irwin_id),
-    )
-    if isinstance(data, dict):
-        data["category"] = "wildfire_spotting"
-        data["severity"] = "immediate"
+    # Phase-3c: the cooldown DECISION (and its latch) is delegated to
+    # gating.firms.decide. The wire is still rendered inline for byte-identity.
+    # On the not-cutover live path the eager fires.last_spotting_broadcast_at
+    # latch is kept VERBATIM (stamped with the handler `now`); on the cutover
+    # path the latch is deferred into gate.commit (tier-b change).
+    from meshai.notifications.cutover import is_cutover
+    from meshai.notifications.gating.firms import decide as _firms_decide
 
-    return (
+    gate = _firms_decide(
+        {"_kind": "firms_spotting", "irwin_id": irwin_id, "dist_mi": dist_mi,
+         "direction": direction, "incident_name": incident_name},
+        source="firms", now=float(now))
+    if not gate.broadcast:
+        return None
+
+    wire = (
         f"🔥 Possible spotting {dist_mi:.1f} mi {direction} of "
         f"{incident_name} perimeter"
     )
+
+    if isinstance(data, dict):
+        if is_cutover("wildfire_spotting"):
+            # NEW PATH: formatter re-renders from data_patch; latch deferred.
+            data.update(gate.data_patch)
+            data["_broadcast_audit"] = {"table": "fires", "pk": irwin_id}
+            _raw_commit = gate.commit
+
+            def _on_commit(committed_at: float) -> None:
+                if _raw_commit is not None:
+                    _raw_commit(committed_at)
+
+            data["_on_broadcast_committed"] = _on_commit
+        else:
+            # LEGACY verbatim (byte-for-byte identical live output): eager latch
+            # with the handler `now`, plain category/severity stamps.
+            conn.execute(
+                "UPDATE fires SET last_spotting_broadcast_at=? WHERE irwin_id=?",
+                (float(now), irwin_id),
+            )
+            data["category"] = "wildfire_spotting"
+            data["severity"] = "immediate"
+
+    return wire
 
 
 def _convex_hull(points):
