@@ -232,6 +232,27 @@ def test_renderer_byte_budget_drops_optional_segments():
     assert "lightning" not in s
 
 
+def test_renderer_omits_none_context_fields():
+    """Regression — native road adapters set optional context keys present but
+    None (``cause``/``expires_at``/``containment_pct``). The composer must
+    guard on value, not key presence, so the literal string 'None' never leaks
+    onto the wire."""
+    e = make_event(
+        source="wzdx", category="wildfire_incident", severity="immediate",
+        title="Test Fire", region="Boise", timestamp=time.time(),
+        data={"cause": None, "expires_at": None, "containment_pct": None},
+    )
+    s = compose_mesh_message(e)
+    assert "None" not in s
+    # A real value on the same field still renders (guard doesn't over-suppress).
+    e2 = make_event(
+        source="wzdx", category="wildfire_incident", severity="immediate",
+        title="Test Fire", region="Boise", timestamp=time.time(),
+        data={"cause": "lightning", "expires_at": None, "containment_pct": None},
+    )
+    assert "lightning" in compose_mesh_message(e2)
+
+
 def test_renderer_never_mid_character_truncation():
     """The composer must never emit a UTF-8 byte sequence that splits a
     codepoint. Even with required-only over budget, we drop wholesale or

@@ -285,14 +285,14 @@ def _context_segment(event: Event) -> Optional[str]:
     """Optional context (dropped FIRST when over budget)."""
     data = event.data or {}
     bits: list[str] = []
-    if "containment_pct" in data:
+    if data.get("containment_pct") is not None:
         try:
             bits.append(f"{int(float(data['containment_pct']))}% contained")
         except Exception:
             pass
-    if "cause" in data:
+    if data.get("cause"):
         bits.append(str(data["cause"]))
-    if "expires_at" in data:
+    if data.get("expires_at"):
         bits.append(f"exp {data['expires_at']}")
     return ", ".join(bits) if bits else None
 

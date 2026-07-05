@@ -122,6 +122,33 @@ def test_select_feeds_handles_garbage(adapter):
     assert adapter._select_feeds([None, 3, {"state": "ID"}]) == []  # no url
 
 
+def test_select_feeds_unwraps_socrata_url_object(adapter):
+    """Live FHWA registry serializes Idaho's ``url`` as a Socrata "URL" column
+    object (``{"url": "…"}``), not a bare string. Selection must unwrap it and
+    never raise ``AttributeError: 'dict' object has no attribute 'strip'``."""
+    rows = [
+        {"state": "Idaho", "format": "geojson",
+         "url": {"url": "https://511.idaho.gov/api/wzdx"}},
+    ]
+    feeds = adapter._select_feeds(rows)
+    assert feeds == ["https://511.idaho.gov/api/wzdx"]
+
+
+def test_tick_survives_socrata_url_object(adapter, monkeypatch):
+    """End-to-end discovery path tolerates the nested-object ``url`` shape."""
+    registry = [{"state": "Idaho", "format": "geojson",
+                 "url": {"url": "https://511.idaho.gov/api/wzdx"}}]
+    fc = make_feature_collection(make_wzdx_feature(feat_id="A"))
+
+    def fake_get(url, timeout=30):
+        return registry if "datahub" in url else fc
+
+    monkeypatch.setattr(adapter, "_http_get_json", fake_get)
+    # Must not raise; the unwrapped feed URL is discovered and fetched.
+    assert adapter.tick() is True
+    assert {e["external_id"] for e in adapter.get_events()} == {"idot-1:A"}
+
+
 # ============================================================
 # CATEGORY + CANONICAL DATA
 # ============================================================
