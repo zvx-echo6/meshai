@@ -190,16 +190,27 @@ def format_pass(*, sat_name: str, max_el: float,
                 aos_compass: str, los_compass: str,
                 broadcast: bool = True,
                 entry_observer: Optional[str] = None,
-                exit_observer: Optional[str] = None) -> str:
+                exit_observer: Optional[str] = None,
+                peak_compass: Optional[str] = None) -> str:
     """Unified pass formatter with mode switch.
 
     broadcast=True:  Two-line format with buckets, 12h times, LoRa budget.
-        🛰️ {name} {bucket}, {aos_compass}→{los_compass}
+        🛰️ {name} {bucket}, {aos_compass}→[peak_compass→]{los_compass}
         {duration} min window, {rise}–{set} {AM/PM} {TZ} [tomorrow] [(region)]
 
     broadcast=False: Compact DM format with exact degrees.
-        {name} {HH:MM}–{HH:MM} {TZ} max {el}° {aos_compass}→{los_compass}
+        {name} {HH:MM}–{HH:MM} {TZ} max {el}° {aos_compass}→[peak→]{los_compass}
+
+    peak_compass: compass direction at peak elevation. When provided, the
+        compass segment renders as aos→peak→los; when None it stays aos→los
+        (preserving legacy callers that don't thread the peak field).
     """
+    # Compass sweep segment: include the peak point only when supplied.
+    if peak_compass:
+        compass_seg = f"{aos_compass}→{peak_compass}→{los_compass}"
+    else:
+        compass_seg = f"{aos_compass}→{los_compass}"
+
     if broadcast:
         bucket = _elevation_bucket(max_el)
         # Duration in whole minutes
@@ -213,7 +224,7 @@ def format_pass(*, sat_name: str, max_el: float,
         tz = _tz_abbr(aos_epoch)
         date_lbl = _date_label(aos_epoch)
 
-        line1 = f"\U0001F6F0\uFE0F {sat_name} {bucket}, {aos_compass}\u2192{los_compass}"
+        line1 = f"\U0001F6F0\uFE0F {sat_name} {bucket}, {compass_seg}"
 
         # Build time portion
         time_part = f"{dur_min} min window, {rise_str}\u2013{set_str} {ampm} {tz}{date_lbl}"
@@ -235,7 +246,7 @@ def format_pass(*, sat_name: str, max_el: float,
         tz = _tz_abbr(aos_epoch)
         return (f"{sat_name} {aos_str}\u2013{los_str} {tz} "
                 f"max {int(max_el)}\u00B0 "
-                f"{aos_compass}\u2192{los_compass}")
+                f"{compass_seg}")
 
 
 def _map_severity(max_el: float) -> str:
@@ -397,10 +408,10 @@ def handle_satpass(envelope: dict, subject: str,
     conn.execute(
         "INSERT OR REPLACE INTO satpass_pending("
         "consolidated_id, observer, sat_name, norad_id, max_elevation, "
-        "aos_at, los_at, aos_compass, los_compass, received_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "aos_at, los_at, aos_compass, los_compass, peak_compass, received_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (consolidated_id, observer, sat_name, norad_id, max_el,
-         aos_epoch, los_epoch, aos_compass, los_compass, now))
+         aos_epoch, los_epoch, aos_compass, los_compass, direction, now))
 
     # Signal consumer to schedule consolidation timer
     _pending_consolidation_ids.add(consolidated_id)
@@ -443,6 +454,8 @@ def consolidate_satpass_pending(consolidated_id: str) -> tuple[str, dict] | None
     los_epoch = exit_["los_at"]
     aos_compass = entry["aos_compass"]
     los_compass = exit_["los_compass"]
+    # Peak belongs to whoever saw the highest elevation.
+    peak_compass = best["peak_compass"]
     entry_obs = entry["observer"]
     exit_obs = exit_["observer"]
 
@@ -467,6 +480,7 @@ def consolidate_satpass_pending(consolidated_id: str) -> tuple[str, dict] | None
     wire = format_pass(sat_name=sat_name, max_el=max_el,
                       aos_epoch=aos_epoch, los_epoch=los_epoch,
                       aos_compass=aos_compass, los_compass=los_compass,
+                      peak_compass=peak_compass,
                       entry_observer=entry_obs, exit_observer=exit_obs)
 
     # Dry-run gate
@@ -586,6 +600,7 @@ CREATE TABLE IF NOT EXISTS satpass_pending (
     los_at          INTEGER,
     aos_compass     TEXT,
     los_compass     TEXT,
+    peak_compass    TEXT,
     received_at     INTEGER,
     PRIMARY KEY (consolidated_id, observer)
 );

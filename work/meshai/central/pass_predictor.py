@@ -46,6 +46,7 @@ class PassInfo:
     max_elevation: float     # Degrees
     azimuth_at_aos: float    # Degrees, clockwise from north
     azimuth_at_los: float    # Degrees, clockwise from north
+    azimuth_at_peak: float   # Degrees, clockwise from north (at max elevation)
 
 
 def compute_passes(line1: str, line2: str,
@@ -144,6 +145,7 @@ def _build_pass(samples: list[tuple[datetime, float, float]]) -> PassInfo:
         max_elevation=samples[peak_idx][1],
         azimuth_at_aos=samples[0][2] % 360,
         azimuth_at_los=samples[-1][2] % 360,
+        azimuth_at_peak=samples[peak_idx][2] % 360,
     )
 
 

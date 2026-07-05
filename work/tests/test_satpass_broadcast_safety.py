@@ -89,6 +89,30 @@ def _clear_handler_flags():
             delattr(handle_satpass, attr)
 
 
+def _ingest_and_consolidate(env, subject, *, now, data=None):
+    """Drive the two-call async satpass contract.
+
+    handle_satpass() ingests the pass into satpass_pending and ALWAYS
+    returns None (the immediate-broadcast suppression); the consumer then
+    fires consolidate_satpass_pending() on its 5s timer, which returns the
+    (wire_string, data_dict) to actually broadcast, or None if suppressed.
+    This helper runs both halves and returns the consolidation result so a
+    test can assert on the real broadcast decision + wire.
+    """
+    from meshai.central.satpass_handler import (
+        handle_satpass, consolidate_satpass_pending,
+        drain_pending_consolidation_ids)
+    drain_pending_consolidation_ids()  # clear any cross-test leakage
+    ingest = handle_satpass(
+        env, subject, data=data if data is not None else {}, now=now)
+    assert ingest is None, "handle_satpass must suppress the immediate broadcast"
+    for cid in drain_pending_consolidation_ids():
+        res = consolidate_satpass_pending(cid)
+        if res is not None:
+            return res
+    return None
+
+
 # ══════════════════════════════════════════════════════════════════════
 # 1. OPT-IN BIRD FILTER
 # ══════════════════════════════════════════════════════════════════════
@@ -113,12 +137,14 @@ class TestOptInBirdFilter:
         _enable_satpass_db(norad_ids=[], dry_run=False)
         _clear_handler_flags()
 
+        # now near the 2026 envelope window so the AOS-horizon guard does
+        # not short-circuit before the opt-in norad_ids check that logs.
         with caplog.at_level(logging.INFO, logger="meshai.central.satpass_handler"):
             handle_satpass(_envelope(norad_id=25544, max_el=80.0),
-                           "central.sat.pass.iss", data={}, now=1718163120)
+                           "central.sat.pass.iss", data={}, now=1781235000)
             handle_satpass(_envelope(norad_id=25544, max_el=80.0,
                                      aos="2026-06-12T04:32:00Z"),
-                           "central.sat.pass.iss", data={}, now=1718163180)
+                           "central.sat.pass.iss", data={}, now=1781235000)
 
         matching = [r for r in caplog.records
                     if "no norad_ids configured" in r.message]
@@ -132,15 +158,15 @@ class TestOptInBirdFilter:
 
         # ISS pass should air
         iss_env = _envelope(norad_id=25544, max_el=65.0)
-        iss_result = handle_satpass(iss_env, "central.sat.pass.iss",
-                                    data={}, now=1718163120)
+        iss_result = _ingest_and_consolidate(iss_env, "central.sat.pass.iss",
+                                             now=1781235000)
         assert iss_result is not None, "ISS pass should broadcast"
 
-        # NOAA-18 pass should be rejected
+        # NOAA-18 pass should be rejected (opt-in norad_ids excludes it)
         noaa_env = _envelope(norad_id=28654, sat_name="NOAA 18", max_el=65.0,
                              aos="2026-06-12T05:00:00Z")
-        noaa_result = handle_satpass(noaa_env, "central.sat.pass.noaa",
-                                     data={}, now=1718163120)
+        noaa_result = _ingest_and_consolidate(noaa_env, "central.sat.pass.noaa",
+                                              now=1781235000)
         assert noaa_result is None, "NOAA-18 pass should be rejected"
 
     def test_dm_command_not_gated_by_norad_ids(self):
@@ -201,11 +227,15 @@ class TestRateCap:
         _enable_satpass_db(norad_ids=[25544], dry_run=False, max_per_hour=0)
         _clear_handler_flags()
 
-        now = 1718200000
+        # now near the 2026 envelope window; max_per_hour=0 => the
+        # consolidation step always trips the rate cap and logs.
+        now = 1781258400  # 2026-06-12T10:00:00Z (just before this pass)
         with caplog.at_level(logging.INFO, logger="meshai.central.satpass_handler"):
             env = _envelope(norad_id=25544, max_el=70.0,
-                            aos="2026-06-12T10:05:00Z")
-            handle_satpass(env, "central.sat.pass.iss", data={}, now=now)
+                            aos="2026-06-12T10:05:00Z",
+                            los="2026-06-12T10:11:00Z")
+            result = _ingest_and_consolidate(env, "central.sat.pass.iss", now=now)
+        assert result is None, "rate cap should suppress the broadcast"
 
         matching = [r for r in caplog.records if "rate cap reached" in r.message]
         assert len(matching) >= 1, "Rate cap suppression should be logged"
@@ -250,11 +280,14 @@ class TestDryRun:
 
         with caplog.at_level(logging.INFO, logger="meshai.central.satpass_handler"):
             env = _envelope(norad_id=25544, sat_name="ISS", max_el=70.0)
-            handle_satpass(env, "central.sat.pass.iss", data={},
-                           now=1718163120)
+            result = _ingest_and_consolidate(env, "central.sat.pass.iss",
+                                             now=1781235000)
+        assert result is None, "dry_run should suppress dispatch"
 
+        # dry-run logging now happens in the consolidation step; the message
+        # is "DRY-RUN would air (consolidated, N observers): <wire>".
         matching = [r for r in caplog.records
-                    if r.message.startswith("DRY-RUN would air:")]
+                    if r.message.startswith("DRY-RUN would air")]
         assert len(matching) == 1, "Should log DRY-RUN wire text once"
         assert "ISS" in matching[0].message
 
@@ -264,11 +297,12 @@ class TestDryRun:
         _enable_satpass_db(norad_ids=[25544], dry_run=False)
         _clear_handler_flags()
 
-        data = {}
         env = _envelope(norad_id=25544, max_el=70.0)
-        result = handle_satpass(env, "central.sat.pass.iss", data=data,
-                                now=1718163120)
+        result = _ingest_and_consolidate(env, "central.sat.pass.iss",
+                                         now=1781235000)
         assert result is not None, "dry_run=False should dispatch"
+        # commit callback now rides on the consolidation result's data dict.
+        wire, data = result
         assert "_on_broadcast_committed" in data
 
     def test_dry_run_default_is_true(self):
@@ -322,8 +356,13 @@ class TestBroadcastWireFormat:
         lines = wire.split("\n")
         assert len(lines) == 2
 
+        # No peak_compass passed here \u2192 the sweep stays aos\u2192los (SW\u2192NE).
         assert lines[0] == "\U0001F6F0\uFE0F ISS high pass, SW\u2192NE"
-        assert lines[1] == "6 minute window, 8:38\u20138:44 PM MDT"
+        # line2 renders "min window" + a date qualifier for a pass not
+        # occurring today (the fixed 2026-06-12 date is always in the past
+        # relative to run time).
+        assert lines[1].startswith("6 min window, 8:38\u20138:44 PM MDT")
+        assert lines[1] == "6 min window, 8:38\u20138:44 PM MDT Fri Jun 12"
 
     def test_bucket_overhead_at_60(self):
         """max_el=60 should be 'overhead'."""
@@ -464,7 +503,7 @@ class TestNoradIdTypeCoercion:
         _enable_satpass_db(norad_ids=["25544"], dry_run=False)
 
         env = _envelope(norad_id=25544, max_el=80.0)
-        result = handle_satpass(env, "test.subject", data={}, now=1781235000)
+        result = _ingest_and_consolidate(env, "test.subject", now=1781235000)
         assert result is not None, "string norad_id should match int wire"
 
     def test_mixed_int_and_string_norad_ids(self):
@@ -475,13 +514,13 @@ class TestNoradIdTypeCoercion:
 
         # int in list, int on wire
         env_iss = _envelope(norad_id=25544, max_el=65.0)
-        result_iss = handle_satpass(env_iss, "test.subject", data={}, now=1781235000)
+        result_iss = _ingest_and_consolidate(env_iss, "test.subject", now=1781235000)
         assert result_iss is not None, "int norad_id in mixed list should match"
 
         # string in list, int on wire
         env_noaa = _envelope(norad_id=22825, sat_name="NOAA 15", max_el=65.0,
                              aos="2026-06-12T05:32:00Z", los="2026-06-12T05:38:00Z")
-        result_noaa = handle_satpass(env_noaa, "test.subject", data={}, now=1781235000)
+        result_noaa = _ingest_and_consolidate(env_noaa, "test.subject", now=1781235000)
         assert result_noaa is not None, "string norad_id in mixed list should match int wire"
 
     def test_garbage_entries_skipped_without_crash(self):
@@ -493,7 +532,7 @@ class TestNoradIdTypeCoercion:
 
         env = _envelope(norad_id=25544, max_el=80.0)
         # Must not raise, and the valid entry should still match
-        result = handle_satpass(env, "test.subject", data={}, now=1781235000)
+        result = _ingest_and_consolidate(env, "test.subject", now=1781235000)
         assert result is not None, "valid entry should match despite garbage siblings"
 
     def test_all_garbage_norad_ids_matches_nothing(self):
@@ -513,7 +552,7 @@ class TestNoradIdTypeCoercion:
         _enable_satpass_db(norad_ids=[25544], dry_run=False)
 
         env = _envelope(norad_id=25544, max_el=80.0)
-        result = handle_satpass(env, "test.subject", data={}, now=1781235000)
+        result = _ingest_and_consolidate(env, "test.subject", now=1781235000)
         assert result is not None, "pure int norad_id should still match"
 
     def test_string_norad_id_rejects_non_matching(self):
@@ -567,7 +606,7 @@ class TestStalenessGuard:
         los = datetime.fromtimestamp(los_epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         env = _envelope(norad_id=25544, max_el=70.0, aos=aos, los=los)
-        result = handle_satpass(env, "test.subject", data={}, now=now)
+        result = _ingest_and_consolidate(env, "test.subject", now=now)
         assert result is not None, "ongoing pass (los in future) should broadcast"
 
     def test_future_pass_broadcasts(self):
@@ -583,7 +622,7 @@ class TestStalenessGuard:
         los = datetime.fromtimestamp(los_epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         env = _envelope(norad_id=25544, max_el=55.0, aos=aos, los=los)
-        result = handle_satpass(env, "test.subject", data={}, now=now)
+        result = _ingest_and_consolidate(env, "test.subject", now=now)
         assert result is not None, "future pass should broadcast"
 
     def test_none_los_falls_through(self):
@@ -601,7 +640,7 @@ class TestStalenessGuard:
         # Patch los to None by removing los_time from inner data
         env["data"]["data"]["los_time"] = None
 
-        result = handle_satpass(env, "test.subject", data={}, now=now)
+        result = _ingest_and_consolidate(env, "test.subject", now=now)
         # Should not be rejected by staleness guard — falls through to
         # normal handling (wire produced or other filter applies)
         # We just verify it does NOT crash and is not rejected as stale

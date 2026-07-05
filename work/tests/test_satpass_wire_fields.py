@@ -96,6 +96,26 @@ def _enable_satpass(norad_ids=None):
     invalidate_cache()
 
 
+def _ingest_and_consolidate(env, subject, *, now, data=None):
+    """Drive the two-call async satpass contract (ingest -> consolidate).
+
+    handle_satpass() ingests the pass and returns None; the consumer then
+    runs consolidate_satpass_pending(), which returns the (wire, data) to
+    broadcast (or None). Returns the consolidation result.
+    """
+    from meshai.central.satpass_handler import (
+        handle_satpass, consolidate_satpass_pending,
+        drain_pending_consolidation_ids)
+    drain_pending_consolidation_ids()
+    assert handle_satpass(
+        env, subject, data=data if data is not None else {}, now=now) is None
+    for cid in drain_pending_consolidation_ids():
+        res = consolidate_satpass_pending(cid)
+        if res is not None:
+            return res
+    return None
+
+
 # ── Handler produces correct satpass_events row ─────────────────────
 
 def test_noaa18_envelope_produces_satpass_event():
@@ -110,13 +130,13 @@ def test_noaa18_envelope_produces_satpass_event():
         del handle_satpass._no_norad_ids_logged
 
     now = 1781065800  # before NOAA18 envelope los_time
-    wire = handle_satpass(
+    result = _ingest_and_consolidate(
         NOAA18_ENVELOPE,
         "central.sat.pass.us.id.filer",
-        data={},
         now=now,
     )
-    assert wire is not None, "handler returned None -- field extraction failed"
+    assert result is not None, "handler returned None -- field extraction failed"
+    wire, _ = result
 
     conn = get_db()
     rows = conn.execute(
@@ -147,25 +167,26 @@ def test_noaa18_wire_message_format():
     if hasattr(handle_satpass, "_no_norad_ids_logged"):
         del handle_satpass._no_norad_ids_logged
 
-    wire = handle_satpass(
+    result = _ingest_and_consolidate(
         NOAA18_ENVELOPE,
         "central.sat.pass.us.id.filer",
-        data={},
         now=1781065800,  # before NOAA18 envelope los_time
     )
-    assert wire is not None
+    assert result is not None
+    wire, _ = result
 
     lines = wire.split("\n")
     assert len(lines) == 2, f"Expected 2 lines, got {len(lines)}: {wire!r}"
 
-    # Line 1: satellite name + bucket + compass directions
+    # Line 1: satellite name + bucket + compass sweep (aos->peak->los)
     assert "NOAA 18" in lines[0]
     assert "low pass" in lines[0]  # 22.69 < 30 = low pass
-    assert "SE" in lines[0]  # aos_compass
-    assert "N" in lines[0]   # los_compass
+    assert "SE" in lines[0]   # aos_compass
+    assert "ENE" in lines[0]  # peak_compass (new)
+    assert "N" in lines[0]    # los_compass
 
-    # Line 2: duration + time window
-    assert "minute window" in lines[1]
+    # Line 2: duration + time window ("min window")
+    assert "min window" in lines[1]
 
 
 def test_missing_norad_id_rejected():
@@ -230,13 +251,12 @@ def test_observer_fallback_to_slug():
     del env["data"]["data"]["observer_name"]
     # observer_slug = "filer" still present
 
-    wire = handle_satpass(
+    result = _ingest_and_consolidate(
         env,
         "central.sat.pass.us.id.filer",
-        data={},
         now=1781065800,  # before NOAA18 envelope los_time
     )
-    assert wire is not None
+    assert result is not None
     # Observer name stored in DB, not in broadcast wire format
     from meshai.persistence import get_db
     conn = get_db()

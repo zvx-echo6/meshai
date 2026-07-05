@@ -145,6 +145,27 @@ def _clear_handler_flags():
             delattr(handle_satpass, attr)
 
 
+def _ingest_and_consolidate(env, subject, *, now, data=None):
+    """Drive the two-call async satpass contract (ingest → consolidate).
+
+    handle_satpass() ingests the pass and returns None; the consumer then
+    runs consolidate_satpass_pending(), which yields the (wire, data) to
+    broadcast (or None). Returns the consolidation result so a test can
+    assert on the real broadcast wire.
+    """
+    from meshai.central.satpass_handler import (
+        handle_satpass, consolidate_satpass_pending,
+        drain_pending_consolidation_ids)
+    drain_pending_consolidation_ids()
+    assert handle_satpass(
+        env, subject, data=data if data is not None else {}, now=now) is None
+    for cid in drain_pending_consolidation_ids():
+        res = consolidate_satpass_pending(cid)
+        if res is not None:
+            return res
+    return None
+
+
 # ── (a) satpass_predict envelope: raw azimuths → non-empty compass ───
 
 def test_satpass_predict_compass_from_raw_azimuths():
@@ -156,29 +177,26 @@ def test_satpass_predict_compass_from_raw_azimuths():
     _clear_handler_flags()
 
     now = 1781330520  # well before the AO-27 pass window
-    wire = handle_satpass(
+    result = _ingest_and_consolidate(
         AO27_PREDICT_ENVELOPE,
         "central.sat.pass.us.id.filer",
-        data={},
         now=now,
     )
-    assert wire is not None, "handler returned None for satpass_predict envelope"
+    assert result is not None, "handler returned None for satpass_predict envelope"
+    wire, _ = result
 
     lines = wire.split("\n")
     assert len(lines) == 2, f"Expected 2 lines, got {len(lines)}: {wire!r}"
 
-    # Line 1 must contain non-empty compass directions
-    # 163.2° → S (8-point compass), 348.7° → N
-    assert "S" in lines[0].split(",")[-1], f"Expected S (from 163.2°) in compass portion: {lines[0]!r}"
-    assert "\u2192" in lines[0], f"Expected → arrow in line 1: {lines[0]!r}"
-
-    # Extract the compass portion: after bucket comma, before newline
-    # Format: 🛰️ {name} {bucket}, {aos_compass}→{los_compass}
-    arrow_idx = lines[0].index("\u2192")
-    los_part = lines[0][arrow_idx + 1:]
-    assert los_part != "", f"los_compass is empty in line 1: {lines[0]!r}"
-    # 348.7° → N in 8-point compass
-    assert los_part == "N", f"Expected N (from 348.7°) after arrow: {los_part!r}"
+    # Line 1 format: name bucket, aos→peak→los. Raw azimuths convert
+    # to a non-empty 3-point compass sweep.
+    compass = lines[0].split(", ")[-1]
+    parts = compass.split("\u2192")
+    assert len(parts) == 3, f"Expected aos->peak->los sweep, got {parts!r}"
+    # 163.2 -> S, 245.0 -> SW (peak), 348.7 -> N  (8-point compass)
+    assert parts[0] == "S", f"Expected S (from 163.2): {parts!r}"
+    assert parts[1] == "SW", f"Expected SW (from peak 245.0): {parts!r}"
+    assert parts[2] == "N", f"Expected N (from 348.7): {parts!r}"
 
 
 # ── (b) n2yo envelope: precomputed _compass strings used as-is ───────
@@ -192,21 +210,22 @@ def test_n2yo_precomputed_compass_unchanged():
     _clear_handler_flags()
 
     now = 1781065800  # before NOAA-18 pass window
-    wire = handle_satpass(
+    result = _ingest_and_consolidate(
         N2YO_ENVELOPE,
         "central.sat.pass.us.id.filer",
-        data={},
         now=now,
     )
-    assert wire is not None, "handler returned None for n2yo envelope"
+    assert result is not None, "handler returned None for n2yo envelope"
+    wire, _ = result
 
     lines = wire.split("\n")
-    # Must use the precomputed strings: SE→N
-    assert "SE" in lines[0], f"Expected SE from precomputed _compass: {lines[0]!r}"
-    # The los_compass from precomputed is "N"
-    arrow_idx = lines[0].index("\u2192")
-    los_part = lines[0][arrow_idx + 1:]
-    assert los_part == "N", f"Expected precomputed los_compass N, got {los_part!r}"
+    # Must use the precomputed strings verbatim: SE→ENE→N
+    compass = lines[0].split(", ")[-1]
+    parts = compass.split("\u2192")
+    assert len(parts) == 3, f"Expected aos->peak->los sweep, got {parts!r}"
+    assert parts[0] == "SE", f"Expected precomputed aos SE: {parts!r}"
+    assert parts[1] == "ENE", f"Expected precomputed peak ENE: {parts!r}"
+    assert parts[2] == "N", f"Expected precomputed los N: {parts!r}"
 
 
 # ── (c) envelope with neither → empty compass, no crash ──────────────
@@ -228,16 +247,16 @@ def test_no_compass_no_azimuth_no_crash():
         d.pop(key, None)
 
     now = 1781330520
-    wire = handle_satpass(
+    result = _ingest_and_consolidate(
         env,
         "central.sat.pass.us.id.filer",
-        data={},
         now=now,
     )
-    assert wire is not None, "handler crashed or returned None — should produce wire with empty compass"
+    assert result is not None, "handler crashed or returned None — should produce wire with empty compass"
+    wire, _ = result
 
     lines = wire.split("\n")
     assert len(lines) == 2
-    # Arrow should still be present with empty directions: "→" or similar
-    assert "\u2192" in lines[0], f"Expected → in line 1 even with empty compass: {lines[0]!r}"
+    # Arrow still present even with empty (peak empty -> no peak segment):
+    assert "\u2192" in lines[0], f"Expected arrow in line 1 even with empty compass: {lines[0]!r}"
     # No crash = test passes
