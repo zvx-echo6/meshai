@@ -73,105 +73,48 @@ def make_firms_event(
 
 
 # ============================================================
-# CATEGORY DECISION TESTS
+# ATTRIBUTION-ONLY CONTRACT
 # ============================================================
+#
+# Firm rule (Matt): "we do NOT broadcast hotspots." The native FIRMS adapter
+# must NEVER produce a broadcastable Event from a raw satellite pixel --
+# neither a near-known-fire `wildfire_hotspot` nor a standalone `new_ignition`.
+# `to_event()` is now attribution-only and ALWAYS returns None, mirroring the
+# storage-only Central path (central/firms_handler.py). The only FIRMS signals
+# that ever reach the mesh are the fusion outputs (wildfire_growth /
+# wildfire_spotting / wildfire_halted) produced by the Central handler.
+#
+# These tests lock that contract: NOTHING the adapter emits reaches the bus.
 
-def test_to_event_new_ignition(adapter):
-    """New ignition maps to new_ignition category."""
-    evt = make_firms_event(new_ignition=True)
-    event = adapter.to_event(evt)
-    assert event is not None
-    assert event.category == "new_ignition"
+def test_to_event_hotspot_returns_none(adapter):
+    """A representative hotspot (near a known fire) never broadcasts."""
+    evt = make_firms_event(new_ignition=False, near_fire="Snake River Fire",
+                           frp=85.5, confidence="h")
+    assert adapter.to_event(evt) is None
 
 
-def test_to_event_near_known_fire(adapter):
-    """Hotspot near known fire maps to wildfire_hotspot."""
-    evt = make_firms_event(new_ignition=False, near_fire="Snake River Fire")
-    event = adapter.to_event(evt)
-    assert event is not None
-    assert event.category == "wildfire_hotspot"
+def test_to_event_new_ignition_returns_none(adapter):
+    """A representative new-ignition hotspot never broadcasts."""
+    evt = make_firms_event(new_ignition=True, frp=120.0, confidence="h",
+                           distance_km=12, nearest_anchor="TFL")
+    assert adapter.to_event(evt) is None
 
 
-# ============================================================
-# SEVERITY PASS-THROUGH TESTS
-# ============================================================
-
-def test_to_event_severity_passes_through(adapter):
-    """Severity from FIRMS event passes through unchanged."""
+def test_to_event_returns_none_across_severities(adapter):
+    """No severity tier re-opens the hotspot broadcast path."""
     for sev in ["routine", "priority", "immediate"]:
         evt = make_firms_event(severity=sev)
-        event = adapter.to_event(evt)
-        assert event is not None
-        assert event.severity == sev
+        assert adapter.to_event(evt) is None
 
 
-# ============================================================
-# CONTENT TESTS
-# ============================================================
-
-def test_to_event_summary_includes_frp(adapter):
-    """Summary includes FRP when present."""
-    evt = make_firms_event(frp=85.5)
-    event = adapter.to_event(evt)
-    assert event is not None
-    assert "FRP 85" in event.summary
-
-
-def test_to_event_summary_handles_missing_frp(adapter):
-    """Missing FRP doesn't break to_event."""
-    evt = make_firms_event(frp=None)
-    event = adapter.to_event(evt)
-    assert event is not None
-    assert "FRP" not in event.summary
-
-
-def test_to_event_summary_includes_distance_when_present(adapter):
-    """Summary includes distance and anchor when present."""
-    evt = make_firms_event(distance_km=12, nearest_anchor="TFL")
-    event = adapter.to_event(evt)
-    assert event is not None
-    assert "12 km" in event.summary
-    assert "TFL" in event.summary
-
-
-def test_to_event_region_uses_nearest_anchor(adapter):
-    """Region is set from nearest_anchor."""
-    evt = make_firms_event(nearest_anchor="MHR")
-    event = adapter.to_event(evt)
-    assert event is not None
-    assert event.region == "MHR"
-
-
-# ============================================================
-# SPATIAL KEY TESTS
-# ============================================================
-
-def test_to_event_group_key_is_spatial_grid(adapter):
-    """Group key is spatial grid based on rounded lat/lon."""
-    evt = make_firms_event(lat=42.5678, lon=-114.3456)
-    event = adapter.to_event(evt)
-    assert event is not None
-    assert event.group_key == "firms:42.57:-114.35"
-
-
-def test_to_event_inhibit_keys_match_group_key(adapter):
-    """Inhibit keys contain the same spatial key as group_key."""
-    evt = make_firms_event(lat=42.5678, lon=-114.3456)
-    event = adapter.to_event(evt)
-    assert event is not None
-    assert event.group_key in event.inhibit_keys
-
-
-def test_two_nearby_detections_share_group_key(adapter):
-    """Two detections in same grid cell share group_key."""
-    # Both round to 42.57:-114.35
-    evt1 = make_firms_event(lat=42.571, lon=-114.351)
-    evt2 = make_firms_event(lat=42.572, lon=-114.352)
-    event1 = adapter.to_event(evt1)
-    event2 = adapter.to_event(evt2)
-    assert event1 is not None
-    assert event2 is not None
-    assert event1.group_key == event2.group_key
+def test_to_event_never_broadcasts_even_with_full_payload(adapter):
+    """A fully-populated hotspot dict still produces no Event."""
+    evt = make_firms_event(
+        lat=42.5678, lon=-114.3456, new_ignition=True, severity="immediate",
+        headline="NEW HOTSPOT detected", frp=250.0, confidence="h",
+        distance_km=3, nearest_anchor="MHR",
+    )
+    assert adapter.to_event(evt) is None
 
 
 # ============================================================
@@ -186,8 +129,8 @@ def test_to_event_missing_coords_returns_none(adapter):
     assert event is None
 
 
-def test_to_event_missing_properties_returns_event(adapter):
-    """Missing properties dict defaults to wildfire_hotspot."""
+def test_to_event_missing_properties_returns_none(adapter):
+    """Missing properties dict still produces no broadcast."""
     evt = {
         "source": "firms",
         "event_id": "test",
@@ -200,8 +143,7 @@ def test_to_event_missing_properties_returns_event(adapter):
     }
     # No "properties" key at all
     event = adapter.to_event(evt)
-    assert event is not None
-    assert event.category == "wildfire_hotspot"
+    assert event is None
 
 
 def test_to_event_does_not_raise_on_corrupted_dict(adapter):
