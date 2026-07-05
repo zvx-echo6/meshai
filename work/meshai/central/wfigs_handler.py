@@ -83,15 +83,54 @@ def _fire_too_old_to_announce(declared_at_epoch, now) -> bool:
 # ---------- public entry --------------------------------------------------
 
 
+def _build_canonical(normalized: dict, kind: str) -> dict:
+    """Flat canonical dict consumed by gating.fire.decide + formatters.fire.
+
+    Carries the render-ready WFIGS fields the decider (gating decision) and the
+    formatter (wire) read.  ``_kind`` routes the decider between the active-fire
+    state machine, the tombstone all-clear, and the never-broadcast perimeter.
+    """
+    return {
+        "_kind": kind,
+        "irwin_id": normalized.get("irwin_id"),
+        "incident_name": normalized.get("incident_name"),
+        "incident_type": normalized.get("incident_type"),
+        "acres": normalized.get("acres"),
+        "contained_pct": normalized.get("contained_pct"),
+        "fire_cause": normalized.get("fire_cause"),
+        "declared_at_epoch": normalized.get("declared_at_epoch"),
+        "unique_fire_id": normalized.get("unique_fire_id"),
+        "lat": normalized.get("lat"),
+        "lon": normalized.get("lon"),
+        "county": normalized.get("county"),
+        "state": normalized.get("state"),
+        "landclass": normalized.get("landclass"),
+        "geocoder_city": normalized.get("geocoder_city"),
+    }
+
+
 def handle_wfigs(normalized: dict, envelope: dict, subject: str,
                   data: Optional[dict] = None,
                   now: Optional[int] = None) -> Optional[str]:
     """Route a normalized WFIGS dict through persistence + change-detection.
 
+    Phase-3b refactor: the broadcast DECISION (New/Update/suppress + cooldown +
+    age-gate + all-clear eligibility) now lives in
+    ``meshai.notifications.gating.fire.decide``.  This handler keeps ownership
+    of the inline ``fires`` INSERT/UPDATE of ``current_*`` (unconditional state
+    write), the ``tombstoned_at`` stamp, the ``event_log`` row + handled flip,
+    and the wire it returns (mirror quake/nwis).
+
     `data` is the mutable dict the caller (consumer._normalize) is composing
     into the Event. When a broadcast should fire, the handler attaches an
     `_on_broadcast_committed` callback and `_broadcast_audit` descriptor to
     it; the dispatcher invokes both AFTER a successful deliver().
+
+    Cutover gate: when the emitted category is explicitly cut over, the handler
+    writes ``gate.data_patch`` + wraps ``gate.commit`` (new path live);
+    otherwise it keeps the legacy ``_attach_commit_handles`` / all-clear
+    stamping VERBATIM so the live broadcast stays byte-for-byte identical while
+    the new formatter+decider bake in shadow.
 
     Returns a wire string when a broadcast should fire, None otherwise.
     """
@@ -114,6 +153,11 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
                           "deferring to default pipeline")
         return None
 
+    from meshai.notifications.cutover import is_cutover
+    from meshai.notifications.gating.fire import decide as _gate_decide
+
+    canonical = _build_canonical(normalized, kind)
+
     if kind in ("wfigs_tombstone", "wfigs_perimeter"):
         source = "wfigs_incidents" if kind == "wfigs_tombstone" else "wfigs_perimeters"
         log_id = _log_event_returning_id(
@@ -124,6 +168,7 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
         # v0.6-tail item 4: tombstone branch stamps fires.tombstoned_at so
         # the ReminderScheduler stops re-broadcasting the closed fire.
         # Only the tombstone kind closes the fire; perimeter polls don t.
+        # UNCONDITIONAL state write — stays inline, mirror the original.
         if kind == "wfigs_tombstone" and irwin_id:
             try:
                 conn.execute(
@@ -136,13 +181,17 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
 
         # All-clear broadcast: only fires that previously made it to mesh
         # get a closure message. Silent for fires that were never broadcast.
+        # The DECISION (row exists AND last_broadcast_at NOT NULL) is delegated
+        # to the decider; the WIRE is still rendered here from the fire row for
+        # byte-identity, and the not-cutover data stamping stays verbatim.
         if kind == "wfigs_tombstone" and irwin_id:
-            fire_row = conn.execute(
-                "SELECT incident_name, current_acres, current_contained_pct, "
-                "last_broadcast_at, county, state, lat, lon "
-                "FROM fires WHERE irwin_id = ?", (irwin_id,)
-            ).fetchone()
-            if fire_row is not None and fire_row["last_broadcast_at"] is not None:
+            gate = _gate_decide(canonical, source="wfigs", now=float(now))
+            if gate.broadcast:
+                fire_row = conn.execute(
+                    "SELECT incident_name, current_acres, current_contained_pct, "
+                    "last_broadcast_at, county, state, lat, lon "
+                    "FROM fires WHERE irwin_id = ?", (irwin_id,)
+                ).fetchone()
                 name = fire_row["incident_name"] or "(unnamed fire)"
                 # Build line 2 parts
                 parts = []
@@ -163,15 +212,36 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
                     lines.append(" | ".join(parts))
                 wire = "\n".join(lines)
                 if isinstance(data, dict):
-                    data["category"] = "wildfire_closed"
-                    data["_severity_override"] = "priority"
-                _attach_commit_handles(
-                    data, irwin_id=irwin_id,
-                    acres=fire_row["current_acres"],
-                    contained_pct=fire_row["current_contained_pct"],
-                    event_log_row_id=log_id)
-                if isinstance(data, dict):
-                    data["_dedup_suffix"] = "closed"
+                    if is_cutover("wildfire_closed"):
+                        # NEW PATH: formatter re-renders from data_patch fields.
+                        data.update(gate.data_patch)
+                        data["_broadcast_audit"] = {"table": "fires", "pk": irwin_id}
+                        _raw_commit = gate.commit
+                        _log_row_id = log_id
+
+                        def _on_commit(committed_at: float) -> None:
+                            if _raw_commit is not None:
+                                _raw_commit(committed_at)
+                            if _log_row_id is not None:
+                                try:
+                                    get_db().execute(
+                                        "UPDATE event_log SET handled=1 WHERE id=?",
+                                        (int(_log_row_id),))
+                                except Exception:
+                                    logger.exception(
+                                        "wfigs closed commit: event_log update failed")
+
+                        data["_on_broadcast_committed"] = _on_commit
+                    else:
+                        # LEGACY verbatim (byte-for-byte identical live output).
+                        data["category"] = "wildfire_closed"
+                        data["_severity_override"] = "priority"
+                        _attach_commit_handles(
+                            data, irwin_id=irwin_id,
+                            acres=fire_row["current_acres"],
+                            contained_pct=fire_row["current_contained_pct"],
+                            event_log_row_id=log_id)
+                        data["_dedup_suffix"] = "closed"
                 return wire
 
         return None
@@ -187,15 +257,19 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
         subject=subject, handled=0,
         table_name="fires", table_pk=irwin_id)
 
-    row = conn.execute(
-        "SELECT current_acres, current_contained_pct, last_broadcast_at, "
-        "last_broadcast_acres, last_broadcast_contained "
-        "FROM fires WHERE irwin_id = ?", (irwin_id,)).fetchone()
-
     acres = normalized.get("acres")
     contained_pct = normalized.get("contained_pct")
 
-    # ---- (i) row missing -- INSERT, mark "New", but DO NOT set last_broadcast_*
+    # Delegate the New/Update/suppress + age-gate + cooldown decision. The
+    # decider READS the fires row (pre-write) exactly as the original inline
+    # branch did; the inline INSERT/UPDATE below stays handler-owned.
+    gate = _gate_decide(canonical, source="wfigs", now=float(now))
+
+    # ---- inline state write (UNCONDITIONAL) -- INSERT or UPDATE current_*.
+    # Re-read the row (same pre-write state the decider saw) to pick the write.
+    row = conn.execute(
+        "SELECT last_broadcast_at FROM fires WHERE irwin_id = ?",
+        (irwin_id,)).fetchone()
     if row is None:
         conn.execute(
             "INSERT INTO fires(irwin_id, incident_name, incident_type, "
@@ -217,27 +291,7 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
                 None, None, None,  # last_broadcast_* explicitly NULL
             ),
         )
-        # Step 3 age-gate: keep the INSERT (so genuine future Updates work) but
-        # suppress the "New" broadcast for fires whose declared_at is too old.
-        if _fire_too_old_to_announce(normalized.get("declared_at_epoch"), now):
-            return None
-        wire = _render(normalized, prefix="New")
-        # v0.7-fire-tracker-1: tag first-sight broadcasts with the new
-        # wildfire_declared category so the dispatcher rules them apart
-        # from acres/containment updates (wildfire_incident).
-        if isinstance(data, dict):
-            data["category"] = "wildfire_declared"
-        # v0.6-3c: severity override for fire broadcasts (downgraded from
-        # immediate to priority to prevent cooldown/grouper bypass)
-        if isinstance(data, dict):
-            data["_severity_override"] = "priority"
-        _attach_commit_handles(data, irwin_id=irwin_id,
-                                 acres=acres, contained_pct=contained_pct,
-                                 event_log_row_id=log_id)
-        return wire
-
-    # ---- (ii) row exists but never broadcast -- UPDATE current_*, prefix="New"
-    if row["last_broadcast_at"] is None:
+    else:
         conn.execute(
             "UPDATE fires SET current_acres=?, current_contained_pct=?, "
             "lat=COALESCE(?, lat), lon=COALESCE(?, lon), last_event_at=? "
@@ -245,72 +299,57 @@ def handle_wfigs(normalized: dict, envelope: dict, subject: str,
             (acres, contained_pct, normalized.get("lat"),
              normalized.get("lon"), now, irwin_id),
         )
-        # Step 3 age-gate: keep the UPDATE but suppress the "New" broadcast for
-        # fires whose declared_at is too old (closed/stale-fire resurrection).
-        if _fire_too_old_to_announce(normalized.get("declared_at_epoch"), now):
-            return None
-        wire = _render(normalized, prefix="New")
-        # v0.7-fire-tracker-1: case-(ii) is also first-sight as far as
-        # broadcast history goes -- the row exists because some prior
-        # handler call ran but no actual broadcast went out.
-        if isinstance(data, dict):
-            data["category"] = "wildfire_declared"
-        # v0.6-3c: severity override for fire broadcasts (downgraded from
-        # immediate to priority to prevent cooldown/grouper bypass)
-        if isinstance(data, dict):
+
+    if not gate.broadcast:
+        # Case-(iii) suppress (no forward change OR inside cooldown) ran the
+        # stale-fire cleanup in the original; the age-gate suppress did not.
+        if gate.lifecycle == "cooldown":
+            _cleanup_stale_fires(conn)
+        return None
+
+    # ---- broadcast: render the wire (back-compat) + stamp data.
+    prefix = "Update" if gate.lifecycle == "update" else "New"
+    wire = _render(normalized, prefix=prefix,
+                    last_bcast_acres=gate.data_patch.get("last_bcast_acres"),
+                    last_bcast_contained=gate.data_patch.get("last_bcast_contained"))
+
+    # Cutover gate keys on the category THIS broadcast carries: New first-sight
+    # is wildfire_declared, growth Update stays wildfire_incident.
+    _cut = (is_cutover("wildfire_incident") if gate.lifecycle == "update"
+            else is_cutover("wildfire_declared"))
+    if isinstance(data, dict):
+        if _cut:
+            # NEW PATH: formatter re-renders from canonical + data_patch.
+            data.update(canonical)
+            data.update(gate.data_patch)
+            data["_broadcast_audit"] = {"table": "fires", "pk": irwin_id}
+            _raw_commit = gate.commit
+            _log_row_id = log_id
+
+            def _on_commit(committed_at: float) -> None:
+                if _raw_commit is not None:
+                    _raw_commit(committed_at)
+                if _log_row_id is not None:
+                    try:
+                        get_db().execute(
+                            "UPDATE event_log SET handled=1 WHERE id=?",
+                            (int(_log_row_id),))
+                    except Exception:
+                        logger.exception(
+                            "wfigs commit: event_log update failed")
+
+            data["_on_broadcast_committed"] = _on_commit
+        else:
+            # LEGACY verbatim (byte-for-byte identical live output).
+            # New first-sight tags wildfire_declared; Update keeps the
+            # envelope-derived wildfire_incident (no category override).
+            if gate.lifecycle != "update":
+                data["category"] = "wildfire_declared"
             data["_severity_override"] = "priority"
-        _attach_commit_handles(data, irwin_id=irwin_id,
-                                 acres=acres, contained_pct=contained_pct,
-                                 event_log_row_id=log_id)
-        return wire
-
-    # ---- (iii) row exists AND already broadcast -- gate on change + 8h cooldown
-    conn.execute(
-        "UPDATE fires SET current_acres=?, current_contained_pct=?, "
-        "lat=COALESCE(?, lat), lon=COALESCE(?, lon), last_event_at=? "
-        "WHERE irwin_id=?",
-        (acres, contained_pct, normalized.get("lat"),
-         normalized.get("lon"), now, irwin_id),
-    )
-
-    last_bcast_at = row["last_broadcast_at"]
-    last_bcast_acres = row["last_broadcast_acres"]
-    last_bcast_contained = row["last_broadcast_contained"]
-
-    # Forward-only change detection: more acres or higher containment counts.
-    # Downward revisions and unchanged values do not warrant re-broadcast.
-    # v0.6-3b: each axis can be silenced via adapter_config toggles.
-    changed_acres = (
-        bool(adapter_config.wfigs.broadcast_on_acres)
-        and acres is not None
-        and (last_bcast_acres is None or acres > last_bcast_acres)
-    )
-    changed_contained = (
-        bool(adapter_config.wfigs.broadcast_on_contained)
-        and contained_pct is not None
-        and (last_bcast_contained is None or contained_pct > last_bcast_contained)
-    )
-    cooldown_s = int(adapter_config.wfigs.cooldown_seconds)
-    eight_hours_passed = (
-        last_bcast_at is None
-        or (now - int(last_bcast_at) >= cooldown_s)
-    )
-
-    if (changed_acres or changed_contained) and eight_hours_passed:
-        wire = _render(normalized, prefix="Update",
-                        last_bcast_acres=last_bcast_acres,
-                        last_bcast_contained=last_bcast_contained)
-        # v0.6-3c: severity override for fire updates (downgraded from
-        # immediate to priority to prevent cooldown/grouper bypass)
-        if isinstance(data, dict):
-            data["_severity_override"] = "priority"
-        _attach_commit_handles(data, irwin_id=irwin_id,
-                                 acres=acres, contained_pct=contained_pct,
-                                 event_log_row_id=log_id)
-        return wire
-
-    _cleanup_stale_fires(conn)
-    return None
+            _attach_commit_handles(data, irwin_id=irwin_id,
+                                     acres=acres, contained_pct=contained_pct,
+                                     event_log_row_id=log_id)
+    return wire
 
 
 # ---------- commit-callback factory ---------------------------------------

@@ -18,7 +18,8 @@ from meshai.notifications.renderers.composer import compose_mesh_message
     # earthquake_event removed: Phase-1 registers formatters.quake for it.
     # weather_warning/weather_statement removed: Phase-2 registers formatters.nws.
     # road_closure/work_zone/road_incident/traffic_congestion removed: Phase-2 registers formatters.incident.
-    "wildfire_incident",
+    # wildfire_declared/wildfire_incident/wildfire_closed removed: Phase-3b registers formatters.fire.
+    "wildfire_hotspot",  # FIRMS — still deferred (not migrated)
     "battery_critical",
 ])
 def test_get_formatter_returns_none_while_registry_empty(category):

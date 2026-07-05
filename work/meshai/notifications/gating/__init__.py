@@ -86,3 +86,17 @@ register("traffic_congestion", _incident_gate_mod.decide)
 # NOT cut over, store._emit_event's native decider hook won't run it.
 from meshai.notifications.gating import hydro as _hydro_gate_mod  # noqa: E402,F401
 register("stream_flow", _hydro_gate_mod.decide)
+
+# Phase-3b: WFIGS wildfire. Three explicit categories the wfigs_handler emits:
+# `wildfire_declared` (New), `wildfire_incident` (growth Update), and
+# `wildfire_closed` (tombstone all-clear). One decider handles all three; it
+# keys off canonical `_kind` (wfigs_incident / wfigs_tombstone / wfigs_perimeter)
+# to route New/Update/suppress vs the all-clear eligibility. Registered under
+# explicit strings (not the "fire" toggle) so FIRMS categories are untouched —
+# FIRMS + native env/fires.py are a deferred follow-up (env/fires.py lacks the
+# IRWIN/FireCause/landclass fields and has no tombstone concept, and since fire
+# is NOT cut over, store._emit_event's native decider hook won't run it).
+from meshai.notifications.gating import fire as _fire_gate_mod  # noqa: E402,F401
+register("wildfire_declared", _fire_gate_mod.decide)
+register("wildfire_incident", _fire_gate_mod.decide)
+register("wildfire_closed",   _fire_gate_mod.decide)
