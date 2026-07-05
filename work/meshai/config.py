@@ -513,6 +513,11 @@ class SatpassConfig(_SourcedFeed):
     # Predictor pass filters (used by the next task):
     min_elevation_deg: float = 10.0
     window_hours: int = 24
+    # BROADCAST imminence lead (seconds): a predicted pass is broadcast only
+    # once its AOS is within this near-term window (and still in the future).
+    # `window_hours` governs how far ahead we PREDICT; this governs when a
+    # predicted pass is actually announced. Default 60 min.
+    broadcast_lead_seconds: int = 3600
 
 
 @dataclass

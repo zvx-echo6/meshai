@@ -60,6 +60,18 @@ logger = logging.getLogger(__name__)
 # pointless). Overridable via SatpassConfig.pass_refresh_seconds if present.
 DEFAULT_POLL_SECONDS = 900
 
+# Broadcast imminence lead. Satpass is NOT an API-delta feed — it computes the
+# SAME future passes every poll, so a pure "new since last poll" gate would
+# seed them all as backlog and then never broadcast. A pass's "newly received"
+# analog is IMMINENCE: it becomes broadcast-worthy only once its AOS first
+# enters this near-term lead window (and is still in the future). Combined with
+# the store's received-delta seen-set (keyed on the pass canonical id), each
+# pass then emits exactly once as it crosses into imminence, and the
+# first-poll-seed suppresses any startup burst. `window_hours` still governs
+# how far ahead we PREDICT (the schedule); this only governs the BROADCAST
+# trigger. Overridable via SatpassConfig.broadcast_lead_seconds.
+DEFAULT_BROADCAST_LEAD_SECONDS = 3600
+
 
 class SatpassAdapter:
     """Native SGP4 pass predictor — consolidates in-memory, gates synchronously."""
@@ -71,6 +83,9 @@ class SatpassAdapter:
             or DEFAULT_POLL_SECONDS)
         self._window_h = int(getattr(config, "window_hours", 24) or 24)
         self._min_el = float(getattr(config, "min_elevation_deg", 10.0))
+        self._lead_s = int(
+            getattr(config, "broadcast_lead_seconds", DEFAULT_BROADCAST_LEAD_SECONDS)
+            or DEFAULT_BROADCAST_LEAD_SECONDS)
         self._norad_ids = self._parse_norad_ids(
             getattr(config, "norad_ids", None) or [])
 
@@ -84,21 +99,39 @@ class SatpassAdapter:
 
     @staticmethod
     def _parse_norad_ids(raw) -> list[int]:
-        """Coerce a config norad_ids list (ints or GUI strings) to int list."""
+        """Coerce a config norad_ids value to a sorted unique int list.
+
+        Accepts a real list (ints or GUI strings) OR a single comma/space
+        separated string (as some GUI paths persist it). The string case
+        MUST be split first — iterating a bare string would walk its
+        CHARACTERS, turning "25544,33591" into garbage single-digit ids and
+        silently defeating the norad filter (a cause of non-listed sats
+        leaking into predictions).
+        """
+        if isinstance(raw, str):
+            raw = raw.replace(",", " ").split()
         return sorted({int(x) for x in raw if str(x).strip().isdigit()})
 
     def _resolve_tles(self) -> list[dict]:
         """Resolve the target TLE set from `sat_tles` (fresh only).
 
         `norad_ids` configured -> exactly those; empty -> all fresh.
+
+        When `norad_ids` is configured the result is ALSO post-filtered to
+        that set: this is belt-and-suspenders so that only configured NORADs
+        are ever predicted, regardless of which lookup path ran. Without a
+        configured list, the fetcher's `tle_groups` (e.g. "weather") stock
+        sat_tles with GOES/METEOR/FENGYUN etc.; the strict post-filter
+        guarantees those never leak into predictions once a list is set.
         """
         from meshai.central.tle_handler import get_fresh_tles, get_tle_by_norad
 
         if self._norad_ids:
+            allowed = set(self._norad_ids)
             out: list[dict] = []
             for nid in self._norad_ids:
                 tle = get_tle_by_norad(nid)
-                if tle is not None:
+                if tle is not None and int(tle["norad_id"]) in allowed:
                     out.append(tle)
             return out
         return get_fresh_tles()
@@ -186,6 +219,18 @@ class SatpassAdapter:
         staged: list[dict] = []
         for cid, recs in groups.items():
             consolidated = self._consolidate(cid, recs)
+            # IMMINENCE gate — applied on the CONSOLIDATED pass (earliest AOS
+            # across observers), so multi-observer consolidation is never
+            # fragmented. A pass is broadcast-worthy only once its AOS is both
+            # in the FUTURE and within the near-term lead window. Far-future
+            # passes are predicted (on the schedule) but not staged until they
+            # become imminent; a past AOS is never staged. This is satpass's
+            # "just received" signal — the store's received-delta seen-set then
+            # emits each pass exactly once as it crosses into the window, and
+            # the first-poll-seed prevents any startup burst.
+            aos = consolidated["aos_epoch"]
+            if aos <= now_epoch or aos > now_epoch + self._lead_s:
+                continue
             try:
                 result = sh.gate_consolidated_pass(consolidated, now=now_epoch)
             except Exception as e:

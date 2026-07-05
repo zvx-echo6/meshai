@@ -1,5 +1,7 @@
 """Environmental data store with tick-based adapter polling."""
 
+import hashlib
+import json
 import logging
 import time
 from typing import TYPE_CHECKING, Optional
@@ -28,6 +30,21 @@ class EnvironmentalStore:
         self._ducting_status = {}  # tropo ducting assessment
         self._mesh_zones = config.nws_zones or []
         self._region_anchors = region_anchors or []
+
+        # ── Received-delta gate (NATIVE-only) ────────────────────────────
+        # Per-adapter set of item keys seen in PRIOR polls, plus the set of
+        # adapters whose first poll has completed. The model the operator
+        # demanded: a native adapter broadcasts an item ONLY when it was newly
+        # RECEIVED from the API this poll — never by scanning an accumulated
+        # backlog. So the FIRST poll for an adapter records every current key
+        # as "seen" and emits NOTHING (that batch is pre-existing backlog, not
+        # ours to announce); every later poll emits only keys not already
+        # seen. In-memory only (per process) — a restart empties the sets, so
+        # the next poll is a fresh "first poll" that re-seeds silently. This
+        # makes broadcasting a backlog item structurally impossible on cold
+        # start, restart, or after the adapter was disabled for days.
+        self._seen: dict[str, set] = {}   # adapter name -> set of item keys
+        self._seeded: set[str] = set()    # adapters past their first poll
 
         # Create adapter instances with error isolation
         self._register_adapter("nws", config.nws, ".nws", "NWSAlertsAdapter",
@@ -112,46 +129,106 @@ class EnvironmentalStore:
         self._purge_expired()
         return changed
 
+    def _seen_key(self, name: str, raw_evt: dict) -> str:
+        """Derive a STABLE per-item key for the received-delta gate.
+
+        Stability across polls is the whole point: the SAME real-world item
+        must produce the SAME key every poll, or it would look "newly
+        received" forever and re-broadcast on each tick. Preference order,
+        most→least explicit id:
+          1. external_id — the upstream feed's own stable id (e.g. WZDx)
+          2. event_id    — the adapter's stable per-item id; every native raw
+             event carries one (the store's own dedup already keys on it, and
+             the adapters build it from natural ids: USGS quake id, 511 event
+             id, NWS alert id, ``swpc_<scale><level>``, ``ducting_<tier>_<loc>``,
+             ``avy_<center>_<zone>``, etc. — all stable across polls).
+          3. content hash — last-resort fallback if an item somehow carries no
+             id at all.
+        Namespaced by adapter so two feeds never cross-contaminate.
+        """
+        ext = raw_evt.get("external_id")
+        if ext:
+            return f"{name}\x1eext:{ext}"
+        eid = raw_evt.get("event_id")
+        if eid:
+            return f"{name}\x1eeid:{eid}"
+        blob = json.dumps(raw_evt, sort_keys=True, default=str)
+        return f"{name}\x1ehash:" + hashlib.sha1(blob.encode()).hexdigest()[:16]
+
+    def _delta_emit(self, name: str, adapter, raw_evt: dict, force: bool = False):
+        """Received-delta gate — emit ONLY items newly received THIS poll.
+
+        - First poll for ``name`` (name not yet in ``self._seeded``): record
+          the item's key as seen and emit NOTHING. That batch is the
+          pre-existing backlog.
+        - Later polls: emit only when the key is not already in the seen-set
+          (it just appeared upstream = "just received"); then record it.
+        - ``force=True`` (avalanche danger-level rise) re-emits an already-seen
+          item on a legitimate CONTENT change — but is IGNORED on the first
+          poll, so a restart still can never replay the backlog.
+
+        This replaces the native path's reliance on the deciders'
+        broadcast-state tables for the "is this new" decision. Legitimate
+        content filtering (severity/threshold/impact, decider gates) still runs
+        downstream in ``_emit_event``.
+        """
+        seen = self._seen.setdefault(name, set())
+        key = self._seen_key(name, raw_evt)
+        first_poll = name not in self._seeded
+
+        if first_poll:
+            seen.add(key)            # seed silently — this is backlog
+            return
+        if key in seen and not force:
+            return                   # already received in a prior poll
+        seen.add(key)
+
+        if self._event_bus is not None and hasattr(adapter, "to_event"):
+            self._emit_event(adapter, raw_evt)
+
     def _ingest(self, name: str, adapter):
-        """Ingest data from an adapter after it ticks."""
+        """Ingest data from an adapter after it ticks.
+
+        Emission goes through the received-delta gate (``_delta_emit``): the
+        adapter's FIRST data-bearing poll seeds the seen-set and broadcasts
+        nothing; only items that newly appear on later polls are broadcast.
+        ``self._events`` is still maintained for state/queries as before.
+        """
         if name == "swpc":
             self._swpc_status = adapter.get_status()
             # Also ingest any alert events (R-scale >= 3)
             for evt in adapter.get_events():
                 key = (evt["source"], evt["event_id"])
-                is_new = key not in self._events
                 self._events[key] = evt
-                if is_new and self._event_bus and hasattr(adapter, "to_event"):
-                    self._emit_event(adapter, evt)
+                self._delta_emit(name, adapter, evt)
         elif name == "ducting":
             self._ducting_status = adapter.get_status()
             for evt in adapter.get_events():
                 key = (evt["source"], evt["event_id"])
-                is_new = key not in self._events
                 self._events[key] = evt
-                if is_new and self._event_bus and hasattr(adapter, "to_event"):
-                    self._emit_event(adapter, evt)
+                self._delta_emit(name, adapter, evt)
         elif name == "avalanche":
-            # Avalanche: re-emit on danger_level rise (Update:) not just new events.
+            # Avalanche: re-emit on danger_level rise (Update:) not just new
+            # events. The rise is a legitimate CONTENT change, so it passes
+            # `force=True` — but the received-delta gate still suppresses it on
+            # the first poll (backlog stays silent).
             for evt in adapter.get_events():
                 key = (evt["source"], evt["event_id"])
                 prior = self._events.get(key)
-                is_new = prior is None
                 prior_level = prior.get("danger_level", -1) if prior else -1
-                level_rose = (not is_new) and (evt.get("danger_level", -1) > prior_level)
-
-                if (is_new or level_rose) and self._event_bus and hasattr(adapter, "to_event"):
-                    evt["_is_update"] = level_rose   # signal to to_event()
-                    self._emit_event(adapter, evt)
-
+                level_rose = (prior is not None) and (
+                    evt.get("danger_level", -1) > prior_level)
+                evt["_is_update"] = level_rose   # signal to to_event()
+                self._delta_emit(name, adapter, evt, force=level_rose)
                 self._events[key] = evt   # always update stored state
         else:
             for evt in adapter.get_events():
                 key = (evt["source"], evt["event_id"])
-                is_new = key not in self._events
                 self._events[key] = evt
-                if is_new and self._event_bus and hasattr(adapter, "to_event"):
-                    self._emit_event(adapter, evt)
+                self._delta_emit(name, adapter, evt)
+
+        # First poll for this adapter is now complete: later polls may emit.
+        self._seeded.add(name)
 
     def _emit_event(self, adapter, raw_evt: dict):
         """Convert raw event to pipeline Event and emit to bus.

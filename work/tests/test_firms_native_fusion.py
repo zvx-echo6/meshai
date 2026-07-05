@@ -330,6 +330,13 @@ class TestAdapterTickFusion:
         store = EnvironmentalStore.__new__(EnvironmentalStore)
         store._events = {}
         store._event_bus = bus
+        # Received-delta gate state. This test exercises STEADY-STATE fusion
+        # routing (fusion reaches the bus, raw hotspots never do), so mark firms
+        # as already past its first-poll seed — otherwise the store's
+        # received-delta gate would (correctly) seed this first batch silently.
+        # First-poll seed-silence is covered by test_store_received_delta.
+        store._seen = {}
+        store._seeded = {"firms"}
         assert a.tick() is True
         store._ingest("firms", a)
 

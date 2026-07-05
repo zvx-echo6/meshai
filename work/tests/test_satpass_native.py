@@ -162,8 +162,10 @@ def test_second_tick_does_not_rebroadcast_after_commit(monkeypatch):
     commit = staged[0]["data"]["_on_broadcast_committed"]
     commit(float(T0))  # marks satpass_events.last_broadcast_at
 
-    # Tick 2 (interval elapsed): same canonical pass must be suppressed.
-    assert adapter.tick(now=T0 + 2000) is False
+    # Tick 2 (interval elapsed): the pass is STILL imminent (AOS 30 min out,
+    # inside the 60-min lead) so the imminence gate would stage it — but the
+    # satpass_events commit from tick 1 must suppress the re-broadcast.
+    assert adapter.tick(now=T0 - 1800) is False
     assert adapter.get_events() == []
 
 
@@ -176,8 +178,9 @@ def test_second_tick_without_commit_is_not_deduped(monkeypatch):
 
     adapter = _adapter()
     assert adapter.tick(now=T0 - 3600) is True
-    # No commit fired -> last_broadcast_at still NULL -> re-stages next tick.
-    assert adapter.tick(now=T0 + 2000) is True
+    # No commit fired -> last_broadcast_at still NULL. The pass is still
+    # imminent at T0-1800 (AOS 30 min out) so it re-stages next tick.
+    assert adapter.tick(now=T0 - 1800) is True
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -305,3 +308,107 @@ def test_central_consolidate_feeds_shared_gate_merged(monkeypatch):
         "SELECT COUNT(*) AS n FROM satpass_pending WHERE consolidated_id=?",
         (cid,)).fetchone()
     assert left["n"] == 0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 6. IMMINENCE BROADCAST TRIGGER (satpass's "just received" analog)
+# ══════════════════════════════════════════════════════════════════════
+#
+# Satpass is NOT an API-delta feed — it recomputes the SAME future passes
+# every poll. Its "newly received" signal is IMMINENCE: a pass is staged for
+# broadcast only once its AOS is both in the FUTURE and within the near-term
+# lead window (default 60 min). A far-future pass is predicted (on schedule)
+# but not staged; a past AOS is never staged. Combined with the store's
+# received-delta seen-set, each pass then emits exactly once as it crosses in.
+
+# The fixed mock pass sits at AOS=T0 (both observers consolidate to one).
+
+def test_far_future_pass_not_staged(monkeypatch):
+    _enable_satpass_db(dry_run=False)
+    _seed_iss_tle()
+    _patch_observers(monkeypatch, [_BOISE, _TWIN])
+    _patch_predictor(monkeypatch, _two_observer_pass)
+
+    adapter = _adapter()  # default broadcast_lead_seconds = 3600 (60 min)
+    # AOS=T0 is 4 hours ahead of now -> well outside the 60-min lead window.
+    assert adapter.tick(now=T0 - 4 * 3600) is False
+    assert adapter.get_events() == []
+
+
+def test_imminent_pass_is_staged(monkeypatch):
+    _enable_satpass_db(dry_run=False)
+    _seed_iss_tle()
+    _patch_observers(monkeypatch, [_BOISE, _TWIN])
+    _patch_predictor(monkeypatch, _two_observer_pass)
+
+    adapter = _adapter()
+    # AOS=T0 is 30 min ahead of now -> inside the 60-min lead window.
+    assert adapter.tick(now=T0 - 1800) is True
+    staged = adapter.get_events()
+    assert len(staged) == 1
+    assert staged[0]["event_id"] == f"25544:{T0 // 3600}"
+
+
+def test_past_aos_never_staged(monkeypatch):
+    _enable_satpass_db(dry_run=False)
+    _seed_iss_tle()
+    _patch_observers(monkeypatch, [_BOISE, _TWIN])
+    _patch_predictor(monkeypatch, _two_observer_pass)
+
+    adapter = _adapter()
+    # now is 10 min AFTER AOS=T0 -> the pass is in the past, never staged.
+    assert adapter.tick(now=T0 + 600) is False
+    assert adapter.get_events() == []
+
+
+def test_configurable_lead_window(monkeypatch):
+    _enable_satpass_db(dry_run=False)
+    _seed_iss_tle()
+    _patch_observers(monkeypatch, [_BOISE, _TWIN])
+    _patch_predictor(monkeypatch, _two_observer_pass)
+
+    # With a 3-hour lead, an AOS 2 hours out is now imminent.
+    adapter = _adapter(broadcast_lead_seconds=3 * 3600)
+    assert adapter.tick(now=T0 - 2 * 3600) is True
+    assert len(adapter.get_events()) == 1
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 7. NORAD_IDS FILTER IS STRICT (non-listed sats never predicted)
+# ══════════════════════════════════════════════════════════════════════
+
+# A non-ISS TLE (a stand-in for a GOES/METEOR/FENGYUN weather sat the fetcher
+# stocks via tle_groups). Different NORAD so a filter break would surface as a
+# second consolidated pass with a different canonical id.
+OTHER_L1 = "1 43226U 18022A   26182.50000000  .00000000  00000-0  00000-0 0  9999"
+OTHER_L2 = "2 43226   0.0300 100.0000 0001000  90.0000 270.0000  1.00270000 12345"
+
+
+def _seed_other_tle():
+    conn = get_db()
+    fresh = datetime.now(timezone.utc).isoformat()
+    upsert_tle(conn, 43226, "GOES-17", OTHER_L1, OTHER_L2, fresh)
+
+
+def test_norad_ids_filter_excludes_non_listed_sats(monkeypatch):
+    _enable_satpass_db(dry_run=False)
+    _seed_iss_tle()     # 25544 — configured
+    _seed_other_tle()   # 43226 — fresh but NOT in norad_ids
+    _patch_observers(monkeypatch, [_BOISE, _TWIN])
+    # Predictor would return a pass for ANY satellite (keyed on observer lat),
+    # so if 43226 leaked through it would produce a second staged pass.
+    _patch_predictor(monkeypatch, _two_observer_pass)
+
+    adapter = _adapter()  # norad_ids=[25544]
+    assert adapter.tick(now=T0 - 1800) is True
+    staged = adapter.get_events()
+    # Only the configured NORAD is predicted, despite 43226 being fresh.
+    assert len(staged) == 1
+    assert staged[0]["norad_id"] == 25544
+
+
+def test_parse_norad_ids_handles_comma_string():
+    # A GUI-persisted comma string must NOT be char-iterated into garbage ids.
+    assert SatpassAdapter._parse_norad_ids("25544, 33591") == [25544, 33591]
+    assert SatpassAdapter._parse_norad_ids([25544, "33591"]) == [25544, 33591]
+    assert SatpassAdapter._parse_norad_ids([]) == []
