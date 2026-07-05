@@ -58,7 +58,6 @@ from datetime import datetime
 from typing import Any, Optional
 
 from meshai.central.idaho_gauge_sites import (
-    THRESHOLD_RANK,
     compute_threshold_state,
     lookup_site,
     normalize_site_id,
@@ -165,6 +164,22 @@ def handle_nwis(envelope: dict, subject: str,
     lat = d.get("latitude") if isinstance(d.get("latitude"), (int, float)) else site_meta.get("lat")
     lon = d.get("longitude") if isinstance(d.get("longitude"), (int, float)) else site_meta.get("lon")
 
+    # Build the canonical dict the decider + formatter read. parameter_code is
+    # carried so the decider can perform the 00060 discharge back-look; it is
+    # not part of the formatter's wire schema.
+    canonical: dict = {
+        "site_id": site_id,
+        "gauge_name": site_meta["gauge_name"],
+        "stage_ft": stage_ft,
+        "flow_cfs": flow_cfs,
+        "unit": unit,
+        "threshold_state": threshold_state,
+        "reading_time": reading_time,
+        "lat": lat,
+        "lon": lon,
+        "parameter_code": pc,
+    }
+
     # Always log the envelope to event_log. Initial handled=0; commit
     # callback flips to 1 if we actually broadcast.
     log_id = _log_event_returning_id(
@@ -173,31 +188,23 @@ def handle_nwis(envelope: dict, subject: str,
         subject=subject, handled=0,
         table_name="gauge_readings", table_pk=site_id)
 
-    # SELECT most recent prior reading (for this site, any parameter) to
-    # detect upward threshold crossing. Use threshold_state column directly.
-    prior = conn.execute(
-        "SELECT threshold_state FROM gauge_readings "
-        "WHERE site_id=? AND reading_time < ? "
-        "ORDER BY reading_time DESC LIMIT 1",
-        (site_id, reading_time),
-    ).fetchone()
-    prior_state = prior["threshold_state"] if prior else "normal"
+    # Delegate the threshold-crossing decision (prior-reading SELECT, 00060
+    # stage back-look, THRESHOLD_RANK upward-crossing check, broadcast_on_recede
+    # toggle) to the gating module. It reads gauge_readings for prior state
+    # BEFORE the inline INSERT below, preserving the original ordering. It
+    # returns the resolved (back-looked) threshold_state + stage_ft in
+    # data_patch so the INSERT + render use the same values on every path.
+    from meshai.notifications.gating.hydro import decide as _gate_decide
+    gate = _gate_decide(canonical, source="nwis", now=float(now))
+    threshold_state = gate.data_patch.get("threshold_state", threshold_state)
+    stage_ft = gate.data_patch.get("stage_ft", stage_ft)
+    canonical["threshold_state"] = threshold_state
+    canonical["stage_ft"] = stage_ft
 
-    # If this envelope is a 00060 (discharge) reading, look back for the
-    # latest 00065 stage reading at this site so the wire string can carry
-    # both. The threshold_state of THIS row inherits from that prior stage
-    # reading (discharge alone doesn't define a threshold band).
-    if pc == "00060":
-        last_stage = conn.execute(
-            "SELECT reading_value, threshold_state FROM gauge_readings "
-            "WHERE site_id=? AND reading_unit='ft' "
-            "ORDER BY reading_time DESC LIMIT 1",
-            (site_id,)).fetchone()
-        if last_stage:
-            stage_ft = last_stage["reading_value"]
-            threshold_state = last_stage["threshold_state"] or "normal"
-
-    # INSERT the new reading row. Always persist (time-series semantics).
+    # INSERT the new reading row INLINE (append-only time-series). Always
+    # persist, regardless of the broadcast decision, and AFTER the decider's
+    # reads so they never see the current row. Per the refactor plan this
+    # write stays handler-owned; the decider only READS gauge_readings.
     conn.execute(
         "INSERT INTO gauge_readings(site_id, gauge_name, reading_value, "
         "reading_unit, threshold_state, flow_cfs, reading_time, lat, lon) "
@@ -206,30 +213,48 @@ def handle_nwis(envelope: dict, subject: str,
          threshold_state, flow_cfs, reading_time, lat, lon),
     )
 
-    # Upward-crossing check.
-    try:
-        prior_rank = THRESHOLD_RANK.index(prior_state)
-    except ValueError:
-        prior_rank = 0   # unknown prior -> treat as normal
-    try:
-        cur_rank = THRESHOLD_RANK.index(threshold_state)
-    except ValueError:
-        cur_rank = 0
-
-    if cur_rank == prior_rank:
-        # Unchanged band -- no broadcast.
-        return None
-    if cur_rank < prior_rank and not bool(adapter_config.usgs_nwis.broadcast_on_recede):
-        # Receding without the recede toggle -- silent.
+    if not gate.broadcast:
         return None
 
-    wire = _render(gauge_name=site_meta["gauge_name"],
+    # Cutover gate: mirror quake_handler. When "stream_flow" is cut over, write
+    # gate.data_patch and wrap gate.commit so it also flips event_log.handled.
+    # Hydro has no per-event broadcast-state table, so gate.commit is None and
+    # the wrapper carries only the event_log flip. Otherwise old-style
+    # _attach_commit keeps the live broadcast byte-for-byte identical while the
+    # new formatter+decider bake in shadow.
+    from meshai.notifications.cutover import is_cutover
+    if isinstance(data, dict):
+        data.update(canonical)
+        if is_cutover("stream_flow"):
+            data.update(gate.data_patch)
+            data["_broadcast_audit"] = {"table": "gauge_readings", "pk": site_id}
+
+            _raw_commit = gate.commit
+            _log_row_id = log_id
+
+            def _on_commit(committed_at: float) -> None:
+                if _raw_commit is not None:
+                    _raw_commit(committed_at)
+                if _log_row_id is not None:
+                    try:
+                        c = get_db()
+                        c.execute("UPDATE event_log SET handled=1 WHERE id=?",
+                                  (int(_log_row_id),))
+                    except Exception:
+                        logger.exception("nwis commit: event_log update failed")
+
+            data["_on_broadcast_committed"] = _on_commit
+        else:
+            _attach_commit(data, site_id=site_id, event_log_row_id=log_id)
+
+    # Return _render() wire for backward-compat (existing call-sites + tests).
+    # At dispatch time compose_mesh_message() uses the registered formatter
+    # (formatters/hydro.py) on cutover, re-rendering byte-identically from data.
+    return _render(gauge_name=site_meta["gauge_name"],
                     threshold_state=threshold_state,
                     stage_ft=stage_ft, flow_cfs=flow_cfs,
                     unit=unit if pc == "00065" else "ft",
                     lat=lat, lon=lon)
-    _attach_commit(data, site_id=site_id, event_log_row_id=log_id)
-    return wire
 
 
 # ---- renderer ------------------------------------------------------------
