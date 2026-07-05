@@ -95,6 +95,8 @@ EXPECTED_SECRETS: list[str] = [
     "MQTT_PASSWORD",
     "TOMTOM_API_KEY",
     "FIRMS_MAP_KEY",
+    "ROADS511_API_KEY",
+    "WZDX_API_KEY",
     "SMTP_PASSWORD",
 ]
 
@@ -740,6 +742,12 @@ def save_section(
         for key, value in d.items():
             field_path = f"{path}.{key}" if path else key
             if _is_secret_field(section_name, field_path):
+                # GUI-managed secrets: config holds only ${VAR} refs. If the
+                # incoming value is itself a ${VAR} reference, always preserve
+                # it (secret values live in /data/secrets/.env, never here).
+                if isinstance(value, str) and _VAR_RE.match(value):
+                    cleaned[key] = value
+                    continue
                 ref = _ondisk_ref(field_path)
                 m = _VAR_RE.match(ref) if isinstance(ref, str) else None
                 if m:

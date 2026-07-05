@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { notifyRestartRequired } from '@/components/RestartBanner'
+import { ManagedSecret } from '@/components/ManagedSecret'
 import { useDirty } from '@/context/DirtyContext'
 import NodePicker from '@/components/NodePicker'
 import ChannelPicker from '@/components/ChannelPicker'
@@ -1011,6 +1012,7 @@ function CommandsSection({ data, onChange }: { data: CommandsConfig; onChange: (
 }
 
 function LLMSection({ data, onChange }: { data: LLMConfig; onChange: (d: LLMConfig) => void }) {
+  const llmEnvVar = ({ openai: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY', google: 'GOOGLE_API_KEY' } as Record<string, string>)[(data.backend || '').toLowerCase()] || 'LLM_API_KEY'
   return (
     <div className="space-y-4">
       <SectionDescription text={SECTION_DESCRIPTIONS.llm} />
@@ -1036,13 +1038,10 @@ function LLMSection({ data, onChange }: { data: LLMConfig; onChange: (d: LLMConf
           info="The specific model to use. Common choices: gpt-4o-mini (fast, cheap), gpt-4o (better, costs more), claude-sonnet-4-20250514 (Anthropic equivalent). For local models via Ollama, use the model name you pulled (e.g. llama3.1)."
         />
       </div>
-      <TextInput
+      <ManagedSecret
+        envVar={llmEnvVar}
         label="API Key"
-        value={data.api_key}
-        onChange={(v) => onChange({ ...data, api_key: v })}
-        type="password"
-        helper="Supports ${ENV_VAR} syntax"
-        info="Your API key from the provider. You can also use ${ENV_VAR} syntax to read from an environment variable instead of storing the key in the config file."
+        helper="Secret stored in /data/secrets/.env; config holds the ${VAR} ref"
       />
       <TextInput
         label="Base URL"

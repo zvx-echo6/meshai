@@ -48,7 +48,7 @@ context:
 # === LLM BACKEND ===
 llm:
   backend: openai                # openai | anthropic | google
-  api_key: ""                    # API key (or use LLM_API_KEY env var)
+  api_key: ${GOOGLE_API_KEY}      # Secret: set via dashboard or /data/secrets/.env (var depends on backend: GOOGLE_API_KEY/OPENAI_API_KEY/ANTHROPIC_API_KEY)
   base_url: https://api.openai.com/v1  # API base URL
   model: gpt-4o-mini             # Model name
   timeout: 30                    # Request timeout (seconds)
@@ -184,7 +184,7 @@ environmental:
   traffic:
     enabled: false
     tick_seconds: 300
-    api_key: ""         # Get key at developer.tomtom.com
+    api_key: ${TOMTOM_API_KEY}   # Secret: set via dashboard or /data/secrets/.env (get key at developer.tomtom.com)
     corridors: []
     # Example corridors:
     # - name: "I-84 Twin Falls"
@@ -195,7 +195,7 @@ environmental:
   roads511:
     enabled: false
     tick_seconds: 300
-    api_key: ""
+    api_key: ${ROADS511_API_KEY}   # Secret: set via dashboard or /data/secrets/.env (leave var empty if 511 needs no key)
     base_url: ""        # e.g. "https://511.idaho.gov/api/v2"
     endpoints: ["/get/event"]
     bbox: []            # [west, south, east, north]
@@ -206,7 +206,7 @@ environmental:
   firms:
     enabled: false
     tick_seconds: 1800  # 30 min default
-    map_key: ""         # Required - NASA FIRMS MAP_KEY
+    map_key: ${FIRMS_MAP_KEY}    # Secret: set via dashboard or /data/secrets/.env (NASA FIRMS MAP_KEY)
     source: "VIIRS_SNPP_NRT"  # VIIRS_SNPP_NRT, VIIRS_NOAA20_NRT, MODIS_NRT
     bbox: []            # [west, south, east, north] - Required
     day_range: 1        # 1-10 days of data

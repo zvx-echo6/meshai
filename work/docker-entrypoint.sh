@@ -52,7 +52,7 @@ context:
 
 llm:
   backend: openai
-  api_key: ""
+  api_key: ${GOOGLE_API_KEY}  # secret: set via dashboard or /data/secrets/.env
   base_url: https://api.openai.com/v1
   model: gpt-4o-mini
   timeout: 30
@@ -66,6 +66,8 @@ meshmonitor:
   enabled: false
   inject_into_prompt: true
 EOF
+    mkdir -p /data/secrets
+    [ -f /data/secrets/.env ] || : > /data/secrets/.env
     echo "Default config created at $MESHAI_CONFIG. Edit it or configure via the dashboard."
 fi
 

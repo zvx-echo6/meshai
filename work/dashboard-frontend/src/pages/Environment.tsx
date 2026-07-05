@@ -14,6 +14,7 @@ import {
 } from '@/lib/api'
 import { TOGGLE_FAMILY_META, type NotificationToggle, type NotificationsConfig } from './Notifications'
 import AdapterConfig, { CURATED_KEYS } from './AdapterConfig'
+import { ManagedSecret } from '@/components/ManagedSecret'
 
 type FeedSource = 'native' | 'central'
 
@@ -1153,7 +1154,7 @@ const save = async () => {
     </div>
    )
    case 'traffic': return (<>
-    <TextInput label="API Key" value={env.traffic.api_key} onChange={(v) => up({ traffic: { ...env.traffic, api_key: v } })} type="password" helper="developer.tomtom.com" />
+    <ManagedSecret envVar="TOMTOM_API_KEY" label="API Key" helper="developer.tomtom.com" />
     <NumberInput label="Tick Seconds" value={env.traffic.tick_seconds} onChange={(v) => up({ traffic: { ...env.traffic, tick_seconds: v } })} min={60} />
     <div className="text-xs text-[#666] mt-2">Corridors:</div>
     {(env.traffic.corridors || []).map((c, i) => (
@@ -1197,7 +1198,7 @@ const save = async () => {
    </>)
    case 'roads511': return (<>
     <TextInput label="Base URL" value={env.roads511.base_url} onChange={(v) => up({ roads511: { ...env.roads511, base_url: v } })} placeholder="https://511.yourstate.gov/api/v2" />
-    <TextInput label="API Key" value={env.roads511.api_key} onChange={(v) => up({ roads511: { ...env.roads511, api_key: v } })} type="password" helper="Leave empty if not required" />
+    <ManagedSecret envVar="ROADS511_API_KEY" label="API Key" helper="Leave unset if 511 needs no key" />
     <NumberInput label="Tick Seconds" value={env.roads511.tick_seconds} onChange={(v) => up({ roads511: { ...env.roads511, tick_seconds: v } })} min={60} />
     <ListInput label="Endpoints" value={env.roads511.endpoints} onChange={(v) => up({ roads511: { ...env.roads511, endpoints: v } })} helper="e.g., /get/event" />
     <div className="grid grid-cols-4 gap-2">
@@ -1254,7 +1255,7 @@ const save = async () => {
     {env.wzdx?.feed_source !== 'central' && (
      <>
       <TextInput label="Base URL" value={env.wzdx?.base_url ?? ''} onChange={(v) => up({ wzdx: { ...env.wzdx!, base_url: v } })} placeholder="https://511.yourstate.gov/api/v2" />
-      <TextInput label="API Key" value={env.wzdx?.api_key ?? ''} onChange={(v) => up({ wzdx: { ...env.wzdx!, api_key: v } })} type="password" helper="Leave empty if not required" />
+      <ManagedSecret envVar="WZDX_API_KEY" label="API Key" helper="Leave unset if not required" />
       <NumberInput label="Tick Seconds" value={env.wzdx?.tick_seconds ?? 300} onChange={(v) => up({ wzdx: { ...env.wzdx!, tick_seconds: v } })} min={60} />
       <ListInput label="Endpoints" value={env.wzdx?.endpoints ?? ['/get/event']} onChange={(v) => up({ wzdx: { ...env.wzdx!, endpoints: v } })} helper="e.g., /get/event" />
       <div className="grid grid-cols-4 gap-2">
@@ -1312,7 +1313,7 @@ const save = async () => {
     </div>
    </>)
    case 'firms': return (<>
-    <TextInput label="MAP Key" value={env.firms.map_key} onChange={(v) => up({ firms: { ...env.firms, map_key: v } })} type="password" helper="firms.modaps.eosdis.nasa.gov/api/area/" infoLink="https://firms.modaps.eosdis.nasa.gov/api/area/" />
+    <ManagedSecret envVar="FIRMS_MAP_KEY" label="MAP Key" helper="NASA FIRMS MAP_KEY" />
     <NumberInput label="Tick Seconds" value={env.firms.tick_seconds} onChange={(v) => up({ firms: { ...env.firms, tick_seconds: v } })} min={300} />
     <SelectInput label="Satellite Source" value={env.firms.source} onChange={(v) => up({ firms: { ...env.firms, source: v } })} options={[{ value: 'VIIRS_SNPP_NRT', label: 'VIIRS SNPP (NRT)' }, { value: 'VIIRS_NOAA20_NRT', label: 'VIIRS NOAA-20 (NRT)' }, { value: 'MODIS_NRT', label: 'MODIS (NRT)' }]} />
     <div className="grid grid-cols-3 gap-4">

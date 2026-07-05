@@ -9,6 +9,7 @@ import {
 import ChannelPicker from '@/components/ChannelPicker'
 import NodePicker from '@/components/NodePicker'
 import { useDirty } from '@/context/DirtyContext'
+import { ManagedSecret } from '@/components/ManagedSecret'
 
 // Types
 interface NotificationRuleConfig {
@@ -1341,12 +1342,10 @@ function NotificationRuleCard({
                         value={rule.smtp_user || ''}
                         onChange={(v) => onChange({ ...rule, smtp_user: v })}
                       />
-                      <TextInput
+                      <ManagedSecret
+                        envVar="SMTP_PASSWORD"
                         label="Password"
-                        value={rule.smtp_password || ''}
-                        onChange={(v) => onChange({ ...rule, smtp_password: v })}
-                        type="password"
-                        info="Gmail users: use an App Password from myaccount.google.com/apppasswords"
+                        helper="SMTP password (App Password for Gmail)"
                       />
                     </div>
                     <Toggle
@@ -1763,7 +1762,7 @@ function OtherChannelsGrid({
                     <TextInput label="SMTP host" value={t.smtp_host || ''} onChange={(v) => upd(key, { smtp_host: v })} placeholder="smtp.example.com" />
                     <NumberInput label="SMTP port" value={t.smtp_port ?? 587} onChange={(v) => upd(key, { smtp_port: v })} />
                     <TextInput label="Username" value={t.smtp_user || ''} onChange={(v) => upd(key, { smtp_user: v })} />
-                    <TextInput label="Password" value={t.smtp_password || ''} onChange={(v) => upd(key, { smtp_password: v })} type="password" />
+                    <ManagedSecret envVar="SMTP_PASSWORD" label="Password" helper="SMTP password (App Password for Gmail)" />
                     <Toggle label="Use TLS" checked={t.smtp_tls ?? true} onChange={(v) => upd(key, { smtp_tls: v })} />
                     <TextInput label="From address" value={t.from_address || ''} onChange={(v) => upd(key, { from_address: v })} placeholder="alerts@example.com" />
                   </div>
