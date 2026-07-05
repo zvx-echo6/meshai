@@ -154,3 +154,238 @@ def test_disabled_for_days_then_backlog_is_not_broadcast():
     adapter.set_batch(backlog + ["fresh"])
     store.refresh()
     assert _emitted_ids(captured) == ["fresh"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Durable persistent pre-seed (the robust anti-leak fix)
+#
+# meshai already has a durable record of everything it has ever received: the
+# persistent hazard tables. At startup the store loads their identifying keys
+# into self._seen so nothing ever received can re-broadcast, immune to how the
+# fetch is staged and immune to restarts. These tests use the REAL persistent
+# DB (conftest points MESHAI_DB_PATH at a fresh migrated tmp file per test).
+# ═══════════════════════════════════════════════════════════════════════════
+from meshai.persistence import get_db
+
+
+class _FakeWZDx:
+    """Native-WZDx stand-in. Its raw events carry a stable ``external_id``
+    (like the real adapter), so the seen-key is ``wzdx\x1eext:<id>`` — exactly
+    what the durable pre-seed loads from traffic_events(source='wzdx')."""
+
+    def __init__(self):
+        self._batch: list[dict] = []
+
+    def set_batch(self, ext_ids: list[str]) -> None:
+        self._batch = [
+            {"source": "wzdx", "event_id": f"wzdx_{x}",
+             "external_id": x, "fetched_at": 0}
+            for x in ext_ids
+        ]
+
+    def tick(self) -> bool:
+        # Real wzdx.tick() returns True even on a 0-event (registry-only) tick.
+        return True
+
+    def get_events(self) -> list:
+        return list(self._batch)
+
+    def to_event(self, raw_evt: dict):
+        eid = raw_evt["external_id"]
+        return make_event(source="wzdx", category="test_delta",
+                          severity="routine", title=eid, summary=eid,
+                          group_key=eid)
+
+
+class _FakeQuake:
+    """Native usgs_quake stand-in. Raw events have NO external_id, so the
+    seen-key falls to ``usgs_quake\x1eeid:<event_id>`` — exactly what the
+    durable pre-seed loads from quake_events.event_id."""
+
+    def __init__(self):
+        self._batch: list[dict] = []
+
+    def set_batch(self, event_ids: list[str]) -> None:
+        self._batch = [
+            {"source": "usgs_quake", "event_id": e, "fetched_at": 0}
+            for e in event_ids
+        ]
+
+    def tick(self) -> bool:
+        return True
+
+    def get_events(self) -> list:
+        return list(self._batch)
+
+    def to_event(self, raw_evt: dict):
+        eid = raw_evt["event_id"]
+        return make_event(source="usgs_quake", category="test_delta",
+                          severity="routine", title=eid, summary=eid,
+                          group_key=eid)
+
+
+def _insert_traffic(external_ids: list[str], source: str = "wzdx") -> None:
+    conn = get_db()
+    for x in external_ids:
+        conn.execute(
+            "INSERT OR IGNORE INTO traffic_events"
+            "(source, external_id, first_seen_at, last_seen_at) "
+            "VALUES (?,?,?,?)",
+            (source, x, 0, 0),
+        )
+
+
+def _insert_quake(event_ids: list[str]) -> None:
+    conn = get_db()
+    for e in event_ids:
+        conn.execute(
+            "INSERT OR IGNORE INTO quake_events(event_id, first_seen_at) "
+            "VALUES (?,?)",
+            (e, 0),
+        )
+
+
+def _build_store(adapter_name: str, adapter):
+    """Construct a store (runs the durable pre-seed against the current DB),
+    then inject a fake adapter. Insert persistent rows BEFORE calling this."""
+    bus = EventBus()
+    captured: list = []
+    bus.subscribe(lambda e: captured.append(e))
+    store = EnvironmentalStore(EnvironmentalConfig(), event_bus=bus)
+    store._adapters[adapter_name] = adapter
+    return store, captured
+
+
+def test_persistent_preseed_known_suppressed_new_emitted():
+    # N durable rows in traffic_events(source=wzdx). A fresh store must treat
+    # them as already-received: a poll of those same N broadcasts NOTHING; a
+    # poll adding one external_id NOT in the table broadcasts only that one.
+    known = [f"z{i}" for i in range(5)]
+    _insert_traffic(known)
+
+    adapter = _FakeWZDx()
+    store, captured = _build_store("wzdx", adapter)
+
+    # wzdx was pre-seeded from the durable table AND marked seeded (baseline).
+    assert "wzdx" in store._seeded
+    assert len(store._seen["wzdx"]) == 5
+
+    adapter.set_batch(known)
+    store.refresh()
+    assert captured == [], "all 5 are durably-known → zero broadcast"
+
+    adapter.set_batch(known + ["z_new"])
+    store.refresh()
+    assert _emitted_ids(captured) == ["z_new"], "only the not-in-table id broadcasts"
+
+
+def test_persistent_preseed_cross_tick_staging_no_leak():
+    # The scenario the DURABLE seed uniquely fixes: a source is marked seeded
+    # on a partial tick, then a LATER tick brings a backlog item that was never
+    # seen in-process. Without the durable record it would leak.
+    _insert_traffic(["A", "B"])          # both already RECEIVED (durable)
+    adapter = _FakeWZDx()
+    store, captured = _build_store("wzdx", adapter)
+
+    adapter.set_batch(["A"])
+    store.refresh()                       # tick 1: only A present
+    adapter.set_batch(["A", "B"])
+    store.refresh()                       # tick 2: B appears (backlog)
+    assert captured == [], "B is durably-known — must NOT leak on a later tick"
+
+    # CONTROL: identical staging but NO durable rows → B leaks (proves the
+    # durable seed is what prevents it; in-memory alone cannot).
+    ctrl = _FakeWZDx()
+    bus = EventBus(); cap2: list = []
+    bus.subscribe(lambda e: cap2.append(e))
+    # A separate source name so its 0-row durable seed doesn't mark it seeded.
+    ctrl._batch = []
+    store2 = EnvironmentalStore(EnvironmentalConfig(), event_bus=bus)
+    store2._adapters["wzdx_ctrl"] = ctrl
+    ctrl.set_batch(["A"])
+    # Re-point ctrl events to a fresh source with no durable rows.
+    for e in ctrl._batch:
+        e["source"] = "wzdx_ctrl"
+    store2.refresh()
+    ctrl.set_batch(["A", "B"])
+    for e in ctrl._batch:
+        e["source"] = "wzdx_ctrl"
+    store2.refresh()
+    assert [e.title for e in cap2] == ["B"], "without a durable record, B leaks"
+
+
+def test_incremental_empty_first_tick_then_only_new_broadcasts():
+    # Task's incremental case: tick 1 yields [] (e.g. wzdx registry-only tick),
+    # tick 2 yields [A,B,C] where A,B are durably-known and C is new.
+    # The empty tick must not mark-and-leak; the durable seed catches A,B; only
+    # C — genuinely never received — broadcasts.
+    _insert_traffic(["A", "B"])
+    adapter = _FakeWZDx()
+    store, captured = _build_store("wzdx", adapter)
+
+    adapter.set_batch([])                 # empty first tick
+    store.refresh()
+    assert captured == [], "empty tick emits nothing"
+
+    adapter.set_batch(["A", "B", "C"])    # backlog A,B + new C
+    store.refresh()
+    assert _emitted_ids(captured) == ["C"], "only the never-received C broadcasts"
+
+
+def test_restart_against_same_persistent_db_never_rebroadcasts():
+    # A full received backlog is durable. Process 1 broadcasts nothing for it.
+    # After a RESTART (fresh store, same DB) the backlog still never broadcasts.
+    backlog = ["A", "B", "C", "D"]
+    _insert_traffic(backlog)
+
+    a1 = _FakeWZDx()
+    store1, cap1 = _build_store("wzdx", a1)
+    a1.set_batch(backlog)
+    store1.refresh()
+    assert cap1 == [], "process 1: durable backlog is silent"
+
+    # RESTART: brand-new store, same persistent DB → pre-seed reloads.
+    a2 = _FakeWZDx()
+    store2, cap2 = _build_store("wzdx", a2)
+    a2.set_batch(backlog)
+    store2.refresh()
+    assert cap2 == [], "restart must NEVER re-broadcast the durable backlog"
+
+    a2.set_batch(backlog + ["E"])
+    store2.refresh()
+    assert _emitted_ids(cap2) == ["E"], "a genuinely-new item still broadcasts once"
+
+
+def test_persistent_preseed_quake_by_event_id():
+    # Durable seed for the event_id-keyed path (no external_id): quake_events.
+    _insert_quake(["us1000aaaa", "us1000bbbb"])
+    adapter = _FakeQuake()
+    store, captured = _build_store("usgs_quake", adapter)
+
+    assert "usgs_quake" in store._seeded
+    assert len(store._seen["usgs_quake"]) == 2
+
+    adapter.set_batch(["us1000aaaa", "us1000bbbb"])
+    store.refresh()
+    assert captured == [], "both quakes already received → zero broadcast"
+
+    adapter.set_batch(["us1000aaaa", "us1000bbbb", "us1000cccc"])
+    store.refresh()
+    assert _emitted_ids(captured) == ["us1000cccc"], "only the new quake broadcasts"
+
+
+def test_no_durable_rows_falls_back_to_silent_first_poll():
+    # Fresh DB (0 durable rows): the source must NOT be pre-marked seeded, so
+    # the first real batch is silently seeded (never leaked) — the fresh-start
+    # safety property.
+    adapter = _FakeWZDx()
+    store, captured = _build_store("wzdx", adapter)
+    assert "wzdx" not in store._seeded, "0 durable rows → not pre-marked seeded"
+
+    adapter.set_batch(["A", "B"])
+    store.refresh()
+    assert captured == [], "first non-empty poll on a fresh DB is silent"
+
+    adapter.set_batch(["A", "B", "C"])
+    store.refresh()
+    assert _emitted_ids(captured) == ["C"]

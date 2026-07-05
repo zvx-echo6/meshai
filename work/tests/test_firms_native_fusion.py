@@ -335,8 +335,12 @@ class TestAdapterTickFusion:
         # as already past its first-poll seed — otherwise the store's
         # received-delta gate would (correctly) seed this first batch silently.
         # First-poll seed-silence is covered by test_store_received_delta.
+        # The gate keys on the event's ``source`` (not the adapter name), and
+        # this adapter emits BOTH "firms" (raw hotspots) and "firms_fusion"
+        # (consolidated growth) — mark both seeded, exactly as a non-empty
+        # ingest would (store._ingest marks every source it touched).
         store._seen = {}
-        store._seeded = {"firms"}
+        store._seeded = {"firms", "firms_fusion"}
         assert a.tick() is True
         store._ingest("firms", a)
 
