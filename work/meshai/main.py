@@ -12,7 +12,6 @@ from typing import Optional
 
 from . import __version__
 from .backends import AnthropicBackend, GoogleBackend, LLMBackend, OpenAIBackend
-from .cli import run_configurator
 from .commands import CommandDispatcher
 from .commands.dispatcher import create_dispatcher
 from .commands.status import set_start_time
@@ -877,9 +876,6 @@ def main() -> None:
         "--version", "-V", action="version", version=f"%(prog)s {__version__}"
     )
     parser.add_argument(
-        "--config", "-c", action="store_true", help="Launch configuration tool"
-    )
-    parser.add_argument(
         "--config-file",
         "-f",
         type=Path,
@@ -891,11 +887,6 @@ def main() -> None:
     args = parser.parse_args()
 
     setup_logging(args.verbose)
-
-    # Launch configurator if requested
-    if args.config:
-        run_configurator(args.config_file)
-        return
 
     # Load config - support both old (/data/config.yaml) and new (/data/config/) layouts
     config_path = args.config_file
@@ -912,7 +903,7 @@ def main() -> None:
         config = legacy_load(config_path)
     else:
         logger.warning(f"Config not found at {config_path} or {config_dir}")
-        logger.info("Run 'meshai --config' to create one, or copy config.example.yaml")
+        logger.info("Copy config.example.yaml to get started, or configure via the dashboard")
         sys.exit(1)
 
     # Create and run bot

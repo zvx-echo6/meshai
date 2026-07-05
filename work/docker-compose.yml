@@ -1,15 +1,15 @@
 # MeshAI Docker Compose Configuration
 #
 # Usage:
-#   docker compose up -d                  # Start bot + web config
+#   docker compose up -d                  # Start the bot + dashboard
 #   docker compose logs -f                # View logs
 #
-# Web config: http://localhost:7682 (TUI in browser)
+# Dashboard: http://localhost:8080
 #
 # Config is stored in the meshai_data volume at /data/config.yaml
 #
 # For serial connection (USB), uncomment the devices section below
-# For TCP connection, configure via web interface
+# For TCP connection, edit config.yaml or use the dashboard
 
 services:
   meshai:
@@ -41,8 +41,6 @@ services:
     #   - /dev/ttyACM0:/dev/ttyACM0
 
     ports:
-      # Web-based config interface (ttyd)
-      - "7682:7682"
       # Dashboard API
       - "8080:8080"
 
@@ -50,7 +48,7 @@ services:
       # Persistent data (database, config)
       - meshai_data:/data
 
-    # Run interactively for first-time setup wizard
+    # Allocate a TTY for cleaner log output
     stdin_open: true
     tty: true
 
