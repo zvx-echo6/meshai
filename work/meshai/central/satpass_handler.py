@@ -54,6 +54,19 @@ _TZ = ZoneInfo("America/Boise")
 # Consumer polls this after each satpass _normalize() call.
 _pending_consolidation_ids: set[str] = set()
 
+# Baseline consolidation delay, in seconds, from a pending row's arrival to
+# when its consolidated broadcast should fire. This is the DURABLE fire-time
+# basis persisted as satpass_pending.due_at (= received_at + this).
+#
+# It matches the live consumer's baseline: the consumer schedules the timer
+# at `5.0 + N*60` where N is the count of OTHER in-flight timers (a runtime
+# anti-thundering-herd stagger). The `+N*60` term depends on transient
+# in-memory scheduler state that has no meaning across a restart, so it is
+# deliberately NOT persisted; only the N=0 baseline (5s) is durable. The
+# live in-memory timer still drives normal operation exactly as before —
+# due_at is purely the reboot-recovery backstop the in-memory timer can't be.
+CONSOLIDATION_DELAY = 5
+
 
 def drain_pending_consolidation_ids() -> set[str]:
     """Atomically drain and return all pending consolidation IDs."""
@@ -404,14 +417,19 @@ def handle_satpass(envelope: dict, subject: str,
         subject=subject, handled=0,
         table_name="satpass_pending", table_pk=f"{consolidated_id}:{observer}")
 
-    # Accumulate into pending table
+    # Accumulate into pending table. due_at is the durable fire-time backstop
+    # (received_at + baseline delay) so a restart can reconstruct a consolidation
+    # timer for rows the in-memory scheduler would otherwise orphan.
+    due_at = now + CONSOLIDATION_DELAY
     conn.execute(
         "INSERT OR REPLACE INTO satpass_pending("
         "consolidated_id, observer, sat_name, norad_id, max_elevation, "
-        "aos_at, los_at, aos_compass, los_compass, peak_compass, received_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        "aos_at, los_at, aos_compass, los_compass, peak_compass, received_at, "
+        "due_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         (consolidated_id, observer, sat_name, norad_id, max_el,
-         aos_epoch, los_epoch, aos_compass, los_compass, direction, now))
+         aos_epoch, los_epoch, aos_compass, los_compass, direction, now,
+         due_at))
 
     # Signal consumer to schedule consolidation timer
     _pending_consolidation_ids.add(consolidated_id)
@@ -602,6 +620,44 @@ CREATE TABLE IF NOT EXISTS satpass_pending (
     los_compass     TEXT,
     peak_compass    TEXT,
     received_at     INTEGER,
+    due_at          INTEGER,
     PRIMARY KEY (consolidated_id, observer)
 );
 """
+
+
+def load_pending_schedule() -> list[tuple[str, int]]:
+    """Return [(consolidated_id, due_at)] for every cid with pending rows.
+
+    Used by the consumer's startup sweep to reconstruct consolidation timers
+    that were lost with the in-memory scheduler on restart. One entry per
+    distinct consolidated_id, keyed on the EARLIEST due_at across its observer
+    rows (MIN) so the reconstructed fire time matches the live timer, which is
+    armed off the first arrival and never re-armed for later observers.
+
+    A row written before due_at existed (pre-v22, or a partial write) has
+    due_at IS NULL; COALESCE falls it back to received_at + baseline delay so
+    such a row is still recoverable rather than silently stranded.
+    """
+    try:
+        conn = get_db()
+    except Exception:
+        logger.exception("satpass sweep: persistence unavailable")
+        return []
+    rows = conn.execute(
+        "SELECT consolidated_id, "
+        "MIN(COALESCE(due_at, received_at + ?)) AS due_at "
+        "FROM satpass_pending GROUP BY consolidated_id",
+        (CONSOLIDATION_DELAY,),
+    ).fetchall()
+    out: list[tuple[str, int]] = []
+    for r in rows:
+        try:
+            cid = r["consolidated_id"]
+            due = r["due_at"]
+            if cid is None or due is None:
+                continue
+            out.append((str(cid), int(due)))
+        except Exception:
+            logger.exception("satpass sweep: skipping malformed pending row")
+    return out
