@@ -36,7 +36,9 @@ def test_list_returns_all_59_keys(client):
     # 14 adapters with at least one key (itd_511 has zero -- not in the
     # grouped dict because the SQL only returns rows that exist).
     total = sum(len(v) for v in body.values())
-    assert total == 96
+    # was 96; config-schema cleanup removed the two deprecated nws keys
+    # (broadcast_severities, warning_suffix_promotes) -> 94.
+    assert total == 94
 
 
 def test_list_grouped_by_adapter(client):
@@ -184,12 +186,14 @@ def test_put_str_validation(client):
 
 
 def test_put_json_accepts_list(client):
+    # broadcast_severities was removed in the config-schema cleanup; use the
+    # surviving nws json-list key tombstone_msgtypes to exercise list PUTs.
     r = client.put(
-        "/api/adapter-config/nws/broadcast_severities",
-        json={"value": ["Extreme"]},
+        "/api/adapter-config/nws/tombstone_msgtypes",
+        json={"value": ["Cancel"]},
     )
     assert r.status_code == 200
-    assert r.json()["value"] == ["Extreme"]
+    assert r.json()["value"] == ["Cancel"]
 
 
 def test_put_json_accepts_dict(client):

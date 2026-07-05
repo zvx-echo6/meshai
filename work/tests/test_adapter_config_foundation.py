@@ -75,7 +75,9 @@ def test_adapter_config_type_check_constrains_vocabulary(fresh_db):
 
 def test_registry_at_59_entries():
     """v0.6-3a.1 trim: 43 CONFIG-only keys (was 77 in v0.6-3a draft)."""
-    assert len(REGISTRY) == 96, (
+    # was 96; config-schema cleanup removed the two deprecated nws keys
+    # (broadcast_severities, warning_suffix_promotes) -> 94.
+    assert len(REGISTRY) == 94, (
         f"REGISTRY drift guard; got {len(REGISTRY)}. "
         f"If a sentence template / emoji / heuristic snuck in, it belongs in CODE not config."
     )
@@ -225,7 +227,9 @@ def test_accessor_returns_bool(fresh_db):
 
 def test_accessor_returns_json_list(fresh_db):
     invalidate_cache()
-    assert adapter_config.nws.broadcast_severities == ["Extreme", "Severe"]
+    # broadcast_severities was removed in the config-schema cleanup (deprecated,
+    # no longer enforced); tombstone_msgtypes is the surviving nws json-list key.
+    assert adapter_config.nws.tombstone_msgtypes == ["Cancel", "Expire"]
 
 
 def test_accessor_returns_json_dict(fresh_db):

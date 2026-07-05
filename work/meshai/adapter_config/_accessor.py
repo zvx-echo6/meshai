@@ -5,7 +5,7 @@ Handlers use the singleton `adapter_config` from this package:
     from meshai.adapter_config import adapter_config
 
     cooldown_s = adapter_config.wfigs.cooldown_seconds   # int
-    severities = adapter_config.nws.broadcast_severities # list[str]
+    tombstones = adapter_config.nws.tombstone_msgtypes   # list[str]
 
 Reads are dict-cached. The cache invalidates on `invalidate_cache()`
 (called from the REST API's PUT handler in v0.6-3c). The cache is

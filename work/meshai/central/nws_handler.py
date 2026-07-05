@@ -44,8 +44,10 @@ from meshai.persistence import get_db
 logger = logging.getLogger(__name__)
 
 
-# v0.6-3b: severity gate + tombstone msgTypes live in adapter_config.nws
-# (broadcast_severities, tombstone_msgtypes). Read at handler call time.
+# v0.6-3b: tombstone msgTypes live in adapter_config.nws
+# (tombstone_msgtypes), read at handler call time. The old broadcast_severities
+# severity gate was removed in the config-schema cleanup (no longer enforced;
+# NWS breadth is governed by the per-toggle dispatcher severity threshold).
 
 # Ordered (substring, emoji) checks; first match wins.
 _EVENT_EMOJI = [
