@@ -48,6 +48,8 @@ class EnvironmentalStore:
             lambda cfg: (cfg,))
         self._register_adapter("roads511", config.roads511, ".roads511", "Roads511Adapter",
             lambda cfg: (cfg,))
+        self._register_adapter("wzdx", config.wzdx, ".wzdx", "WZDxAdapter",
+            lambda cfg: (cfg,))
 
         # FIRMS needs reference to NIFC adapter for cross-referencing
         if config.firms.enabled and config.firms.feed_source == "native":
@@ -61,7 +63,7 @@ class EnvironmentalStore:
                 logger.warning("Failed to initialize firms adapter: %s", err_msg)
                 self._failed_adapters["firms"] = err_msg
 
-        _central = [n for n in ("nws", "swpc", "ducting", "fires", "avalanche", "usgs", "usgs_quake", "traffic", "roads511", "firms")
+        _central = [n for n in ("nws", "swpc", "ducting", "fires", "avalanche", "usgs", "usgs_quake", "traffic", "roads511", "wzdx", "firms")
                     if getattr(getattr(config, n, None), "feed_source", "native") == "central"]
         if _central:
             logger.debug("Adapters sourced from Central (native skipped): %s", _central)
