@@ -803,11 +803,16 @@ class Coverage:
           Empty list means "not configured" — adapters fall back to their own scope.
     enabled: master switch; when False, adapters fall back to their own scope even
              if bbox is populated.
+    areas: multi-box list for the Shapely geometry gate (Phase 3+). Each entry is
+           {"name": str, "west": float, "south": float, "east": float, "north": float}.
+           When non-empty, takes precedence over bbox for the CoverageFilter gate.
+           When empty, CoverageFilter falls back to bbox (if set) for back-compat.
     """
 
     bbox: list = field(default_factory=list)   # [west, south, east, north]; empty = not configured
     enabled: bool = True                        # master switch for deriving adapter scope from bbox
     excluded_adapters: list = field(default_factory=list)  # adapters that OPT OUT of coverage bbox and use their own config
+    areas: list = field(default_factory=list)  # multi-box list [{name,west,south,east,north}]; empty = use bbox fallback
 
 
 @dataclass

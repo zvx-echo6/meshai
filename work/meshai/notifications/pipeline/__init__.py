@@ -41,6 +41,8 @@ except ImportError:
 from meshai.notifications.pipeline.inhibitor import Inhibitor
 from meshai.notifications.pipeline.grouper import Grouper
 from meshai.notifications.pipeline.toggle_filter import ToggleFilter
+from meshai.notifications.pipeline.coverage_filter import CoverageFilter
+from meshai.coverage_area import areas_from_config
 from meshai.notifications.pipeline.digest import DigestAccumulator, Digest
 from meshai.notifications.pipeline.scheduler import DigestScheduler
 
@@ -111,8 +113,20 @@ def build_pipeline(config, llm_backend, connector=None) -> EventBus:
             sorted(enabled_toggles),
         )
 
-    toggle_filter = ToggleFilter(
+    # Coverage filter: Shapely bbox geometry gate (set-union over all areas).
+    # Inserted between toggle_filter and _tee so geographic gating runs on
+    # every event that passes the user-preference toggle check.
+    # Chain: inhibitor → grouper → toggle_filter → coverage_filter → _tee
+    _coverage_areas = areas_from_config(config.coverage)
+    coverage_filter = CoverageFilter(
         next_handler=_tee,
+        areas=_coverage_areas,
+        enabled=getattr(config.coverage, "enabled", True),
+        excluded_adapters=set(getattr(config.coverage, "excluded_adapters", None) or []),
+    )
+
+    toggle_filter = ToggleFilter(
+        next_handler=coverage_filter.handle,
         enabled_toggles=enabled_toggles,
     )
 
@@ -125,6 +139,7 @@ def build_pipeline(config, llm_backend, connector=None) -> EventBus:
         "inhibitor": inhibitor,
         "grouper": grouper,
         "toggle_filter": toggle_filter,
+        "coverage_filter": coverage_filter,
         "dispatcher": dispatcher,
         "accumulator": accumulator,
         "connector": connector,
@@ -321,6 +336,7 @@ __all__ = [
     "Inhibitor",
     "Grouper",
     "ToggleFilter",
+    "CoverageFilter",
     "DigestAccumulator",
     "Digest",
     "DigestScheduler",
