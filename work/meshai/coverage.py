@@ -104,6 +104,28 @@ def grid_points(bbox, cols: int = 3, rows: int = 3) -> list[tuple[float, float]]
     return points
 
 
+def enclosing_bbox(areas) -> list:
+    """Union bounding box [west, south, east, north] of a list of area dicts
+    ({'west','south','east','north'}), or [] if empty/invalid. Used to widen
+    adapter FETCH scope so multi-area / cross-state data is pulled; the Shapely
+    gate narrows to the exact areas afterward."""
+    boxes = []
+    for a in areas or []:
+        try:
+            w, s, e, n = float(a["west"]), float(a["south"]), float(a["east"]), float(a["north"])
+            boxes.append((w, s, e, n))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not boxes:
+        return []
+    return [
+        round(min(b[0] for b in boxes), 6),
+        round(min(b[1] for b in boxes), 6),
+        round(max(b[2] for b in boxes), 6),
+        round(max(b[3] for b in boxes), 6),
+    ]
+
+
 def arcgis_envelope(bbox) -> dict:
     """Return ArcGIS FeatureServer spatial-filter query params for *bbox*.
 
