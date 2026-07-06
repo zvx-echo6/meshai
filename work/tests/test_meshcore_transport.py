@@ -911,3 +911,40 @@ class TestAutoAddContacts:
             t._on_new_contact(event)  # must not raise
         finally:
             _cleanup(t)
+
+
+# ---------------------------------------------------------------------------
+# 13. _resolve_contact — cache-miss refetch behavior
+# ---------------------------------------------------------------------------
+
+class TestResolveContact:
+    """_resolve_contact: fast path (hit) and miss → refetch → retry behavior."""
+
+    _FAKE_CONTACT = {"public_key": "a" * 64, "adv_name": "RemoteNode", "out_path_len": -1}
+
+    def test_miss_triggers_refetch_and_returns_contact_on_retry(self):
+        """On a cache miss, get_contacts(lastmod=0) is called exactly once and
+        the contact returned on the subsequent retry is passed back to the caller."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            # First call returns None (miss); second call (after refetch) finds it.
+            mc.get_contact_by_key_prefix.side_effect = [None, self._FAKE_CONTACT]
+            mc.commands.get_contacts = AsyncMock(return_value=None)
+            result = t._resolve_contact("7d4e07237294")
+            assert result == self._FAKE_CONTACT
+            mc.commands.get_contacts.assert_awaited_once_with(lastmod=0)
+        finally:
+            _cleanup(t)
+
+    def test_hit_skips_refetch(self):
+        """When the first lookup returns a contact, get_contacts is NOT called
+        (fast path — no unnecessary serial round-trip to the radio)."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            mc.get_contact_by_key_prefix.return_value = self._FAKE_CONTACT
+            mc.commands.get_contacts = AsyncMock(return_value=None)
+            result = t._resolve_contact("7d4e07237294")
+            assert result == self._FAKE_CONTACT
+            mc.commands.get_contacts.assert_not_awaited()
+        finally:
+            _cleanup(t)
