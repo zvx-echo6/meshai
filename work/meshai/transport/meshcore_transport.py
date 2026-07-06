@@ -391,15 +391,36 @@ class MeshCoreTransport(MeshTransport):
     # Internal coroutines (run on the dedicated loop)
     # ------------------------------------------------------------------
 
-    async def _do_connect(self, host: str, port: int,
-                          auto_reconnect: bool, max_attempts: int):
-        """Lazy-import meshcore and create the TCP client."""
+    async def _do_connect(self, conn_type: str, target: str,
+                          auto_reconnect: bool, max_attempts: int,
+                          host: str = "", port: int = 5050,
+                          serial_port: str = "", baud: int = 115200,
+                          ble_address: str = ""):
+        """Lazy-import meshcore and create the appropriate client.
+
+        ``conn_type`` selects tcp | serial | ble.  ``target`` is a human-readable
+        string used only for logging (built in connect()).
+        """
         from meshcore import MeshCore  # noqa: PLC0415 (lazy import intentional)
-        mc = await MeshCore.create_tcp(
-            host, port,
-            auto_reconnect=auto_reconnect,
-            max_reconnect_attempts=max_attempts,
-        )
+        if conn_type == "serial":
+            mc = await MeshCore.create_serial(
+                serial_port,
+                baudrate=baud,
+                auto_reconnect=auto_reconnect,
+                max_reconnect_attempts=max_attempts,
+            )
+        elif conn_type == "ble":
+            mc = await MeshCore.create_ble(
+                address=(ble_address or None),
+                auto_reconnect=auto_reconnect,
+                max_reconnect_attempts=max_attempts,
+            )
+        else:  # tcp (default)
+            mc = await MeshCore.create_tcp(
+                host, port,
+                auto_reconnect=auto_reconnect,
+                max_reconnect_attempts=max_attempts,
+            )
         return mc
 
     async def _setup_subscriptions(self) -> None:
@@ -437,13 +458,25 @@ class MeshCoreTransport(MeshTransport):
     # ------------------------------------------------------------------
 
     def connect(self) -> None:
-        """Connect to the pyMC companion TCP frame server."""
-        host = getattr(self.config, "meshcore_host", "100.64.0.9")
+        """Connect to the MeshCore companion (tcp, serial, or ble)."""
+        conn_type = getattr(self.config, "meshcore_conn_type", "tcp") or "tcp"
+        host = getattr(self.config, "meshcore_host", "")
         port = getattr(self.config, "meshcore_port", 5050)
+        serial_port = getattr(self.config, "meshcore_serial_port", "")
+        baud = getattr(self.config, "meshcore_baud", 115200)
+        ble_address = getattr(self.config, "meshcore_ble_address", "")
         auto_reconnect = getattr(self.config, "meshcore_auto_reconnect", True)
         max_attempts = getattr(self.config, "meshcore_max_reconnect_attempts", 5)
 
-        logger.info("MeshCoreTransport: connecting to %s:%d …", host, port)
+        # Build a human-readable target string for logging.
+        if conn_type == "serial":
+            target = f"serial:{serial_port}@{baud}"
+        elif conn_type == "ble":
+            target = f"ble:{ble_address or 'auto'}"
+        else:
+            target = f"{host}:{port}"
+
+        logger.info("MeshCoreTransport: connecting to %s …", target)
 
         # Start the dedicated event loop in a daemon thread.
         self._loop = asyncio.new_event_loop()
@@ -464,7 +497,13 @@ class MeshCoreTransport(MeshTransport):
 
         try:
             mc = self._run_coro(
-                self._do_connect(host, port, auto_reconnect, max_attempts),
+                self._do_connect(
+                    conn_type, target,
+                    auto_reconnect, max_attempts,
+                    host=host, port=port,
+                    serial_port=serial_port, baud=baud,
+                    ble_address=ble_address,
+                ),
                 timeout=30.0,
             )
         except Exception as exc:
@@ -475,7 +514,7 @@ class MeshCoreTransport(MeshTransport):
         if mc is None:
             self._stop_loop()
             raise RuntimeError(
-                f"MeshCore.create_tcp({host}:{port}) returned None — connection failed"
+                f"MeshCore connect ({target}) returned None — connection failed"
             )
 
         self._mc = mc

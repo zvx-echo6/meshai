@@ -44,6 +44,18 @@ class ConnectionConfig:
     meshcore_auto_reconnect: bool = True        # enable meshcore lib auto-reconnect
     meshcore_max_reconnect_attempts: int = 5    # max reconnect attempts (0 = unlimited)
     meshcore_advert_interval_seconds: int = 10800  # periodic self-advert interval (0 = disabled)
+    # MeshCore connection type: tcp | serial | ble (default tcp for back-compat)
+    meshcore_conn_type: str = "tcp"
+    meshcore_serial_port: str = ""             # prefer stable /dev/serial/by-id/... path
+    meshcore_baud: int = 115200
+    meshcore_ble_address: str = ""             # optional; for ble
+
+    def __post_init__(self):
+        if self.meshcore_conn_type not in {"tcp", "serial", "ble"}:
+            raise ValueError(
+                f"meshcore_conn_type must be one of 'tcp', 'serial', 'ble', "
+                f"got {self.meshcore_conn_type!r}"
+            )
 
 
 @dataclass

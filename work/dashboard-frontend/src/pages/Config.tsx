@@ -5,6 +5,7 @@ import { ManagedSecret } from '@/components/ManagedSecret'
 import { useDirty } from '@/context/DirtyContext'
 import NodePicker from '@/components/NodePicker'
 import ChannelPicker from '@/components/ChannelPicker'
+import SerialPortPicker from '@/components/SerialPortPicker'
 import {
   Settings, Bot, MessageSquare, Database, Brain, Eye,
   Terminal, Cpu, Cloud, BookOpen, Activity,
@@ -739,13 +740,11 @@ export function ConnectionSection({ data, onChange }: { data: ConnectionConfig; 
         info="Serial: direct USB connection to a Meshtastic radio. TCP: connect over the network to a radio's IP or to meshtasticd running on another machine."
       />
       {data.type === 'serial' ? (
-        <TextInput
+        <SerialPortPicker
           label="Serial Port"
           value={data.serial_port}
           onChange={(v) => onChange({ ...data, serial_port: v })}
-          placeholder="/dev/ttyUSB0"
-          helper="Device path for your USB radio"
-          info="Usually /dev/ttyUSB0 on Linux or /dev/ttyACM0. Check with 'ls /dev/tty*' after plugging in your radio."
+          helper="Device path for your USB radio — Detect fills a stable by-id path"
         />
       ) : (
         <div className="grid grid-cols-2 gap-4">
