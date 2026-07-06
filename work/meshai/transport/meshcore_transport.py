@@ -121,22 +121,49 @@ class MeshCoreTransport(MeshTransport):
     def _resolve_contact(self, dest: str):
         """Resolve a pubkey prefix (or key) to the full MeshCore contact dict.
 
-        Refreshes the roster first (ensure_contacts) so the lib can upgrade the
-        6-byte prefix to the full 32-byte key. Returns None if the contact can't
-        be resolved.
+        Fast path: if the lib's cached contact mirror already has a match for
+        *dest*, return it immediately with no serial round-trip.
+
+        On a cache miss, force a full contact re-fetch directly from the
+        firmware (``get_contacts(lastmod=0)``).  ``lastmod=0`` fetches ALL
+        contacts, bypassing the no-op cache guard in ``ensure_contacts()``
+        (which skips the fetch once ``self._contacts`` is already populated).
+        This pulls in any contacts the firmware has auto-added since the last
+        sync (e.g. the sender of an inbound DM).  The lib merges the result
+        into its ``_contacts`` cache automatically via its CONTACTS/NEXT_CONTACT
+        event handler, so a subsequent ``get_contact_by_key_prefix`` will find
+        the freshly-learned entry.
+
+        Returns None if the firmware genuinely has no such contact.
         """
         if self._mc is None:
             return None
-        ensure = getattr(self._mc, "ensure_contacts", None)
-        if ensure is not None:
-            try:
-                self._run_coro(ensure(), timeout=15)
-            except Exception:
-                logger.debug("MeshCore: ensure_contacts (resolve) failed", exc_info=True)
+        # Fast path: contact already in the lib's cached mirror.
+        try:
+            contact = self._mc.get_contact_by_key_prefix(dest)
+            if contact is not None:
+                return contact
+        except Exception:
+            logger.debug(
+                "MeshCore: get_contact_by_key_prefix (fast path) failed for %s", dest, exc_info=True
+            )
+            return None
+        # Miss: force a full re-fetch so the firmware's auto-added contacts
+        # (including the sender of the inbound DM we're about to reply to)
+        # are merged into the lib's cache before we retry.
+        try:
+            self._run_coro(self._mc.commands.get_contacts(lastmod=0), timeout=15)
+        except Exception:
+            logger.debug(
+                "MeshCore: get_contacts(lastmod=0) refetch failed for %s", dest, exc_info=True
+            )
+        # Retry with the freshly merged roster.
         try:
             return self._mc.get_contact_by_key_prefix(dest)
         except Exception:
-            logger.debug("MeshCore: get_contact_by_key_prefix failed for %s", dest, exc_info=True)
+            logger.debug(
+                "MeshCore: get_contact_by_key_prefix (retry) failed for %s", dest, exc_info=True
+            )
             return None
 
     def _establish_direct_path(self, contact: dict, dst: str) -> None:
