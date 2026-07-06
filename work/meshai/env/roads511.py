@@ -329,6 +329,12 @@ class Roads511Adapter:
             event = {
                 "source": "511",
                 "event_id": f"511_{event_id}",
+                # Stable ITD id, EQUAL to event_id. Threading it as external_id
+                # makes _seen_key use the ext: branch (511\x1eext:511_{id}) and
+                # lets the incident decider persist a matching
+                # traffic_events(source='511', external_id='511_{id}') row so the
+                # store's durable startup pre-seed can suppress this item.
+                "external_id": f"511_{event_id}",
                 "event_type": event_type,
                 "headline": headline,
                 "description": description[:500] if description else "",
@@ -398,8 +404,15 @@ class Roads511Adapter:
             _roadway = props.get("roadway")
             _desc = evt.get("description", "") or ""
             _is_closure = bool(props.get("is_closure"))
+            # Stable ITD id (the raw event carries the same value as its
+            # event_id). Threading it lets the incident decider persist a
+            # traffic_events(source='511', external_id='511_{id}') row that the
+            # store's durable pre-seed matches via _key_ext('511', external_id).
+            # NOTE: Central-era rows used source 'itd_511' with 'idaho_511:event:*'
+            # ids — a different keyspace the pre-seed intentionally does not cover.
+            _external_id = evt.get("external_id") or event_id
             canonical_data = {
-                "external_id":    None,   # native adapter, no Central dedup
+                "external_id":    _external_id,   # 511_{itd_id}; enables durable pre-seed
                 "source":         "511",
                 "sub_type":       "road_closed" if _is_closure else "incident",
                 "road":           _roadway or None,
