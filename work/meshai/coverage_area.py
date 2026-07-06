@@ -168,19 +168,27 @@ def areas_from_config(coverage_cfg) -> list[MonitoringArea]:
 # event_in_areas — convenience wrapper over build_geom_json + classify
 # ---------------------------------------------------------------------------
 
-def event_in_areas(event: Any, areas: list[MonitoringArea]) -> bool:
-    """Return True if the event's geometry intersects any configured area.
+def classify_event_areas(event: Any, areas: list[MonitoringArea]) -> str:
+    """Classify an event against configured areas, returning the 3-state result.
+
+    Extracts the event's geometry (same priority chain as ``event_in_areas``)
+    and returns the raw ``classify_geom_areas`` verdict so callers can
+    distinguish "out-of-bounds" from "can't be located":
+
+      'null-geom'     -- no geometry / bbox / centroid at all
+      'invalid-geom'  -- geometry present but Shapely could not evaluate it
+      'no-area'       -- areas list empty (coverage effectively off)
+      'in-bounds'     -- intersects at least one configured area
+      'out-of-bounds' -- lies entirely outside every configured area
+
+    The coverage gate uses this to fail CLOSED (drop) on 'null-geom' /
+    'invalid-geom' for weather-alert categories, while other adapters keep
+    the fail-OPEN behaviour.
 
     Geometry extraction priority (mirrors Central's archive chain):
       1. event.data["geometry"] — full GeoJSON dict (richest, preferred)
       2. event.data["bbox"]     — [west, south, east, north]
       3. (event.lon, event.lat) — Point centroid [lon, lat] in GeoJSON order
-
-    Fail-open semantics (matching Central):
-      'null-geom'  (no geometry at all) → True  (keep)
-      'invalid-geom' (parse/Shapely error) → True  (keep)
-      'no-area'    (areas list empty)    → True  (keep)
-      'out-of-bounds'                    → False (drop)
     """
     data: dict[str, Any] = getattr(event, "data", None) or {}
     geo: dict[str, Any] = {}
@@ -199,5 +207,18 @@ def event_in_areas(event: Any, areas: list[MonitoringArea]) -> bool:
                 geo["centroid"] = [lon, lat]  # GeoJSON coordinate order: [lon, lat]
 
     geom_json = build_geom_json(geo if geo else None)
-    result = classify_geom_areas(geom_json, areas)
-    return result != "out-of-bounds"
+    return classify_geom_areas(geom_json, areas)
+
+
+def event_in_areas(event: Any, areas: list[MonitoringArea]) -> bool:
+    """Return True if the event's geometry intersects any configured area.
+
+    Back-compat bool wrapper over ``classify_event_areas``. Retains the
+    original fail-OPEN semantics (matching Central):
+      'null-geom'  (no geometry at all)   → True  (keep)
+      'invalid-geom' (parse/Shapely error) → True  (keep)
+      'no-area'    (areas list empty)      → True  (keep)
+      'in-bounds'                          → True  (keep)
+      'out-of-bounds'                      → False (drop)
+    """
+    return classify_event_areas(event, areas) != "out-of-bounds"
