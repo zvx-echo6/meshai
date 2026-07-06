@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { Save, RotateCcw, RefreshCw, Check, ChevronRight } from 'lucide-react'
-import { TextInput, NumberInput, Toggle, ListInput } from './Config'
+import { TextInput, NumberInput, Toggle, ListInput, SelectInput } from './Config'
+import SerialPortPicker from '@/components/SerialPortPicker'
 import { notifyRestartRequired } from '@/components/RestartBanner'
 import { fetchConfig as apiFetchConfig, updateConfig as apiUpdateConfig, getMeshcoreChannels, sendTestMessage } from '@/lib/api'
 import { useDirty } from '@/context/DirtyContext'
@@ -18,6 +19,10 @@ interface ConnectionConfig {
   meshcore_port?: number
   meshcore_auto_reconnect?: boolean
   meshcore_max_reconnect_attempts?: number
+  meshcore_conn_type?: string
+  meshcore_serial_port?: string
+  meshcore_baud?: number
+  meshcore_ble_address?: string
   [key: string]: unknown
 }
 
@@ -236,27 +241,67 @@ export default function MeshCoreConnection() {
       <div className="bg-bg-card border border-border p-6 space-y-4">
         <div className="text-xs text-slate-500 uppercase tracking-wide">MeshCore Connection</div>
         <p className="text-xs text-slate-500">
-          Set the host and port to enable MeshCore; leave host blank to disable.
-          Meshtastic is always active.
+          Choose how MeshAI reaches your MeshCore node. TCP talks to a companion
+          frame server; Serial connects to a USB-attached node; BLE pairs over
+          Bluetooth. Meshtastic is always active.
         </p>
-        <div className="grid grid-cols-2 gap-4">
+        <SelectInput
+          label="Connection Type"
+          value={config.meshcore_conn_type ?? 'tcp'}
+          onChange={(v) => upd({ meshcore_conn_type: v })}
+          options={[
+            { value: 'tcp', label: 'TCP (companion)' },
+            { value: 'serial', label: 'Serial (USB)' },
+            { value: 'ble', label: 'BLE' },
+          ]}
+          helper="TCP for a companion frame server, Serial for a USB node, BLE for Bluetooth"
+        />
+        {(config.meshcore_conn_type ?? 'tcp') === 'tcp' && (
+          <div className="grid grid-cols-2 gap-4">
+            <TextInput
+              label="MeshCore Host"
+              value={config.meshcore_host ?? ''}
+              onChange={(v) => upd({ meshcore_host: v })}
+              placeholder="192.168.1.100"
+              helper="IP or hostname of the companion frame server"
+              info="The MeshCore companion (frame server) host. Active when non-empty in TCP mode."
+            />
+            <NumberInput
+              label="MeshCore Port"
+              value={config.meshcore_port ?? 5525}
+              onChange={(v) => upd({ meshcore_port: v })}
+              min={1}
+              max={65535}
+              helper="MeshCore TCP port (default 5525)"
+            />
+          </div>
+        )}
+        {(config.meshcore_conn_type ?? 'tcp') === 'serial' && (
+          <>
+            <SerialPortPicker
+              label="MeshCore Serial Port"
+              value={config.meshcore_serial_port ?? ''}
+              onChange={(v) => upd({ meshcore_serial_port: v })}
+              helper="USB-attached MeshCore node — Detect fills a stable by-id path"
+            />
+            <NumberInput
+              label="Baud Rate"
+              value={config.meshcore_baud ?? 115200}
+              onChange={(v) => upd({ meshcore_baud: v })}
+              min={1200}
+              helper="Serial baud rate (default 115200)"
+            />
+          </>
+        )}
+        {(config.meshcore_conn_type ?? 'tcp') === 'ble' && (
           <TextInput
-            label="MeshCore Host"
-            value={config.meshcore_host ?? ''}
-            onChange={(v) => upd({ meshcore_host: v })}
-            placeholder="192.168.1.100"
-            helper="IP or hostname — leave blank to disable MeshCore"
-            info="MeshCore is active when this field is non-empty."
+            label="BLE Address"
+            value={config.meshcore_ble_address ?? ''}
+            onChange={(v) => upd({ meshcore_ble_address: v })}
+            placeholder="AA:BB:CC:DD:EE:FF"
+            helper="Leave blank to scan/pair the first available device"
           />
-          <NumberInput
-            label="MeshCore Port"
-            value={config.meshcore_port ?? 5525}
-            onChange={(v) => upd({ meshcore_port: v })}
-            min={1}
-            max={65535}
-            helper="MeshCore TCP port (default 5525)"
-          />
-        </div>
+        )}
         <div className="pt-2">
           <Link
             to="/meshtastic/connection"

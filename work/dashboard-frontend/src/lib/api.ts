@@ -239,6 +239,29 @@ async function fetchJson<T>(url: string): Promise<T> {
   return response.json()
 }
 
+export interface SerialPort {
+  device: string
+  by_id?: string | null
+  by_path?: string | null
+  stable_path: string
+  description?: string
+  vid?: number | null
+  pid?: number | null
+  serial_number?: string | null
+  manufacturer?: string | null
+  product?: string | null
+  likely_radio: boolean
+}
+
+export interface SerialPortsResponse {
+  ports: SerialPort[]
+  note: string
+}
+
+export async function getSerialPorts(): Promise<SerialPortsResponse> {
+  return fetchJson<SerialPortsResponse>('/api/serial-ports')
+}
+
 export async function fetchStatus(): Promise<SystemStatus> {
   return fetchJson<SystemStatus>('/api/status')
 }
