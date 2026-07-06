@@ -87,8 +87,9 @@ export default function RestartBanner() {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.detail || `HTTP ${res.status}`)
       }
-      // Clear the banner immediately; the container will tear down and the
-      // dashboard will need a refresh anyway.
+      // Clear the banner immediately; the bot process restarts in place
+      // (a few seconds) and the dashboard briefly reconnects. The container
+      // itself is NOT recreated.
       clearRestartRequired()
     } catch (e) {
       setError(String(e))
@@ -106,7 +107,7 @@ export default function RestartBanner() {
     <div className="bg-yellow-900/40 border-b border-yellow-700 text-yellow-100 px-4 py-2 text-sm flex items-center gap-3">
       <AlertTriangle className="w-4 h-4 flex-shrink-0 text-yellow-300" />
       <div className="flex-1 min-w-0">
-        <strong>Container restart required</strong>
+        <strong>Restart required</strong>
         {state.changedKeys.length > 0 && (
           <span className="text-yellow-300 ml-2">
             ({state.changedKeys.length} key{state.changedKeys.length === 1 ? '' : 's'}:{' '}
@@ -114,7 +115,7 @@ export default function RestartBanner() {
           </span>
         )}
         <span className="ml-2 text-yellow-300/80">
-          for these changes to take effect. Until then the runtime keeps its boot-time configuration. Restart-required keys include anything under Config → environmental (feed_source, central URL), the LLM backend swap, and the dispatcher cold-start grace window. Other keys take effect on the next handler call.
+for these changes to take effect. Click <strong>Restart now</strong> — it restarts the bot process in place (a few seconds; the dashboard briefly reconnects), NOT the container. Until then the runtime keeps its boot-time configuration. Restart-required keys include transport connections and anything under Config → environmental (feed_source, central URL), the LLM backend swap, and the dispatcher cold-start grace window. Other keys take effect on the next handler call.
         </span>
         {error && <div className="text-red-400 text-xs mt-1">{error}</div>}
       </div>
