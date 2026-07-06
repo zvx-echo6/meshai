@@ -22,9 +22,15 @@ class TomTomTrafficAdapter:
 
     BASE_URL = "https://api.tomtom.com/traffic/services/4/flowSegmentData/relative0/10/json"
 
-    def __init__(self, config: "TomTomConfig"):
+    def __init__(self, config: "TomTomConfig", coverage: dict = None):
         self._api_key = self._resolve_env(config.api_key or "")
-        self._corridors = config.corridors or []
+        if coverage is not None:
+            self._corridors = [
+                {"name": f"grid_{i}", "lat": la, "lon": lo}
+                for i, (la, lo) in enumerate(coverage["points"])
+            ]
+        else:
+            self._corridors = config.corridors or []
         self._tick_interval = config.tick_seconds or 300
         self._last_tick = 0.0
         self._events = []

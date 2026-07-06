@@ -79,7 +79,7 @@ class EnvironmentalStore:
 
         # Create adapter instances with error isolation
         self._register_adapter("nws", config.nws, ".nws", "NWSAlertsAdapter",
-            lambda cfg: (cfg,))
+            lambda cfg: (cfg, self._coverage_for("nws")))
         self._register_adapter("swpc", config.swpc, ".swpc", "SWPCAdapter",
             lambda cfg: (cfg,))
         self._register_adapter("ducting", config.ducting, ".ducting", "DuctingAdapter",
@@ -93,7 +93,7 @@ class EnvironmentalStore:
         self._register_adapter("usgs_quake", config.usgs_quake, ".usgs_quake", "USGSQuakeAdapter",
             lambda cfg: (cfg, self._coverage_for("usgs_quake")))
         self._register_adapter("traffic", config.traffic, ".traffic", "TomTomTrafficAdapter",
-            lambda cfg: (cfg,))
+            lambda cfg: (cfg, self._coverage_for("traffic")))
         self._register_adapter("roads511", config.roads511, ".roads511", "Roads511Adapter",
             lambda cfg: (cfg, self._coverage_for("roads511")))
         self._register_adapter("wzdx", config.wzdx, ".wzdx", "WZDxAdapter",
