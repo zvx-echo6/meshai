@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import {
  Cloud, Flame, Radio, Car, Mountain, Satellite, Activity, Server,
  Save, RotateCcw, RefreshCw, AlertCircle, AlertTriangle, Info, Bell,
- Sliders,
+ Sliders, ChevronRight,
 } from 'lucide-react'
 import {
  Toggle, TextInput, NumberInput, SelectInput, ListInput, NumberListInput,
@@ -21,16 +21,16 @@ type FeedSource = 'native' | 'central'
 interface EnvConfig {
  enabled: boolean
  nws_zones: string[]
- nws: { enabled: boolean; user_agent: string; tick_seconds: number; severity_min: string; feed_source?: FeedSource }
+ nws: { enabled: boolean; user_agent: string; tick_seconds: number; severity_min: string; areas?: string[]; feed_source?: FeedSource }
  swpc: { enabled: boolean; feed_source?: FeedSource }
  ducting: { enabled: boolean; tick_seconds: number; latitude: number; longitude: number; feed_source?: FeedSource }
  fires: { enabled: boolean; tick_seconds: number; state: string; feed_source?: FeedSource }
  avalanche: { enabled: boolean; tick_seconds: number; center_ids: string[]; season_months: number[]; feed_source?: FeedSource }
- usgs: { enabled: boolean; tick_seconds: number; sites: string[]; feed_source?: FeedSource }
- usgs_quake: { enabled: boolean; tick_seconds: number; feed_url: string; global_mag_floor: number; regional_mag_floor: number; regional_radius_mi: number; escalate_mag_floor: number; broadcast_pager_alerts: string[]; region: string; feed_source?: FeedSource }
+ usgs: { enabled: boolean; tick_seconds: number; sites: string[]; flood_thresholds?: Record<string, { flow?: number; height?: number }>; feed_source?: FeedSource }
+ usgs_quake: { enabled: boolean; tick_seconds: number; feed_url: string; min_magnitude?: number; bbox?: number[]; global_mag_floor: number; regional_mag_floor: number; regional_radius_mi: number; escalate_mag_floor: number; broadcast_pager_alerts: string[]; region: string; feed_source?: FeedSource }
  traffic: { enabled: boolean; tick_seconds: number; api_key: string; corridors: { name: string; lat: number; lon: number }[]; feed_source?: FeedSource }
  roads511: { enabled: boolean; tick_seconds: number; api_key: string; base_url: string; endpoints: string[]; bbox: number[]; feed_source?: FeedSource }
- wzdx: { enabled: boolean; tick_seconds: number; api_key: string; base_url: string; endpoints: string[]; bbox: number[]; states: string[]; registry_url: string; feed_source?: FeedSource }
+ wzdx: { enabled: boolean; tick_seconds: number; api_key: string; base_url: string; endpoints: string[]; bbox: number[]; states: string[]; registry_url: string; registry_ttl?: number; feed_source?: FeedSource }
  firms: { enabled: boolean; tick_seconds: number; map_key: string; source: string; bbox: number[]; day_range: number; confidence_min: string; proximity_km: number; feed_source?: FeedSource }
  // Native satpass (SGP4) YAML layer — drives env/satpass.py + env/tle_fetch.py.
  // Distinct from the Central adapter_config/satpass layer (see SatpassConfig
@@ -43,9 +43,11 @@ interface EnvConfig {
   min_elevation_deg: number
   window_hours: number
   tle_refresh_seconds: number
+  broadcast_lead_seconds?: number
   feed_source?: FeedSource
  }
- central?: { enabled: boolean; url: string; durable: string; region: string }
+ central?: { enabled: boolean; url: string; durable: string; region: string; connect_timeout?: number }
+ geocoder?: { url?: string; timeout_seconds?: number; radius_km?: number; limit?: number }
 }
 
 // Sane defaults for the native satpass block so a GET payload predating
@@ -58,6 +60,7 @@ const SATPASS_NATIVE_DEFAULT: EnvConfig['satpass'] = {
  min_elevation_deg: 10,
  window_hours: 24,
  tle_refresh_seconds: 21600,
+ broadcast_lead_seconds: 3600,
  feed_source: 'central',
 }
 
@@ -373,6 +376,12 @@ export default function Environment() {
   dry_run: true,
  })
  const [satpassOriginal, setSatpassOriginal] = useState<string>("")
+
+ // USGS flood_thresholds advanced JSON editor: raw text buffer (so invalid
+ // intermediate edits stay in the textarea) + inline parse error. Only valid
+ // parses are committed to env state via up().
+ const [floodThreshText, setFloodThreshText] = useState<string | null>(null)
+ const [floodThreshErr, setFloodThreshErr] = useState<string | null>(null)
 
  // ── Notification family gating state ──────────────────────────────────────
  const [notifConfig, setNotifConfig] = useState<NotificationsConfig | null>(null)
@@ -810,6 +819,7 @@ const save = async () => {
   setAvalancheConfig(JSON.parse(avalancheOriginal || JSON.stringify(avalancheConfig)))
   setSwpcConfig(JSON.parse(swpcOriginal || JSON.stringify(swpcConfig)))
   setSatpassConfig(JSON.parse(satpassOriginal || JSON.stringify(satpassConfig)))
+  setFloodThreshText(null); setFloodThreshErr(null)
  }
  const restart = async () => {
   try { await fetch('/api/restart', { method: 'POST' }); setRestartRequired(false); setSuccess('Restart initiated') }
@@ -874,6 +884,7 @@ const save = async () => {
      min_severity: mine.min_severity,
      freshness_seconds: mine.freshness_seconds ?? (freshT as NotificationToggle).freshness_seconds ?? 600,
      cooldown_seconds: mine.cooldown_seconds ?? (freshT as NotificationToggle).cooldown_seconds ?? 0,
+     regions: mine.regions ?? (freshT as NotificationToggle).regions ?? [],
     } as NotificationToggle
    }
    const res = await fetch('/api/config/notifications', {
@@ -915,6 +926,7 @@ const save = async () => {
   switch (key) {
    case 'nws': return (<>
     <ListInput label="NWS Zones" value={env.nws_zones} onChange={(v) => up({ nws_zones: v })} helper="Zone IDs like IDZ016, IDZ030" infoLink="https://www.weather.gov/pimar/PubZone" />
+    <ListInput label="NWS Areas" value={env.nws.areas ?? []} onChange={(v) => up({ nws: { ...env.nws, areas: v } })} helper="State codes NWS pulls, e.g. ID" />
     {env.nws.feed_source !== 'central' && (
      <>
       <TextInput label="User Agent" value={env.nws.user_agent} onChange={(v) => up({ nws: { ...env.nws, user_agent: v } })} placeholder="(MeshAI, you@email.com)" helper="Format: (app_name, contact_email)" />
@@ -1095,6 +1107,28 @@ const save = async () => {
    case 'usgs': return (<>
     <NumberInput label="Tick Seconds" value={env.usgs.tick_seconds} onChange={(v) => up({ usgs: { ...env.usgs, tick_seconds: v } })} min={900} helper="Minimum 15 min (900s). tick_seconds is the native-mode poll interval; ignored when this adapter is set to feed_source=central." />
     <ListInput label="Site IDs" value={env.usgs.sites} onChange={(v) => up({ usgs: { ...env.usgs, sites: v } })} helper="USGS gauge site numbers" infoLink="https://waterdata.usgs.gov/nwis" />
+    <div>
+     <label className="text-xs font-sans text-[#777] mb-1 block">Flood Thresholds (advanced JSON)</label>
+     <textarea
+      value={floodThreshText ?? JSON.stringify(env.usgs.flood_thresholds ?? {}, null, 2)}
+      onChange={(e) => {
+       const raw = e.target.value
+       setFloodThreshText(raw)
+       try {
+        const parsed = JSON.parse(raw)
+        setFloodThreshErr(null)
+        up({ usgs: { ...env.usgs, flood_thresholds: parsed } })
+       } catch (err) {
+        setFloodThreshErr(err instanceof Error ? err.message : 'Invalid JSON')
+       }
+      }}
+      rows={6}
+      spellCheck={false}
+      className="w-full bg-[#0d0d0d] border border-border px-3 py-2 text-sm font-mono"
+     />
+     {floodThreshErr && <p className="text-xs text-red-400 mt-1">Invalid JSON — not saved: {floodThreshErr}</p>}
+     <p className="text-xs text-[#666] mt-1">Per-site flood levels, shape {'{'}"site_id": {'{'} "flow": X, "height": Y {'}'}{'}'}</p>
+    </div>
    </>)
    case 'usgs_quake': return (
     <div className="space-y-6">
@@ -1107,6 +1141,23 @@ const save = async () => {
         onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, region: v } })} />
       </div>
      )}
+     <div>
+      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">
+       Native Feed
+      </div>
+      <div className="space-y-3">
+       <TextInput label="Quake Feed URL" value={env.usgs_quake.feed_url}
+        onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, feed_url: v } })} />
+       <div className="grid grid-cols-2 gap-4">
+        <NumberInput label="Min Magnitude" value={env.usgs_quake.min_magnitude ?? 2.5}
+         onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, min_magnitude: v } })}
+         step={0.1} min={0} helper="Native quake magnitude floor" />
+       </div>
+       <NumberListInput label="Bounding Box [W, S, E, N]" value={env.usgs_quake.bbox ?? []}
+        onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, bbox: v } })}
+        helper="Four values: west, south, east, north" />
+      </div>
+     </div>
      <div>
       <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">
        Magnitude Thresholds
@@ -1269,6 +1320,8 @@ const save = async () => {
       <TextInput label="Registry URL" value={env.wzdx?.registry_url ?? ''} onChange={(v) => up({ wzdx: { ...env.wzdx!, registry_url: v } })}
        placeholder="https://datahub.transportation.gov/resource/69qe-yiui.json?$limit=200"
        helper="FHWA WZDx Feed Registry (Socrata) URL — lists every state DOT feed" />
+      <NumberInput label="Registry TTL (sec)" value={env.wzdx?.registry_ttl ?? 21600} onChange={(v) => up({ wzdx: { ...env.wzdx!, registry_ttl: v } })}
+       min={0} helper="How often to re-fetch the WZDx registry (default 21600 = 6h)" />
      </>
     )}
     <div className="border-t border-border pt-4 mt-4">
@@ -1432,6 +1485,9 @@ const save = async () => {
        <NumberInput label="TLE Refresh (sec)" value={env.satpass.tle_refresh_seconds}
         onChange={(v) => up({ satpass: { ...env.satpass, tle_refresh_seconds: v } })}
         min={3600} helper="How often to re-fetch TLEs (default 21600 = 6h)" />
+       <NumberInput label="Broadcast Lead (sec)" value={env.satpass.broadcast_lead_seconds ?? 3600}
+        onChange={(v) => up({ satpass: { ...env.satpass, broadcast_lead_seconds: v } })}
+        min={0} helper="How far ahead of a pass to announce" />
       </div>
      </div>
     </div>
@@ -1534,6 +1590,9 @@ const save = async () => {
       <TextInput label="Durable" value={env.central.durable || ""}
             onChange={(v) => up({ central: { ...env.central!, durable: v } })}
             placeholder="meshai-v04" />
+      <NumberInput label="Connect Timeout (sec)" value={env.central.connect_timeout ?? 10}
+            onChange={(v) => up({ central: { ...env.central!, connect_timeout: v } })}
+            step={0.5} min={0} helper="NATS connect timeout for the Central consumer" />
       <TextInput label="Region" value={env.central.region || ""}
             onChange={(v) => up({ central: { ...env.central!, region: v } })}
             placeholder="us.id"
@@ -1568,7 +1627,6 @@ const save = async () => {
       freshness window, and cooldown. Delivery routing (which mesh channels, email, webhook) is
       configured on the <a href="/notifications" className="text-accent hover:underline">Meshtastic Routing</a> and{' '}
       <a href="/meshcore/routing" className="text-accent hover:underline">MeshCore Routing</a> pages.
-      Regions filter is dormant and intentionally hidden.
      </p>
      {notifError && <div className="text-sm text-red-400 bg-red-500/10 p-3">{notifError}</div>}
      {notifSuccess && <div className="text-sm text-green-400 bg-green-500/10 p-3">{notifSuccess}</div>}
@@ -1614,6 +1672,12 @@ const save = async () => {
               helper="0 = no throttle"
              />
             </div>
+            <ListInput
+             label="Regions"
+             value={t.regions ?? []}
+             onChange={(v) => updNotif(key, { regions: v })}
+             helper="Empty = all regions; otherwise only these region names"
+            />
            </div>
           </div>
          )
@@ -1681,6 +1745,50 @@ const save = async () => {
      </AdapterPanel>
     </>
    )}
+
+   {/* ── Advanced: Geocoder — infra, not a feed ──────────────────────────── */}
+   <details className="group border border-border p-4">
+    <summary className="flex items-center gap-2 cursor-pointer text-sm font-medium text-[#e0e0e0] hover:text-white">
+     <ChevronRight size={14} className="group-open:rotate-90 transition-transform" />
+     Advanced: Geocoder
+    </summary>
+    <p className="mt-2 text-xs text-[#666]">
+     Configures the Photon reverse-geocoder used to resolve place names.
+    </p>
+    <div className="mt-4 space-y-3 pl-6 border-l border-border">
+     <TextInput
+      label="Geocoder URL"
+      value={env.geocoder?.url ?? 'https://photon.komoot.io'}
+      onChange={(v) => up({ geocoder: { ...env.geocoder, url: v } })}
+      placeholder="https://photon.komoot.io"
+      helper="Photon geocoding endpoint"
+     />
+     <div className="grid grid-cols-2 gap-3">
+      <NumberInput
+       label="Timeout (s)"
+       value={env.geocoder?.timeout_seconds ?? 2}
+       onChange={(v) => up({ geocoder: { ...env.geocoder, timeout_seconds: v } })}
+       min={0}
+       step={0.5}
+       helper="HTTP timeout per geocode request"
+      />
+      <NumberInput
+       label="Search Radius (km)"
+       value={env.geocoder?.radius_km ?? 80}
+       onChange={(v) => up({ geocoder: { ...env.geocoder, radius_km: v } })}
+       min={0}
+       helper="Bias radius around the configured center for results"
+      />
+      <NumberInput
+       label="Result Limit"
+       value={env.geocoder?.limit ?? 10}
+       onChange={(v) => up({ geocoder: { ...env.geocoder, limit: v } })}
+       min={1}
+       helper="Max candidate results to consider"
+      />
+     </div>
+    </div>
+   </details>
 
    </> /* end curated tab */}
   </div>

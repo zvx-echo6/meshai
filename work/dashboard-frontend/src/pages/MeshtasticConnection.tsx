@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Save, RotateCcw, RefreshCw, Check } from 'lucide-react'
+import { Save, RotateCcw, RefreshCw, Check, ChevronRight } from 'lucide-react'
 import { ConnectionSection, TextInput, NumberInput, Toggle, type ConnectionConfig } from './Config'
 import ChannelPicker from '@/components/ChannelPicker'
 import NodePicker from '@/components/NodePicker'
@@ -206,6 +206,53 @@ export default function MeshtasticConnection() {
       {/* Form */}
       <div className="bg-bg-card border border-border p-6">
         <ConnectionSection data={config} onChange={setConfig} />
+      </div>
+
+      {/* Advanced — reconnect & packet tuning */}
+      <div className="bg-bg-card border border-border p-6">
+        <details className="group">
+          <summary className="flex items-center gap-2 cursor-pointer text-sm text-slate-400 hover:text-slate-200">
+            <ChevronRight size={14} className="group-open:rotate-90 transition-transform" />
+            Advanced — Reconnect &amp; Packet Tuning
+          </summary>
+          <div className="mt-4 space-y-4 pl-6 border-l border-[#1e2a3a]">
+            <Toggle
+              label="Auto-reconnect"
+              checked={config.reconnect ?? true}
+              onChange={(v) => setConfig({ ...config, reconnect: v })}
+              helper="Automatically reconnect if the mesh link drops"
+            />
+            <NumberInput
+              label="Reconnect Initial Delay (s)"
+              value={config.reconnect_initial_delay ?? 2}
+              onChange={(v) => setConfig({ ...config, reconnect_initial_delay: v })}
+              min={0}
+              step={0.5}
+              helper="Backoff delay before the first reconnect attempt"
+            />
+            <NumberInput
+              label="Reconnect Max Delay (s)"
+              value={config.reconnect_max_delay ?? 60}
+              onChange={(v) => setConfig({ ...config, reconnect_max_delay: v })}
+              min={0}
+              helper="Ceiling for exponential reconnect backoff"
+            />
+            <NumberInput
+              label="Reconnect Health Interval (s)"
+              value={config.reconnect_health_interval ?? 30}
+              onChange={(v) => setConfig({ ...config, reconnect_health_interval: v })}
+              min={1}
+              helper="How often the socket-probe watchdog checks link health"
+            />
+            <NumberInput
+              label="Mesh Max Chars"
+              value={config.mesh_max_chars ?? 140}
+              onChange={(v) => setConfig({ ...config, mesh_max_chars: v })}
+              min={1}
+              helper="Per-packet character budget for the transport"
+            />
+          </div>
+        </details>
       </div>
 
       {/* Bot behavior card */}

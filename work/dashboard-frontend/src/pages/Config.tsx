@@ -17,6 +17,7 @@ import {
 interface BotConfig {
   name: string
   owner: string
+  contact_email?: string
   respond_to_dms: boolean
   filter_bbs_protocols: boolean
 }
@@ -28,6 +29,13 @@ export interface ConnectionConfig {
   tcp_port: number
   meshcore_host?: string
   meshcore_port?: number
+  reconnect?: boolean
+  reconnect_initial_delay?: number
+  reconnect_max_delay?: number
+  reconnect_health_interval?: number
+  mesh_max_chars?: number
+  meshcore_auto_reconnect?: boolean
+  meshcore_max_reconnect_attempts?: number
 }
 
 interface ResponseConfig {
@@ -206,6 +214,7 @@ interface DashboardConfig {
 }
 
 interface FullConfig {
+  timezone: string
   bot: BotConfig
   connection: ConnectionConfig
   response: ResponseConfig
@@ -686,6 +695,13 @@ function BotSection({ data, onChange }: { data: BotConfig; onChange: (d: BotConf
           helper="Your callsign or identifier"
           info="Identifies the bot operator. Shown in !help responses and used for admin-level commands."
         />
+        <TextInput
+          label="Contact Email"
+          value={data.contact_email || ''}
+          onChange={(v) => onChange({ ...data, contact_email: v })}
+          helper="Used to synthesize the NWS User-Agent"
+          info="An email address identifying the operator; sent as the User-Agent when fetching NWS weather data (NWS requires a contact). Stored in local.yaml."
+        />
       </div>
       <Toggle
         label="Respond to DMs"
@@ -942,6 +958,31 @@ function ContextSection({ data, onChange }: { data: ContextConfig; onChange: (d:
 function CommandsSection({ data, onChange }: { data: CommandsConfig; onChange: (d: CommandsConfig) => void }) {
   const disabledSet = new Set(data.disabled_commands.map(c => c.toLowerCase()))
 
+  // custom_commands is a {name: response} dict. Edit it as ordered rows in
+  // local state so a half-typed (blank-key) row isn't dropped mid-edit; commit
+  // the blank-filtered dict up to the parent on every change.
+  const [customRows, setCustomRows] = useState<[string, string][]>(() =>
+    Object.entries(data.custom_commands || {})
+  )
+  useEffect(() => {
+    const committed: Record<string, string> = {}
+    for (const [k, v] of customRows) {
+      if (k.trim()) committed[k.trim()] = v
+    }
+    if (JSON.stringify(committed) !== JSON.stringify(data.custom_commands || {})) {
+      setCustomRows(Object.entries(data.custom_commands || {}))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.custom_commands])
+  const commitCustomRows = (rows: [string, string][]) => {
+    setCustomRows(rows)
+    const obj: Record<string, string> = {}
+    for (const [k, v] of rows) {
+      if (k.trim()) obj[k.trim()] = v
+    }
+    onChange({ ...data, custom_commands: obj })
+  }
+
   const toggleCommand = (cmdName: string) => {
     const lowerName = cmdName.toLowerCase()
     if (disabledSet.has(lowerName)) {
@@ -1004,6 +1045,52 @@ function CommandsSection({ data, onChange }: { data: CommandsConfig; onChange: (
                 )
               })}
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+              Custom Commands
+              <InfoButton info="Define your own commands. When a user types the prefix followed by the name, the bot replies with the response text verbatim." />
+            </label>
+            {customRows.map(([name, response], i) => (
+              <div key={i} className="flex items-start gap-2">
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => {
+                    const rows = customRows.map((r, j) => j === i ? [e.target.value, r[1]] as [string, string] : r)
+                    commitCustomRows(rows)
+                  }}
+                  placeholder="name"
+                  className="w-40 flex-shrink-0 px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 font-mono focus:outline-none focus:border-accent placeholder-slate-600"
+                />
+                <input
+                  type="text"
+                  value={response}
+                  onChange={(e) => {
+                    const rows = customRows.map((r, j) => j === i ? [r[0], e.target.value] as [string, string] : r)
+                    commitCustomRows(rows)
+                  }}
+                  placeholder="response text"
+                  className="flex-1 px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 focus:outline-none focus:border-accent placeholder-slate-600"
+                />
+                <button
+                  type="button"
+                  onClick={() => commitCustomRows(customRows.filter((_, j) => j !== i))}
+                  className="p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded flex-shrink-0"
+                  aria-label="Remove custom command"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => commitCustomRows([...customRows, ['', '']])}
+              className="w-full py-2 border border-dashed border-[#1e2a3a] text-slate-500 hover:text-slate-300 hover:border-accent flex items-center justify-center gap-2 transition-colors"
+            >
+              <Plus size={16} /> Add Custom Command
+            </button>
           </div>
         </>
       )}
@@ -1263,6 +1350,22 @@ function KnowledgeSection({ data, onChange }: { data: KnowledgeConfig; onChange:
                   value={data.tei_port}
                   onChange={(v) => onChange({ ...data, tei_port: v })}
                   helper="Default 8090"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <TextInput
+                  label="Sparse Host"
+                  value={data.sparse_host}
+                  onChange={(v) => onChange({ ...data, sparse_host: v })}
+                  placeholder="localhost"
+                  helper="SPLADE sparse-embedding service host"
+                  info="Host of the SPLADE service that generates sparse (keyword-weighted) embeddings for hybrid search."
+                />
+                <NumberInput
+                  label="Sparse Port"
+                  value={data.sparse_port}
+                  onChange={(v) => onChange({ ...data, sparse_port: v })}
+                  helper="Default 8091"
                 />
               </div>
               <Toggle
@@ -1713,6 +1816,17 @@ export function MeshIntelligenceSection({ data, onChange }: { data: MeshIntellig
                 thresholdMax={50}
                 thresholdSuffix={`% for ${data.alert_rules.high_util_hours}h`}
               />
+              {data.alert_rules.sustained_high_util && (
+                <div className="pl-3">
+                  <NumberInput
+                    label="High-Util Window (hours)"
+                    value={data.alert_rules.high_util_hours}
+                    onChange={(v) => onChange({ ...data, alert_rules: { ...data.alert_rules, high_util_hours: v } })}
+                    min={1}
+                    helper="Sustained duration above the utilization threshold before alerting"
+                  />
+                </div>
+              )}
               <AlertRuleToggle
                 label="Packet Flood"
                 description="Alert when a single node sends excessive packets"
@@ -1792,6 +1906,28 @@ function DashboardSection({ data, onChange }: { data: DashboardConfig; onChange:
           />
         </div>
       )}
+    </div>
+  )
+}
+
+// Global settings that aren't part of any dataclass section. `timezone` is a
+// top-level scalar on Config, saved via its own PUT /api/config/timezone with
+// the bare string as the JSON body (not part of the section Save button flow).
+function GeneralSettings({ timezone, onSave }: { timezone: string; onSave: (tz: string) => void }) {
+  const [tz, setTz] = useState(timezone)
+  useEffect(() => { setTz(timezone) }, [timezone])
+
+  return (
+    <div className="space-y-4 mb-6 pb-6 border-b border-[#1e2a3a]">
+      <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">General</label>
+      <TextInput
+        label="Timezone"
+        value={tz}
+        onChange={(v) => { setTz(v); onSave(v) }}
+        placeholder="America/Boise"
+        helper="Global IANA timezone, e.g. America/Boise"
+        info="Global IANA timezone used for local time display across MeshAI. Saved immediately."
+      />
     </div>
   )
 }
@@ -1912,6 +2048,25 @@ export default function Config() {
     setConfig({ ...config, [section]: data })
   }
 
+  // Top-level `timezone` scalar: PUT the bare string to /api/config/timezone.
+  // Kept out of the section Save flow (it isn't a SectionKey); on success we
+  // sync both config + originalConfig so it doesn't register as unsaved.
+  const saveTimezone = async (tz: string) => {
+    try {
+      const res = await fetch('/api/config/timezone', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(tz),
+      })
+      const result = await res.json()
+      if (!res.ok) throw new Error(result.detail || 'Save failed')
+      setConfig((prev) => (prev ? { ...prev, timezone: tz } : prev))
+      setOriginalConfig((prev) => (prev ? { ...prev, timezone: tz } : prev))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Timezone save failed')
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -1930,7 +2085,12 @@ export default function Config() {
 
   const renderSection = () => {
     switch (activeSection) {
-      case 'bot': return <BotSection data={config.bot} onChange={(d) => updateSection('bot', d)} />
+      case 'bot': return (
+        <>
+          <GeneralSettings timezone={config.timezone} onSave={saveTimezone} />
+          <BotSection data={config.bot} onChange={(d) => updateSection('bot', d)} />
+        </>
+      )
       case 'response': return <ResponseSection data={config.response} onChange={(d) => updateSection('response', d)} />
       case 'history': return <HistorySection data={config.history} onChange={(d) => updateSection('history', d)} />
       case 'memory': return <MemorySection data={config.memory} onChange={(d) => updateSection('memory', d)} />

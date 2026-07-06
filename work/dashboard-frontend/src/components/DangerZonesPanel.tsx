@@ -14,6 +14,7 @@ import { fetchConfig as apiFetchConfig, updateConfig as apiUpdateConfig } from '
 import { Toggle, NumberInput, TextInput, InfoButton } from '@/pages/Notifications'
 import NodePicker from '@/components/NodePicker'
 import ChannelPicker from '@/components/ChannelPicker'
+import { KeyValueInput } from './KeyValueInput'
 
 const DZ_MONITOR_ROLES = ['CLIENT_BASE', 'ROUTER', 'ROUTER_LATE'] as const
 
@@ -36,7 +37,7 @@ const DZ_FAMILIES: {
 }[] = [
   { key: 'fire', label: 'Fire', description: 'Active wildfires (radius from fire perimeter).', Icon: Flame, showAcres: true },
   { key: 'weather', label: 'Weather', description: 'Severe weather warnings near a node.', Icon: Cloud },
-  { key: 'snow', label: 'Snow (sub-gate of Weather)', description: 'Snow-category weather events.', Icon: Snowflake, tabled: true },
+  { key: 'snow', label: 'Snow (sub-gate of Weather)', description: 'Snow-category weather events.', Icon: Snowflake },
   { key: 'flood', label: 'Flood (sub-gate of Seismic)', description: 'Stream/flood gauge events.', Icon: Activity },
   { key: 'avalanche', label: 'Avalanche', description: 'Avalanche advisories near a node.', Icon: Mountain },
   { key: 'seismic', label: 'Seismic', description: 'Earthquakes and seismic events near a node.', Icon: Mountain },
@@ -412,13 +413,23 @@ export default function DangerZonesPanel() {
                 )}
 
                 {cfg.delivery_type === 'webhook' && (
-                  <TextInput
-                    label="Webhook URL"
-                    value={cfg.webhook_url || ''}
-                    onChange={(v) => upd({ webhook_url: v })}
-                    placeholder="https://discord.com/api/webhooks/..."
-                    helper="POST alert as JSON"
-                  />
+                  <>
+                    <TextInput
+                      label="Webhook URL"
+                      value={cfg.webhook_url || ''}
+                      onChange={(v) => upd({ webhook_url: v })}
+                      placeholder="https://discord.com/api/webhooks/..."
+                      helper="POST alert as JSON"
+                    />
+                    <KeyValueInput
+                      label="Webhook Headers"
+                      value={cfg.webhook_headers || {}}
+                      onChange={(v) => upd({ webhook_headers: v })}
+                      helper="Custom HTTP headers sent with the danger-zone webhook"
+                      keyPlaceholder="Header"
+                      valuePlaceholder="Value"
+                    />
+                  </>
                 )}
 
                 {cfg.delivery_type === 'email' && (

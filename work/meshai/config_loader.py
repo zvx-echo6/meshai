@@ -62,6 +62,7 @@ SECTION_TO_FILE: dict[str, str] = {
 LOCAL_FIELDS: dict[str, str] = {
     "bot.name": "identity.name",
     "bot.owner": "identity.owner",
+    "bot.contact_email": "identity.contact_email",
     "connection.tcp_host": "infrastructure.tcp_host",
     "knowledge.qdrant_host": "infrastructure.qdrant_host",
     "knowledge.tei_host": "infrastructure.tei_host",
@@ -345,6 +346,8 @@ def _merge_local_values(data: dict, local: dict) -> dict:
             data["bot"]["name"] = identity["name"]
         if identity.get("owner"):
             data["bot"]["owner"] = identity["owner"]
+        if identity.get("contact_email"):
+            data["bot"]["contact_email"] = identity["contact_email"]
 
     # Infrastructure hosts
     infra = local.get("infrastructure", {})
@@ -789,9 +792,15 @@ def save_section(
             for i, item in enumerate(data)
         ]
         local_updates = {}
-    else:
+    elif isinstance(data, dict):
         data = check_secrets(data)
         domain_data, local_updates = _extract_local_fields(section_name, data)
+    else:
+        # Scalar section (e.g. the top-level `timezone` string). A bare scalar
+        # can't carry a secret ${VAR} ref or a local-identifying field, so it is
+        # written straight through to its target file (config.yaml) as-is.
+        domain_data = data
+        local_updates = {}
 
     # Load existing target file (v0.6-tail-4: preserve !include directives
     # for inline-section saves to config.yaml; safe_load would crash).
