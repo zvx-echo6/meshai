@@ -10,6 +10,7 @@ import ChannelPicker from '@/components/ChannelPicker'
 import NodePicker from '@/components/NodePicker'
 import { useDirty } from '@/context/DirtyContext'
 import { ManagedSecret } from '@/components/ManagedSecret'
+import { KeyValueInput } from '../components/KeyValueInput'
 
 // Types
 interface NotificationRuleConfig {
@@ -63,11 +64,18 @@ export interface NotificationToggle {
   webhook_headers: Record<string, string>
 }
 
+export interface DigestConfig {
+  schedule: string
+  include: string[]
+}
+
 export interface NotificationsConfig {
   enabled: boolean
   cold_start_grace_seconds?: number
   band_conditions_enabled?: boolean
   band_conditions_schedule?: string[]
+  band_conditions_tz?: string
+  digest?: DigestConfig
   rules: NotificationRuleConfig[]
   toggles?: Record<string, NotificationToggle>
 }
@@ -1617,7 +1625,9 @@ function mergeMeshtasticAndOtherFields(
   key: string,
 ): NotificationToggle {
   const base: NotificationToggle = fresh ? { ...fresh } : { ...mine, name: key }
-  base.name = base.name || key
+  // Prefer a locally-edited display name; else keep the server's; else default
+  // to the family id. (mine.name is overlaid here so Display Name edits persist.)
+  base.name = mine.name || base.name || key
 
   // Merge severity_channels: keep meshcore_* from fresh, overlay non-meshcore from mine.
   const freshSC = fresh?.severity_channels || {}
@@ -1660,7 +1670,7 @@ function MeshtasticDeliveryGrid({
   onChange: (t: Record<string, NotificationToggle>) => void
 }) {
   const upd = (fam: string, patch: Partial<NotificationToggle>) =>
-    onChange({ ...toggles, [fam]: { ...(toggles[fam] || {}), name: fam, ...patch } as NotificationToggle })
+    onChange({ ...toggles, [fam]: { ...(toggles[fam] || {}), ...patch } as NotificationToggle })
 
   return (
     <div className="space-y-3">
@@ -1721,7 +1731,7 @@ function OtherChannelsGrid({
   onChange: (t: Record<string, NotificationToggle>) => void
 }) {
   const upd = (fam: string, patch: Partial<NotificationToggle>) =>
-    onChange({ ...toggles, [fam]: { ...(toggles[fam] || {}), name: fam, ...patch } as NotificationToggle })
+    onChange({ ...toggles, [fam]: { ...(toggles[fam] || {}), ...patch } as NotificationToggle })
 
   return (
     <div className="space-y-3">
@@ -1774,6 +1784,29 @@ function OtherChannelsGrid({
                   placeholder="https://..."
                   helper="POST alert as JSON"
                 />
+                <details className="group">
+                  <summary className="flex items-center gap-2 cursor-pointer text-xs text-slate-400 hover:text-slate-200">
+                    <ChevronRight size={12} className="group-open:rotate-90 transition-transform" />
+                    Advanced
+                  </summary>
+                  <div className="mt-2 space-y-3 pl-4 border-l border-[#1e2a3a]">
+                    <TextInput
+                      label="Display Name"
+                      value={t.name || ''}
+                      onChange={(v) => upd(key, { name: v })}
+                      placeholder={key}
+                      helper="Human-readable label for this alert family (defaults to the family id)"
+                    />
+                    <KeyValueInput
+                      label="Webhook Headers"
+                      value={t.webhook_headers || {}}
+                      onChange={(v) => upd(key, { webhook_headers: v })}
+                      helper="Custom HTTP headers sent with this family's webhook (e.g. Authorization)"
+                      keyPlaceholder="Header"
+                      valuePlaceholder="Value"
+                    />
+                  </div>
+                </details>
               </div>
             </div>
           )
@@ -1858,6 +1891,8 @@ export default function Notifications() {
       const merged: NotificationsConfig = {
         ...fresh,
         enabled: config.enabled,   // global master switch lives on this page
+        band_conditions_tz: config.band_conditions_tz,  // top-level, edited on this page
+        digest: config.digest,     // daily digest schedule/include, edited on this page
         rules: config.rules,       // rules are only edited on this page
         toggles: { ...(fresh.toggles || {}) },
       }
@@ -2244,6 +2279,38 @@ export default function Notifications() {
           helper="Master switch for all notification delivery"
           info="When disabled, no alerts or scheduled messages will be delivered. Alerts still get recorded to history."
         />
+
+        {/* Band-condition timezone (top-level notification setting) */}
+        <TextInput
+          label="Band Conditions Timezone"
+          value={config.band_conditions_tz ?? 'America/Boise'}
+          onChange={(v) => setConfig({ ...config, band_conditions_tz: v })}
+          placeholder="America/Boise"
+          helper="IANA tz for band-condition slot times, e.g. America/Boise"
+        />
+
+        {/* Daily digest (top-level notification setting) */}
+        {(() => {
+          const digest = config.digest ?? { schedule: '07:00', include: [] }
+          return (
+            <>
+              <TextInput
+                label="Digest Time"
+                value={digest.schedule}
+                onChange={(v) => setConfig({ ...config, digest: { ...digest, schedule: v } })}
+                placeholder="07:00"
+                helper="Daily digest fire time HH:MM"
+              />
+              <ListInput
+                label="Digest Families"
+                value={digest.include}
+                onChange={(v) => setConfig({ ...config, digest: { ...digest, include: v } })}
+                placeholder="Add family..."
+                helper="Notification families to include in the daily digest"
+              />
+            </>
+          )
+        })()}
 
         {/* Meshtastic delivery grids — always visible regardless of master switch */}
         {config.toggles && (

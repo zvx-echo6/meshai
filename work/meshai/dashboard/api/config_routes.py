@@ -37,6 +37,7 @@ RESTART_REQUIRED_SECTIONS = {
 
 # Valid config section names
 VALID_SECTIONS = {
+    "timezone",
     "notifications",
     "environmental",
     "bot",

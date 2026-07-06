@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { Save, RotateCcw, RefreshCw, Check } from 'lucide-react'
+import { Save, RotateCcw, RefreshCw, Check, ChevronRight } from 'lucide-react'
 import { TextInput, NumberInput, Toggle, ListInput } from './Config'
 import { notifyRestartRequired } from '@/components/RestartBanner'
 import { fetchConfig as apiFetchConfig, updateConfig as apiUpdateConfig, getMeshcoreChannels, sendTestMessage } from '@/lib/api'
@@ -16,6 +16,8 @@ interface ConnectionConfig {
   tcp_port?: number
   meshcore_host?: string
   meshcore_port?: number
+  meshcore_auto_reconnect?: boolean
+  meshcore_max_reconnect_attempts?: number
   [key: string]: unknown
 }
 
@@ -263,6 +265,27 @@ export default function MeshCoreConnection() {
             &rarr; Meshtastic connection
           </Link>
         </div>
+        <details className="group">
+          <summary className="flex items-center gap-2 cursor-pointer text-sm text-slate-400 hover:text-slate-200">
+            <ChevronRight size={14} className="group-open:rotate-90 transition-transform" />
+            Advanced — MeshCore Reconnect
+          </summary>
+          <div className="mt-4 space-y-4 pl-6 border-l border-[#1e2a3a]">
+            <Toggle
+              label="Auto-reconnect (MeshCore)"
+              checked={config.meshcore_auto_reconnect ?? true}
+              onChange={(v) => upd({ meshcore_auto_reconnect: v })}
+              helper="Automatically reconnect to the MeshCore companion if the link drops"
+            />
+            <NumberInput
+              label="Max Reconnect Attempts"
+              value={config.meshcore_max_reconnect_attempts ?? 5}
+              onChange={(v) => upd({ meshcore_max_reconnect_attempts: v })}
+              min={0}
+              helper="Maximum reconnect attempts before giving up (0 = unlimited)"
+            />
+          </div>
+        </details>
       </div>
 
       {/* Bot behavior card — mirrors the Meshtastic Connection page, MeshCore-native */}

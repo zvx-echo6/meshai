@@ -17,6 +17,7 @@ class BotConfig:
 
     name: str = "ai"
     owner: str = ""
+    contact_email: str = ""
     respond_to_dms: bool = True
     filter_bbs_protocols: bool = True
 
