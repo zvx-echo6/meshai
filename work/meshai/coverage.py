@@ -73,9 +73,14 @@ def bbox_intersects(a, b) -> bool:
 
 
 def centroid(bbox) -> tuple[float, float]:
-    """Return the (lat, lon) center of *bbox* = [W, S, E, N]."""
+    """Return the (lat, lon) center of *bbox* = [W, S, E, N].
+
+    Coordinates are rounded to 6 decimal places (≈0.11 m precision) so that
+    values derived from high-precision Leaflet clicks never exceed external API
+    decimal-place limits.
+    """
     west, south, east, north = bbox
-    return ((south + north) / 2.0, (west + east) / 2.0)
+    return (round((south + north) / 2.0, 6), round((west + east) / 2.0, 6))
 
 
 def grid_points(bbox, cols: int = 3, rows: int = 3) -> list[tuple[float, float]]:
@@ -95,7 +100,7 @@ def grid_points(bbox, cols: int = 3, rows: int = 3) -> list[tuple[float, float]]
         lat = south + (row + 0.5) * lat_step
         for col in range(cols):
             lon = west + (col + 0.5) * lon_step
-            points.append((lat, lon))
+            points.append((round(lat, 6), round(lon, 6)))
     return points
 
 
@@ -323,7 +328,9 @@ def resolve_adapter_coverage(
     if adapter in _GLOBAL_ADAPTERS:
         return None
 
-    bbox = list(coverage_bbox)  # defensive copy
+    # Defensive copy + precision cap: raw Leaflet clicks produce 14+ decimal
+    # places which USGS (and others) reject.  6dp ≈ 0.11 m — more than enough.
+    bbox = [round(float(c), 6) for c in coverage_bbox]
 
     if adapter in ("fires", "wfigs", "nicf"):
         return {

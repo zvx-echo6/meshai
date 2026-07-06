@@ -195,7 +195,8 @@ class NICFFiresAdapter:
         self._is_loaded = True
 
         if changed:
-            logger.info(f"NIFC fires updated: {len(new_events)} active in {self._state}")
+            loc = "the coverage area" if self._coverage is not None else self._state
+            logger.info(f"NIFC fires updated: {len(new_events)} active in {loc}")
 
         return changed
 
