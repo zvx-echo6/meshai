@@ -399,11 +399,27 @@ class MeshAI:
         except Exception:
             logger.exception("persistence init_db failed at startup")
 
-        # Native satpass: seed observer_locations from SatpassConfig.observers
-        # (config is the source of truth; the table is the predictor's store).
+        # Native satpass: seed observer_locations. When a valid coverage bbox is
+        # configured, seed a single derived observer at the bbox centroid instead
+        # of the hand-listed config observers (coverage wins; config is fallback).
         try:
             from meshai.persistence.observer_locations import seed_observers_from_config
-            seed_observers_from_config(self.config.environmental.satpass)
+            from meshai import coverage as _cov
+            from types import SimpleNamespace
+            _sat_scope = _cov.resolve_adapter_coverage(
+                "satpass",
+                (self.config.coverage.bbox if self.config.coverage.enabled else []),
+                "native",
+            )
+            if _sat_scope is not None:
+                lat, lon = _sat_scope["centroid"]
+                observers_to_seed = [
+                    {"slug": "coverage_center", "name": "Coverage Center",
+                     "lat": lat, "lon": lon, "alt_m": 0.0}
+                ]
+                seed_observers_from_config(SimpleNamespace(observers=observers_to_seed))
+            else:
+                seed_observers_from_config(self.config.environmental.satpass)
         except Exception:
             logger.exception("observer_locations seed failed at startup")
 

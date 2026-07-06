@@ -35,8 +35,9 @@ class USGSStreamsAdapter:
     BASE_URL = "https://waterservices.usgs.gov/nwis/iv/"
     NWPS_BASE_URL = "https://api.water.noaa.gov/nwps/v1/gauges"
 
-    def __init__(self, config: "USGSConfig"):
+    def __init__(self, config: "USGSConfig", coverage: dict = None):
         self._sites = config.sites or []
+        self._coverage_bbox = coverage["bbox"] if coverage is not None else None
         self._tick_interval = max(config.tick_seconds or 900, MIN_TICK_SECONDS)
         self._flood_thresholds = getattr(config, "flood_thresholds", {}) or {}
         self._last_tick = 0.0
@@ -61,8 +62,8 @@ class USGSStreamsAdapter:
         """
         now = time.time()
 
-        # No sites configured
-        if not self._sites:
+        # No sites configured and no coverage bbox to discover by
+        if not self._sites and self._coverage_bbox is None:
             return False
 
         # Check tick interval
@@ -245,6 +246,36 @@ class USGSStreamsAdapter:
 
         return result
 
+    def _build_iv_params(self, site_ids: list) -> dict:
+        """Build USGS IV API params — bBox-first when coverage is configured.
+
+        When a coverage bbox is set, the query uses USGS IV bBox discovery
+        (west,south,east,north) and ignores preset site IDs. When no bbox is
+        configured, falls back to an explicit sites= list. Shared between
+        _fetch() and tests so the param logic is directly verifiable.
+        """
+        if self._coverage_bbox is not None:
+            west, south, east, north = self._coverage_bbox
+            width = east - west
+            height = north - south
+            if width * height > 25:
+                logger.warning(
+                    "USGS bBox %s too large (>25 sq-deg); readings may be rejected",
+                    self._coverage_bbox,
+                )
+            return {
+                "format": "json",
+                "bBox": ",".join(str(c) for c in self._coverage_bbox),
+                "parameterCd": "00060,00065",  # Streamflow (cfs) and Gage height (ft)
+                "siteStatus": "active",
+            }
+        return {
+            "format": "json",
+            "sites": ",".join(site_ids),
+            "parameterCd": "00060,00065",  # Streamflow (cfs) and Gage height (ft)
+            "siteStatus": "active",
+        }
+
     def _fetch(self) -> bool:
         """Fetch instantaneous values from USGS Water Services.
 
@@ -252,15 +283,10 @@ class USGSStreamsAdapter:
             True if data changed
         """
         site_ids = self._get_site_ids()
-        if not site_ids:
+        if not site_ids and self._coverage_bbox is None:
             return False
 
-        params = {
-            "format": "json",
-            "sites": ",".join(site_ids),
-            "parameterCd": "00060,00065",  # Streamflow (cfs) and Gage height (ft)
-            "siteStatus": "active",
-        }
+        params = self._build_iv_params(site_ids)
 
         url = f"{self.BASE_URL}?{urlencode(params)}"
 
@@ -433,7 +459,11 @@ class USGSStreamsAdapter:
         self._is_loaded = True
 
         if changed:
-            logger.info(f"USGS streams updated: {len(new_events)} readings from {len(site_ids)} sites")
+            if self._coverage_bbox is not None:
+                logger.info("USGS streams updated: %d readings (bbox query)", len(new_events))
+            else:
+                logger.info("USGS streams updated: %d readings from %d sites",
+                            len(new_events), len(site_ids))
 
         return changed
 

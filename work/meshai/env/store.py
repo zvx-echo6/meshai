@@ -89,7 +89,7 @@ class EnvironmentalStore:
         self._register_adapter("avalanche", config.avalanche, ".avalanche", "AvalancheAdapter",
             lambda cfg: (cfg, self._coverage_for("avalanche")))
         self._register_adapter("usgs", config.usgs, ".usgs", "USGSStreamsAdapter",
-            lambda cfg: (cfg,))
+            lambda cfg: (cfg, self._coverage_for("usgs")))
         self._register_adapter("usgs_quake", config.usgs_quake, ".usgs_quake", "USGSQuakeAdapter",
             lambda cfg: (cfg, self._coverage_for("usgs_quake")))
         self._register_adapter("traffic", config.traffic, ".traffic", "TomTomTrafficAdapter",
