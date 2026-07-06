@@ -265,6 +265,48 @@ class DuctingAdapter:
 
         self._update_events()
 
+        # Persistence add (LLM-queryable): after the tier is committed, write
+        # the single current assessment into the durable ducting_events table
+        # so the mesh LLM (env_reporter.build_ducting_detail) can answer
+        # RF-propagation questions and the assessment survives a restart.
+        # Persistence-only -- does NOT touch broadcast/gating.
+        self._persist_status()
+
+    def _persist_status(self) -> None:
+        """UPSERT the current single-point assessment into ducting_events.
+
+        Ducting is a single-point periodic assessment, so we keep ONE durable
+        current row per location (id = "ducting_{lat}_{lon}"), refreshed each
+        poll. Best-effort: a DB error is logged and swallowed so persistence
+        never breaks polling.
+        """
+        if not self._status:
+            return
+        try:
+            from meshai.persistence import get_db
+            conn = get_db()
+        except Exception as e:
+            logger.warning("ducting persist skipped (DB unavailable): %s", e)
+            return
+
+        try:
+            loc = f"{round(self._lat, 2)}_{round(self._lon, 2)}"
+            row_id = f"ducting_{loc}"
+            assessed_at = int(self._status.get("fetched_at") or time.time())
+            conn.execute(
+                "INSERT OR REPLACE INTO ducting_events(id, lat, lon, "
+                "condition, tier, min_gradient, duct_base_m, duct_thickness_m, "
+                "assessment, assessed_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (row_id, self._lat, self._lon,
+                 self._status.get("condition"), self._status.get("tier"),
+                 self._status.get("min_gradient"),
+                 self._status.get("duct_base_m"),
+                 self._status.get("duct_thickness_m"),
+                 self._status.get("assessment"), assessed_at),
+            )
+        except Exception:
+            logger.exception("ducting persist failed")
+
     # Tier model (enhancement strength, ascending):
     #   normal < super_refraction < duct < surface_duct
     _TIER_ORDER = ["normal", "super_refraction", "duct", "surface_duct"]

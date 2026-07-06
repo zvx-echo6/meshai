@@ -384,6 +384,106 @@ class EnvReporter:
 
         return ("\n".join(lines) if lines else "")[:_block_cap()]
 
+    def build_satpass_detail(self, *, hours: int = 24,
+                              limit: int = 8,
+                              now: Optional[int] = None) -> str:
+        """Upcoming satellite passes from satpass_events (AOS in the near
+        future). Data is written by the native satpass path; this is the
+        missing LLM reader so the bot can answer satellite-pass questions.
+        """
+        if not self._adapter_included("satpass"):
+            return ""
+        now = now if now is not None else int(time.time())
+        try: conn = self._conn_factory()
+        except Exception: return ""
+
+        rows = conn.execute(
+            "SELECT sat_name, norad_id, observer, max_elevation, aos_at, los_at "
+            "FROM satpass_events WHERE aos_at IS NOT NULL "
+            "AND aos_at >= ? AND aos_at <= ? "
+            "ORDER BY aos_at ASC LIMIT ?",
+            (now, now + hours * 3600, limit),
+        ).fetchall()
+        if not rows:
+            return ""
+        lines = [f"UPCOMING SATELLITE PASSES (next {hours}h):"]
+        for r in rows:
+            name = r["sat_name"] or (
+                f"NORAD {r['norad_id']}" if r["norad_id"] is not None else "sat?")
+            aos = _fmt_epoch(r["aos_at"]) if r["aos_at"] else "?"
+            el = (f"max el {int(r['max_elevation'])}°"
+                   if r["max_elevation"] is not None else "el ?")
+            obs = f" @ {r['observer']}" if r["observer"] else ""
+            lines.append(f"  - {name}: AOS {aos}, {el}{obs}")
+        return "\n".join(lines)[:_block_cap()]
+
+    def build_avalanche_detail(self, *, limit: int = 10,
+                                now: Optional[int] = None) -> str:
+        """Current (non-expired) avalanche advisories from avalanche_events.
+        NAADS danger scale 1-5. Off-season the table is empty -> empty block.
+        """
+        if not self._adapter_included("avalanche"):
+            return ""
+        now = now if now is not None else int(time.time())
+        try: conn = self._conn_factory()
+        except Exception: return ""
+
+        rows = conn.execute(
+            "SELECT zone_name, center_id, danger_level, danger_name, "
+            "travel_advice, expires_at FROM avalanche_events "
+            "WHERE expires_at IS NULL OR expires_at >= ? "
+            "ORDER BY danger_level DESC, zone_name ASC LIMIT ?",
+            (now, limit),
+        ).fetchall()
+        if not rows:
+            return ""
+        lines = ["AVALANCHE ADVISORIES (avalanche.org, NAADS 1-5):"]
+        for r in rows:
+            zone = r["zone_name"] or "(zone?)"
+            dl = r["danger_level"]
+            level = r["danger_name"] or "?"
+            dl_str = f"{level} ({dl})" if dl is not None else level
+            center = f" [{r['center_id']}]" if r["center_id"] else ""
+            advice = (r["travel_advice"] or "")[:90]
+            advice_str = f" -- {advice}" if advice else ""
+            lines.append(f"  - {zone}{center}: {dl_str}{advice_str}")
+        return "\n".join(lines)[:_block_cap()]
+
+    def build_ducting_detail(self, *, now: Optional[int] = None) -> str:
+        """Latest tropospheric ducting / RF-propagation assessment from
+        ducting_events (single current row per location, most recent first).
+        Lets the LLM answer band-opening / extended-UHF-range questions.
+        """
+        if not self._adapter_included("ducting"):
+            return ""
+        try: conn = self._conn_factory()
+        except Exception: return ""
+
+        rows = conn.execute(
+            "SELECT lat, lon, condition, tier, min_gradient, duct_base_m, "
+            "duct_thickness_m, assessment, assessed_at FROM ducting_events "
+            "ORDER BY assessed_at DESC LIMIT 3",
+        ).fetchall()
+        if not rows:
+            return ""
+        lines = ["RF PROPAGATION (tropospheric ducting assessment):"]
+        for r in rows:
+            tier = r["tier"] or r["condition"] or "?"
+            assessment = r["assessment"] or ""
+            mg = (f", min M-gradient {r['min_gradient']}/km"
+                   if r["min_gradient"] is not None else "")
+            base = r["duct_base_m"]
+            thick = r["duct_thickness_m"]
+            duct = ""
+            if base is not None and thick:
+                duct = f", duct base {int(base)} m ~{int(thick)} m thick"
+            loc = (f"{r['lat']:.2f},{r['lon']:.2f}"
+                    if r["lat"] is not None else "loc?")
+            when = _fmt_epoch(r["assessed_at"])
+            assess_str = f": {assessment}" if assessment else ""
+            lines.append(f"  - {loc} [{tier}]{assess_str}{mg}{duct} (as of {when})")
+        return "\n".join(lines)[:_block_cap()]
+
     def build_drop_audit(self, *, hours: int = 1) -> str:
         """Why-was-X-dropped: event_log handled=0 grouped by source+reason
         + the dispatcher_state cumulative counters."""
@@ -434,6 +534,9 @@ class EnvReporter:
             self.build_traffic_detail(now=now),
             self.build_gauges_detail(now=now),
             self.build_swpc_detail(now=now),
+            self.build_satpass_detail(now=now),
+            self.build_avalanche_detail(now=now),
+            self.build_ducting_detail(now=now),
         ]
         return "\n\n".join(p for p in parts if p)
 
