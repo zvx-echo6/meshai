@@ -473,3 +473,69 @@ def test_resolve_does_not_mutate_input_bbox():
     result = resolve_adapter_coverage("usgs_quake", original)
     result["bbox"].append(999)  # mutate return value
     assert len(original) == 4  # original untouched
+
+
+# ===========================================================================
+# Coordinate precision — all outputs must be ≤6 decimal places (Fix 1)
+# ===========================================================================
+
+# Raw Leaflet map-click bbox: ~14 decimal places, triggers USGS HTTP 400.
+HIGH_PREC_BOX = [
+    -116.99340820312501,
+    41.95949009892467,
+    -110.98388671875001,
+    44.09547572946637,
+]
+
+
+def _decimal_places(v) -> int:
+    """Return significant decimal places in *v* (trailing zeros not counted)."""
+    s = f"{float(v):.10f}"
+    decimal_part = s.split(".")[1]
+    stripped = decimal_part.rstrip("0")
+    return len(stripped) if stripped else 0
+
+
+def _assert_max_6dp(v, label: str = "") -> None:
+    """Assert float *v* has at most 6 decimal places."""
+    n = _decimal_places(v)
+    assert n <= 6, f"{label}: {v!r} has {n} decimal places (max 6)"
+
+
+def test_high_precision_bbox_coords_rounded():
+    """bbox key in every adapter that returns one must have ≤6dp per coordinate."""
+    bbox_adapters = ("usgs_quake", "firms", "roads511", "usgs", "nws", "wzdx",
+                     "fires", "wfigs", "nicf")
+    for adapter in bbox_adapters:
+        result = resolve_adapter_coverage(adapter, HIGH_PREC_BOX)
+        assert result is not None, f"{adapter} unexpectedly returned None"
+        if "bbox" in result:
+            for i, coord in enumerate(result["bbox"]):
+                _assert_max_6dp(coord, f"{adapter}.bbox[{i}]")
+
+
+def test_high_precision_envelope_geometry_rounded():
+    """ArcGIS envelope geometry string coords must have ≤6dp (fires adapter)."""
+    result = resolve_adapter_coverage("fires", HIGH_PREC_BOX)
+    assert result is not None
+    geom = result["envelope"]["geometry"]
+    for part in geom.split(","):
+        _assert_max_6dp(part.strip(), f"fires.envelope.geometry part {part!r}")
+
+
+def test_high_precision_centroid_rounded():
+    """centroid() computed from a high-precision bbox must have ≤6dp per coord."""
+    result = resolve_adapter_coverage("satpass", HIGH_PREC_BOX)
+    assert result is not None
+    lat, lon = result["centroid"]
+    _assert_max_6dp(lat, "satpass.centroid.lat")
+    _assert_max_6dp(lon, "satpass.centroid.lon")
+
+
+def test_high_precision_grid_points_rounded():
+    """All grid_points() coords from a high-precision bbox must have ≤6dp."""
+    result = resolve_adapter_coverage("traffic", HIGH_PREC_BOX)
+    assert result is not None
+    for i, (plat, plon) in enumerate(result["points"]):
+        _assert_max_6dp(plat, f"traffic.points[{i}].lat")
+        _assert_max_6dp(plon, f"traffic.points[{i}].lon")

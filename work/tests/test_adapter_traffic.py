@@ -1,7 +1,8 @@
 """Tests for TomTom traffic adapter Phase 2.7 — to_event() method."""
 
 import time
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError
 
 import pytest
 
@@ -203,3 +204,48 @@ def test_to_event_missing_properties_returns_none(adapter):
 def test_to_event_does_not_raise_on_corrupted_dict(adapter):
     """Corrupted dict returns None without raising."""
     assert adapter.to_event({"garbage": True}) is None
+
+
+# ============================================================
+# _fetch_point 400 — roadless cell is no-data, not an error
+# ============================================================
+
+def test_fetch_point_400_does_not_set_last_error(mock_config):
+    """A 400 HTTPError (roadless cell) must not set _last_error or increment
+    consecutive_errors — it is expected no-data, not a failure."""
+    adapter = TomTomTrafficAdapter(mock_config)
+    assert adapter._last_error is None
+    assert adapter._consecutive_errors == 0
+
+    err = HTTPError(
+        url="https://api.tomtom.com/...",
+        code=400,
+        msg="Bad Request",
+        hdrs=None,
+        fp=None,
+    )
+    with patch("meshai.env.traffic.urlopen", side_effect=err):
+        result = adapter._fetch_point("wilderness_cell", 43.5, -115.0, 0.0)
+
+    assert result is None, "400 must return None (no data)"
+    assert adapter._last_error is None, "_last_error must not be set on 400"
+    assert adapter._consecutive_errors == 0, "consecutive_errors must not increment on 400"
+
+
+def test_fetch_point_non400_http_error_sets_last_error(mock_config):
+    """Non-400/401/403 HTTP errors (e.g. 503) must still set _last_error."""
+    adapter = TomTomTrafficAdapter(mock_config)
+
+    err = HTTPError(
+        url="https://api.tomtom.com/...",
+        code=503,
+        msg="Service Unavailable",
+        hdrs=None,
+        fp=None,
+    )
+    with patch("meshai.env.traffic.urlopen", side_effect=err):
+        result = adapter._fetch_point("some_corridor", 43.5, -116.0, 0.0)
+
+    assert result is None
+    assert adapter._last_error == "HTTP 503"
+    assert adapter._consecutive_errors == 1

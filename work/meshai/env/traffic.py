@@ -162,10 +162,19 @@ class TomTomTrafficAdapter:
             if e.code == 401 or e.code == 403:
                 logger.error(f"TomTom auth error: {e.code} - check API key")
                 self._last_error = f"Auth error {e.code}"
+                self._consecutive_errors += 1
+            elif e.code == 400:
+                # "Point too far from nearest existing segment" — expected for
+                # wilderness/rural grid cells with no TomTom road data.
+                # This is not an error; the cell simply has no data.
+                logger.debug(
+                    "TomTom: no road segment near %s (%.5f,%.5f) — skipping",
+                    name, lat, lon,
+                )
             else:
                 logger.warning(f"TomTom HTTP error for {name}: {e.code}")
                 self._last_error = f"HTTP {e.code}"
-            self._consecutive_errors += 1
+                self._consecutive_errors += 1
             return None
 
         except URLError as e:
