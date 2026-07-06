@@ -38,6 +38,7 @@ class EnvironmentalStore:
         config: "EnvironmentalConfig",
         region_anchors: list = None,
         event_bus: Optional["EventBus"] = None,
+        coverage_bbox: list = None,
     ):
         self._adapters = {}  # name -> adapter instance
         self._failed_adapters = {}  # name -> last_error string
@@ -47,6 +48,7 @@ class EnvironmentalStore:
         self._ducting_status = {}  # tropo ducting assessment
         self._mesh_zones = config.nws_zones or []
         self._region_anchors = region_anchors or []
+        self._coverage_bbox = coverage_bbox or []
 
         # ── Received-delta gate (NATIVE-only) ────────────────────────────
         # The model the operator demanded: a native adapter broadcasts an item
@@ -85,17 +87,17 @@ class EnvironmentalStore:
         self._register_adapter("nifc", config.fires, ".fires", "NICFFiresAdapter",
             lambda cfg: (cfg, self._region_anchors))
         self._register_adapter("avalanche", config.avalanche, ".avalanche", "AvalancheAdapter",
-            lambda cfg: (cfg,))
+            lambda cfg: (cfg, self._coverage_for("avalanche")))
         self._register_adapter("usgs", config.usgs, ".usgs", "USGSStreamsAdapter",
             lambda cfg: (cfg,))
         self._register_adapter("usgs_quake", config.usgs_quake, ".usgs_quake", "USGSQuakeAdapter",
-            lambda cfg: (cfg,))
+            lambda cfg: (cfg, self._coverage_for("usgs_quake")))
         self._register_adapter("traffic", config.traffic, ".traffic", "TomTomTrafficAdapter",
             lambda cfg: (cfg,))
         self._register_adapter("roads511", config.roads511, ".roads511", "Roads511Adapter",
-            lambda cfg: (cfg,))
+            lambda cfg: (cfg, self._coverage_for("roads511")))
         self._register_adapter("wzdx", config.wzdx, ".wzdx", "WZDxAdapter",
-            lambda cfg: (cfg,))
+            lambda cfg: (cfg, self._coverage_for("wzdx")))
         # Native satpass TLE fetcher (storage-only: populates sat_tles, emits
         # no events). Gated on satpass.feed_source=="native" like the rest.
         self._register_adapter("satpass_tle", config.satpass, ".tle_fetch", "TLEFetchAdapter",
@@ -144,6 +146,11 @@ class EnvironmentalStore:
             err_msg = f"{type(e).__name__}: {e}"
             logger.warning("Failed to initialize %s adapter: %s", name, err_msg)
             self._failed_adapters[name] = err_msg
+
+    def _coverage_for(self, adapter: str):
+        """Derived coverage scope for a NATIVE adapter, or None to use its own config (override/fallback)."""
+        from meshai import coverage as _cov
+        return _cov.resolve_adapter_coverage(adapter, self._coverage_bbox, "native")
 
     def refresh(self) -> bool:
         """Called every second from main loop. Ticks each adapter.

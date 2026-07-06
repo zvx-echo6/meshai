@@ -24,11 +24,11 @@ logger = logging.getLogger(__name__)
 class Roads511Adapter:
     """511 road conditions polling adapter."""
 
-    def __init__(self, config: "Roads511Config"):
+    def __init__(self, config: "Roads511Config", coverage: dict = None):
         self._api_key = self._resolve_env(config.api_key or "")
         self._base_url = (config.base_url or "").rstrip("/")
         self._endpoints = config.endpoints or ["/get/event"]
-        self._bbox = config.bbox or []  # [west, south, east, north]
+        self._bbox = coverage["bbox"] if coverage is not None else (config.bbox or [])  # [west, south, east, north]
         self._tick_interval = config.tick_seconds or 300
         self._last_tick = 0.0
         self._events = []

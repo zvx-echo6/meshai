@@ -616,8 +616,11 @@ class MeshAI:
             from .env.store import EnvironmentalStore
             # Pass region anchors for fire proximity calculation
             region_anchors = self.config.mesh_intelligence.regions if self.config.mesh_intelligence.enabled else []
+            cov = self.config.coverage
+            coverage_bbox = cov.bbox if (cov.enabled and cov.bbox) else []
             self.env_store = EnvironmentalStore(
-                config=env_cfg, region_anchors=region_anchors, event_bus=self.event_bus
+                config=env_cfg, region_anchors=region_anchors,
+                coverage_bbox=coverage_bbox, event_bus=self.event_bus,
             )
             logger.info(f"Environmental feeds enabled ({len(self.env_store._adapters)} adapters)")
         else:

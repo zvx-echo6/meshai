@@ -29,10 +29,10 @@ class USGSQuakeAdapter:
     geometry.coordinates [lon, lat, depth_km].
     """
 
-    def __init__(self, config: "USGSQuakeConfig"):
+    def __init__(self, config: "USGSQuakeConfig", coverage: dict = None):
         self._feed_url = config.feed_url
         self._min_magnitude = config.min_magnitude
-        self._bbox = config.bbox or []  # [west, south, east, north]
+        self._bbox = coverage["bbox"] if coverage is not None else (config.bbox or [])  # [west, south, east, north]
         self._region = config.region or "magic_valley"
         self._tick_interval = config.tick_seconds or 300
         self._last_tick = 0.0

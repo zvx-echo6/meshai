@@ -95,14 +95,18 @@ def _unwrap_url(v) -> str:
 class WZDxAdapter:
     """FHWA WZDx work-zone polling adapter (native ``work_zone`` source)."""
 
-    def __init__(self, config: "WZDxConfig"):
+    def __init__(self, config: "WZDxConfig", coverage: dict = None):
         self._api_key = self._resolve_env(config.api_key or "")  # unused (keyless)
         self._base_url = (config.base_url or "").strip().rstrip("/")
         self._registry_url = (config.registry_url or "").strip()
         self._registry_ttl = config.registry_ttl or 21600
         self._tick_interval = config.tick_seconds or 300
-        self._states = [str(s).strip() for s in (config.states or ["ID"]) if str(s).strip()]
-        self._bbox = config.bbox or []  # [west, south, east, north]
+        if coverage is not None:
+            self._states = coverage["states"]  # [west, south, east, north] derived state codes
+            self._bbox = coverage["bbox"]
+        else:
+            self._states = [str(s).strip() for s in (config.states or ["ID"]) if str(s).strip()]
+            self._bbox = config.bbox or []  # [west, south, east, north]
 
         self._last_tick = 0.0
         self._events = []
