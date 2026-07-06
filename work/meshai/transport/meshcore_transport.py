@@ -600,32 +600,6 @@ class MeshCoreTransport(MeshTransport):
     # Message I/O
     # ------------------------------------------------------------------
 
-    def _send_dm_once(self, contact: dict, text: str, destination: str):
-        """Send one DM to *contact* and log the route type.
-
-        Returns the result event from send_msg, or None if the coroutine
-        timed out or failed at the coro layer.  Never raises.
-        """
-        result = self._run_coro(
-            self._mc.commands.send_msg(contact, text),
-            timeout=15,
-        )
-        # Log whether the radio sent DIRECT or FLOOD from RESP_CODE_SENT type field.
-        try:
-            sent_type = (
-                result.payload.get("type")
-                if hasattr(result, "payload") and isinstance(result.payload, dict)
-                else None
-            )
-            logger.info(
-                "MeshCore: DM to %s sent (route=%s)",
-                contact.get("adv_name") or destination,
-                "flood" if sent_type == 1 else ("direct" if sent_type == 0 else "?"),
-            )
-        except Exception:
-            pass
-        return result
-
     def send_message(
         self,
         text: str,
@@ -666,29 +640,34 @@ class MeshCoreTransport(MeshTransport):
                         destination,
                     )
                     return False
-                had_route = contact.get("out_path_len", -1) >= 0
-                if not had_route:
-                    # Establish a real route so the reply goes DIRECT — flood DMs are
-                    # silently rejected on this mesh.
-                    self._establish_direct_path(contact, destination)
-                    # Re-resolve so we send with the freshly-learned out_path.
-                    contact = self._resolve_contact(destination) or contact
+                # Establish a real route so the reply goes DIRECT — flood DMs are
+                # silently rejected on this mesh.
+                self._establish_direct_path(contact, destination)
+                # Re-resolve so we send with the freshly-learned out_path.
+                contact = self._resolve_contact(destination) or contact
                 # Plain send_msg (NOT send_msg_with_retry — that calls reset_path
                 # which forces flood, defeating the path we just established).
-                result = self._send_dm_once(contact, text, destination)
-                # Self-heal: if we trusted a cached route but it failed, the path
-                # may be stale — run discovery and retry once.
-                if had_route and (result is None or result.is_error()):
-                    logger.info(
-                        "MeshCore: cached route to %s failed; running path discovery and retrying",
-                        destination,
-                    )
-                    self._establish_direct_path(contact, destination)
-                    contact = self._resolve_contact(destination) or contact
-                    result = self._send_dm_once(contact, text, destination)
+                result = self._run_coro(
+                    self._mc.commands.send_msg(contact, text),
+                    timeout=15,
+                )
                 if result is None:
                     logger.warning("MeshCoreTransport: DM to %s — no send result", destination)
                     return False
+                # Log whether the radio sent DIRECT or FLOOD from RESP_CODE_SENT type field.
+                try:
+                    sent_type = (
+                        result.payload.get("type")
+                        if hasattr(result, "payload") and isinstance(result.payload, dict)
+                        else None
+                    )
+                    logger.info(
+                        "MeshCore: DM to %s sent (route=%s)",
+                        contact.get("adv_name") or destination,
+                        "flood" if sent_type == 1 else ("direct" if sent_type == 0 else "?"),
+                    )
+                except Exception:
+                    pass
                 success = not result.is_error()
                 if not success:
                     logger.warning("MeshCoreTransport: DM send returned error event")
