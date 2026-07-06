@@ -49,6 +49,7 @@ class ConnectionConfig:
     meshcore_serial_port: str = ""             # prefer stable /dev/serial/by-id/... path
     meshcore_baud: int = 115200
     meshcore_ble_address: str = ""             # optional; for ble
+    meshcore_auto_add_contacts: bool = True     # firmware auto-adds every node it hears an advert from (so AIDA can DM anyone)
 
     def __post_init__(self):
         if self.meshcore_conn_type not in {"tcp", "serial", "ble"}:

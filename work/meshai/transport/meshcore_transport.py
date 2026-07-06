@@ -435,10 +435,17 @@ class MeshCoreTransport(MeshTransport):
         self._mc.subscribe(EventType.DISCONNECTED, self._on_disconnect_event)
         self._mc.subscribe(EventType.CONNECTED, self._on_connect_event)
         self._mc.subscribe(EventType.ACK, self._on_ack_event)
+        self._mc.subscribe(EventType.NEW_CONTACT, self._on_new_contact)
         try:
             await self._mc.ensure_contacts()
         except Exception:
             logger.debug("MeshCore: ensure_contacts failed (non-fatal)", exc_info=True)
+        if getattr(self.config, "meshcore_auto_add_contacts", True):
+            try:
+                await self._mc.commands.set_autoadd_config(1)
+                logger.info("MeshCore: firmware auto-add-contacts ENABLED (AIDA will auto-add any node it hears)")
+            except Exception as exc:  # older firmware may not support CMD 58
+                logger.warning("MeshCore: set_autoadd_config not supported/failed (non-fatal): %s", exc)
         await self._mc.start_auto_message_fetching()
         logger.info("MeshCore: subscriptions registered; auto message-fetch started")
 
@@ -813,6 +820,26 @@ class MeshCoreTransport(MeshTransport):
 
     def _on_ack_event(self, event) -> None:
         logger.info("MeshCore: ACK event received: %r", getattr(event, "payload", None))
+
+    def _on_new_contact(self, event) -> None:
+        """Firmware auto-added a node from a fresh advert — log it and refresh our roster."""
+        try:
+            payload = getattr(event, "payload", None) or {}
+            name = payload.get("adv_name") or payload.get("public_key", "")[:12] or "?"
+            logger.info("MeshCore: new contact auto-added: %s", name)
+        except Exception:
+            logger.debug("MeshCore: _on_new_contact logging failed", exc_info=True)
+        # Refresh roster on the transport's own loop (fire-and-forget, non-blocking).
+        # We must NOT use _run_coro here: the lib calls this callback from within
+        # the asyncio event loop, so blocking with .result() would deadlock.
+        # asyncio.run_coroutine_threadsafe without .result() is safe from any context.
+        try:
+            ensure = getattr(self._mc, "ensure_contacts", None)
+            loop = getattr(self, "_loop", None)
+            if ensure is not None and loop is not None and loop.is_running():
+                asyncio.run_coroutine_threadsafe(ensure(), loop)
+        except Exception:
+            logger.debug("MeshCore: roster refresh after new contact failed", exc_info=True)
 
     def _on_disconnect_event(self, event=None) -> None:
         """Track link state: DISCONNECTED."""
