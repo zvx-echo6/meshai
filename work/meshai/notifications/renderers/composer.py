@@ -334,10 +334,16 @@ def compose_mesh_message(event: Event) -> str:
     # the formatter is used only by shadow_render (dry-run comparison) and by
     # direct unit tests — compose_mesh_message falls through to the legacy path.
     from meshai.notifications.formatters import get_formatter
-    from meshai.notifications.cutover import is_cutover
+    from meshai.notifications.cutover import is_cutover, NATIVE_ALWAYS_DECIDE
     from meshai.notifications import clock
     fmt = get_formatter(event.category)
-    if fmt is not None and is_cutover(event.category):
+    # Native WFIGS fire categories always render via the shared fire formatter
+    # (same single render path a cut-over category takes), independent of the
+    # shadow-bake env var. Central is off in this deployment, so these categories
+    # are emitted only by the native fire adapter — no Central-render impact.
+    if fmt is not None and (
+            is_cutover(event.category)
+            or event.category in NATIVE_ALWAYS_DECIDE):
         try:
             return fmt(event, now=clock.now(), budget=_resolve_budget(event))
         except Exception:

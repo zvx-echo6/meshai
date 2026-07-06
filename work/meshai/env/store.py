@@ -44,6 +44,11 @@ class EnvironmentalStore:
         self._adapters = {}  # name -> adapter instance
         self._failed_adapters = {}  # name -> last_error string
         self._events = {}  # (source, event_id) -> event dict
+        # Process boot epoch — the native fire cold-start silent-seed window is
+        # measured from here (see _ingest_fires). clock.now() is the pipeline's
+        # monkeypatchable time seam so tests can freeze/override it.
+        from meshai.notifications import clock as _clock
+        self._boot_at = _clock.now()
         self._event_bus = event_bus  # Pipeline EventBus for emission
         self._swpc_status = {}  # Kp/SFI/scales snapshot
         self._ducting_status = {}  # tropo ducting assessment
@@ -276,6 +281,17 @@ class EnvironmentalStore:
                 self._events[key] = evt
                 touched.add(evt.get("source") or name)
                 self._delta_emit(name, adapter, evt)
+        elif name == "nifc":
+            # Native WFIGS fires DELIBERATELY bypass the received-delta `_seen`
+            # gate: a fire's growth updates are repeat sightings of the SAME
+            # event_id that `_delta_emit` would wrongly suppress. The DECIDER
+            # (gating.fire.decide, backed by the fires table + 8h cooldown) is
+            # the gate instead. `_ingest_fires` also silent-seeds old/known
+            # fires at cold start so boot never dumps a backlog.
+            for evt in adapter.get_events():
+                key = (evt["source"], evt["event_id"])
+                self._events[key] = evt
+            self._ingest_fires(adapter)
         elif name == "avalanche":
             # Avalanche: re-emit on danger_level rise (Update:) not just new
             # events. The rise is a legitimate CONTENT change, so it passes
@@ -302,6 +318,119 @@ class EnvironmentalStore:
         # may emit. Empty ingests touch nothing and so never mark a source
         # seeded — the leak-proof invariant behind the wzdx staging fix.
         self._seeded.update(touched)
+
+    def _ingest_fires(self, adapter) -> None:
+        """Native WFIGS fire ingest — Phase-3 growth-decider path.
+
+        For each polled fire (already recorded in ``self._events`` by the
+        caller):
+
+          1. COLD-START silent-seed. A FIRST-SIGHT fire (no ``fires`` row) that
+             is old/undated AND seen inside the boot-grace window is a
+             pre-existing active fire, not a fresh ignition. We INSERT a
+             ``fires`` row stamped as ALREADY broadcast (``last_broadcast_*`` =
+             current) and emit NOTHING, so the decider treats later polls as
+             Update and only fires on real growth — no boot backlog dump. The
+             shared ``gating.fire.decide`` is untouched.
+
+          2. Unconditional current-state write (mirrors the Central
+             ``wfigs_handler``): INSERT (``last_broadcast_*`` NULL) on first
+             sight else UPDATE ``current_*``. This GUARANTEES a row exists so
+             the decider's deferred ``commit`` UPSERT
+             (``WHERE irwin_id=?``) persists ``last_broadcast_*`` — without it a
+             genuine New would never latch and would re-broadcast every poll.
+
+          3. Decider path via ``_emit_event``: runs ``gating.fire.decide``,
+             applies ``gate.data_patch`` (``_dedup_suffix`` / ``_severity_override``
+             / render hints) and arms ``gate.commit`` onto the emitted Event.
+        """
+        from meshai.notifications import clock as _clock
+        from meshai.adapter_config import adapter_config
+
+        now = _clock.now()
+        try:
+            from meshai.persistence import get_db
+            conn = get_db()
+        except Exception as e:
+            logger.warning("nifc fire ingest skipped (DB unavailable): %s", e)
+            return
+
+        try:
+            grace = int(adapter_config.fires.cold_start_grace_seconds)
+        except Exception:
+            grace = 120
+        try:
+            max_age = int(adapter_config.fires.new_ignition_max_age_seconds)
+        except Exception:
+            max_age = 172800
+        within_boot_grace = (now - self._boot_at) < grace
+
+        for evt in adapter.get_events():
+            try:
+                irwin_id = evt.get("irwin_id")
+                if not irwin_id:
+                    continue  # no stable identity -> not gate-able via fires
+                acres = evt.get("acres")
+                contained = evt.get("contained_pct")
+                declared = evt.get("declared_at_epoch")
+
+                row = conn.execute(
+                    "SELECT last_broadcast_at FROM fires WHERE irwin_id=?",
+                    (irwin_id,)).fetchone()
+                first_sight = row is None
+
+                old_or_undated = (
+                    declared is None or (now - int(declared)) >= max_age)
+
+                # (1) Cold-start silent-seed — seed as already-broadcast, no emit.
+                if first_sight and within_boot_grace and old_or_undated:
+                    conn.execute(
+                        "INSERT INTO fires(irwin_id, incident_name, "
+                        "current_acres, current_contained_pct, lat, lon, "
+                        "county, state, declared_at, last_event_at, "
+                        "last_broadcast_at, first_broadcast_at, "
+                        "last_broadcast_acres, last_broadcast_contained) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (irwin_id, evt.get("name"), acres, contained,
+                         evt.get("lat"), evt.get("lon"), evt.get("county"),
+                         evt.get("state"), declared, int(now),
+                         int(now), int(now), acres, contained),
+                    )
+                    logger.info(
+                        "nifc cold-start silent-seed irwin=%s acres=%s "
+                        "(seeded already-broadcast, no mesh)", irwin_id, acres)
+                    continue
+
+                # (2) Unconditional current-state write so commit can latch.
+                if first_sight:
+                    conn.execute(
+                        "INSERT INTO fires(irwin_id, incident_name, "
+                        "current_acres, current_contained_pct, lat, lon, "
+                        "county, state, declared_at, last_event_at, "
+                        "last_broadcast_at, last_broadcast_acres, "
+                        "last_broadcast_contained) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (irwin_id, evt.get("name"), acres, contained,
+                         evt.get("lat"), evt.get("lon"), evt.get("county"),
+                         evt.get("state"), declared, int(now),
+                         None, None, None),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE fires SET current_acres=?, "
+                        "current_contained_pct=?, lat=COALESCE(?, lat), "
+                        "lon=COALESCE(?, lon), last_event_at=? "
+                        "WHERE irwin_id=?",
+                        (acres, contained, evt.get("lat"), evt.get("lon"),
+                         int(now), irwin_id),
+                    )
+
+                # (3) Run the decider + emit (or suppress) via the shared path.
+                if self._event_bus is not None and hasattr(adapter, "to_event"):
+                    self._emit_event(adapter, evt)
+            except Exception:
+                logger.exception(
+                    "nifc fire ingest failed for %s", evt.get("event_id", "?"))
 
     def _seed_from_persistent(self) -> None:
         """Pre-seed ``self._seen`` from the durable hazard tables at startup.
@@ -449,10 +578,16 @@ class EnvironmentalStore:
             # dry-run comparison for the bake period.
             try:
                 from meshai.notifications.gating import get_decider
-                from meshai.notifications.cutover import is_cutover
+                from meshai.notifications.cutover import is_cutover, NATIVE_ALWAYS_DECIDE
                 from meshai.notifications import clock as _clock
                 decider = get_decider(event.category)
-                if decider is not None and is_cutover(event.category):
+                # Native WFIGS fire categories always run the decider — it IS
+                # the fire gate (fires table + cooldown), so it can't hang on the
+                # shadow-bake env var. Central is off, so this cannot affect any
+                # Central render. All other categories stay env-gated (is_cutover).
+                if decider is not None and (
+                        is_cutover(event.category)
+                        or event.category in NATIVE_ALWAYS_DECIDE):
                     if event.data is None:
                         event.data = {}
                     gate = decider(event.data, source=event.source,

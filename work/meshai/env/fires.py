@@ -58,7 +58,8 @@ class NICFFiresAdapter:
         """
         out_fields = (
             "attr_IncidentName,attr_IncidentSize,attr_PercentContained,"
-            "attr_FireDiscoveryDateTime,attr_POOState,poly_GISAcres"
+            "attr_FireDiscoveryDateTime,attr_POOState,poly_GISAcres,"
+            "attr_IrwinID,attr_UniqueFireIdentifier"
         )
         if self._coverage is not None:
             params = {
@@ -160,15 +161,36 @@ class NICFFiresAdapter:
             else:
                 event_id_state = self._state
 
+            event_id = f"nifc_{name.replace(' ', '_').lower()}_{event_id_state}"
+
+            # Canonical WFIGS identity + discovery date the Phase-3 fire decider
+            # (notifications/gating/fire.py::decide) reads off Event.data. Prefer
+            # the real IRWIN GUID; fall back to the unique fire id, then to the
+            # stable adapter event_id so a fire is always gate-able by the fires
+            # table even when WFIGS omits the id fields.
+            irwin_id = (
+                props.get("attr_IrwinID")
+                or props.get("attr_UniqueFireIdentifier")
+                or event_id
+            )
+            declared_at_epoch = self._parse_discovery_epoch(
+                props.get("attr_FireDiscoveryDateTime"))
+
             event = {
                 "source": "nifc",
-                "event_id": f"nifc_{name.replace(' ', '_').lower()}_{event_id_state}",
+                "event_id": event_id,
                 "event_type": "Wildfire",
                 "severity": severity,
                 "headline": headline,
                 "name": name,
                 "acres": acres,
                 "pct_contained": pct_contained,
+                # Canonical keys the decider consumes (mirrored into Event.data
+                # by to_event) + reused by store cold-start seeding.
+                "irwin_id": irwin_id,
+                "contained_pct": pct_contained,
+                "declared_at_epoch": declared_at_epoch,
+                "county": None,  # WFIGS perimeter layer carries no county field
                 "lat": lat,
                 "lon": lon,
                 "distance_km": distance_km,
@@ -199,6 +221,27 @@ class NICFFiresAdapter:
             logger.info(f"NIFC fires updated: {len(new_events)} active in {loc}")
 
         return changed
+
+    @staticmethod
+    def _parse_discovery_epoch(raw) -> Optional[int]:
+        """WFIGS FireDiscoveryDateTime (epoch MILLISECONDS) -> epoch seconds.
+
+        Guards None/blank/garbage; WFIGS reports ms since epoch, so values with
+        13+ digits are divided by 1000. Returns None when unparseable so the
+        decider's age-gate fails OPEN (announces) exactly as for a dateless fire.
+        """
+        if raw is None or raw == "":
+            return None
+        try:
+            val = int(float(raw))
+        except (TypeError, ValueError):
+            return None
+        if val <= 0:
+            return None
+        # >= ~ year 2001 in ms (1e12) -> treat as milliseconds.
+        if val >= 1_000_000_000_000:
+            val //= 1000
+        return val
 
     def _compute_centroid(self, geom) -> tuple:
         """Compute centroid from GeoJSON geometry."""
@@ -325,6 +368,23 @@ class NICFFiresAdapter:
             # sole inhibit_key lets the pipeline Inhibitor suppress lower-severity
             # re-emissions while a higher-severity one is active (severity tiering
             # delegated to the Inhibitor).
+            # Canonical WFIGS schema on Event.data — the exact keys the Phase-3
+            # decider (gating/fire.py::decide) and formatter (formatters/fire.py)
+            # read. `_kind="wfigs_incident"` routes decide() into the active-fire
+            # New/Update/suppress state machine (without it, decide suppresses).
+            data = {
+                "_kind": "wfigs_incident",
+                "irwin_id": evt.get("irwin_id"),
+                "incident_name": name,
+                "acres": acres,
+                "contained_pct": evt.get("contained_pct"),
+                "declared_at_epoch": evt.get("declared_at_epoch"),
+                "lat": lat,
+                "lon": lon,
+                "county": evt.get("county"),
+                "state": evt.get("state"),
+            }
+
             return make_event(
                 source="nifc",
                 category="wildfire_incident",
@@ -337,6 +397,7 @@ class NICFFiresAdapter:
                 lon=lon,
                 group_key=event_id,
                 inhibit_keys=[event_id],
+                data=data,
             )
         except Exception:
             logger.exception(f"NIFC to_event failed for evt: {evt.get('event_id')}")

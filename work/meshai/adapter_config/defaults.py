@@ -330,6 +330,24 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "type": "float",
         "description": "Default attribution radius for FIRMS hotspot -> fire matching, miles. Per-fire override in fires.spread_radius_mi.",
     },
+    # Native WFIGS cold-start silent-seed knobs (env/store.py::_ingest_fires).
+    # new_ignition_max_age_seconds: a FIRST-SIGHT fire older than this at boot is
+    # treated as a pre-existing active fire and silent-seeded (no broadcast); a
+    # first-sight fire younger than this is a genuine fresh ignition and the
+    # decider announces it (New). Default 48h.
+    ("fires", "new_ignition_max_age_seconds"): {
+        "default": 172800,
+        "type": "int",
+        "description": "Max discovery age (seconds) for a first-sight native fire to count as a fresh ignition (announced New). Older/undated first-sights within the boot-grace window are silent-seeded instead. Default 48h.",
+    },
+    # cold_start_grace_seconds: how long after process boot the silent-seed
+    # pre-pass stays active. After this window, first-sights fall through to
+    # normal decider behavior. Default 120s (covers the first fire poll).
+    ("fires", "cold_start_grace_seconds"): {
+        "default": 120,
+        "type": "int",
+        "description": "Seconds after boot during which first-sight old/known native fires are silent-seeded (no backlog dump). After this window first-sights follow normal decider behavior. Default 120s.",
+    },
     # v0.7-fire-2 -- growth + halt detection thresholds.
     # growth_drift_threshold_mi: a per-pass centroid drift of at least
     # this many miles fires wildfire_growth. 0.5 mi matches the design
