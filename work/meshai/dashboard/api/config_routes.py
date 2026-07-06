@@ -33,6 +33,7 @@ RESTART_REQUIRED_SECTIONS = {
     "meshmonitor",
     "dashboard",
     "environmental",
+    "coverage",
 }
 
 # Valid config section names
@@ -56,6 +57,7 @@ VALID_SECTIONS = {
     "mesh_intelligence",
     "dashboard",
     "danger_zones",
+    "coverage",
 }
 
 
