@@ -26,10 +26,10 @@ class FIRMSAdapter:
 
     BASE_URL = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
 
-    def __init__(self, config: "FIRMSConfig", region_anchors: list = None, fires_adapter=None):
+    def __init__(self, config: "FIRMSConfig", region_anchors: list = None, fires_adapter=None, coverage: dict = None):
         self._map_key = config.map_key
         self._source = config.source or "VIIRS_SNPP_NRT"
-        self._bbox = config.bbox  # [west, south, east, north]
+        self._bbox = coverage["bbox"] if coverage is not None else config.bbox  # [west, south, east, north]
         self._day_range = config.day_range or 1
         self._tick_interval = config.tick_seconds or 1800
         self._confidence_min = config.confidence_min or "nominal"

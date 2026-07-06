@@ -83,9 +83,9 @@ class EnvironmentalStore:
         self._register_adapter("swpc", config.swpc, ".swpc", "SWPCAdapter",
             lambda cfg: (cfg,))
         self._register_adapter("ducting", config.ducting, ".ducting", "DuctingAdapter",
-            lambda cfg: (cfg,))
+            lambda cfg: (cfg, self._coverage_for("ducting")))
         self._register_adapter("nifc", config.fires, ".fires", "NICFFiresAdapter",
-            lambda cfg: (cfg, self._region_anchors))
+            lambda cfg: (cfg, self._region_anchors, self._coverage_for("fires")))
         self._register_adapter("avalanche", config.avalanche, ".avalanche", "AvalancheAdapter",
             lambda cfg: (cfg, self._coverage_for("avalanche")))
         self._register_adapter("usgs", config.usgs, ".usgs", "USGSStreamsAdapter",
@@ -113,7 +113,7 @@ class EnvironmentalStore:
             try:
                 from .firms import FIRMSAdapter
                 fires_adapter = self._adapters.get("nifc")
-                self._firms = FIRMSAdapter(config.firms, self._region_anchors, fires_adapter)
+                self._firms = FIRMSAdapter(config.firms, self._region_anchors, fires_adapter, coverage=self._coverage_for("firms"))
                 self._adapters["firms"] = self._firms
             except Exception as e:
                 err_msg = f"{type(e).__name__}: {e}"

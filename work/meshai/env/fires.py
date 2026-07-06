@@ -21,7 +21,7 @@ class NICFFiresAdapter:
 
     BASE_URL = "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Interagency_Perimeters_Current/FeatureServer/0/query"
 
-    def __init__(self, config: "NICFFiresConfig", region_anchors: list = None):
+    def __init__(self, config: "NICFFiresConfig", region_anchors: list = None, coverage: dict = None):
         self._state = config.state
         self._tick_interval = config.tick_seconds or 600
         self._last_tick = 0.0
@@ -31,6 +31,8 @@ class NICFFiresAdapter:
         self._is_loaded = False
         # Region anchors for proximity calculation
         self._region_anchors = region_anchors or []
+        # Coverage bbox — when set, drives spatial filter instead of single-state WHERE
+        self._coverage = coverage
 
     def tick(self) -> bool:
         """Execute one polling tick.
@@ -46,18 +48,43 @@ class NICFFiresAdapter:
         self._last_tick = now
         return self._fetch()
 
+    def _build_query_params(self) -> dict:
+        """Build WFIGS ArcGIS query parameters.
+
+        When self._coverage is set, switches to an envelope spatial filter spanning
+        the full coverage bbox (which may cross multiple states); the single-state
+        attr_POOState WHERE clause is dropped in favour of the geometry filter.
+        When self._coverage is None, falls back to the original single-state WHERE.
+        """
+        out_fields = (
+            "attr_IncidentName,attr_IncidentSize,attr_PercentContained,"
+            "attr_FireDiscoveryDateTime,attr_POOState,poly_GISAcres"
+        )
+        if self._coverage is not None:
+            params = {
+                "where": "attr_IncidentTypeCategory='WF'",
+                "outFields": out_fields,
+                "returnGeometry": "true",
+                "f": "geojson",
+            }
+            # Merge the ArcGIS envelope keys from the coverage dict
+            params.update(self._coverage["envelope"])
+        else:
+            params = {
+                "where": f"attr_POOState='{self._state}' AND attr_IncidentTypeCategory='WF'",
+                "outFields": out_fields,
+                "returnGeometry": "true",
+                "f": "geojson",
+            }
+        return params
+
     def _fetch(self) -> bool:
         """Fetch fire perimeters from WFIGS.
 
         Returns:
             True if data changed
         """
-        params = {
-            "where": f"attr_POOState='{self._state}' AND attr_IncidentTypeCategory='WF'",
-            "outFields": "attr_IncidentName,attr_IncidentSize,attr_PercentContained,attr_FireDiscoveryDateTime,attr_POOState,poly_GISAcres",
-            "returnGeometry": "true",
-            "f": "geojson",
-        }
+        params = self._build_query_params()
 
         url = f"{self.BASE_URL}?{urlencode(params)}"
 
@@ -124,9 +151,18 @@ class NICFFiresAdapter:
             if distance_km is not None and nearest_anchor:
                 headline += f" ({int(distance_km)} km from {nearest_anchor})"
 
+            # In coverage mode fires can span multiple states, so use the fire's own
+            # POOState for the event_id suffix. This keeps Idaho fire keys identical to
+            # the single-state path (attr_POOState="US-ID" == self._state for Idaho).
+            # Fall back to self._state when the field is absent or blank.
+            if self._coverage is not None:
+                event_id_state = (props.get("attr_POOState") or "").strip() or self._state
+            else:
+                event_id_state = self._state
+
             event = {
                 "source": "nifc",
-                "event_id": f"nifc_{name.replace(' ', '_').lower()}_{self._state}",
+                "event_id": f"nifc_{name.replace(' ', '_').lower()}_{event_id_state}",
                 "event_type": "Wildfire",
                 "severity": severity,
                 "headline": headline,
