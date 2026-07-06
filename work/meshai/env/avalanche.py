@@ -191,10 +191,71 @@ class AvalancheAdapter:
 
         self._is_loaded = True
 
+        # Persistence add (LLM-queryable): mirror the WFIGS fire path and write
+        # the current advisories into the durable avalanche_events table so the
+        # mesh LLM (env_reporter.build_avalanche_detail) can answer avalanche
+        # questions and state survives a restart. Persistence-only -- does NOT
+        # touch broadcast/gating (that stays in _delta_emit / to_event).
+        self._persist_events()
+
         if changed:
             logger.info(f"Avalanche advisories updated: {len(new_events)} active zones")
 
         return changed
+
+    def _persist_events(self) -> None:
+        """UPSERT the current in-memory advisories into avalanche_events.
+
+        Best-effort: a DB error is logged and swallowed so persistence never
+        breaks polling. Keyed by the stable adapter event_id
+        ("avy_{center}_{zone}") -- an existing zone is updated in place.
+        """
+        if not self._events:
+            return
+        try:
+            from meshai.persistence import get_db
+            conn = get_db()
+        except Exception as e:
+            logger.warning("avalanche persist skipped (DB unavailable): %s", e)
+            return
+
+        now = int(time.time())
+        for evt in self._events:
+            try:
+                event_id = evt.get("event_id")
+                if not event_id:
+                    continue
+                expires = evt.get("expires")
+                expires_at = int(expires) if expires is not None else None
+                exists = conn.execute(
+                    "SELECT 1 FROM avalanche_events WHERE event_id=?",
+                    (event_id,),
+                ).fetchone()
+                if exists is None:
+                    conn.execute(
+                        "INSERT INTO avalanche_events(event_id, center_id, "
+                        "zone_name, danger_level, danger_name, travel_advice, "
+                        "lat, lon, expires_at, first_seen_at, last_event_at) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        (event_id, evt.get("center_id"), evt.get("zone_name"),
+                         evt.get("danger_level"), evt.get("danger_name"),
+                         evt.get("travel_advice"), evt.get("lat"),
+                         evt.get("lon"), expires_at, now, now),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE avalanche_events SET center_id=?, zone_name=?, "
+                        "danger_level=?, danger_name=?, travel_advice=?, "
+                        "lat=?, lon=?, expires_at=?, last_event_at=? "
+                        "WHERE event_id=?",
+                        (evt.get("center_id"), evt.get("zone_name"),
+                         evt.get("danger_level"), evt.get("danger_name"),
+                         evt.get("travel_advice"), evt.get("lat"),
+                         evt.get("lon"), expires_at, now, event_id),
+                    )
+            except Exception:
+                logger.exception(
+                    "avalanche persist failed for %s", evt.get("event_id", "?"))
 
     def _compute_centroid(self, geom) -> tuple:
         """Compute centroid from GeoJSON geometry."""
