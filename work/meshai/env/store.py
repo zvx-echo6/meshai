@@ -39,6 +39,7 @@ class EnvironmentalStore:
         region_anchors: list = None,
         event_bus: Optional["EventBus"] = None,
         coverage_bbox: list = None,
+        coverage_excluded: list = None,
     ):
         self._adapters = {}  # name -> adapter instance
         self._failed_adapters = {}  # name -> last_error string
@@ -49,6 +50,7 @@ class EnvironmentalStore:
         self._mesh_zones = config.nws_zones or []
         self._region_anchors = region_anchors or []
         self._coverage_bbox = coverage_bbox or []
+        self._coverage_excluded = set(coverage_excluded or [])
 
         # ── Received-delta gate (NATIVE-only) ────────────────────────────
         # The model the operator demanded: a native adapter broadcasts an item
@@ -148,7 +150,14 @@ class EnvironmentalStore:
             self._failed_adapters[name] = err_msg
 
     def _coverage_for(self, adapter: str):
-        """Derived coverage scope for a NATIVE adapter, or None to use its own config (override/fallback)."""
+        """Derived coverage scope for a NATIVE adapter, or None to use its own config (override/fallback).
+
+        Returns None immediately for any adapter listed in coverage_excluded, so
+        that adapter falls back to its own config fields exactly as if no coverage
+        bbox were set (the "advanced override" escape hatch).
+        """
+        if adapter in self._coverage_excluded:
+            return None
         from meshai import coverage as _cov
         return _cov.resolve_adapter_coverage(adapter, self._coverage_bbox, "native")
 

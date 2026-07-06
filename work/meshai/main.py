@@ -402,13 +402,16 @@ class MeshAI:
         # Native satpass: seed observer_locations. When a valid coverage bbox is
         # configured, seed a single derived observer at the bbox centroid instead
         # of the hand-listed config observers (coverage wins; config is fallback).
+        # Exception: if "satpass" is in coverage.excluded_adapters, treat as if
+        # no coverage bbox is set — fall back to the adapter's own config observers.
         try:
             from meshai.persistence.observer_locations import seed_observers_from_config
             from meshai import coverage as _cov
             from types import SimpleNamespace
+            _satpass_excluded = "satpass" in self.config.coverage.excluded_adapters
             _sat_scope = _cov.resolve_adapter_coverage(
                 "satpass",
-                (self.config.coverage.bbox if self.config.coverage.enabled else []),
+                (self.config.coverage.bbox if (self.config.coverage.enabled and not _satpass_excluded) else []),
                 "native",
             )
             if _sat_scope is not None:
@@ -637,6 +640,7 @@ class MeshAI:
             self.env_store = EnvironmentalStore(
                 config=env_cfg, region_anchors=region_anchors,
                 coverage_bbox=coverage_bbox, event_bus=self.event_bus,
+                coverage_excluded=cov.excluded_adapters,
             )
             logger.info(f"Environmental feeds enabled ({len(self.env_store._adapters)} adapters)")
         else:

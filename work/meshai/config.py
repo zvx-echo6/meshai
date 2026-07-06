@@ -807,6 +807,7 @@ class Coverage:
 
     bbox: list = field(default_factory=list)   # [west, south, east, north]; empty = not configured
     enabled: bool = True                        # master switch for deriving adapter scope from bbox
+    excluded_adapters: list = field(default_factory=list)  # adapters that OPT OUT of coverage bbox and use their own config
 
 
 @dataclass
