@@ -30,6 +30,20 @@ from __future__ import annotations
 import functools
 import os
 
+# ── Native-adapter always-decide/always-render set ───────────────────────────
+# The native WFIGS fire path (env/fires.py) must run the shared gating decider
+# AND the shared fire formatter DETERMINISTICALLY, independent of the shadow-bake
+# MESHAI_CUTOVER_CATEGORIES env var: the decider IS the fire gate (fires table +
+# 8h cooldown), so it cannot be left to an operator toggle. These categories are
+# emitted ONLY by the native fire adapter in this standalone deployment (Central
+# is off, feed_source=native), so forcing decider+formatter here has no
+# Central-render impact. Consumed by store._emit_event (decider gate) and
+# renderers.composer.compose_mesh_message (formatter gate) so native fires take
+# the exact same single render path a cut-over category would.
+NATIVE_ALWAYS_DECIDE = frozenset(
+    {"wildfire_incident", "wildfire_declared", "wildfire_closed"}
+)
+
 
 @functools.lru_cache(maxsize=1)
 def _load_cutover_categories() -> frozenset:

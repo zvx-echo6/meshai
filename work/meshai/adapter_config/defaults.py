@@ -330,6 +330,18 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "type": "float",
         "description": "Default attribution radius for FIRMS hotspot -> fire matching, miles. Per-fire override in fires.spread_radius_mi.",
     },
+    # Native WFIGS cold-start silent-seed (env/store.py::_ingest_fires).
+    # The cold-start seed is now gated on a per-process FIRST-POLL flag, not a
+    # wall-clock window: the FIRST fires poll after boot silent-seeds EVERY fire
+    # present (regardless of age, no broadcast); a fire only broadcasts "New" if
+    # it first appears on a LATER poll. cold_start_grace_seconds is retained
+    # (GUI-visible / reserved) but no longer gates the fire seed; the old
+    # new_ignition_max_age_seconds knob was removed with the 48h age window.
+    ("fires", "cold_start_grace_seconds"): {
+        "default": 120,
+        "type": "int",
+        "description": "Reserved boot-grace window (seconds). The native fire cold-start silent-seed is now gated on the first fires poll rather than this window, so it no longer affects fire seeding; retained for GUI/back-compat. Default 120s.",
+    },
     # v0.7-fire-2 -- growth + halt detection thresholds.
     # growth_drift_threshold_mi: a per-pass centroid drift of at least
     # this many miles fires wildfire_growth. 0.5 mi matches the design
