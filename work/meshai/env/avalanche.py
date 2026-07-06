@@ -32,8 +32,8 @@ class AvalancheAdapter:
         5: ("extreme", "Extreme"),
     }
 
-    def __init__(self, config: "AvalancheConfig"):
-        self._center_ids = config.center_ids
+    def __init__(self, config: "AvalancheConfig", coverage: dict = None):
+        self._center_ids = coverage["center_ids"] if coverage is not None else config.center_ids
         self._tick_interval = config.tick_seconds or 1800
         self._season_months = config.season_months or [12, 1, 2, 3, 4]
         self._last_tick = 0.0
