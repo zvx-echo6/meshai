@@ -251,3 +251,179 @@ def test_serial_by_id_available_false(monkeypatch):
     import meshai.serial_ports as sp
     monkeypatch.setattr(sp, "BY_ID_DIR", "/does/not/exist/by-id")
     assert sp.serial_by_id_available() is False
+
+
+# ---------------------------------------------------------------------------
+# /dev supplementary scan — detects nodes comports() misses
+# ---------------------------------------------------------------------------
+
+def _major_by_basename(mapping):
+    """Return a _char_major replacement that looks up majors by basename.
+
+    ``mapping`` maps a basename -> major (int). Unlisted paths return None
+    (treated as "not a USB-serial char device").
+    """
+    def _fake(path):
+        return mapping.get(os.path.basename(path))
+    return _fake
+
+
+def _setup_dev_scan(sp, tmp_path, monkeypatch, filenames, majors, comports=()):
+    """Create a fake /dev dir with ``filenames`` and wire up the module.
+
+    Points DEV_DIR at the tmp dir, disables the by-id/by-path dirs, fakes
+    _char_major from ``majors`` (basename -> major), and sets comports().
+    Returns the tmp dev dir path.
+    """
+    dev = tmp_path / "dev"
+    dev.mkdir()
+    for name in filenames:
+        (dev / name).write_text("")  # stand-in for a device node
+
+    monkeypatch.setattr(sp, "DEV_DIR", str(dev))
+    monkeypatch.setattr(sp, "BY_ID_DIR", str(tmp_path / "by-id-none"))
+    monkeypatch.setattr(sp, "BY_PATH_DIR", str(tmp_path / "by-path-none"))
+    monkeypatch.setattr(sp, "_char_major", _major_by_basename(majors))
+    monkeypatch.setattr(sp, "comports", lambda: list(comports))
+    return dev
+
+
+def test_dev_scan_custom_node_meshcore_rak(tmp_path, monkeypatch):
+    """A passed-through custom node /dev/meshcore-rak (major 166) with no /sys
+    backing (comports() returns []) is detected with likely_radio=True and its
+    own name as the stable path."""
+    import meshai.serial_ports as sp
+
+    dev = _setup_dev_scan(
+        sp, tmp_path, monkeypatch,
+        filenames=["meshcore-rak"],
+        majors={"meshcore-rak": 166},
+        comports=[],
+    )
+
+    result = sp.list_serial_ports()
+    assert len(result) == 1
+    entry = result[0]
+    assert entry["device"] == str(dev / "meshcore-rak")
+    assert entry["stable_path"] == str(dev / "meshcore-rak")
+    assert entry["likely_radio"] is True
+    assert entry["vid"] is None and entry["pid"] is None
+    assert entry["serial_number"] is None
+
+
+def test_dev_scan_raw_ttyacm(tmp_path, monkeypatch):
+    """A raw ttyACM0 (major 166) with no by-id link is included; its basename
+    doesn't match the radio-name heuristic so likely_radio is False and the
+    stable path is the raw device."""
+    import meshai.serial_ports as sp
+
+    dev = _setup_dev_scan(
+        sp, tmp_path, monkeypatch,
+        filenames=["ttyACM0"],
+        majors={"ttyACM0": 166},
+        comports=[],
+    )
+
+    result = sp.list_serial_ports()
+    assert len(result) == 1
+    entry = result[0]
+    assert entry["device"] == str(dev / "ttyACM0")
+    assert entry["stable_path"] == str(dev / "ttyACM0")
+    assert entry["likely_radio"] is False
+
+
+def test_dev_scan_ttyusb_included(tmp_path, monkeypatch):
+    """ttyUSB0 (major 188) is a USB-serial major and is included."""
+    import meshai.serial_ports as sp
+
+    dev = _setup_dev_scan(
+        sp, tmp_path, monkeypatch,
+        filenames=["ttyUSB0"],
+        majors={"ttyUSB0": 188},
+        comports=[],
+    )
+
+    result = sp.list_serial_ports()
+    assert len(result) == 1
+    assert result[0]["stable_path"] == str(dev / "ttyUSB0")
+
+
+def test_dev_scan_ttys_excluded(tmp_path, monkeypatch):
+    """ttyS0 (major 4, legacy UART) is NOT a USB-serial major → excluded."""
+    import meshai.serial_ports as sp
+
+    _setup_dev_scan(
+        sp, tmp_path, monkeypatch,
+        filenames=["ttyS0"],
+        majors={"ttyS0": 4},
+        comports=[],
+    )
+
+    assert sp.list_serial_ports() == []
+
+
+def test_dev_scan_dedup_keeps_pyserial_metadata(tmp_path, monkeypatch):
+    """A device found by BOTH comports() and the /dev scan yields one entry
+    that keeps the pyserial vid/pid/manufacturer metadata."""
+    import meshai.serial_ports as sp
+
+    dev = _setup_dev_scan(
+        sp, tmp_path, monkeypatch,
+        filenames=["ttyACM0"],
+        majors={"ttyACM0": 166},
+        comports=[],
+    )
+    device_path = str(dev / "ttyACM0")
+
+    # comports() reports the same node with rich metadata.
+    port = _fake_port(device_path, vid=0x239A, pid=0x0001)
+    monkeypatch.setattr(sp, "comports", lambda: [port])
+
+    result = sp.list_serial_ports()
+    assert len(result) == 1
+    entry = result[0]
+    assert entry["vid"] == 0x239A
+    assert entry["pid"] == 0x0001
+    assert entry["manufacturer"] == "Acme"
+    assert entry["serial_number"] == "SN001"
+    assert entry["likely_radio"] is True
+
+
+def test_dev_scan_custom_symlink_stable_path(tmp_path, monkeypatch):
+    """A custom udev symlink /dev/meshcore-rak -> ttyACM0 (both in /dev) groups
+    to one node; the custom name is preferred as the stable path over the raw
+    ttyACM0, and the radio heuristic fires on the custom name."""
+    import meshai.serial_ports as sp
+
+    dev = tmp_path / "dev"
+    dev.mkdir()
+    raw = dev / "ttyACM0"
+    raw.write_text("")
+    link = dev / "meshcore-rak"
+    link.symlink_to(raw)
+
+    monkeypatch.setattr(sp, "DEV_DIR", str(dev))
+    monkeypatch.setattr(sp, "BY_ID_DIR", str(tmp_path / "by-id-none"))
+    monkeypatch.setattr(sp, "BY_PATH_DIR", str(tmp_path / "by-path-none"))
+    monkeypatch.setattr(sp, "_char_major", _major_by_basename({"ttyACM0": 166}))
+    monkeypatch.setattr(sp, "comports", lambda: [])
+
+    result = sp.list_serial_ports()
+    assert len(result) == 1
+    entry = result[0]
+    # realpath collapses to the raw node; stable_path prefers the custom name.
+    assert entry["device"] == str(raw)
+    assert entry["stable_path"] == str(link)
+    assert entry["likely_radio"] is True
+
+
+def test_dev_scan_unreadable_dir_no_raise(tmp_path, monkeypatch):
+    """A nonexistent DEV_DIR must not raise — just yields nothing extra."""
+    import meshai.serial_ports as sp
+
+    monkeypatch.setattr(sp, "DEV_DIR", "/does/not/exist/dev")
+    monkeypatch.setattr(sp, "BY_ID_DIR", str(tmp_path / "noid"))
+    monkeypatch.setattr(sp, "BY_PATH_DIR", str(tmp_path / "nopath"))
+    monkeypatch.setattr(sp, "comports", lambda: [])
+
+    assert sp.list_serial_ports() == []
