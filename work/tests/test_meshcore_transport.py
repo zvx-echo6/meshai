@@ -29,6 +29,7 @@ def _build_fake_meshcore():
         DISCONNECTED = "DISCONNECTED"
         CONNECTED = "CONNECTED"
         ACK = "ACK"
+        NEW_CONTACT = "NEW_CONTACT"
 
     mod.EventType = EventType
 
@@ -78,6 +79,12 @@ def _build_fake_meshcore():
             async def send_advert(flood=False):
                 # No return value required for advert.
                 pass
+
+            @staticmethod
+            async def set_autoadd_config(value):
+                result = MagicMock()
+                result.is_error.return_value = False
+                return result
 
     mod.MeshCore = _FakeMeshCore
     return mod
@@ -818,3 +825,89 @@ class TestPeriodicAdvertScheduler:
         assert t._advert_task is not None
         t.disconnect()
         assert t._advert_task is None, "_advert_task should be None after disconnect"
+
+
+# ---------------------------------------------------------------------------
+# 12. Auto-add contacts (CMD 58 + NEW_CONTACT roster refresh)
+# ---------------------------------------------------------------------------
+
+class TestAutoAddContacts:
+    """set_autoadd_config called (or not) at connect; _on_new_contact refreshes roster."""
+
+    def _run_subscriptions(self, t, mc):
+        """Drive _setup_subscriptions on the transport's dedicated loop."""
+        mc.ensure_contacts = AsyncMock(return_value=True)
+        mc.start_auto_message_fetching = AsyncMock()
+        t._run_coro(t._setup_subscriptions())
+
+    def test_set_autoadd_config_called_when_enabled(self):
+        """set_autoadd_config(1) is called during _setup_subscriptions when toggle is True."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            mc.commands.set_autoadd_config = AsyncMock(return_value=MagicMock())
+            # Default config has meshcore_auto_add_contacts=True (default from ConnectionConfig).
+            t.config.meshcore_auto_add_contacts = True
+            self._run_subscriptions(t, mc)
+            mc.commands.set_autoadd_config.assert_awaited_once_with(1)
+        finally:
+            _cleanup(t)
+
+    def test_set_autoadd_config_not_called_when_disabled(self):
+        """set_autoadd_config is NOT called during _setup_subscriptions when toggle is False."""
+        cfg = _mc_config()
+        cfg.meshcore_auto_add_contacts = False
+        t = MeshCoreTransport(cfg)
+        mc = MagicMock()
+        mc.get_contact_by_key_prefix.return_value = None
+        _install_channel_table(mc)
+        mc.commands.set_autoadd_config = AsyncMock(return_value=MagicMock())
+        t._mc = mc
+        t._connected = True
+        loop = asyncio.new_event_loop()
+        t._loop = loop
+        thread = threading.Thread(target=loop.run_forever, daemon=True)
+        thread.start()
+        t._loop_thread = thread
+        try:
+            mc.ensure_contacts = AsyncMock(return_value=True)
+            mc.start_auto_message_fetching = AsyncMock()
+            t._run_coro(t._setup_subscriptions())
+            mc.commands.set_autoadd_config.assert_not_awaited()
+        finally:
+            _cleanup(t)
+
+    def test_on_new_contact_does_not_raise(self):
+        """_on_new_contact handles a well-formed event payload without raising."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            event = MagicMock()
+            event.payload = {"adv_name": "K7ZVX-Node", "public_key": "abc123deadbeef"}
+            t._on_new_contact(event)  # must not raise
+        finally:
+            _cleanup(t)
+
+    def test_on_new_contact_triggers_roster_refresh(self):
+        """_on_new_contact schedules ensure_contacts on the transport loop."""
+        import time
+        t, mc, loop = _transport_with_mock_mc()
+        try:
+            mc.ensure_contacts = AsyncMock(return_value=True)
+            event = MagicMock()
+            event.payload = {"adv_name": "NewNode", "public_key": "cafef00d"}
+            t._on_new_contact(event)
+            # Drain the dedicated loop so the fire-and-forget coroutine runs.
+            drain = asyncio.run_coroutine_threadsafe(asyncio.sleep(0.05), loop)
+            drain.result(timeout=2.0)
+            mc.ensure_contacts.assert_called()
+        finally:
+            _cleanup(t)
+
+    def test_on_new_contact_handles_missing_payload_gracefully(self):
+        """_on_new_contact survives when event.payload is None or absent."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            event = MagicMock()
+            event.payload = None
+            t._on_new_contact(event)  # must not raise
+        finally:
+            _cleanup(t)

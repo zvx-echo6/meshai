@@ -23,6 +23,7 @@ interface ConnectionConfig {
   meshcore_serial_port?: string
   meshcore_baud?: number
   meshcore_ble_address?: string
+  meshcore_auto_add_contacts?: boolean
   [key: string]: unknown
 }
 
@@ -310,6 +311,12 @@ export default function MeshCoreConnection() {
             &rarr; Meshtastic connection
           </Link>
         </div>
+        <Toggle
+          label="Auto-add contacts (AIDA adds any node it hears — required to DM anyone)"
+          checked={config.meshcore_auto_add_contacts ?? true}
+          onChange={(v) => upd({ meshcore_auto_add_contacts: v })}
+          helper="Enables firmware CMD 58 (set_autoadd_config) at connect so AIDA automatically adds every node it hears an advert from as a contact, enabling DM send/decrypt without manual contact exchange"
+        />
         <details className="group">
           <summary className="flex items-center gap-2 cursor-pointer text-sm text-slate-400 hover:text-slate-200">
             <ChevronRight size={14} className="group-open:rotate-90 transition-transform" />
