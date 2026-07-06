@@ -15,7 +15,7 @@ whose per-poll batch we control, and assert exactly which events reach the bus.
 """
 from __future__ import annotations
 
-from meshai.env.store import EnvironmentalStore
+from meshai.env.store import EnvironmentalStore, _key_ext
 from meshai.config import EnvironmentalConfig
 from meshai.notifications.pipeline.bus import EventBus
 from meshai.notifications.events import make_event
@@ -389,3 +389,87 @@ def test_no_durable_rows_falls_back_to_silent_first_poll():
     adapter.set_batch(["A", "B", "C"])
     store.refresh()
     assert _emitted_ids(captured) == ["C"]
+
+
+class _FakeRoads511:
+    """Native roads511 stand-in. Raw events carry a stable external_id
+    '511_{id}' EQUAL to their event_id (like the patched adapter), so the
+    seen-key is '511\x1eext:511_{id}' — exactly what the durable pre-seed loads
+    from traffic_events(source='511')."""
+
+    def __init__(self):
+        self._batch: list[dict] = []
+
+    def set_batch(self, ext_ids: list[str]) -> None:
+        self._batch = [
+            {"source": "511", "event_id": x, "external_id": x, "fetched_at": 0}
+            for x in ext_ids
+        ]
+
+    def tick(self) -> bool:
+        return True
+
+    def get_events(self) -> list:
+        return list(self._batch)
+
+    def to_event(self, raw_evt: dict):
+        eid = raw_evt["external_id"]
+        return make_event(source="511", category="test_delta",
+                          severity="routine", title=eid, summary=eid,
+                          group_key=eid)
+
+
+def test_roads511_seen_key_matches_persistent_preseed_key():
+    # CONSISTENCY PROOF: the SAME roads511 item must produce a byte-identical
+    # self._seen key on both sides — the live emit path (_seen_key over the real
+    # adapter's raw event) and the durable pre-seed (_key_ext built from the
+    # persisted traffic_events row). If these drift the pre-seed silently does
+    # nothing.
+    from meshai.env.roads511 import Roads511Adapter
+
+    # Build a raw event exactly as the adapter would from an ITD item.
+    # _parse_event does not touch self, so __new__ (no network/init) is safe.
+    adapter = Roads511Adapter.__new__(Roads511Adapter)
+    raw = adapter._parse_event(
+        {"id": "11165", "Latitude": 43.6, "Longitude": -116.2,
+         "Description": "US-20 closed"},
+        now=0.0,
+    )
+    assert raw["source"] == "511"
+    assert raw["external_id"] == "511_11165"
+    assert raw["event_id"] == "511_11165"
+
+    # Live emit key (no bus needed for _seen_key).
+    store = EnvironmentalStore(EnvironmentalConfig(), event_bus=None)
+    live_key = store._seen_key(raw)
+
+    # The incident decider persists traffic_events.external_id == raw external_id.
+    persisted_external_id = raw["external_id"]
+    preseed_key = _key_ext("511", persisted_external_id)
+
+    assert live_key == preseed_key == "511\x1eext:511_11165", (
+        f"live={live_key!r} preseed={preseed_key!r} must be identical"
+    )
+
+
+def test_persistent_preseed_roads511_by_external_id():
+    # N durable rows in traffic_events(source='511'). A fresh store must treat
+    # them as already-received: polling those same N broadcasts NOTHING; adding
+    # one external_id NOT in the table broadcasts only that one.
+    known = [f"511_{i}" for i in range(4)]
+    _insert_traffic(known, source="511")
+
+    adapter = _FakeRoads511()
+    store, captured = _build_store("roads511", adapter)
+
+    # roads511's SOURCE is '511'; pre-seed keys/marks by source, not adapter name.
+    assert "511" in store._seeded
+    assert len(store._seen["511"]) == 4
+
+    adapter.set_batch(known)
+    store.refresh()
+    assert captured == [], "all 4 durably-known 511 rows → zero broadcast"
+
+    adapter.set_batch(known + ["511_99"])
+    store.refresh()
+    assert _emitted_ids(captured) == ["511_99"], "only the not-in-table id broadcasts"

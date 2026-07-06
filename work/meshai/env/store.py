@@ -316,14 +316,26 @@ class EnvironmentalStore:
             USGS id (e.g. ``us6000t9bn``) and the quake decider persists it as
             ``quake_events.event_id`` verbatim → ``_key_eid('usgs_quake', id)``
             matches exactly.
+          * ``roads511``    — the native 511 adapter now carries a stable
+            ``external_id`` (``511_{itd_id}``, EQUAL to its ``event_id``) on its
+            raw event and the incident decider persists it as
+            ``traffic_events(source='511', external_id='511_{itd_id}')``. Same
+            value on both sides → ``_key_ext('511', external_id)`` matches
+            exactly. Central-era rows used source ``itd_511`` with
+            ``idaho_511:event:*`` ids — a DIFFERENT keyspace this pre-seed does
+            NOT cover. On the first restart after this change there may be ~0
+            ``source='511'`` rows yet; the layer-2 in-memory silent-first-poll
+            seed covers any Central-era backlog in the interim (safe because
+            roads511 fetches atomically per tick), and durability grows as
+            native ``source='511'`` rows accumulate.
 
         DELIBERATELY NOT seeded here (native emit key ≠ any persistent key —
         see the report; these stay protected by the in-memory first-poll +
         non-empty-seed guard, which is sufficient because each fetches
         atomically per tick rather than across ticks):
-          roads511 / traffic (persistent rows are Central-keyed:
-          itd_511/tomtom_incidents with idaho_511:event:* external_ids, but the
-          native adapters emit source '511'/'traffic' with derived event_ids),
+          traffic (persistent rows are Central-keyed: tomtom_incidents with
+          tomtom external_ids, but the native adapter emits source 'traffic'
+          with derived event_ids),
           fires (native ``nifc_<name>_<state>`` vs persistent IRWIN GUID),
           firms (native ``firms_<lat>_<lon>_<date>_<time>`` — no matching PK),
           satpass (native ``<norad>:<bucket>`` vs persistent
@@ -351,6 +363,13 @@ class EnvironmentalStore:
                 "SELECT external_id FROM traffic_events "
                 "WHERE source='wzdx' AND external_id IS NOT NULL",
                 lambda row: _key_ext("wzdx", row[0]),
+            ),
+            (
+                "511",
+                "traffic_events(source='511')",
+                "SELECT external_id FROM traffic_events "
+                "WHERE source='511' AND external_id IS NOT NULL",
+                lambda row: _key_ext("511", row[0]),
             ),
             (
                 "usgs_quake",
