@@ -19,8 +19,23 @@ logger = logging.getLogger(__name__)
 class NWSAlertsAdapter:
     """NWS Active Alerts -- polls api.weather.gov"""
 
-    def __init__(self, config: "NWSConfig"):
-        self._areas = config.areas or ["ID"]
+    def __init__(self, config: "NWSConfig", coverage: dict = None):
+        if coverage is not None:
+            derived_areas = coverage["areas"]
+            if not derived_areas:
+                # bbox overlaps no state — keep config areas so the API call
+                # remains well-formed, but retain the bbox for geometry filter.
+                logger.debug(
+                    "NWS coverage: derived area list is empty (bbox outside all states); "
+                    "falling back to config areas for API query"
+                )
+                self._areas = config.areas or ["ID"]
+            else:
+                self._areas = derived_areas
+            self._coverage_bbox = coverage["bbox"]
+        else:
+            self._areas = config.areas or ["ID"]
+            self._coverage_bbox = None
         self._user_agent = config.user_agent or "(meshai, ops@example.com)"
         self._severity_min = config.severity_min or "moderate"
         self._tick_interval = config.tick_seconds or 60
@@ -157,6 +172,24 @@ class NWSAlertsAdapter:
         self._last_tick = now
         return self._fetch()
 
+    def _in_coverage(self, event: dict) -> bool:
+        """Return True iff the event should be kept under the coverage bbox filter.
+
+        Rules:
+        - If no coverage bbox is set, always keep.
+        - If the event has a numeric lat/lon centroid, drop it when outside the box.
+        - If the event has no centroid (lat/lon absent or None), keep it — the
+          state area= filter already scopes it; we can't box-filter without coords.
+        """
+        if not self._coverage_bbox:
+            return True
+        lat = event.get("lat")
+        lon = event.get("lon")
+        if lat is None or lon is None:
+            return True  # no geometry — pass through
+        from meshai.coverage import point_in_bbox
+        return point_in_bbox(lat, lon, self._coverage_bbox)
+
     def _fetch(self) -> bool:
         """Fetch alerts from NWS API.
 
@@ -265,6 +298,12 @@ class NWSAlertsAdapter:
                         event["lon"] = lon_sum / len(ring)
                 except Exception:
                     pass
+
+            # Geometry filter: drop alerts whose centroid falls outside the
+            # coverage bbox. Alerts with no centroid are kept (state area=
+            # filter already scopes them; we can't box-filter without coords).
+            if not self._in_coverage(event):
+                continue
 
             new_events.append(event)
 
