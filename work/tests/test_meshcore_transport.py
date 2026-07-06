@@ -381,6 +381,107 @@ class TestSendMessageDM:
 
 
 # ---------------------------------------------------------------------------
+# 3b. send_message — DM path-discovery skip / self-heal logic
+# ---------------------------------------------------------------------------
+
+class TestSendMessageDMPathSkip:
+    """Verify the out_path_len guard and stale-route self-heal retry."""
+
+    def _make_ok_event(self):
+        ev = MagicMock()
+        ev.is_error.return_value = False
+        ev.payload = {"type": 0}
+        return ev
+
+    def _make_err_event(self):
+        ev = MagicMock()
+        ev.is_error.return_value = True
+        ev.payload = {"reason": "no ack"}
+        return ev
+
+    def _transport_with_contact(self, out_path_len):
+        """Return (transport, mc) with mc.get_contact_by_key_prefix returning a
+        contact carrying the given out_path_len.  Path-discovery helpers are
+        AsyncMocks so they never block.  _establish_direct_path is left intact
+        (caller can monkeypatch as needed)."""
+        t, mc, _ = _transport_with_mock_mc()
+        contact = {
+            "public_key": "a" * 64,
+            "adv_name": "TestNode",
+            "out_path_len": out_path_len,
+        }
+        mc.get_contact_by_key_prefix.return_value = contact
+        mc.ensure_contacts = AsyncMock(return_value=True)
+        # Path-discovery support (used by _establish_direct_path).
+        path_ev = MagicMock()
+        path_ev.is_error.return_value = False
+        mc.commands.send_path_discovery_sync = AsyncMock(return_value=path_ev)
+        mc.commands.get_advert_path = AsyncMock(return_value=path_ev)
+        return t, mc
+
+    def test_routed_contact_skips_discovery(self):
+        """out_path_len=0 (already routed): _establish_direct_path must NOT be called."""
+        t, mc = self._transport_with_contact(out_path_len=0)
+        try:
+            # Replace _establish_direct_path with a spy so we can assert it's not called.
+            from unittest.mock import Mock
+            spy = Mock()
+            t._establish_direct_path = spy
+
+            mc.commands.send_msg = AsyncMock(return_value=self._make_ok_event())
+
+            result = t.send_message("hi", destination="7d4e07237294")
+
+            spy.assert_not_called()
+            mc.commands.send_msg.assert_awaited_once()
+            assert result is True
+        finally:
+            _cleanup(t)
+
+    def test_flood_contact_runs_discovery(self):
+        """out_path_len=-1 (flood/unknown): _establish_direct_path MUST be called once."""
+        t, mc = self._transport_with_contact(out_path_len=-1)
+        try:
+            from unittest.mock import Mock
+            spy = Mock()
+            t._establish_direct_path = spy
+
+            mc.commands.send_msg = AsyncMock(return_value=self._make_ok_event())
+
+            result = t.send_message("hi", destination="7d4e07237294")
+
+            spy.assert_called_once()
+            mc.commands.send_msg.assert_awaited_once()
+            assert result is True
+        finally:
+            _cleanup(t)
+
+    def test_stale_routed_contact_self_heals(self):
+        """out_path_len=0 but first send fails (stale route): discovery runs,
+        send retried once, final return is True."""
+        t, mc = self._transport_with_contact(out_path_len=0)
+        try:
+            from unittest.mock import Mock
+            spy = Mock()
+            t._establish_direct_path = spy
+
+            # First send fails, second succeeds.
+            mc.commands.send_msg = AsyncMock(
+                side_effect=[self._make_err_event(), self._make_ok_event()]
+            )
+
+            result = t.send_message("hi", destination="7d4e07237294")
+
+            # Discovery was triggered exactly once (the self-heal retry).
+            spy.assert_called_once()
+            # send_msg was called twice (first attempt + retry).
+            assert mc.commands.send_msg.await_count == 2
+            assert result is True
+        finally:
+            _cleanup(t)
+
+
+# ---------------------------------------------------------------------------
 # 4. Inbound normalization — direct method calls (hermetic, no threads)
 # ---------------------------------------------------------------------------
 
