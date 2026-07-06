@@ -232,7 +232,9 @@ interface FullConfig {
   dashboard: DashboardConfig
 }
 
-type SectionKey = keyof FullConfig
+// `timezone` is a top-level scalar (saved via its own PUT /api/config/timezone),
+// not a config section — exclude it so section maps/tabs stay exhaustive.
+type SectionKey = Exclude<keyof FullConfig, 'timezone'>
 
 const SECTIONS: { key: SectionKey; label: string; icon: typeof Settings }[] = [
   { key: 'bot', label: 'Bot', icon: Bot },
