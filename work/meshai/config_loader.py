@@ -56,6 +56,7 @@ SECTION_TO_FILE: dict[str, str] = {
     "llm": "llm.yaml",
     "dashboard": "dashboard.yaml",
     "danger_zones": "danger_zones.yaml",
+    "coverage": "config.yaml",
 }
 
 # Fields that should be written to local.yaml instead of domain files

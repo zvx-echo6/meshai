@@ -793,6 +793,23 @@ class DangerZonesConfig:
 
 
 @dataclass
+class Coverage:
+    """Universal geographic coverage bounding box.
+
+    A single [west, south, east, north] bbox that drives every native adapter's
+    effective scope in Phase 2+. Phase 1 defines the shape; no adapter is wired yet.
+
+    bbox: [west, south, east, north] = [min_lon, min_lat, max_lon, max_lat].
+          Empty list means "not configured" — adapters fall back to their own scope.
+    enabled: master switch; when False, adapters fall back to their own scope even
+             if bbox is populated.
+    """
+
+    bbox: list = field(default_factory=list)   # [west, south, east, north]; empty = not configured
+    enabled: bool = True                        # master switch for deriving adapter scope from bbox
+
+
+@dataclass
 class Config:
     """Main configuration container."""
 
@@ -817,6 +834,7 @@ class Config:
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
     danger_zones: DangerZonesConfig = field(default_factory=DangerZonesConfig)
+    coverage: Coverage = field(default_factory=Coverage)
 
     _config_path: Optional[Path] = field(default=None, repr=False)
 
@@ -980,6 +998,8 @@ def _dict_to_dataclass(cls, data: dict):
             kwargs[key] = _dict_to_dataclass(EnvironmentalConfig, value)
         elif key == "dashboard" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(DashboardConfig, value)
+        elif key == "coverage" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(Coverage, value)
         elif key == "toggles" and isinstance(value, dict):
             # v0.5: notifications.toggles is a dict of family -> NotificationToggle
             kwargs[key] = {
