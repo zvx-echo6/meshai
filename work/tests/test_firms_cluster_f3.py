@@ -233,6 +233,123 @@ def test_attribution_beats_clustering_for_known_fire():
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# 3b. Cold-start silent-seed suppresses the FUSION path too (growth/spotting/
+#     halt), not just clusters — enabling FIRMS must emit ZERO broadcasts on the
+#     first fetch even for a pre-existing attributed fire (e.g. MORA).
+# ═════════════════════════════════════════════════════════════════════════════
+
+# One VIIRS pass is a 90-min (5400 s) bucket (see _pass_id). Anchor pass A and
+# pass B in DIFFERENT buckets so the second batch crosses a real pass boundary.
+_PASS_A = _acq_epoch("2026-06-06", "1200")            # bucket N
+_PASS_B = _PASS_A + 6 * 3600                            # +6h -> a later bucket
+
+
+def _pixel_at(*, lat, lon, acq_epoch, frp=20.0):
+    return {"lat": lat, "lon": lon, "frp": frp, "confidence": "high",
+            "brightness": 320.0, "satellite": "N20", "acq_epoch": acq_epoch}
+
+
+def test_cold_start_seed_suppresses_growth_fusion_but_persists():
+    """First (seed) fetch: a pre-existing fire (MORA) with pixels that WOULD
+    produce a wildfire_growth boundary broadcast -> ZERO wires, yet the pixels
+    are persisted + attributed and the pass/centroid baseline is built."""
+    from meshai.persistence import get_db
+
+    mora_lat, mora_lon = 44.100, -115.600
+    _seed_fire(irwin_id="ID-MORA", lat=mora_lat, lon=mora_lon)
+
+    produced = []
+    # Pass A: 5 pixels around the anchor (same 90-min bucket).
+    for i in range(5):
+        produced += _feed(
+            _pixel_at(lat=mora_lat + 0.0001 * i, lon=mora_lon + 0.0001 * (i - 2),
+                      acq_epoch=_PASS_A + i, frp=20.0 + i),
+            now=1780728000 + i, seed=True)
+    # Pass B: one pixel ~1 mi north in a LATER bucket -> a growth boundary that,
+    # on a non-seed fetch, WOULD broadcast wildfire_growth.
+    produced += _feed(
+        _pixel_at(lat=mora_lat + 1.0 / 69.0, lon=mora_lon, acq_epoch=_PASS_B),
+        now=1780728100, seed=True)
+
+    assert produced == [], "cold-start seed must suppress the growth fusion wire"
+
+    conn = get_db()
+    # Persistence + attribution still happened.
+    assert conn.execute("SELECT COUNT(*) FROM firms_pixels").fetchone()[0] == 6
+    assert conn.execute(
+        "SELECT COUNT(*) FROM fire_pixels").fetchone()[0] == 6
+    assert conn.execute(
+        "SELECT COUNT(*) FROM firms_pixels WHERE attributed_at IS NOT NULL"
+    ).fetchone()[0] == 6
+    # Pass baseline built: the fires cursor advanced to pass B's bucket so a
+    # genuinely-new LATER pass can measure drift against it.
+    cursor = conn.execute(
+        "SELECT last_pass_id, current_centroid_lat FROM fires "
+        "WHERE irwin_id=?", ("ID-MORA",)).fetchone()
+    assert cursor["last_pass_id"] is not None
+    assert cursor["current_centroid_lat"] is not None
+
+
+def test_growth_fires_on_later_fetch_after_seed():
+    """After the cold-start seed built the pass baseline, a genuinely-new pass
+    on a LATER (seed=False) fetch DOES broadcast wildfire_growth."""
+    mora_lat, mora_lon = 44.100, -115.600
+    _seed_fire(irwin_id="ID-MORA", lat=mora_lat, lon=mora_lon)
+
+    # --- Cold-start seed: pass A + pass B, all silent. ---
+    for i in range(5):
+        assert _feed(
+            _pixel_at(lat=mora_lat + 0.0001 * i, lon=mora_lon + 0.0001 * (i - 2),
+                      acq_epoch=_PASS_A + i, frp=20.0 + i),
+            now=1780728000 + i, seed=True) == []
+    assert _feed(
+        _pixel_at(lat=mora_lat + 1.0 / 69.0, lon=mora_lon, acq_epoch=_PASS_B),
+        now=1780728100, seed=True) == []
+
+    # --- Later real fetch (seed=False): a NEW pass C, another ~1 mi north of
+    # pass B -> a genuinely-new boundary drift -> wildfire_growth broadcasts. ---
+    pass_c = _PASS_B + 6 * 3600
+    out = _feed(
+        _pixel_at(lat=mora_lat + 2.0 / 69.0, lon=mora_lon, acq_epoch=pass_c),
+        now=1780750000, seed=False)
+    assert len(out) == 1, f"genuinely-new post-seed growth must fire: {out}"
+    wire, data = out[0]
+    assert data["category"] == "wildfire_growth"
+    assert data["_severity_override"] == "immediate"
+    assert wire.startswith("🔥 MORA")
+
+
+def test_cold_start_seed_suppresses_halt_but_latches():
+    """First (seed) fetch: an already-idle fire that WOULD halt-broadcast is
+    suppressed AND its halt latch is stamped, so it stays silent on later
+    unrelated fetches until real activity resumes."""
+    from meshai.persistence import get_db
+
+    now = 1780768800
+    idle_at = now - 14 * 3600
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO fires(irwin_id, incident_name, lat, lon, last_event_at, "
+        "last_pass_id, last_pass_at) VALUES (?,?,?,?,?,?,?)",
+        ("ID-IDLE", "Cold Fire", 42.5, -114.5, int(idle_at),
+         "N20-329627", float(idle_at)))
+
+    # A fresh unattributed pixel FAR from the idle fire on the cold-start fetch.
+    out = _feed(_pixel_at(lat=45.0, lon=-118.0, acq_epoch=_PASS_A), now=now,
+                seed=True)
+    assert out == [], "cold-start seed must suppress the halt wire"
+    latch = conn.execute(
+        "SELECT halt_broadcast_at FROM fires WHERE irwin_id=?",
+        ("ID-IDLE",)).fetchone()[0]
+    assert latch == float(now), "seed still latches halt so it can't re-fire"
+
+    # A later unrelated fetch: the idle fire is latched -> still silent.
+    out2 = _feed(_pixel_at(lat=45.1, lon=-118.1, acq_epoch=_PASS_A + 60),
+                 now=now + 120, seed=False)
+    assert out2 == [], "latched idle fire must not halt on a later fetch"
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # 4. Per-pixel silent: a raw hotspot never renders an Event
 # ═════════════════════════════════════════════════════════════════════════════
 

@@ -308,6 +308,10 @@ class TestAdapterTickFusion:
         _patch_fetch(monkeypatch, _csv(self._growth_rows(center_lat, center_lon)))
 
         a = _adapter()
+        # Steady-state growth routing (not cold start): mark the adapter past its
+        # first-fetch silent-seed so this tick's growth broadcasts. Cold-start
+        # fusion suppression is covered in test_firms_cluster_f3.
+        a._firms_seeded = True
         assert a.tick() is True
 
         evts = a.get_events()
@@ -352,6 +356,10 @@ class TestAdapterTickFusion:
         # ingest would (store._ingest marks every source it touched).
         store._seen = {}
         store._seeded = {"firms", "firms_fusion"}
+        # Adapter-level cold-start seed is also a first-fetch silence gate; this
+        # steady-state test wants the growth wire, so mark the adapter seeded too
+        # (cold-start fusion suppression is covered in test_firms_cluster_f3).
+        a._firms_seeded = True
         assert a.tick() is True
         store._ingest("firms", a)
 
