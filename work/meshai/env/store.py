@@ -44,11 +44,6 @@ class EnvironmentalStore:
         self._adapters = {}  # name -> adapter instance
         self._failed_adapters = {}  # name -> last_error string
         self._events = {}  # (source, event_id) -> event dict
-        # Process boot epoch — the native fire cold-start silent-seed window is
-        # measured from here (see _ingest_fires). clock.now() is the pipeline's
-        # monkeypatchable time seam so tests can freeze/override it.
-        from meshai.notifications import clock as _clock
-        self._boot_at = _clock.now()
         self._event_bus = event_bus  # Pipeline EventBus for emission
         self._swpc_status = {}  # Kp/SFI/scales snapshot
         self._ducting_status = {}  # tropo ducting assessment
@@ -83,6 +78,17 @@ class EnvironmentalStore:
         # is what closes cross-tick, non-empty staging leaks).
         self._seen: dict[str, set] = {}   # source -> set of item keys
         self._seeded: set[str] = set()    # sources past their first non-empty poll
+
+        # Native WFIGS cold-start silent-seed gate (see _ingest_fires). The
+        # FIRST fires poll after boot treats every fire present as already-known
+        # (seed silently, no broadcast) so a fresh deploy never dumps the active-
+        # fire backlog to the mesh. Gated on this per-process flag rather than a
+        # wall-clock boot grace so it holds no matter how late the first
+        # successful WFIGS fetch lands (e.g. a failed first fetch pushes the
+        # first real poll ~10min out, well past any grace window). Flag flips
+        # only after a non-empty fires ingest; a fire that first appears on a
+        # LATER poll is a genuine ignition and broadcasts "New".
+        self._fires_seeded: bool = False
 
         # Create adapter instances with error isolation
         self._register_adapter("nws", config.nws, ".nws", "NWSAlertsAdapter",
@@ -286,8 +292,8 @@ class EnvironmentalStore:
             # gate: a fire's growth updates are repeat sightings of the SAME
             # event_id that `_delta_emit` would wrongly suppress. The DECIDER
             # (gating.fire.decide, backed by the fires table + 8h cooldown) is
-            # the gate instead. `_ingest_fires` also silent-seeds old/known
-            # fires at cold start so boot never dumps a backlog.
+            # the gate instead. `_ingest_fires` also silent-seeds EVERY current
+            # fire on the first poll (cold start) so boot never dumps a backlog.
             for evt in adapter.get_events():
                 key = (evt["source"], evt["event_id"])
                 self._events[key] = evt
@@ -325,13 +331,19 @@ class EnvironmentalStore:
         For each polled fire (already recorded in ``self._events`` by the
         caller):
 
-          1. COLD-START silent-seed. A FIRST-SIGHT fire (no ``fires`` row) that
-             is old/undated AND seen inside the boot-grace window is a
-             pre-existing active fire, not a fresh ignition. We INSERT a
-             ``fires`` row stamped as ALREADY broadcast (``last_broadcast_*`` =
-             current) and emit NOTHING, so the decider treats later polls as
-             Update and only fires on real growth — no boot backlog dump. The
-             shared ``gating.fire.decide`` is untouched.
+          1. COLD-START silent-seed. On the FIRST fires poll after boot
+             (``self._fires_seeded`` is False), EVERY first-sight fire (no
+             ``fires`` row) is treated as a pre-existing active fire —
+             regardless of age. We INSERT a ``fires`` row stamped as ALREADY
+             broadcast (``last_broadcast_*`` = current) and emit NOTHING, so the
+             decider treats later polls as Update and only fires on real growth
+             — no boot backlog dump (a fresh deploy with an empty ``fires`` table
+             must NOT broadcast every fire discovered in the last 48h). A fire
+             only broadcasts "New" if it FIRST appears on a LATER poll (a
+             genuine ignition since startup). The shared ``gating.fire.decide``
+             is untouched. This is gated on the per-process first-poll flag, not
+             a wall-clock boot grace, so it holds no matter how late the first
+             successful WFIGS fetch lands.
 
           2. Unconditional current-state write (mirrors the Central
              ``wfigs_handler``): INSERT (``last_broadcast_*`` NULL) on first
@@ -345,7 +357,6 @@ class EnvironmentalStore:
              / render hints) and arms ``gate.commit`` onto the emitted Event.
         """
         from meshai.notifications import clock as _clock
-        from meshai.adapter_config import adapter_config
 
         now = _clock.now()
         try:
@@ -355,17 +366,13 @@ class EnvironmentalStore:
             logger.warning("nifc fire ingest skipped (DB unavailable): %s", e)
             return
 
-        try:
-            grace = int(adapter_config.fires.cold_start_grace_seconds)
-        except Exception:
-            grace = 120
-        try:
-            max_age = int(adapter_config.fires.new_ignition_max_age_seconds)
-        except Exception:
-            max_age = 172800
-        within_boot_grace = (now - self._boot_at) < grace
+        # Cold-start gate: is this the FIRST fires poll since boot? Captured
+        # once for the whole batch, before the flag is flipped below, so every
+        # fire in the initial full-state sweep is silent-seeded together.
+        cold_start = not self._fires_seeded
 
-        for evt in adapter.get_events():
+        events = adapter.get_events()
+        for evt in events:
             try:
                 irwin_id = evt.get("irwin_id")
                 if not irwin_id:
@@ -379,11 +386,10 @@ class EnvironmentalStore:
                     (irwin_id,)).fetchone()
                 first_sight = row is None
 
-                old_or_undated = (
-                    declared is None or (now - int(declared)) >= max_age)
-
-                # (1) Cold-start silent-seed — seed as already-broadcast, no emit.
-                if first_sight and within_boot_grace and old_or_undated:
+                # (1) Cold-start silent-seed — EVERY first-sight fire on the
+                # first poll, regardless of age; seed as already-broadcast, no
+                # emit.
+                if first_sight and cold_start:
                     conn.execute(
                         "INSERT INTO fires(irwin_id, incident_name, "
                         "current_acres, current_contained_pct, lat, lon, "
@@ -431,6 +437,14 @@ class EnvironmentalStore:
             except Exception:
                 logger.exception(
                     "nifc fire ingest failed for %s", evt.get("event_id", "?"))
+
+        # First fires poll complete: later polls broadcast genuine ignitions.
+        # `_ingest_fires` is only reached when the adapter's tick() reported a
+        # change, which for the atomic WFIGS fetch means a non-empty batch on
+        # the first successful poll (a 0-fire fetch is `changed=False` and never
+        # ingests) — so this flip only ever happens on a real full-state sweep.
+        if events:
+            self._fires_seeded = True
 
     def _seed_from_persistent(self) -> None:
         """Pre-seed ``self._seen`` from the durable hazard tables at startup.

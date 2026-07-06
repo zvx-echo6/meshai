@@ -8,14 +8,16 @@ composer renders them via the shared fire formatter. The shared decider and
 formatter are REUSED unchanged.
 
 Scenarios (mirror the gate-sequence intent of test_fire_refactor.py):
-  1. Cold-start silent-seed: old/undated first-sight within boot grace -> NO
-     broadcast, `fires` row seeded already-broadcast.
+  1. Cold-start silent-seed: ANY first-sight fire on the FIRST poll (undated OR
+     recently declared) -> NO broadcast, `fires` row seeded already-broadcast.
+     The first full-state sweep after boot must produce ZERO broadcasts.
   2. Growth: seeded MORA (last_bcast 2410 @ now-9h), poll 3000 -> Update; after
      the deferred commit runs, last_broadcast_acres == 3000.
   3. Containment rise past cooldown -> Update.
   4. Unchanged OR within cooldown -> suppress (no emit).
-  5. Fresh ignition (first-sight, declared within 48h) -> New; does NOT re-spam
-     on the next unchanged poll (the state-write latched last_broadcast_*).
+  5. Later-poll ignition: a fire absent at boot that FIRST appears on a later
+     poll (source already seeded) -> New; does NOT re-spam on the next unchanged
+     poll (the state-write latched last_broadcast_*).
   6. Native event carries _dedup_suffix + _severity_override +
      _on_broadcast_committed onto the emitted Event; to_event stamps canonical
      `data`; the composer renders it via the fire formatter with no env var.
@@ -134,11 +136,12 @@ def _seed_row(conn, *, acres, contained, last_bcast_at):
 def test_cold_start_silent_seed_no_broadcast(env):
     conn, _clk = env
     store, adapter, captured = _make_store()
-    # First-sight, undated, within boot grace (_boot_at == now).
+    # First-sight, undated, on the FIRST fires poll (source not yet seeded).
     adapter.set_batch([_raw_fire(acres=2410, contained=10, declared=None)])
     store._ingest("nifc", adapter)
 
     assert captured == [], "cold-start must broadcast NOTHING"
+    assert store._fires_seeded is True, "first non-empty poll marks fires seeded"
     row = conn.execute(
         "SELECT last_broadcast_acres, last_broadcast_at, "
         "last_broadcast_contained FROM fires WHERE irwin_id=?",
@@ -147,6 +150,27 @@ def test_cold_start_silent_seed_no_broadcast(env):
     assert row["last_broadcast_acres"] == 2410  # seeded == current
     assert row["last_broadcast_contained"] == 10
     assert row["last_broadcast_at"] is not None
+
+
+# ── 1b. cold-start seeds a RECENTLY-declared fire silently too (no 48h dump) ──
+def test_cold_start_recent_fire_still_silent(env):
+    conn, _clk = env
+    store, adapter, captured = _make_store()
+    # Declared just 1h ago — under the OLD 48h window this first-sight fire
+    # would have broadcast New. On cold start it must now seed SILENT anyway:
+    # a fresh deploy must never dump fires discovered in the last 48h.
+    adapter.set_batch([_raw_fire(name="FRESH", irwin="IRWIN-FRESH-9",
+                                 acres=120, contained=0,
+                                 declared=_NOW - 3600)])
+    store._ingest("nifc", adapter)
+
+    assert captured == [], "cold-start must seed EVERY fire silent, even recent"
+    row = conn.execute(
+        "SELECT last_broadcast_acres, last_broadcast_at FROM fires "
+        "WHERE irwin_id=?", ("IRWIN-FRESH-9",)).fetchone()
+    assert row is not None and row["last_broadcast_acres"] == 120
+    assert row["last_broadcast_at"] is not None
+    assert store._fires_seeded is True
 
 
 # ── 2. growth after cooldown -> Update + commit latches ─────────────────────
@@ -209,17 +233,30 @@ def test_no_change_suppresses(env):
     assert captured == [], "no forward change must be suppressed"
 
 
-# ── 5. fresh ignition -> New, and no re-spam on the next unchanged poll ──────
-def test_fresh_ignition_new_then_no_respam(env):
+# ── 5. later-poll ignition -> New, and no re-spam on the next unchanged poll ──
+def test_later_poll_ignition_new_then_no_respam(env):
     conn, clk = env
     store, adapter, captured = _make_store()
-    fresh = dict(name="FRESH", irwin="IRWIN-FRESH-9", acres=120, contained=0,
-                 declared=_NOW - 3600)  # 1h old -> genuine fresh ignition
 
-    adapter.set_batch([_raw_fire(**fresh)])
+    # First (cold-start) poll: an existing fire present at boot -> silent-seed.
+    # This marks the fires source seeded; NOTHING broadcasts.
+    adapter.set_batch([_raw_fire(acres=2410, contained=10)])
     store._ingest("nifc", adapter)
-    assert len(captured) == 1, "fresh ignition must broadcast New"
+    assert captured == [], "cold-start poll must broadcast nothing"
+    assert store._fires_seeded is True
+
+    # Later poll (well after any grace window): a NEW fire that was NOT present
+    # at boot -> genuine ignition -> New broadcast.
+    clk.t = _NOW + 20 * 60
+    captured.clear()
+    fresh = dict(name="FRESH", irwin="IRWIN-FRESH-9", acres=120, contained=0,
+                 declared=_NOW - 3600)
+    adapter.set_batch([_raw_fire(acres=2410, contained=10),
+                       _raw_fire(**fresh)])
+    store._ingest("nifc", adapter)
+    assert len(captured) == 1, "new fire on a later poll must broadcast New"
     ev = captured[0]
+    assert ev.data.get("irwin_id") == "IRWIN-FRESH-9"
     assert ev.data.get("category") == "wildfire_declared"
     assert ev.data.get("is_update") is False
     # Latch the New broadcast.
@@ -228,7 +265,8 @@ def test_fresh_ignition_new_then_no_respam(env):
     # Next poll, unchanged, even well past cooldown -> must NOT re-broadcast.
     clk.t = _NOW + 10 * 3600
     captured.clear()
-    adapter.set_batch([_raw_fire(**fresh)])
+    adapter.set_batch([_raw_fire(acres=2410, contained=10),
+                       _raw_fire(**fresh)])
     store._ingest("nifc", adapter)
     assert captured == [], "latched New must not re-spam on unchanged re-poll"
 
