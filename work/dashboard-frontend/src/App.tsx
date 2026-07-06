@@ -21,6 +21,7 @@ import MeshCoreContactsCompanion from './pages/MeshCoreContactsCompanion'
 import ScheduledBroadcasts from './pages/ScheduledBroadcasts'
 import MeshtasticDangerZones from './pages/MeshtasticDangerZones'
 import MeshCoreDangerZones from './pages/MeshCoreDangerZones'
+import Coverage from './pages/Coverage'
 import { ToastProvider } from './components/ToastProvider'
 import { DirtyProvider } from './context/DirtyContext'
 
@@ -42,6 +43,7 @@ function App() {
 
           {/* New aggregated pages */}
           <Route path="/places" element={<Places />} />
+          <Route path="/coverage" element={<Coverage />} />
 
           {/* De-navved routes still work */}
           <Route path="/gauge-sites" element={<GaugeSites />} />

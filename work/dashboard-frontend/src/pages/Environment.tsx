@@ -399,6 +399,11 @@ export default function Environment() {
  const [floodThreshText, setFloodThreshText] = useState<string | null>(null)
  const [floodThreshErr, setFloodThreshErr] = useState<string | null>(null)
 
+ // Coverage config (best-effort; used to conditionally hide scope fields that
+ // are driven by the universal bbox when an adapter is not excluded).
+ const [coverageEnabled, setCoverageEnabled] = useState(false)
+ const [coverageExcluded, setCoverageExcluded] = useState<string[]>([])
+
  // ── Notification family gating state ──────────────────────────────────────
  const [notifConfig, setNotifConfig] = useState<NotificationsConfig | null>(null)
  const [notifOriginal, setNotifOriginal] = useState<string>('')
@@ -605,6 +610,21 @@ export default function Environment() {
      setNotifOriginal(JSON.stringify(data))
     }
    } catch { /* best-effort */ }
+  })()
+ }, [])
+
+ // Fetch coverage config (best-effort) to conditionally hide scope fields
+ // that are driven by the universal bbox when the adapter is not excluded.
+ useEffect(() => {
+  ;(async () => {
+   try {
+    const res = await fetch('/api/config/coverage')
+    if (res.ok) {
+     const data = await res.json()
+     setCoverageEnabled(!!data.enabled)
+     setCoverageExcluded(Array.isArray(data.excluded_adapters) ? data.excluded_adapters : [])
+    }
+   } catch { /* best-effort; degrade gracefully — scope fields always show if fetch fails */ }
   })()
  }, [])
 
@@ -859,6 +879,11 @@ const save = async () => {
 
  const up = (patch: Partial<EnvConfig>) => env && setEnv({ ...env, ...patch })
 
+ // Returns true when the coverage bbox is active for this adapter (enabled and
+ // not in excluded_adapters). Scope fields should be hidden in this case.
+ const scopedByCoverage = (key: string) =>
+  coverageEnabled && !coverageExcluded.includes(key)
+
  // Maps from Environment.tsx adapter key → backend adapter-meta name.
  // Used to read/write include_in_llm_context per adapter panel.
  const PANEL_META_KEY: Partial<Record<AdapterKey, string>> = {
@@ -967,8 +992,16 @@ const save = async () => {
  const renderSettings = (key: AdapterKey) => {
   switch (key) {
    case 'nws': return (<>
-    <ListInput label="NWS Zones" value={env.nws_zones} onChange={(v) => up({ nws_zones: v })} helper="Zone IDs like IDZ016, IDZ030" infoLink="https://www.weather.gov/pimar/PubZone" />
-    <ListInput label="NWS Areas" value={env.nws.areas ?? []} onChange={(v) => up({ nws: { ...env.nws, areas: v } })} helper="State codes NWS pulls, e.g. ID" />
+    {scopedByCoverage('nws') ? (
+     <div className="text-xs text-[#666] bg-bg-hover px-3 py-2 border border-border/50">
+      Geographic scope (zones, areas) is set by the{' '}
+      <a href="/coverage" className="text-accent hover:underline">Coverage map</a>.
+      Enable "Use own config" for NWS on that page to edit zones here.
+     </div>
+    ) : (<>
+     <ListInput label="NWS Zones" value={env.nws_zones} onChange={(v) => up({ nws_zones: v })} helper="Zone IDs like IDZ016, IDZ030" infoLink="https://www.weather.gov/pimar/PubZone" />
+     <ListInput label="NWS Areas" value={env.nws.areas ?? []} onChange={(v) => up({ nws: { ...env.nws, areas: v } })} helper="State codes NWS pulls, e.g. ID" />
+    </>)}
     {env.nws.feed_source !== 'central' && (
      <>
       <TextInput label="User Agent" value={env.nws.user_agent} onChange={(v) => up({ nws: { ...env.nws, user_agent: v } })} placeholder="(MeshAI, you@email.com)" helper="Format: (app_name, contact_email)" />
@@ -1043,17 +1076,33 @@ const save = async () => {
     </div>
    )
    case 'ducting': return (
-    <div className="grid grid-cols-3 gap-4">
+    <div className="space-y-3">
      <NumberInput label="Tick Seconds" value={env.ducting.tick_seconds} onChange={(v) => up({ ducting: { ...env.ducting, tick_seconds: v } })} min={60} />
-     <NumberInput label="Latitude" value={env.ducting.latitude} onChange={(v) => up({ ducting: { ...env.ducting, latitude: v } })} step={0.01} />
-     <NumberInput label="Longitude" value={env.ducting.longitude} onChange={(v) => up({ ducting: { ...env.ducting, longitude: v } })} step={0.01} />
+     {scopedByCoverage('ducting') ? (
+      <div className="text-xs text-[#666] bg-bg-hover px-3 py-2 border border-border/50">
+       Lat/lon is set by the{' '}
+       <a href="/coverage" className="text-accent hover:underline">Coverage map</a>.
+      </div>
+     ) : (
+      <div className="grid grid-cols-2 gap-4">
+       <NumberInput label="Latitude" value={env.ducting.latitude} onChange={(v) => up({ ducting: { ...env.ducting, latitude: v } })} step={0.01} />
+       <NumberInput label="Longitude" value={env.ducting.longitude} onChange={(v) => up({ ducting: { ...env.ducting, longitude: v } })} step={0.01} />
+      </div>
+     )}
     </div>)
    case 'fires': return (
     <div className="space-y-6">
      {env.fires.feed_source !== 'central' && (
       <div className="grid grid-cols-2 gap-4">
        <NumberInput label="Tick Seconds" value={env.fires.tick_seconds} onChange={(v) => up({ fires: { ...env.fires, tick_seconds: v } })} min={60} />
-       <SelectInput label="State" value={env.fires.state} onChange={(v) => up({ fires: { ...env.fires, state: v } })} options={US_STATES} />
+       {scopedByCoverage('fires') ? (
+        <div className="text-xs text-[#666] bg-bg-hover px-3 py-2 border border-border/50 self-end">
+         State scoped by{' '}
+         <a href="/coverage" className="text-accent hover:underline">Coverage map</a>.
+        </div>
+       ) : (
+        <SelectInput label="State" value={env.fires.state} onChange={(v) => up({ fires: { ...env.fires, state: v } })} options={US_STATES} />
+       )}
       </div>
      )}
      <div>
@@ -1126,9 +1175,16 @@ const save = async () => {
         helper="e.g., 12, 1, 2, 3, 4" />
       </div>
      )}
-     <ListInput label="Center IDs" value={env.avalanche.center_ids}
-      onChange={(v) => up({ avalanche: { ...env.avalanche, center_ids: v } })}
-      helper="e.g., SNFAC" infoLink="https://avalanche.org/avalanche-centers/" />
+     {scopedByCoverage('avalanche') ? (
+      <div className="text-xs text-[#666] bg-bg-hover px-3 py-2 border border-border/50">
+       Avalanche center IDs are set by the{' '}
+       <a href="/coverage" className="text-accent hover:underline">Coverage map</a>.
+      </div>
+     ) : (
+      <ListInput label="Center IDs" value={env.avalanche.center_ids}
+       onChange={(v) => up({ avalanche: { ...env.avalanche, center_ids: v } })}
+       helper="e.g., SNFAC" infoLink="https://avalanche.org/avalanche-centers/" />
+     )}
      <div>
       <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">
        Broadcast Settings
@@ -1148,7 +1204,14 @@ const save = async () => {
    )
    case 'usgs': return (<>
     <NumberInput label="Tick Seconds" value={env.usgs.tick_seconds} onChange={(v) => up({ usgs: { ...env.usgs, tick_seconds: v } })} min={900} helper="Minimum 15 min (900s). tick_seconds is the native-mode poll interval; ignored when this adapter is set to feed_source=central." />
-    <ListInput label="Site IDs" value={env.usgs.sites} onChange={(v) => up({ usgs: { ...env.usgs, sites: v } })} helper="USGS gauge site numbers" infoLink="https://waterdata.usgs.gov/nwis" />
+    {scopedByCoverage('usgs') ? (
+     <div className="text-xs text-[#666] bg-bg-hover px-3 py-2 border border-border/50">
+      Gauge site IDs are set by the{' '}
+      <a href="/coverage" className="text-accent hover:underline">Coverage map</a>.
+     </div>
+    ) : (
+     <ListInput label="Site IDs" value={env.usgs.sites} onChange={(v) => up({ usgs: { ...env.usgs, sites: v } })} helper="USGS gauge site numbers" infoLink="https://waterdata.usgs.gov/nwis" />
+    )}
     <div>
      <label className="text-xs font-sans text-[#777] mb-1 block">Flood Thresholds (advanced JSON)</label>
      <textarea
@@ -1195,9 +1258,16 @@ const save = async () => {
          onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, min_magnitude: v } })}
          step={0.1} min={0} helper="Native quake magnitude floor" />
        </div>
-       <NumberListInput label="Bounding Box [W, S, E, N]" value={env.usgs_quake.bbox ?? []}
-        onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, bbox: v } })}
-        helper="Four values: west, south, east, north" />
+       {scopedByCoverage('usgs_quake') ? (
+        <div className="text-xs text-[#666] bg-bg-hover px-3 py-2 border border-border/50">
+         Bounding box is set by the{' '}
+         <a href="/coverage" className="text-accent hover:underline">Coverage map</a>.
+        </div>
+       ) : (
+        <NumberListInput label="Bounding Box [W, S, E, N]" value={env.usgs_quake.bbox ?? []}
+         onChange={(v) => up({ usgs_quake: { ...env.usgs_quake, bbox: v } })}
+         helper="Four values: west, south, east, north" />
+       )}
       </div>
      </div>
      <div>
@@ -1249,16 +1319,23 @@ const save = async () => {
    case 'traffic': return (<>
     <ManagedSecret envVar="TOMTOM_API_KEY" label="API Key" helper="developer.tomtom.com" />
     <NumberInput label="Tick Seconds" value={env.traffic.tick_seconds} onChange={(v) => up({ traffic: { ...env.traffic, tick_seconds: v } })} min={60} />
-    <div className="text-xs text-[#666] mt-2">Corridors:</div>
-    {(env.traffic.corridors || []).map((c, i) => (
-     <div key={i} className="grid grid-cols-4 gap-2 items-end">
-      <TextInput label="Name" value={c.name} onChange={(v) => { const n = [...env.traffic.corridors]; n[i] = { ...c, name: v }; up({ traffic: { ...env.traffic, corridors: n } }) }} />
-      <NumberInput label="Lat" value={c.lat} onChange={(v) => { const n = [...env.traffic.corridors]; n[i] = { ...c, lat: v }; up({ traffic: { ...env.traffic, corridors: n } }) }} step={0.01} />
-      <NumberInput label="Lon" value={c.lon} onChange={(v) => { const n = [...env.traffic.corridors]; n[i] = { ...c, lon: v }; up({ traffic: { ...env.traffic, corridors: n } }) }} step={0.01} />
-      <button onClick={() => up({ traffic: { ...env.traffic, corridors: env.traffic.corridors.filter((_, j) => j !== i) } })} className="px-2 py-2 text-xs text-red-400 hover:text-red-300 border border-red-400/30">Remove</button>
+    {scopedByCoverage('traffic') ? (
+     <div className="text-xs text-[#666] bg-bg-hover px-3 py-2 border border-border/50">
+      Traffic corridors are set by the{' '}
+      <a href="/coverage" className="text-accent hover:underline">Coverage map</a>.
      </div>
-    ))}
-    <button onClick={() => up({ traffic: { ...env.traffic, corridors: [...(env.traffic.corridors || []), { name: '', lat: 0, lon: 0 }] } })} className="text-xs text-accent hover:underline">+ Add Corridor</button>
+    ) : (<>
+     <div className="text-xs text-[#666] mt-2">Corridors:</div>
+     {(env.traffic.corridors || []).map((c, i) => (
+      <div key={i} className="grid grid-cols-4 gap-2 items-end">
+       <TextInput label="Name" value={c.name} onChange={(v) => { const n = [...env.traffic.corridors]; n[i] = { ...c, name: v }; up({ traffic: { ...env.traffic, corridors: n } }) }} />
+       <NumberInput label="Lat" value={c.lat} onChange={(v) => { const n = [...env.traffic.corridors]; n[i] = { ...c, lat: v }; up({ traffic: { ...env.traffic, corridors: n } }) }} step={0.01} />
+       <NumberInput label="Lon" value={c.lon} onChange={(v) => { const n = [...env.traffic.corridors]; n[i] = { ...c, lon: v }; up({ traffic: { ...env.traffic, corridors: n } }) }} step={0.01} />
+       <button onClick={() => up({ traffic: { ...env.traffic, corridors: env.traffic.corridors.filter((_, j) => j !== i) } })} className="px-2 py-2 text-xs text-red-400 hover:text-red-300 border border-red-400/30">Remove</button>
+      </div>
+     ))}
+     <button onClick={() => up({ traffic: { ...env.traffic, corridors: [...(env.traffic.corridors || []), { name: '', lat: 0, lon: 0 }] } })} className="text-xs text-accent hover:underline">+ Add Corridor</button>
+    </>)}
     <div className="border-t border-border pt-4 mt-4">
      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">Broadcast Filters</div>
      <div className="grid grid-cols-2 gap-4">
@@ -1294,11 +1371,18 @@ const save = async () => {
     <ManagedSecret envVar="ROADS511_API_KEY" label="API Key" helper="Leave unset if 511 needs no key" />
     <NumberInput label="Tick Seconds" value={env.roads511.tick_seconds} onChange={(v) => up({ roads511: { ...env.roads511, tick_seconds: v } })} min={60} />
     <ListInput label="Endpoints" value={env.roads511.endpoints} onChange={(v) => up({ roads511: { ...env.roads511, endpoints: v } })} helper="e.g., /get/event" />
-    <div className="grid grid-cols-4 gap-2">
-     {(['West', 'South', 'East', 'North'] as const).map((lbl, i) => (
-      <NumberInput key={lbl} label={lbl} value={env.roads511.bbox?.[i] ?? 0} onChange={(v) => { const b = [...(env.roads511.bbox || [0, 0, 0, 0])]; b[i] = v; up({ roads511: { ...env.roads511, bbox: b } }) }} step={0.01} />
-     ))}
-    </div>
+    {scopedByCoverage('roads511') ? (
+     <div className="text-xs text-[#666] bg-bg-hover px-3 py-2 border border-border/50">
+      Bounding box is set by the{' '}
+      <a href="/coverage" className="text-accent hover:underline">Coverage map</a>.
+     </div>
+    ) : (
+     <div className="grid grid-cols-4 gap-2">
+      {(['West', 'South', 'East', 'North'] as const).map((lbl, i) => (
+       <NumberInput key={lbl} label={lbl} value={env.roads511.bbox?.[i] ?? 0} onChange={(v) => { const b = [...(env.roads511.bbox || [0, 0, 0, 0])]; b[i] = v; up({ roads511: { ...env.roads511, bbox: b } }) }} step={0.01} />
+      ))}
+     </div>
+    )}
     <div className="border-t border-border pt-4 mt-4">
      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">Broadcast Filters</div>
      <div className="grid grid-cols-2 gap-4">
@@ -1351,14 +1435,21 @@ const save = async () => {
       <ManagedSecret envVar="WZDX_API_KEY" label="API Key" helper="Leave unset if not required" />
       <NumberInput label="Tick Seconds" value={env.wzdx?.tick_seconds ?? 300} onChange={(v) => up({ wzdx: { ...env.wzdx!, tick_seconds: v } })} min={60} />
       <ListInput label="Endpoints" value={env.wzdx?.endpoints ?? ['/get/event']} onChange={(v) => up({ wzdx: { ...env.wzdx!, endpoints: v } })} helper="e.g., /get/event" />
-      <div className="grid grid-cols-4 gap-2">
-       {(['West', 'South', 'East', 'North'] as const).map((lbl, i) => (
-        <NumberInput key={lbl} label={lbl} value={env.wzdx?.bbox?.[i] ?? 0} onChange={(v) => { const b = [...(env.wzdx?.bbox || [0, 0, 0, 0])]; b[i] = v; up({ wzdx: { ...env.wzdx!, bbox: b } }) }} step={0.01} />
-       ))}
-      </div>
-      <div className="text-xs text-[#666]">Bounding box [W,S,E,N] geographic filter</div>
-      <ListInput label="States" value={env.wzdx?.states ?? []} onChange={(v) => up({ wzdx: { ...env.wzdx!, states: v } })}
-       helper="2-letter state codes to include from the WZDx Feed Registry, e.g. ID, OR" />
+      {scopedByCoverage('wzdx') ? (
+       <div className="text-xs text-[#666] bg-bg-hover px-3 py-2 border border-border/50">
+        Bounding box and states are set by the{' '}
+        <a href="/coverage" className="text-accent hover:underline">Coverage map</a>.
+       </div>
+      ) : (<>
+       <div className="grid grid-cols-4 gap-2">
+        {(['West', 'South', 'East', 'North'] as const).map((lbl, i) => (
+         <NumberInput key={lbl} label={lbl} value={env.wzdx?.bbox?.[i] ?? 0} onChange={(v) => { const b = [...(env.wzdx?.bbox || [0, 0, 0, 0])]; b[i] = v; up({ wzdx: { ...env.wzdx!, bbox: b } }) }} step={0.01} />
+        ))}
+       </div>
+       <div className="text-xs text-[#666]">Bounding box [W,S,E,N] geographic filter</div>
+       <ListInput label="States" value={env.wzdx?.states ?? []} onChange={(v) => up({ wzdx: { ...env.wzdx!, states: v } })}
+        helper="2-letter state codes to include from the WZDx Feed Registry, e.g. ID, OR" />
+      </>)}
       <TextInput label="Registry URL" value={env.wzdx?.registry_url ?? ''} onChange={(v) => up({ wzdx: { ...env.wzdx!, registry_url: v } })}
        placeholder="https://datahub.transportation.gov/resource/69qe-yiui.json?$limit=200"
        helper="FHWA WZDx Feed Registry (Socrata) URL — lists every state DOT feed" />
@@ -1416,11 +1507,18 @@ const save = async () => {
      <SelectInput label="Min Confidence" value={env.firms.confidence_min} onChange={(v) => up({ firms: { ...env.firms, confidence_min: v } })} options={[{ value: 'low', label: 'Low' }, { value: 'nominal', label: 'Nominal' }, { value: 'high', label: 'High' }]} />
      <NumberInput label="Proximity (km)" value={env.firms.proximity_km} onChange={(v) => up({ firms: { ...env.firms, proximity_km: v } })} step={0.5} />
     </div>
-    <div className="grid grid-cols-4 gap-2">
-     {(['West', 'South', 'East', 'North'] as const).map((lbl, i) => (
-      <NumberInput key={lbl} label={lbl} value={env.firms.bbox?.[i] ?? 0} onChange={(v) => { const b = [...(env.firms.bbox || [0, 0, 0, 0])]; b[i] = v; up({ firms: { ...env.firms, bbox: b } }) }} step={0.01} />
-     ))}
-    </div>
+    {scopedByCoverage('firms') ? (
+     <div className="text-xs text-[#666] bg-bg-hover px-3 py-2 border border-border/50">
+      Bounding box is set by the{' '}
+      <a href="/coverage" className="text-accent hover:underline">Coverage map</a>.
+     </div>
+    ) : (
+     <div className="grid grid-cols-4 gap-2">
+      {(['West', 'South', 'East', 'North'] as const).map((lbl, i) => (
+       <NumberInput key={lbl} label={lbl} value={env.firms.bbox?.[i] ?? 0} onChange={(v) => { const b = [...(env.firms.bbox || [0, 0, 0, 0])]; b[i] = v; up({ firms: { ...env.firms, bbox: b } }) }} step={0.01} />
+      ))}
+     </div>
+    )}
    </>)
    case 'satpass': {
     // Armed state keys off the NATIVE enable (environmental.satpass.enabled),
@@ -1493,19 +1591,26 @@ const save = async () => {
       {/* Observers — list of {slug, name, lat, lon, alt_m}; seeds observer_locations */}
       <div>
        <div className="text-xs text-[#777] mb-2">Observers (ground stations the predictor computes passes for)</div>
-       <div className="space-y-2">
-        {(env.satpass.observers || []).map((o, i) => (
-         <div key={i} className="grid grid-cols-6 gap-2 items-end">
-          <TextInput label="Slug" value={o.slug} onChange={(v) => { const n = [...env.satpass.observers]; n[i] = { ...o, slug: v }; up({ satpass: { ...env.satpass, observers: n } }) }} placeholder="tvly" />
-          <TextInput label="Name" value={o.name} onChange={(v) => { const n = [...env.satpass.observers]; n[i] = { ...o, name: v }; up({ satpass: { ...env.satpass, observers: n } }) }} placeholder="Treasure Valley" />
-          <NumberInput label="Lat" value={o.lat} onChange={(v) => { const n = [...env.satpass.observers]; n[i] = { ...o, lat: v }; up({ satpass: { ...env.satpass, observers: n } }) }} step={0.0001} />
-          <NumberInput label="Lon" value={o.lon} onChange={(v) => { const n = [...env.satpass.observers]; n[i] = { ...o, lon: v }; up({ satpass: { ...env.satpass, observers: n } }) }} step={0.0001} />
-          <NumberInput label="Alt (m)" value={o.alt_m} onChange={(v) => { const n = [...env.satpass.observers]; n[i] = { ...o, alt_m: v }; up({ satpass: { ...env.satpass, observers: n } }) }} step={1} />
-          <button onClick={() => up({ satpass: { ...env.satpass, observers: env.satpass.observers.filter((_, j) => j !== i) } })} className="px-2 py-2 text-xs text-red-400 hover:text-red-300 border border-red-400/30">Remove</button>
-         </div>
-        ))}
-       </div>
-       <button onClick={() => up({ satpass: { ...env.satpass, observers: [...(env.satpass.observers || []), { slug: '', name: '', lat: 0, lon: 0, alt_m: 0 }] } })} className="text-xs text-accent hover:underline mt-2">+ Add Observer</button>
+       {scopedByCoverage('satpass') ? (
+        <div className="text-xs text-[#666] bg-bg-hover px-3 py-2 border border-border/50">
+         Observer locations are set by the{' '}
+         <a href="/coverage" className="text-accent hover:underline">Coverage map</a>.
+        </div>
+       ) : (<>
+        <div className="space-y-2">
+         {(env.satpass.observers || []).map((o, i) => (
+          <div key={i} className="grid grid-cols-6 gap-2 items-end">
+           <TextInput label="Slug" value={o.slug} onChange={(v) => { const n = [...env.satpass.observers]; n[i] = { ...o, slug: v }; up({ satpass: { ...env.satpass, observers: n } }) }} placeholder="tvly" />
+           <TextInput label="Name" value={o.name} onChange={(v) => { const n = [...env.satpass.observers]; n[i] = { ...o, name: v }; up({ satpass: { ...env.satpass, observers: n } }) }} placeholder="Treasure Valley" />
+           <NumberInput label="Lat" value={o.lat} onChange={(v) => { const n = [...env.satpass.observers]; n[i] = { ...o, lat: v }; up({ satpass: { ...env.satpass, observers: n } }) }} step={0.0001} />
+           <NumberInput label="Lon" value={o.lon} onChange={(v) => { const n = [...env.satpass.observers]; n[i] = { ...o, lon: v }; up({ satpass: { ...env.satpass, observers: n } }) }} step={0.0001} />
+           <NumberInput label="Alt (m)" value={o.alt_m} onChange={(v) => { const n = [...env.satpass.observers]; n[i] = { ...o, alt_m: v }; up({ satpass: { ...env.satpass, observers: n } }) }} step={1} />
+           <button onClick={() => up({ satpass: { ...env.satpass, observers: env.satpass.observers.filter((_, j) => j !== i) } })} className="px-2 py-2 text-xs text-red-400 hover:text-red-300 border border-red-400/30">Remove</button>
+          </div>
+         ))}
+        </div>
+        <button onClick={() => up({ satpass: { ...env.satpass, observers: [...(env.satpass.observers || []), { slug: '', name: '', lat: 0, lon: 0, alt_m: 0 }] } })} className="text-xs text-accent hover:underline mt-2">+ Add Observer</button>
+       </>)}
       </div>
 
       <ListInput label="TLE Groups" value={env.satpass.tle_groups}

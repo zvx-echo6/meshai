@@ -10,6 +10,7 @@ import {
   Sliders,
   Droplets,
   MapPin,
+  Map,
   Wifi,
   Layers,
   Network,
@@ -51,6 +52,7 @@ const navGroups: NavGroup[] = [
       { path: '/environment', label: 'Data Feeds', icon: Cloud },
       { path: '/activity', label: 'Activity Log', icon: Activity },
       { path: '/places', label: 'Places', icon: MapPin },
+      { path: '/coverage', label: 'Coverage', icon: Map },
     ],
   },
   {
