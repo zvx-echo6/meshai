@@ -444,7 +444,11 @@ class FIRMSConfig(_SourcedFeed):
     tick_seconds: int = 1800  # 30 min default
     map_key: str = ""  # NASA FIRMS MAP_KEY, get at https://firms.modaps.eosdis.nasa.gov/api/area/
     source: str = "VIIRS_SNPP_NRT"  # VIIRS_SNPP_NRT, VIIRS_NOAA20_NRT, MODIS_NRT
-    bbox: list = field(default_factory=list)  # [west, south, east, north]
+    # Default Idaho region box [west, south, east, north] so native FIRMS
+    # fetches/persists even when the universal coverage bbox is OFF. When
+    # coverage IS enabled the store passes the coverage enclosing bbox to the
+    # adapter (env/firms.py:32 `coverage["bbox"]`), which OVERRIDES this default.
+    bbox: list = field(default_factory=lambda: [-115.5, 42.0, -110.0, 45.2])
     day_range: int = 1  # 1-10 days of data
     confidence_min: str = "nominal"  # low, nominal, high
     proximity_km: float = 10.0  # km to match known fire

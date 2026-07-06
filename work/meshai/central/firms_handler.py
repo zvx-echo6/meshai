@@ -248,7 +248,7 @@ def handle_firms(envelope: dict, subject: str,
 
 
 def _ingest_pixel_core(conn, *, lat, lon, acq_epoch, frp, confidence,
-                        brightness, satellite, data, now):
+                        brightness, satellite, data, now, seed=False):
     """INSERT one canonical hotspot pixel + run attribution/fusion.
 
     This is the source-agnostic heart of the fire-fusion engine, extracted so
@@ -262,8 +262,10 @@ def _ingest_pixel_core(conn, *, lat, lon, acq_epoch, frp, confidence,
       2. For a NEWLY-stored pixel, run ``_attribute_or_cluster`` -> writes
          ``fire_pixels`` / ``fire_passes`` / ``fires`` centroid+cursor and runs
          the growth / spotting / halt fusion (honoring the Phase-3c deferred
-         latches). The dead unattributed-cluster path stays dead -- NO
-         raw-hotspot / cluster broadcast is ever produced here.
+         latches). On an attribution MISS it runs the curated
+         unattributed-cluster path (``_maybe_emit_cluster``); ``seed=True``
+         suppresses those cluster broadcasts (cold-start silent-seed). A raw
+         per-pixel hotspot is NEVER broadcast.
 
     Determinism: ``now`` is threaded explicitly; there is no hidden clock read.
 
@@ -301,12 +303,12 @@ def _ingest_pixel_core(conn, *, lat, lon, acq_epoch, frp, confidence,
         lat=lat, lon=lon,
         acq_epoch=acq_epoch,
         frp=frp, satellite=satellite,
-        data=data, now=now,
+        data=data, now=now, seed=seed,
     )
     return (True, rowid, wire)
 
 
-def ingest_hotspot_pixel(pixel: dict, *, now) -> list[tuple[str, dict]]:
+def ingest_hotspot_pixel(pixel: dict, *, now, seed=False) -> list[tuple[str, dict]]:
     """Source-agnostic entrypoint: ingest ONE canonical FIRMS pixel into the
     fire-fusion engine and return the fusion broadcasts it produced.
 
@@ -323,10 +325,19 @@ def ingest_hotspot_pixel(pixel: dict, *, now) -> list[tuple[str, dict]]:
     mesh text and ``data`` carries the Phase-3c category/severity stamps (and,
     under cutover, the deferred commit hook). A dedup hit or a pixel that
     triggers no fusion returns ``[]``. This NEVER returns a raw-hotspot,
-    ``wildfire_hotspot``, ``new_ignition``, or cluster broadcast -- the only
-    outputs are ``wildfire_growth`` / ``wildfire_spotting`` / ``wildfire_halted``
-    (the cluster path is dead). Callers must therefore NEVER broadcast the raw
-    pixel itself -- only these returned fusion wires.
+    ``wildfire_hotspot``, or ``new_ignition`` broadcast -- the possible outputs
+    are ``wildfire_growth`` / ``wildfire_spotting`` / ``wildfire_halted`` (an
+    attributed pixel grew/moved a known fire) OR a curated
+    ``unattributed_hotspot_cluster`` ("possible new fire") when ``cluster_min_pixels``
+    unattributed pixels fall within ``cluster_max_radius_mi`` over
+    ``cluster_time_window_minutes``. Callers must therefore NEVER broadcast the
+    raw pixel itself -- only these returned fusion/cluster wires.
+
+    ``seed`` (cold-start silent-seed): on the FIRST fetch after boot, pass
+    ``seed=True`` so any cluster that forms from the day's pre-existing hotspots
+    is stamped (never re-fires) but emits NOTHING -- no cold-start dump. Only
+    clusters formed by pixels arriving on a LATER (``seed=False``) fetch
+    broadcast. Persistence + attribution run regardless of ``seed``.
 
     Determinism: ``now`` (epoch) is required and threaded straight through.
     """
@@ -359,7 +370,7 @@ def ingest_hotspot_pixel(pixel: dict, *, now) -> list[tuple[str, dict]]:
         conn,
         lat=float(lat), lon=float(lon), acq_epoch=int(acq_epoch),
         frp=frp, confidence=pixel.get("confidence"), brightness=brightness,
-        satellite=pixel.get("satellite") or "", data=data, now=now,
+        satellite=pixel.get("satellite") or "", data=data, now=now, seed=seed,
     )
     if wire is None:
         return []
@@ -465,8 +476,13 @@ def _log_event(conn, *, now, source, category, severity_word,
 
 
 def _attribute_or_cluster(conn, *, pixel_row_id, lat, lon, acq_epoch,
-                            frp, satellite, data, now):
-    """Try attribution; on miss, run cluster check. Returns wire str | None."""
+                            frp, satellite, data, now, seed=False):
+    """Try attribution; on miss, run cluster check. Returns wire str | None.
+
+    Attribution ALWAYS runs first (a pixel inside a known WFIGS fire's spread
+    radius grows that fire and never forms a "new" cluster). ``seed`` only
+    affects the unattributed-cluster branch: see ``_maybe_emit_cluster``.
+    """
     global_default_mi = float(adapter_config.fires.spread_radius_mi_default)
     # Conservative bbox prefilter: take the larger of the global default
     # and 10 mi so a per-fire override beyond the default doesn't get
@@ -539,7 +555,7 @@ def _attribute_or_cluster(conn, *, pixel_row_id, lat, lon, acq_epoch,
     # 0 matches -- run cluster detection.
     wire = _maybe_emit_cluster(
         conn, lat=lat, lon=lon, acq_epoch=acq_epoch, frp=frp,
-        data=data, now=now, this_pixel_id=pixel_row_id,
+        data=data, now=now, this_pixel_id=pixel_row_id, seed=seed,
     )
     if wire is not None:
         return wire
@@ -572,10 +588,18 @@ def _recompute_centroid_and_stamp(conn, irwin_id: str, *,
 
 
 def _maybe_emit_cluster(conn, *, lat, lon, acq_epoch, frp, data, now,
-                          this_pixel_id):
+                          this_pixel_id, seed=False):
     """Return wire string + set data["category"] when a cluster condition
-    fires; otherwise return None and leave data alone."""
-    return None
+    fires; otherwise return None and leave data alone.
+
+    ``seed`` (cold-start silent-seed): when True, a cluster that meets the
+    threshold is still STAMPED (``cluster_broadcast_at`` on every member) so it
+    can never re-fire on a later fetch, but NO wire is returned and ``data`` is
+    left untouched -- i.e. the day's pre-existing hotspots discovered on the
+    first fetch after boot are absorbed silently. Only clusters that form from
+    pixels arriving on a LATER (non-seed) fetch broadcast. Persistence +
+    attribution are unaffected (they run in the caller before this point).
+    """
     min_pixels = int(adapter_config.firms.cluster_min_pixels)
     radius_mi = float(adapter_config.firms.cluster_max_radius_mi)
     window_s = int(adapter_config.firms.cluster_time_window_minutes) * 60
@@ -625,6 +649,16 @@ def _maybe_emit_cluster(conn, *, lat, lon, acq_epoch, frp, data, now,
         f"WHERE id IN ({placeholders})",
         (float(now), *member_ids),
     )
+
+    # Cold-start silent-seed: the cluster is stamped (above) so it can never
+    # re-fire, but on the first fetch after boot we emit NOTHING and leave
+    # `data` untouched -- the day's pre-existing hotspots are absorbed silently.
+    if seed:
+        logger.info(
+            "firms cold-start silent-seed: absorbed %d-pixel cluster "
+            "@ %.3f,%.3f (stamped, no broadcast)",
+            len(members), centroid_lat, centroid_lon)
+        return None
 
     # Override the FIRMS source category so the dispatcher routes this
     # broadcast under unattributed_hotspot_cluster (priority, fire toggle).

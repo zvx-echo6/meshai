@@ -220,10 +220,18 @@ def test_three_unattributed_pixels_fire_cluster_once():
             assert data.get("category") == "unattributed_hotspot_cluster"
             assert data.get("severity") == "priority"
 
-    # Cluster detection is currently stubbed (_maybe_emit_cluster returns None).
-    # All three calls return None.
+    # F3: cluster detection is ENABLED. The 3rd pixel reaches cluster_min_pixels
+    # (3) within 1 mi / 60 min, so exactly ONE cluster wire fires (on pixel 3);
+    # pixels 1 and 2 return None (below threshold at the time they arrive).
     fired = [w for w in wires if w is not None]
-    assert len(fired) == 0, f"expected 0 cluster wires (stub), got {len(fired)}: {wires}" 
+    assert len(fired) == 1, f"expected 1 cluster wire, got {len(fired)}: {wires}"
+    assert fired[0].startswith("🔥 Possible new fire:")
+    # All three members must be stamped so a later pixel can't re-fire them.
+    conn = get_db()
+    stamped = conn.execute(
+        "SELECT COUNT(*) FROM firms_pixels WHERE cluster_broadcast_at IS NOT NULL"
+    ).fetchone()[0]
+    assert stamped == 3
 
 
 def test_fourth_pixel_in_same_cluster_does_not_refire():
@@ -256,7 +264,13 @@ def test_fourth_pixel_in_same_cluster_does_not_refire():
     assert wire is None
     assert "category" not in data4
 
-    # Cluster detection is stubbed; no cluster_broadcast_at stamped on any pixel.
+    # F3: the first 3 members were stamped by the cluster that fired; the 4th
+    # pixel is unattributed + unstamped (it alone can't re-form the cluster).
+    conn = get_db()
+    stamped = conn.execute(
+        "SELECT COUNT(*) FROM firms_pixels WHERE cluster_broadcast_at IS NOT NULL"
+    ).fetchone()[0]
+    assert stamped == 3
 
 
 def test_fifth_pixel_after_time_window_can_form_new_cluster():
@@ -293,9 +307,12 @@ def test_fifth_pixel_after_time_window_can_form_new_cluster():
             env, subject="central.fire.hotspot.N20.high.unknown",
             data={}, now=1780728000 + 7200 + i,
         ))
-    # Cluster detection is stubbed (_maybe_emit_cluster returns None).
+    # F3: the first cluster's 3 members are stamped (excluded from the query),
+    # so the second batch forms an independent NEW cluster -- one wire on its
+    # 3rd pixel.
     fired = [w for w in wires2 if w is not None]
-    assert len(fired) == 0, f"expected 0 cluster wires (stub), got: {wires2}"
+    assert len(fired) == 1, f"expected 1 new cluster wire, got: {wires2}"
+    assert fired[0].startswith("🔥 Possible new fire:")
 
 
 # ---------------------------------------------------------------------------
