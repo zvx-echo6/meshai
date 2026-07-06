@@ -409,9 +409,14 @@ class MeshAI:
             from meshai import coverage as _cov
             from types import SimpleNamespace
             _satpass_excluded = "satpass" in self.config.coverage.excluded_adapters
+            _cov_bbox = (
+                (_cov.enclosing_bbox(self.config.coverage.areas) or self.config.coverage.bbox)
+                if (self.config.coverage.enabled and not _satpass_excluded)
+                else []
+            )
             _sat_scope = _cov.resolve_adapter_coverage(
                 "satpass",
-                (self.config.coverage.bbox if (self.config.coverage.enabled and not _satpass_excluded) else []),
+                _cov_bbox,
                 "native",
             )
             if _sat_scope is not None:
@@ -635,8 +640,9 @@ class MeshAI:
             from .env.store import EnvironmentalStore
             # Pass region anchors for fire proximity calculation
             region_anchors = self.config.mesh_intelligence.regions if self.config.mesh_intelligence.enabled else []
+            from meshai.coverage import enclosing_bbox
             cov = self.config.coverage
-            coverage_bbox = cov.bbox if (cov.enabled and cov.bbox) else []
+            coverage_bbox = (enclosing_bbox(cov.areas) or cov.bbox) if cov.enabled else []
             self.env_store = EnvironmentalStore(
                 config=env_cfg, region_anchors=region_anchors,
                 coverage_bbox=coverage_bbox, event_bus=self.event_bus,
