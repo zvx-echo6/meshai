@@ -186,14 +186,35 @@ def test_nws_in_coverage_outside_bbox_dropped():
     assert adapter._in_coverage(event) is False
 
 
-def test_nws_in_coverage_no_coords_kept():
-    """Alert with no lat/lon is always kept (can't filter without coords)."""
+def test_nws_in_coverage_zone_only_no_areas_dropped():
+    """Zone-only alert with no UGC areas and no centroid is dropped (fail closed).
+
+    The old behavior (always keep when no lat/lon) was the root cause of the
+    LA-alert-under-Idaho-box defect.  After the fix, zone-only alerts are
+    scoped by their UGC state prefix; if there are no UGC codes at all the
+    event cannot be located and must be dropped.
+    """
     adapter = _make_nws_with_bbox(IDAHO_BOX)
-    event = {}  # no lat/lon keys at all
+    event = {}  # no lat/lon keys, no areas
+    assert adapter._in_coverage(event) is False
+
+    event_none = {"lat": None, "lon": None, "areas": []}  # explicit empty areas
+    assert adapter._in_coverage(event_none) is False
+
+
+def test_nws_in_coverage_zone_only_in_state_kept():
+    """Zone-only alert with an in-state UGC code is kept."""
+    adapter = _make_nws_with_bbox(IDAHO_BOX)
+    event = {"lat": None, "lon": None, "areas": ["IDZ016"]}
     assert adapter._in_coverage(event) is True
 
-    event_none = {"lat": None, "lon": None}
-    assert adapter._in_coverage(event_none) is True
+
+def test_nws_in_coverage_zone_only_out_of_state_dropped():
+    """Zone-only alert whose UGC zones are all out-of-state is dropped."""
+    adapter = _make_nws_with_bbox(IDAHO_BOX)
+    # CA zones — coverage is areas=["ID"]
+    event = {"lat": None, "lon": None, "areas": ["CAZ041", "CAZ042"]}
+    assert adapter._in_coverage(event) is False
 
 
 def test_nws_in_coverage_no_bbox_always_passes():

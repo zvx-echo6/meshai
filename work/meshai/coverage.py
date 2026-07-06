@@ -56,6 +56,21 @@ def point_in_bbox(lat: float, lon: float, bbox) -> bool:
     return south <= lat <= north and west <= lon <= east
 
 
+def _significant_overlap(a: list, b: list, min_deg: float = 0.25) -> bool:
+    """True iff boxes a,b [W,S,E,N] overlap by at least min_deg in BOTH lon and lat.
+
+    A mere corner or edge clip (tiny overlap in one dimension) does not count
+    as meaningful coverage.  Default of 0.25 degrees is intentionally
+    conservative: it prevents states that barely nick the coverage box (e.g.
+    CA clipping 0.04 deg in latitude, or WY clipping 0.12 deg in longitude)
+    from polluting the NWS area query, while still capturing genuinely adjacent
+    states like OR that overlap by ~0.5 deg or more in every dimension.
+    """
+    ow = min(a[2], b[2]) - max(a[0], b[0])   # overlap width (lon)
+    oh = min(a[3], b[3]) - max(a[1], b[1])   # overlap height (lat)
+    return ow >= min_deg and oh >= min_deg
+
+
 def bbox_intersects(a, b) -> bool:
     """Return True iff two [W, S, E, N] bounding boxes overlap (share any area).
 
@@ -203,14 +218,17 @@ US_STATE_BBOXES: dict[str, list[float]] = {
 
 
 def states_for_bbox(bbox) -> list[str]:
-    """Return sorted state codes whose bbox intersects the given coverage bbox.
+    """Return sorted state codes whose bbox overlaps the given coverage bbox.
 
-    Uses bbox_intersects; a state whose bounding rectangle overlaps the coverage
-    rectangle is included.  Deduped and sorted alphabetically.
+    Uses _significant_overlap (>= 0.25 deg in both lon and lat) rather than
+    a bare intersection test.  This prevents states that merely clip a corner
+    of the coverage box from being included in NWS area queries — the root
+    cause of the CA/LA-alert-under-Idaho-box defect.  Deduped and sorted
+    alphabetically.
     """
     result = []
     for code, state_bbox in US_STATE_BBOXES.items():
-        if bbox_intersects(bbox, state_bbox):
+        if _significant_overlap(bbox, state_bbox):
             result.append(code)
     return sorted(set(result))
 
@@ -258,10 +276,14 @@ AVALANCHE_CENTER_BBOXES: dict[str, list[float]] = {
 
 
 def avalanche_centers_for_bbox(bbox) -> list[str]:
-    """Return sorted center IDs whose area intersects the given coverage bbox."""
+    """Return sorted center IDs whose area overlaps the given coverage bbox.
+
+    Uses _significant_overlap (same conservative threshold as states_for_bbox)
+    to avoid including avalanche centers that merely clip the coverage box corner.
+    """
     result = []
     for center_id, center_bbox in AVALANCHE_CENTER_BBOXES.items():
-        if bbox_intersects(bbox, center_bbox):
+        if _significant_overlap(bbox, center_bbox):
             result.append(center_id)
     return sorted(set(result))
 

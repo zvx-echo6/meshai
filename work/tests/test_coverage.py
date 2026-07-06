@@ -11,6 +11,7 @@ import pytest
 from meshai.coverage import (
     AVALANCHE_CENTER_BBOXES,
     US_STATE_BBOXES,
+    _significant_overlap,
     arcgis_envelope,
     avalanche_centers_for_bbox,
     bbox_intersects,
@@ -539,3 +540,104 @@ def test_high_precision_grid_points_rounded():
     for i, (plat, plon) in enumerate(result["points"]):
         _assert_max_6dp(plat, f"traffic.points[{i}].lat")
         _assert_max_6dp(plon, f"traffic.points[{i}].lon")
+
+
+# ===========================================================================
+# _significant_overlap
+# ===========================================================================
+
+# Southern-Idaho coverage box from the LA-leak bug report (high-precision form
+# as produced by a Leaflet map click — used in several tests below).
+IDAHO_BUG_BOX = [
+    -116.99340820312501,
+    41.95949009892467,
+    -110.98388671875001,
+    44.09547572946637,
+]
+
+
+def test_significant_overlap_solid_overlap_true():
+    """Two boxes that genuinely overlap return True."""
+    a = [-116.5, 42.0, -112.0, 44.0]
+    b = [-117.3, 41.9, -111.0, 49.1]  # ID bbox — fully contains a
+    assert _significant_overlap(a, b) is True
+
+
+def test_significant_overlap_corner_clip_false():
+    """A corner clip smaller than min_deg in one dimension returns False."""
+    # CA bbox north=42.0, coverage box south=41.959 → lat overlap ~0.04 deg
+    ca_bbox = [-124.5, 32.5, -114.1, 42.0]
+    assert _significant_overlap(IDAHO_BUG_BOX, ca_bbox) is False
+
+
+def test_significant_overlap_lon_edge_clip_false():
+    """A lon-only edge clip smaller than min_deg returns False."""
+    # WY bbox west=-111.1, coverage box east=-110.984 → lon overlap ~0.12 deg
+    wy_bbox = [-111.1, 40.9, -104.0, 45.1]
+    assert _significant_overlap(IDAHO_BUG_BOX, wy_bbox) is False
+
+
+def test_significant_overlap_both_small_false():
+    """Both dimensions below min_deg → False."""
+    a = [-116.0, 42.0, -115.9, 42.09]  # tiny box
+    b = [-115.95, 42.05, -115.85, 42.12]
+    # overlap_lon = -115.9 - (-115.95) = 0.05 < 0.25 → False
+    assert _significant_overlap(a, b) is False
+
+
+def test_significant_overlap_custom_min_deg():
+    """Caller can supply a tighter or looser min_deg."""
+    a = [-116.5, 42.0, -112.0, 44.0]
+    # NV bbox lat overlap ~0.14 deg — excluded at 0.25 but included at 0.10
+    nv_bbox = [-120.0, 35.0, -114.0, 42.1]
+    assert _significant_overlap(a, nv_bbox, min_deg=0.10) is True
+    assert _significant_overlap(a, nv_bbox, min_deg=0.25) is False
+
+
+def test_significant_overlap_symmetric():
+    """Order of arguments should not matter."""
+    a = [-116.5, 42.0, -112.0, 44.0]
+    b = [-117.3, 41.9, -111.0, 49.1]
+    assert _significant_overlap(a, b) == _significant_overlap(b, a)
+
+
+# ===========================================================================
+# states_for_bbox — LA leak regression + significant-overlap behavior
+# ===========================================================================
+
+
+def test_la_bug_box_yields_id_and_or_only():
+    """Regression: the southern-Idaho box that caused the LA-alert leak must
+    return only ID and OR — not CA, NV, UT, or WY."""
+    states = states_for_bbox(IDAHO_BUG_BOX)
+    assert states == ["ID", "OR"], (
+        f"Expected ['ID', 'OR'], got {states} — "
+        "CA/NV/UT/WY must be excluded (corner-clip, not meaningful overlap)"
+    )
+
+
+def test_la_bug_box_ca_not_present():
+    """CA must NOT appear — its inclusion caused real LA alerts to broadcast."""
+    assert "CA" not in states_for_bbox(IDAHO_BUG_BOX)
+
+
+def test_la_bug_box_nv_ut_wy_not_present():
+    """NV, UT, WY must NOT appear — they clip only a thin sliver of the box."""
+    states = states_for_bbox(IDAHO_BUG_BOX)
+    for dropped in ("NV", "UT", "WY"):
+        assert dropped not in states, f"{dropped} unexpectedly in {states}"
+
+
+def test_la_bug_box_id_and_or_present():
+    """ID and OR must appear — they have genuine significant overlap."""
+    states = states_for_bbox(IDAHO_BUG_BOX)
+    assert "ID" in states
+    assert "OR" in states
+
+
+def test_genuine_two_state_box_returns_both():
+    """A box that genuinely straddles ID and OR with >0.25 deg overlap returns both."""
+    # ID_OR_BOX is [-118.0, 43.5, -115.0, 46.0] — overlaps both by >1 degree
+    states = states_for_bbox(ID_OR_BOX)
+    assert "ID" in states
+    assert "OR" in states

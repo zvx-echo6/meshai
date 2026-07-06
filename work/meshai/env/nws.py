@@ -177,18 +177,32 @@ class NWSAlertsAdapter:
 
         Rules:
         - If no coverage bbox is set, always keep.
-        - If the event has a numeric lat/lon centroid, drop it when outside the box.
-        - If the event has no centroid (lat/lon absent or None), keep it — the
-          state area= filter already scopes it; we can't box-filter without coords.
+        - Polygon alerts (lat/lon centroid present): authoritative geographic
+          check — drop when the centroid lies outside the coverage box.
+        - Zone-only alerts (no polygon / no centroid): scope by UGC zone STATE.
+          Keep if at least one affected UGC zone belongs to a state the coverage
+          box covers (self._areas).  Fail CLOSED when no zone info is available
+          — an unlocatable alert must NOT broadcast under an active coverage box.
         """
         if not self._coverage_bbox:
             return True
         lat = event.get("lat")
         lon = event.get("lon")
-        if lat is None or lon is None:
-            return True  # no geometry — pass through
-        from meshai.coverage import point_in_bbox
-        return point_in_bbox(lat, lon, self._coverage_bbox)
+        # Polygon alerts: authoritative geographic check on the centroid.
+        if lat is not None and lon is not None:
+            from meshai.coverage import point_in_bbox
+            return point_in_bbox(lat, lon, self._coverage_bbox)
+        # Zone-only alerts (no polygon/centroid): scope by the UGC zone STATE.
+        # Keep only if at least one affected zone is in a state the box covers.
+        # Fail CLOSED if no zone info — an unlocatable alert must not broadcast.
+        ugcs = event.get("areas") or []
+        if not ugcs:
+            return False
+        area_states = {a.upper() for a in (self._areas or [])}
+        for ugc in ugcs:
+            if isinstance(ugc, str) and len(ugc) >= 2 and ugc[:2].upper() in area_states:
+                return True
+        return False
 
     def _fetch(self) -> bool:
         """Fetch alerts from NWS API.

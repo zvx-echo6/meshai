@@ -286,3 +286,95 @@ def test_map_nws_severity_moderate_to_routine(adapter):
 def test_map_nws_severity_minor_to_routine(adapter):
     """Minor NWS severity maps to routine."""
     assert adapter._map_nws_severity("minor") == "routine"
+
+
+# ============================================================
+# _in_coverage TESTS — coverage-bbox filtering (LA leak fix)
+# ============================================================
+
+# Southern-Idaho coverage box used in all _in_coverage tests.
+_IDAHO_COVERAGE_BBOX = [-116.993, 41.959, -110.984, 44.095]
+
+
+@pytest.fixture
+def adapter_with_coverage(mock_config):
+    """NWSAlertsAdapter with a southern-Idaho coverage dict (areas=ID,OR)."""
+    coverage = {
+        "areas": ["ID", "OR"],
+        "bbox": _IDAHO_COVERAGE_BBOX,
+    }
+    return NWSAlertsAdapter(mock_config, coverage=coverage)
+
+
+def test_in_coverage_no_bbox_always_true(mock_config):
+    """Without a coverage bbox every event passes through."""
+    adapter_no_cov = NWSAlertsAdapter(mock_config)
+    event = {"lat": 34.05, "lon": -118.24, "areas": ["CAZ041"]}
+    assert adapter_no_cov._in_coverage(event) is True
+
+
+def test_in_coverage_la_repro_zone_only_dropped(adapter_with_coverage):
+    """LA-leak regression: a CAZ041 zone-only alert must be DROPPED.
+
+    This is the exact scenario that caused the bug: a Heat Advisory for
+    Los Angeles carried no polygon (zone-based), so the old code returned True
+    unconditionally for any event lacking lat/lon.  The fixed code checks the
+    UGC state prefix instead and rejects CA when coverage is ID/OR-only.
+    """
+    event = {"lat": None, "lon": None, "areas": ["CAZ041", "CAZ042"]}
+    assert adapter_with_coverage._in_coverage(event) is False, (
+        "CAZ* (California) zone-only alert must be DROPPED under Idaho coverage"
+    )
+
+
+def test_in_coverage_idaho_zone_only_kept(adapter_with_coverage):
+    """An Idaho zone-only alert (IDZ016) must be kept."""
+    event = {"lat": None, "lon": None, "areas": ["IDZ016"]}
+    assert adapter_with_coverage._in_coverage(event) is True
+
+
+def test_in_coverage_oregon_zone_only_kept(adapter_with_coverage):
+    """An Oregon zone-only alert (ORZ601) must be kept (OR is in coverage)."""
+    event = {"lat": None, "lon": None, "areas": ["ORZ601"]}
+    assert adapter_with_coverage._in_coverage(event) is True
+
+
+def test_in_coverage_polygon_centroid_inside_kept(adapter_with_coverage):
+    """A polygon alert whose centroid is inside the Idaho bbox is kept."""
+    # Twin Falls, ID — clearly inside the coverage box
+    event = {"lat": 42.56, "lon": -114.46, "areas": ["IDZ016"]}
+    assert adapter_with_coverage._in_coverage(event) is True
+
+
+def test_in_coverage_polygon_centroid_outside_dropped(adapter_with_coverage):
+    """A polygon alert whose centroid is outside the bbox is dropped.
+
+    Los Angeles centroid (34.05, -118.24) is far south-west of the Idaho box.
+    """
+    event = {"lat": 34.05, "lon": -118.24, "areas": ["CAZ041"]}
+    assert adapter_with_coverage._in_coverage(event) is False
+
+
+def test_in_coverage_no_areas_no_centroid_dropped(adapter_with_coverage):
+    """Fail closed: an event with no UGC zones and no centroid must be DROPPED."""
+    event = {"areas": [], "lat": None, "lon": None}
+    assert adapter_with_coverage._in_coverage(event) is False
+
+
+def test_in_coverage_missing_areas_key_dropped(adapter_with_coverage):
+    """Fail closed: event with no 'areas' key and no centroid is dropped."""
+    event = {}
+    assert adapter_with_coverage._in_coverage(event) is False
+
+
+def test_in_coverage_multi_zone_one_match_kept(adapter_with_coverage):
+    """If any UGC zone is in-state the event is kept (at least one match)."""
+    # Mix of out-of-state and in-state zones (e.g. a boundary advisory)
+    event = {"lat": None, "lon": None, "areas": ["NVZ001", "IDZ016", "UTZ001"]}
+    assert adapter_with_coverage._in_coverage(event) is True
+
+
+def test_in_coverage_ugc_case_insensitive(adapter_with_coverage):
+    """UGC state prefix matching must be case-insensitive."""
+    event = {"lat": None, "lon": None, "areas": ["idz016"]}
+    assert adapter_with_coverage._in_coverage(event) is True
