@@ -15,6 +15,7 @@ Idaho reference area (magic-valley to eastern border, generous):
 from __future__ import annotations
 
 import json
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -22,11 +23,16 @@ from meshai.coverage_area import (
     MonitoringArea,
     areas_from_config,
     build_geom_json,
+    classify_event_areas,
     classify_geom_areas,
     event_in_areas,
 )
+from meshai.env.nws import NWSAlertsAdapter
 from meshai.notifications.events import make_event
-from meshai.notifications.pipeline.coverage_filter import CoverageFilter
+from meshai.notifications.pipeline.coverage_filter import (
+    CoverageFilter,
+    FAIL_CLOSED_CATEGORIES,
+)
 from meshai.config import Coverage
 
 
@@ -515,3 +521,267 @@ class TestCoverageFilterPipelineWiring:
         )
         bus.emit(id_event)
         assert len(received_by_tee) == 1, "Idaho event must reach _tee"
+
+
+# ===========================================================================
+# Idaho + MultiPolygon geometry fixtures (for the fail-closed / geometry work)
+# ===========================================================================
+
+# A polygon firmly inside the Idaho box (centroid ~ 42.9N, -114.2W → Twin Falls)
+ID_POLYGON_COORDS = [
+    [-115.0, 42.5],
+    [-113.0, 42.5],
+    [-113.0, 43.5],
+    [-115.0, 43.5],
+    [-115.0, 42.5],
+]
+ID_POLYGON_GEOM = {"type": "Polygon", "coordinates": [ID_POLYGON_COORDS]}
+
+# A MultiPolygon whose FIRST polygon's outer ring is inside Idaho; a second,
+# far-away polygon (in Kansas) exercises the "first polygon wins" centroid rule.
+KS_POLYGON_COORDS = [
+    [-98.0, 38.0],
+    [-97.0, 38.0],
+    [-97.0, 39.0],
+    [-98.0, 39.0],
+    [-98.0, 38.0],
+]
+ID_MULTIPOLYGON_GEOM = {
+    "type": "MultiPolygon",
+    "coordinates": [[ID_POLYGON_COORDS], [KS_POLYGON_COORDS]],
+}
+
+
+# ===========================================================================
+# classify_event_areas — 3-state classification helper
+# ===========================================================================
+
+class TestClassifyEventAreas:
+    def test_idaho_polygon_in_bounds(self):
+        event = make_event(
+            source="nws", category="weather_advisory", severity="routine",
+            title="ID advisory", data={"geometry": ID_POLYGON_GEOM},
+        )
+        assert classify_event_areas(event, IDAHO_AREAS) == "in-bounds"
+
+    def test_ca_polygon_out_of_bounds(self):
+        ca_geom = {"type": "Polygon", "coordinates": [CA_POLYGON_COORDS]}
+        event = make_event(
+            source="nws", category="weather_advisory", severity="routine",
+            title="CA advisory", data={"geometry": ca_geom},
+        )
+        assert classify_event_areas(event, IDAHO_AREAS) == "out-of-bounds"
+
+    def test_no_geometry_no_centroid_is_null_geom(self):
+        """The exact zone-only-alert shape: geometry=None, no lat/lon."""
+        event = make_event(
+            source="nws", category="weather_advisory", severity="routine",
+            title="Heat Advisory (zone-only)", data={"geometry": None},
+        )
+        assert classify_event_areas(event, IDAHO_AREAS) == "null-geom"
+
+    def test_multipolygon_in_bounds(self):
+        event = make_event(
+            source="nws", category="weather_warning", severity="priority",
+            title="ID multipolygon warning", data={"geometry": ID_MULTIPOLYGON_GEOM},
+        )
+        assert classify_event_areas(event, IDAHO_AREAS) == "in-bounds"
+
+
+# ===========================================================================
+# CoverageFilter — fail-CLOSED for weather, fail-OPEN for everything else
+# ===========================================================================
+
+class TestCoverageFilterFailClosed:
+    def _make_filter(self, areas=None, excluded=None):
+        received: list = []
+        flt = CoverageFilter(
+            next_handler=received.append,
+            areas=areas if areas is not None else IDAHO_AREAS,
+            enabled=True,
+            excluded_adapters=set(excluded or []),
+        )
+        return flt, received
+
+    def test_fail_closed_categories_are_the_nws_categories(self):
+        """Guard: the fail-closed set is exactly env/nws._derive_category's outputs."""
+        assert FAIL_CLOSED_CATEGORIES == {
+            "weather_warning", "weather_watch",
+            "weather_advisory", "weather_statement",
+        }
+
+    # -- THE REAL LA LEAK: zone-only advisory, no polygon, no centroid --------
+
+    def test_zone_only_advisory_no_geometry_dropped_failclosed(self):
+        """REAL repro of the leak: a zone-only NWS Heat Advisory with NO polygon
+        and NO centroid, under an Idaho-only coverage area, is now DROPPED
+        (fail-closed). Previously the fail-open gate KEPT it → wrong-region leak.
+        """
+        flt, received = self._make_filter()
+        event = make_event(
+            source="nws", category="weather_advisory", severity="routine",
+            title="Heat Advisory issued for Los Angeles County",
+            # zone-only: geometry is explicitly None, and there is NO lat/lon
+            data={"geometry": None},
+        )
+        assert event.lat is None and event.lon is None  # truly unlocatable
+        flt.handle(event)
+        assert len(received) == 0, (
+            "zone-only weather advisory with no geometry must be DROPPED "
+            "(fail-closed) — this is the exact LA leak"
+        )
+
+    def test_zone_only_statement_no_geometry_dropped_failclosed(self):
+        """A weather_statement (Special Weather Statement) with no geometry is
+        also fail-closed — all four NWS categories are covered."""
+        flt, received = self._make_filter()
+        event = make_event(
+            source="nws", category="weather_statement", severity="routine",
+            title="Special Weather Statement", data={"geometry": None},
+        )
+        flt.handle(event)
+        assert len(received) == 0
+
+    # -- out-of-bounds real polygon (CA) -------------------------------------
+
+    def test_ca_polygon_advisory_dropped_out_of_bounds(self):
+        flt, received = self._make_filter()
+        ca_geom = {"type": "Polygon", "coordinates": [CA_POLYGON_COORDS]}
+        event = make_event(
+            source="nws", category="weather_advisory", severity="routine",
+            title="CA advisory", data={"geometry": ca_geom},
+        )
+        flt.handle(event)
+        assert len(received) == 0, "out-of-bounds CA polygon must be dropped"
+
+    # -- in-bounds real polygon (ID) -----------------------------------------
+
+    def test_idaho_polygon_advisory_kept_in_bounds(self):
+        flt, received = self._make_filter()
+        event = make_event(
+            source="nws", category="weather_advisory", severity="routine",
+            title="ID advisory", data={"geometry": ID_POLYGON_GEOM},
+        )
+        flt.handle(event)
+        assert len(received) == 1, "in-bounds Idaho polygon must be kept"
+
+    def test_idaho_multipolygon_advisory_kept_in_bounds(self):
+        flt, received = self._make_filter()
+        event = make_event(
+            source="nws", category="weather_advisory", severity="routine",
+            title="ID multipolygon advisory", data={"geometry": ID_MULTIPOLYGON_GEOM},
+        )
+        flt.handle(event)
+        assert len(received) == 1, "in-bounds Idaho MultiPolygon must be kept"
+
+    # -- fail-OPEN preserved for non-weather ---------------------------------
+
+    def test_non_weather_no_geometry_kept_fail_open(self):
+        """A non-weather event (quake) with no geometry AND no centroid is still
+        KEPT (fail-open unchanged) — proves we did not over-tighten other
+        adapters. Only the FAIL_CLOSED_CATEGORIES are dropped when unlocatable.
+        """
+        flt, received = self._make_filter()
+        event = make_event(
+            source="usgs", category="earthquake", severity="priority",
+            title="Quake with no geometry",  # no lat/lon, no data geometry
+        )
+        assert event.lat is None and event.lon is None
+        assert event.category not in FAIL_CLOSED_CATEGORIES
+        flt.handle(event)
+        assert len(received) == 1, "non-weather unlocatable event must be KEPT (fail-open)"
+
+    def test_swpc_no_geometry_kept_fail_open(self):
+        """SWPC (space weather, global) with no geometry stays fail-open."""
+        flt, received = self._make_filter()
+        event = make_event(
+            source="swpc", category="kp_index", severity="priority",
+            title="Geomagnetic storm — no location",
+        )
+        flt.handle(event)
+        assert len(received) == 1
+
+
+# ===========================================================================
+# NWS adapter — attaches raw alert geometry + MultiPolygon centroid, and the
+# geometry flows env-event → to_event → Event.data["geometry"]
+# ===========================================================================
+
+def _nws_adapter():
+    config = MagicMock()
+    config.areas = ["ID"]
+    config.user_agent = "(test, test@example.com)"
+    config.severity_min = "moderate"
+    config.tick_seconds = 60
+    return NWSAlertsAdapter(config)
+
+
+def _mock_urlopen_with_features(features):
+    """Return a context-manager mock whose .read() yields a geo+json payload."""
+    payload = json.dumps({"features": features}).encode("utf-8")
+    resp = MagicMock()
+    resp.read.return_value = payload
+    resp.__enter__.return_value = resp
+    resp.__exit__.return_value = False
+    return resp
+
+
+class TestNWSGeometryAttach:
+    def _fetch_one(self, geometry):
+        adapter = _nws_adapter()
+        feature = {
+            "properties": {
+                "id": "urn:oid:nws-test-1",
+                "event": "Heat Advisory",
+                "severity": "Moderate",
+                "headline": "Heat Advisory",
+                "description": "Hot.",
+                "areaDesc": "Test County",
+            },
+            "geometry": geometry,
+        }
+        resp = _mock_urlopen_with_features([feature])
+        with patch("meshai.env.nws.urlopen", return_value=resp):
+            adapter._fetch()
+        events = adapter.get_events()
+        assert len(events) == 1
+        return adapter, events[0]
+
+    def test_polygon_geometry_attached_to_event(self):
+        """The parsed env event carries event['geometry'] = the feature geometry."""
+        _, event = self._fetch_one(ID_POLYGON_GEOM)
+        assert event["geometry"] == ID_POLYGON_GEOM
+
+    def test_polygon_centroid_computed(self):
+        _, event = self._fetch_one(ID_POLYGON_GEOM)
+        # centroid of the ID polygon ring ~ (42.9N, -114.2W) — inside Idaho
+        assert 42.0 <= event["lat"] <= 44.0
+        assert -117.0 <= event["lon"] <= -111.0
+
+    def test_multipolygon_geometry_attached_and_centroid_computed(self):
+        """MultiPolygon: geometry attached verbatim + centroid from first
+        polygon's outer ring (must land in Idaho, not the far-away 2nd polygon).
+        """
+        _, event = self._fetch_one(ID_MULTIPOLYGON_GEOM)
+        assert event["geometry"] == ID_MULTIPOLYGON_GEOM
+        # first polygon is the Idaho one → centroid inside Idaho
+        assert 42.0 <= event["lat"] <= 44.0
+        assert -117.0 <= event["lon"] <= -111.0
+
+    def test_zone_only_geometry_is_none(self):
+        """A zone-only alert (no geometry) yields event['geometry'] is None and
+        NO centroid — the exact unlocatable shape the gate fails closed on."""
+        _, event = self._fetch_one(None)
+        assert event["geometry"] is None
+        assert "lat" not in event and "lon" not in event
+
+    def test_to_event_carries_geometry_into_data(self):
+        """Trace: env event['geometry'] → to_event → Event.data['geometry']."""
+        adapter, event = self._fetch_one(ID_POLYGON_GEOM)
+        pipeline_event = adapter.to_event(event)
+        assert pipeline_event.data["geometry"] == ID_POLYGON_GEOM
+
+    def test_to_event_carries_none_geometry_for_zone_only(self):
+        adapter, event = self._fetch_one(None)
+        pipeline_event = adapter.to_event(event)
+        assert pipeline_event.data["geometry"] is None

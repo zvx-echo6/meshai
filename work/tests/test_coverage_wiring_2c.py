@@ -1,12 +1,16 @@
-"""Tests for Phase 2c coverage-bbox wiring: nws + traffic.
+"""Tests for Phase 2c coverage wiring: nws + traffic.
 
 Verifies that:
 1. traffic: coverage wins (9 grid corridors derived from bbox); None falls back
    to config.corridors.
-2. nws: coverage wins for areas + coverage_bbox; None falls back to config.areas
-   and leaves _coverage_bbox as None.
-3. nws geometry filter: alerts inside bbox are kept; outside are dropped; alerts
-   with no centroid (lat/lon None) are always kept.
+2. nws: coverage wins for the ``area=`` fetch-scope (``_areas``); None falls back
+   to config.areas.
+
+NOTE: the old adapter-level ``_in_coverage`` / ``_coverage_bbox`` geometry
+heuristic was removed — the pipeline coverage gate
+(``notifications/pipeline/coverage_filter.py``) supersedes it and fails CLOSED
+for zone-only weather alerts (see test_coverage_area.py). ``_areas`` remains as
+a fetch-scope optimization only.
 """
 
 from __future__ import annotations
@@ -113,24 +117,12 @@ def test_nws_coverage_areas():
     assert adapter._areas == cov["areas"]
 
 
-def test_nws_coverage_bbox_set():
-    """When coverage is provided, _coverage_bbox is set from coverage['bbox']."""
-    from meshai.env.nws import NWSAlertsAdapter
-    cov = _cov("nws")
-    assert cov is not None
-    cfg = _nws_cfg()
-    adapter = NWSAlertsAdapter(cfg, coverage=cov)
-    assert adapter._coverage_bbox == cov["bbox"]
-    assert adapter._coverage_bbox == IDAHO_BOX
-
-
 def test_nws_fallback_to_config():
-    """When coverage=None, _areas falls back to config.areas and _coverage_bbox is None."""
+    """When coverage=None, _areas falls back to config.areas."""
     from meshai.env.nws import NWSAlertsAdapter
     cfg = _nws_cfg(areas=["ID", "OR"])
     adapter = NWSAlertsAdapter(cfg, coverage=None)
     assert adapter._areas == ["ID", "OR"]
-    assert adapter._coverage_bbox is None
 
 
 def test_nws_fallback_config_areas_default():
@@ -140,11 +132,14 @@ def test_nws_fallback_config_areas_default():
     cfg.areas = None  # force the falsy case
     adapter = NWSAlertsAdapter(cfg, coverage=None)
     assert adapter._areas == ["ID"]
-    assert adapter._coverage_bbox is None
 
 
 def test_nws_empty_areas_fallback_for_api():
-    """When derived areas is empty, config areas are used for the API call but bbox is kept."""
+    """When derived areas is empty, config areas are used for the API call.
+
+    (The old _coverage_bbox geometry filter was removed; the pipeline coverage
+    gate now does geographic filtering. _areas is a fetch-scope hint only.)
+    """
     from meshai.env.nws import NWSAlertsAdapter
     # Synthesise a coverage dict whose areas list is empty (bbox outside all states)
     empty_areas_cov = {"areas": [], "bbox": [-1.0, 0.0, 1.0, 1.0]}
@@ -152,54 +147,5 @@ def test_nws_empty_areas_fallback_for_api():
     adapter = NWSAlertsAdapter(cfg, coverage=empty_areas_cov)
     # API area= query falls back to config areas
     assert adapter._areas == ["ID"]
-    # but the geometry filter bbox is still set
-    assert adapter._coverage_bbox == [-1.0, 0.0, 1.0, 1.0]
-
-
-# ===========================================================================
-# nws geometry filter (_in_coverage helper)
-# ===========================================================================
-
-def _make_nws_with_bbox(bbox=None):
-    """Create a NWSAlertsAdapter with a specific coverage_bbox, no live config needed."""
-    from meshai.env.nws import NWSAlertsAdapter
-    cfg = _nws_cfg()
-    if bbox is not None:
-        cov = {"areas": ["ID"], "bbox": bbox}
-        return NWSAlertsAdapter(cfg, coverage=cov)
-    return NWSAlertsAdapter(cfg, coverage=None)
-
-
-def test_nws_in_coverage_inside_bbox_kept():
-    """Alert whose centroid is inside the bbox passes the filter."""
-    adapter = _make_nws_with_bbox(IDAHO_BOX)
-    # Twin Falls is inside the Idaho box
-    event = {"lat": 42.56, "lon": -114.47}
-    assert adapter._in_coverage(event) is True
-
-
-def test_nws_in_coverage_outside_bbox_dropped():
-    """Alert whose centroid is outside the bbox is filtered out."""
-    adapter = _make_nws_with_bbox(IDAHO_BOX)
-    # Seattle (47.6, -122.3) is well outside south-central Idaho box
-    event = {"lat": 47.6, "lon": -122.3}
-    assert adapter._in_coverage(event) is False
-
-
-def test_nws_in_coverage_no_coords_kept():
-    """Alert with no lat/lon is always kept (can't filter without coords)."""
-    adapter = _make_nws_with_bbox(IDAHO_BOX)
-    event = {}  # no lat/lon keys at all
-    assert adapter._in_coverage(event) is True
-
-    event_none = {"lat": None, "lon": None}
-    assert adapter._in_coverage(event_none) is True
-
-
-def test_nws_in_coverage_no_bbox_always_passes():
-    """When no coverage bbox is set, _in_coverage always returns True."""
-    adapter = _make_nws_with_bbox(bbox=None)
-    assert adapter._coverage_bbox is None
-    # Even an "outside" coord passes when there is no bbox filter
-    event = {"lat": 47.6, "lon": -122.3}
-    assert adapter._in_coverage(event) is True
+    # The removed geometry filter no longer stashes a bbox on the adapter.
+    assert not hasattr(adapter, "_coverage_bbox")

@@ -5,9 +5,13 @@ same base interface (a callable ``.handle(event)``), constructed from config,
 inserted in the pipeline chain adjacent to ToggleFilter.
 
 Events that lie entirely outside ALL configured bounding boxes are dropped.
-Events with no parseable geometry, or events whose source is in
-``excluded_adapters``, are kept (fail-open, matching Central's choke-point
-semantics).
+Events whose source is in ``excluded_adapters`` are always kept.
+
+Unlocatable events (no parseable geometry/centroid) are handled by category:
+weather-alert categories (``FAIL_CLOSED_CATEGORIES``) are DROPPED — fail-closed,
+matching Central's NWS behaviour and closing the zone-only-advisory leak — while
+all other categories are KEPT (fail-open, matching Central's choke-point
+semantics; quake/fire events always carry a centroid anyway).
 
 When coverage is disabled (``coverage.enabled`` is False) or no areas are
 configured (``areas`` is empty), the filter is a no-op and passes everything.
@@ -17,7 +21,19 @@ import logging
 from typing import Callable
 
 from meshai.notifications.events import Event
-from meshai.coverage_area import MonitoringArea, event_in_areas
+from meshai.coverage_area import MonitoringArea, classify_event_areas
+
+
+# Weather-alert categories (from env/nws.py::_derive_category) for which an
+# event that cannot be geographically located is DROPPED (fail-closed),
+# matching Central's NWS behaviour. The real LA leak was a zone-only Heat
+# Advisory with no polygon and no centroid — fail-open kept it; this drops it.
+FAIL_CLOSED_CATEGORIES = {
+    "weather_warning",
+    "weather_watch",
+    "weather_advisory",
+    "weather_statement",
+}
 
 
 class CoverageFilter:
@@ -70,9 +86,16 @@ class CoverageFilter:
             self._next(event)
             return
 
-        if event_in_areas(event, self._areas):
+        verdict = classify_event_areas(event, self._areas)
+
+        # Positively in-bounds → keep. 'no-area' can't occur here (guarded by
+        # the `not self._areas` no-op above) but is treated as keep for safety.
+        if verdict in ("in-bounds", "no-area"):
             self._next(event)
-        else:
+            return
+
+        # Positively out-of-bounds → drop, regardless of category.
+        if verdict == "out-of-bounds":
             self._logger.debug(
                 "DROPPED event %s — out of all coverage areas "
                 "(source=%s category=%s)",
@@ -80,3 +103,19 @@ class CoverageFilter:
                 event.source,
                 event.category,
             )
+            return
+
+        # Unlocatable ('null-geom' / 'invalid-geom'): fail CLOSED for weather
+        # alerts (drop — matches Central), fail OPEN for everything else (keep).
+        if event.category in FAIL_CLOSED_CATEGORIES:
+            self._logger.debug(
+                "DROPPED event %s — unlocatable weather alert (%s), failing "
+                "closed (source=%s category=%s)",
+                event.id,
+                verdict,
+                event.source,
+                event.category,
+            )
+            return
+
+        self._next(event)

@@ -24,7 +24,8 @@ class NWSAlertsAdapter:
             derived_areas = coverage["areas"]
             if not derived_areas:
                 # bbox overlaps no state — keep config areas so the API call
-                # remains well-formed, but retain the bbox for geometry filter.
+                # remains well-formed. (The pipeline coverage gate now does the
+                # geometry filtering; this path is only a fetch-scope hint.)
                 logger.debug(
                     "NWS coverage: derived area list is empty (bbox outside all states); "
                     "falling back to config areas for API query"
@@ -32,10 +33,8 @@ class NWSAlertsAdapter:
                 self._areas = config.areas or ["ID"]
             else:
                 self._areas = derived_areas
-            self._coverage_bbox = coverage["bbox"]
         else:
             self._areas = config.areas or ["ID"]
-            self._coverage_bbox = None
         self._user_agent = config.user_agent or "(meshai, ops@example.com)"
         self._severity_min = config.severity_min or "moderate"
         self._tick_interval = config.tick_seconds or 60
@@ -134,6 +133,9 @@ class NWSAlertsAdapter:
             "references": raw.get("references") or [],
             "category": category,
             "headline": raw.get("headline", ""),
+            # RAW GeoJSON alert geometry (Polygon/MultiPolygon/None). Read by
+            # the pipeline coverage gate as Event.data["geometry"].
+            "geometry": raw.get("geometry"),
         }
 
         return make_event(
@@ -171,24 +173,6 @@ class NWSAlertsAdapter:
 
         self._last_tick = now
         return self._fetch()
-
-    def _in_coverage(self, event: dict) -> bool:
-        """Return True iff the event should be kept under the coverage bbox filter.
-
-        Rules:
-        - If no coverage bbox is set, always keep.
-        - If the event has a numeric lat/lon centroid, drop it when outside the box.
-        - If the event has no centroid (lat/lon absent or None), keep it — the
-          state area= filter already scopes it; we can't box-filter without coords.
-        """
-        if not self._coverage_bbox:
-            return True
-        lat = event.get("lat")
-        lon = event.get("lon")
-        if lat is None or lon is None:
-            return True  # no geometry — pass through
-        from meshai.coverage import point_in_bbox
-        return point_in_bbox(lat, lon, self._coverage_bbox)
 
     def _fetch(self) -> bool:
         """Fetch alerts from NWS API.
@@ -284,26 +268,33 @@ class NWSAlertsAdapter:
                 "references": props.get("references") or [],
             }
 
-            # Try to get centroid from geometry
+            # Attach the RAW GeoJSON alert geometry (Polygon / MultiPolygon /
+            # None) to the event. This is the authoritative field the pipeline
+            # coverage gate intersects against configured areas. Zone-only NWS
+            # alerts have geometry=None; the fail-closed gate drops those.
             geom = feature.get("geometry")
+            event["geometry"] = geom
+
+            # Compute a best-effort centroid (fallback / nice-to-have; the
+            # geometry above is authoritative). Handle Polygon and MultiPolygon.
             if geom and geom.get("coordinates"):
                 try:
                     coords = geom["coordinates"]
-                    if geom.get("type") == "Polygon" and coords:
-                        # Compute centroid of first ring
+                    gtype = geom.get("type")
+                    ring = None
+                    if gtype == "Polygon" and coords:
+                        # Outer ring of the polygon
                         ring = coords[0]
+                    elif gtype == "MultiPolygon" and coords:
+                        # Outer ring of the first polygon
+                        ring = coords[0][0]
+                    if ring:
                         lat_sum = sum(c[1] for c in ring)
                         lon_sum = sum(c[0] for c in ring)
                         event["lat"] = lat_sum / len(ring)
                         event["lon"] = lon_sum / len(ring)
                 except Exception:
                     pass
-
-            # Geometry filter: drop alerts whose centroid falls outside the
-            # coverage bbox. Alerts with no centroid are kept (state area=
-            # filter already scopes them; we can't box-filter without coords).
-            if not self._in_coverage(event):
-                continue
 
             new_events.append(event)
 
