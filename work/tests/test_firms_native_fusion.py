@@ -5,8 +5,9 @@ locally-fetched NASA FIRMS pixels into the SAME attribution/fusion pipeline the
 Central handler uses, via ``central.firms_handler.ingest_hotspot_pixel``:
 
 1. ``ingest_hotspot_pixel`` drives growth / spotting / halt from canonical
-   pixels and returns ``(wire, data)`` fusion broadcasts — and NEVER a raw
-   hotspot / cluster / new_ignition broadcast.
+   pixels (and, F3, curated ``unattributed_hotspot_cluster`` "possible new
+   fire" broadcasts) and returns ``(wire, data)`` — and NEVER a raw per-pixel
+   hotspot / new_ignition broadcast.
 2. ``env/firms.py`` tick() (CSV fetch monkeypatched) feeds those pixels through
    the shared engine, emits the fusion Events, and still returns None for raw
    hotspots.
@@ -25,8 +26,11 @@ from datetime import datetime, timezone
 import pytest
 
 _MI_PER_DEG_LAT = 69.0
-_FUSION_CATS = {"wildfire_growth", "wildfire_spotting", "wildfire_halted"}
-_RAW_CATS = {"wildfire_hotspot", "new_ignition", "unattributed_hotspot_cluster"}
+# F3: unattributed_hotspot_cluster is a CURATED fusion output (a "possible new
+# fire"), not a raw per-pixel broadcast. Raw hotspots are still never emitted.
+_FUSION_CATS = {"wildfire_growth", "wildfire_spotting", "wildfire_halted",
+                "unattributed_hotspot_cluster"}
+_RAW_CATS = {"wildfire_hotspot", "new_ignition"}
 
 
 # ── isolation (real-DB, mirrors test_firms_refactor) ─────────────────────────
@@ -201,17 +205,20 @@ class TestIngestHalt:
         assert latch == float(now)
 
 
-class TestIngestNeverRawOrCluster:
+class TestIngestNeverRaw:
     def test_lone_pixel_no_fire_yields_nothing(self):
-        # Stored, attributed to nothing, cluster path DEAD, no idle fire ->
-        # returns []. A raw hotspot is NEVER emitted on any path.
+        # Stored, attributed to nothing, below the cluster threshold, no idle
+        # fire -> returns []. A raw hotspot is NEVER emitted on any path.
         out = _feed(_pixel(lat=44.4, lon=-116.2, acq_time="1300"),
                     now=1780750000)
         assert out == []
 
-    def test_dense_unattributed_cluster_stays_silent(self):
-        # Several unattributed pixels close together would have tripped the old
-        # cluster broadcast; that path is dead -> no broadcast, ever.
+    def test_dense_unattributed_cluster_broadcasts_curated(self):
+        # F3: several unattributed pixels close together form a CURATED cluster
+        # ("possible new fire"). Non-seed path (no cold-start), so it broadcasts:
+        # a wire fires on the 3rd pixel (min_pixels=3), the first 3 are stamped
+        # so they can't re-fire, and the next 3 form a fresh cluster -> a 2nd
+        # wire on the 6th pixel. NEVER a raw per-pixel broadcast.
         base_lat, base_lon = 44.0, -116.0
         produced = []
         for i in range(6):
@@ -219,7 +226,11 @@ class TestIngestNeverRawOrCluster:
                                acq_time=f"13{i:02d}"), now=1780750000 + i)
             _assert_no_raw(out)
             produced.extend(out)
-        assert produced == []
+        assert len(produced) == 2, f"expected 2 curated cluster wires: {produced}"
+        for wire, data in produced:
+            assert wire.startswith("🔥 Possible new fire:")
+            assert data["category"] == "unattributed_hotspot_cluster"
+            assert data["severity"] == "priority"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -297,6 +308,10 @@ class TestAdapterTickFusion:
         _patch_fetch(monkeypatch, _csv(self._growth_rows(center_lat, center_lon)))
 
         a = _adapter()
+        # Steady-state growth routing (not cold start): mark the adapter past its
+        # first-fetch silent-seed so this tick's growth broadcasts. Cold-start
+        # fusion suppression is covered in test_firms_cluster_f3.
+        a._firms_seeded = True
         assert a.tick() is True
 
         evts = a.get_events()
@@ -341,6 +356,10 @@ class TestAdapterTickFusion:
         # ingest would (store._ingest marks every source it touched).
         store._seen = {}
         store._seeded = {"firms", "firms_fusion"}
+        # Adapter-level cold-start seed is also a first-fetch silence gate; this
+        # steady-state test wants the growth wire, so mark the adapter seeded too
+        # (cold-start fusion suppression is covered in test_firms_cluster_f3).
+        a._firms_seeded = True
         assert a.tick() is True
         store._ingest("firms", a)
 

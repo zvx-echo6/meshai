@@ -42,6 +42,16 @@ class FIRMSAdapter:
         self._last_error = None
         self._is_loaded = False
 
+        # Cold-start silent-seed gate (mirrors store._fires_seeded, F1). The
+        # FIRST non-empty FIRMS fetch after boot ingests a full day of existing
+        # hotspots; every unattributed cluster would look "new" and dump to the
+        # mesh. On that first fetch we ingest + persist + attribute normally but
+        # pass seed=True so clusters are stamped (never re-fire) yet emit
+        # NOTHING. Only clusters formed by pixels arriving on a LATER fetch
+        # (genuinely new ignitions) broadcast. Flipped True after the first
+        # non-empty fetch below.
+        self._firms_seeded = False
+
         # For cross-referencing
         self._region_anchors = region_anchors or []
         self._fires_adapter = fires_adapter  # NICFFiresAdapter for cross-ref
@@ -392,6 +402,10 @@ class FIRMSAdapter:
 
         now = time.time()
         satellite = self._satellite_code()
+        # Cold-start silent-seed gate: captured once for the whole batch BEFORE
+        # the flag is flipped, so every pixel in the first full-day sweep seeds
+        # together (mirrors store._ingest_fires cold_start capture, F1).
+        cold_start = not self._firms_seeded
         fusion: list = []
         for evt in raw_events:
             props = evt.get("properties", {}) or {}
@@ -409,13 +423,25 @@ class FIRMSAdapter:
                 "acq_epoch": acq_epoch,
             }
             try:
-                broadcasts = ingest_hotspot_pixel(pixel, now=int(now))
+                broadcasts = ingest_hotspot_pixel(pixel, now=int(now),
+                                                   seed=cold_start)
             except Exception:
                 logger.exception("FIRMS fusion: ingest failed for %s",
                                  evt.get("event_id"))
                 continue
             for wire, data in broadcasts:
                 fusion.append(self._make_fusion_event(wire, data, evt, now))
+
+        # First non-empty fetch complete: later fetches broadcast genuinely-new
+        # clusters. Only flip on a non-empty batch so an empty first fetch can't
+        # consume the seed (a later real batch still seeds silently).
+        if raw_events:
+            if cold_start:
+                logger.info(
+                    "FIRMS cold-start silent-seed complete: %d pixels ingested, "
+                    "0 cluster broadcasts (later fetches broadcast new fires)",
+                    len(raw_events))
+            self._firms_seeded = True
         return fusion
 
     def _make_fusion_event(self, wire: str, data: dict, source_evt: dict,

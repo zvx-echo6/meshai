@@ -21,7 +21,8 @@ test_hydro_refactor.py:
 4. Not-cutover parity: with no category cut over, handle_firms keeps the legacy
    eager-latch + stamps VERBATIM (byte-identical live behavior).
 
-5. The unattributed_hotspot_cluster path stays DEAD (returns None).
+5. The unattributed_hotspot_cluster path is curated: below cluster_min_pixels
+   it stays silent (returns None) -- F3 enabled the real broadcast path.
 """
 from __future__ import annotations
 
@@ -427,17 +428,19 @@ class TestNotCutoverLegacyVerbatim:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. Cluster path stays DEAD
+# 5. Cluster path: below-threshold is silent (F3 enabled the path; a lone
+#    unattributed pixel with no nearby unstamped neighbors never clusters)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestClusterDead:
-    def test_maybe_emit_cluster_returns_none(self):
+class TestClusterBelowThreshold:
+    def test_maybe_emit_cluster_below_threshold_returns_none(self):
         from meshai.central.firms_handler import _maybe_emit_cluster
         from meshai.persistence import get_db
         data = {}
+        # No pixels in firms_pixels -> the cluster query finds < min_pixels
+        # members, so no wire and no data tagging (curated: needs a real cluster).
         out = _maybe_emit_cluster(
             get_db(), lat=43.0, lon=-115.0, acq_epoch=1780747200,
             frp=20.0, data=data, now=1780747200, this_pixel_id=1)
         assert out is None
-        # The dead path must not tag the data dict either.
         assert data == {}

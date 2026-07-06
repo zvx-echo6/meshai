@@ -248,7 +248,7 @@ def handle_firms(envelope: dict, subject: str,
 
 
 def _ingest_pixel_core(conn, *, lat, lon, acq_epoch, frp, confidence,
-                        brightness, satellite, data, now):
+                        brightness, satellite, data, now, seed=False):
     """INSERT one canonical hotspot pixel + run attribution/fusion.
 
     This is the source-agnostic heart of the fire-fusion engine, extracted so
@@ -262,8 +262,14 @@ def _ingest_pixel_core(conn, *, lat, lon, acq_epoch, frp, confidence,
       2. For a NEWLY-stored pixel, run ``_attribute_or_cluster`` -> writes
          ``fire_pixels`` / ``fire_passes`` / ``fires`` centroid+cursor and runs
          the growth / spotting / halt fusion (honoring the Phase-3c deferred
-         latches). The dead unattributed-cluster path stays dead -- NO
-         raw-hotspot / cluster broadcast is ever produced here.
+         latches). On an attribution MISS it runs the curated
+         unattributed-cluster path (``_maybe_emit_cluster``). ``seed=True``
+         (cold-start silent-seed) suppresses ALL broadcast output on the first
+         fetch -- cluster AND growth/spotting/halt fusion -- while persistence,
+         attribution, per-pass aggregation, centroid/cursor updates, and the
+         dedup latches (cluster_broadcast_at, halt_broadcast_at) still run so a
+         genuinely-new post-seed event broadcasts normally. A raw per-pixel
+         hotspot is NEVER broadcast.
 
     Determinism: ``now`` is threaded explicitly; there is no hidden clock read.
 
@@ -301,12 +307,12 @@ def _ingest_pixel_core(conn, *, lat, lon, acq_epoch, frp, confidence,
         lat=lat, lon=lon,
         acq_epoch=acq_epoch,
         frp=frp, satellite=satellite,
-        data=data, now=now,
+        data=data, now=now, seed=seed,
     )
     return (True, rowid, wire)
 
 
-def ingest_hotspot_pixel(pixel: dict, *, now) -> list[tuple[str, dict]]:
+def ingest_hotspot_pixel(pixel: dict, *, now, seed=False) -> list[tuple[str, dict]]:
     """Source-agnostic entrypoint: ingest ONE canonical FIRMS pixel into the
     fire-fusion engine and return the fusion broadcasts it produced.
 
@@ -323,10 +329,23 @@ def ingest_hotspot_pixel(pixel: dict, *, now) -> list[tuple[str, dict]]:
     mesh text and ``data`` carries the Phase-3c category/severity stamps (and,
     under cutover, the deferred commit hook). A dedup hit or a pixel that
     triggers no fusion returns ``[]``. This NEVER returns a raw-hotspot,
-    ``wildfire_hotspot``, ``new_ignition``, or cluster broadcast -- the only
-    outputs are ``wildfire_growth`` / ``wildfire_spotting`` / ``wildfire_halted``
-    (the cluster path is dead). Callers must therefore NEVER broadcast the raw
-    pixel itself -- only these returned fusion wires.
+    ``wildfire_hotspot``, or ``new_ignition`` broadcast -- the possible outputs
+    are ``wildfire_growth`` / ``wildfire_spotting`` / ``wildfire_halted`` (an
+    attributed pixel grew/moved a known fire) OR a curated
+    ``unattributed_hotspot_cluster`` ("possible new fire") when ``cluster_min_pixels``
+    unattributed pixels fall within ``cluster_max_radius_mi`` over
+    ``cluster_time_window_minutes``. Callers must therefore NEVER broadcast the
+    raw pixel itself -- only these returned fusion/cluster wires.
+
+    ``seed`` (cold-start silent-seed): on the FIRST fetch after boot, pass
+    ``seed=True`` so the day's pre-existing hotspots emit NOTHING -- no cold-start
+    dump of ANY kind. This covers BOTH the curated cluster path AND the
+    attributed growth / spotting / halt fusion: a cluster or idle-fire halt that
+    forms from pre-existing pixels is stamped (never re-fires); a growth/spotting
+    that a pre-existing pass boundary would have produced is withheld. Only
+    genuinely-new activity arriving on a LATER (``seed=False``) fetch broadcasts.
+    Persistence, attribution, per-pass aggregation, and dedup baselines run
+    regardless of ``seed``.
 
     Determinism: ``now`` (epoch) is required and threaded straight through.
     """
@@ -359,7 +378,7 @@ def ingest_hotspot_pixel(pixel: dict, *, now) -> list[tuple[str, dict]]:
         conn,
         lat=float(lat), lon=float(lon), acq_epoch=int(acq_epoch),
         frp=frp, confidence=pixel.get("confidence"), brightness=brightness,
-        satellite=pixel.get("satellite") or "", data=data, now=now,
+        satellite=pixel.get("satellite") or "", data=data, now=now, seed=seed,
     )
     if wire is None:
         return []
@@ -465,8 +484,17 @@ def _log_event(conn, *, now, source, category, severity_word,
 
 
 def _attribute_or_cluster(conn, *, pixel_row_id, lat, lon, acq_epoch,
-                            frp, satellite, data, now):
-    """Try attribution; on miss, run cluster check. Returns wire str | None."""
+                            frp, satellite, data, now, seed=False):
+    """Try attribution; on miss, run cluster check. Returns wire str | None.
+
+    Attribution ALWAYS runs first (a pixel inside a known WFIGS fire's spread
+    radius grows that fire and never forms a "new" cluster). ``seed`` (cold-start
+    silent-seed) suppresses ALL broadcast output on the first fetch -- the
+    unattributed-cluster branch (see ``_maybe_emit_cluster``) AND the attributed
+    fusion path (growth / spotting / halt). Persistence, attribution, per-pass
+    aggregation, centroid/cursor updates, and any dedup latches that must survive
+    to gate a LATER broadcast all still run; only the wire emission is withheld.
+    """
     global_default_mi = float(adapter_config.fires.spread_radius_mi_default)
     # Conservative bbox prefilter: take the larger of the global default
     # and 10 mi so a per-fire override beyond the default doesn't get
@@ -528,22 +556,22 @@ def _attribute_or_cluster(conn, *, pixel_row_id, lat, lon, acq_epoch,
         wire = _handle_pass_boundary(
             conn, irwin_id=chosen_irwin, pass_id=this_pass_id,
             lat=lat, lon=lon, acq_epoch=acq_epoch, frp=frp,
-            data=data, now=now,
+            data=data, now=now, seed=seed,
         )
         if wire is not None:
             return wire
         # No growth broadcast; opportunistically run halt detector for
         # OTHER fires that may have gone idle.
-        return _maybe_emit_halt(conn, data=data, now=now)
+        return _maybe_emit_halt(conn, data=data, now=now, seed=seed)
 
     # 0 matches -- run cluster detection.
     wire = _maybe_emit_cluster(
         conn, lat=lat, lon=lon, acq_epoch=acq_epoch, frp=frp,
-        data=data, now=now, this_pixel_id=pixel_row_id,
+        data=data, now=now, this_pixel_id=pixel_row_id, seed=seed,
     )
     if wire is not None:
         return wire
-    return _maybe_emit_halt(conn, data=data, now=now)
+    return _maybe_emit_halt(conn, data=data, now=now, seed=seed)
 
 
 def _recompute_centroid_and_stamp(conn, irwin_id: str, *,
@@ -572,10 +600,18 @@ def _recompute_centroid_and_stamp(conn, irwin_id: str, *,
 
 
 def _maybe_emit_cluster(conn, *, lat, lon, acq_epoch, frp, data, now,
-                          this_pixel_id):
+                          this_pixel_id, seed=False):
     """Return wire string + set data["category"] when a cluster condition
-    fires; otherwise return None and leave data alone."""
-    return None
+    fires; otherwise return None and leave data alone.
+
+    ``seed`` (cold-start silent-seed): when True, a cluster that meets the
+    threshold is still STAMPED (``cluster_broadcast_at`` on every member) so it
+    can never re-fire on a later fetch, but NO wire is returned and ``data`` is
+    left untouched -- i.e. the day's pre-existing hotspots discovered on the
+    first fetch after boot are absorbed silently. Only clusters that form from
+    pixels arriving on a LATER (non-seed) fetch broadcast. Persistence +
+    attribution are unaffected (they run in the caller before this point).
+    """
     min_pixels = int(adapter_config.firms.cluster_min_pixels)
     radius_mi = float(adapter_config.firms.cluster_max_radius_mi)
     window_s = int(adapter_config.firms.cluster_time_window_minutes) * 60
@@ -625,6 +661,16 @@ def _maybe_emit_cluster(conn, *, lat, lon, acq_epoch, frp, data, now,
         f"WHERE id IN ({placeholders})",
         (float(now), *member_ids),
     )
+
+    # Cold-start silent-seed: the cluster is stamped (above) so it can never
+    # re-fire, but on the first fetch after boot we emit NOTHING and leave
+    # `data` untouched -- the day's pre-existing hotspots are absorbed silently.
+    if seed:
+        logger.info(
+            "firms cold-start silent-seed: absorbed %d-pixel cluster "
+            "@ %.3f,%.3f (stamped, no broadcast)",
+            len(members), centroid_lat, centroid_lon)
+        return None
 
     # Override the FIRMS source category so the dispatcher routes this
     # broadcast under unattributed_hotspot_cluster (priority, fire toggle).
@@ -709,8 +755,16 @@ def _pass_id(satellite, acq_epoch) -> str:
 
 
 def _handle_pass_boundary(conn, *, irwin_id, pass_id, lat, lon,
-                            acq_epoch, frp, data, now):
-    """Maintain fire_passes row, detect boundary, fire growth on drift."""
+                            acq_epoch, frp, data, now, seed=False):
+    """Maintain fire_passes row, detect boundary, fire growth on drift.
+
+    ``seed`` (cold-start silent-seed): all state -- the fire_passes upsert, the
+    ``fires`` cursor/centroid update, and the prior-pass perimeter close -- runs
+    unconditionally so the growth/spotting dedup baselines are correct. Only the
+    wire EMISSION (growth here, spotting in ``_check_spotting``) is withheld on
+    the first fetch. Growth has no latch, so a genuinely-new post-seed pass
+    boundary fires normally on a later fetch.
+    """
     # (1) Recompute the pass aggregate from fire_pixels.
     pass_rows = conn.execute(
         "SELECT lat, lon, frp, acq_time FROM fire_pixels "
@@ -818,7 +872,7 @@ def _handle_pass_boundary(conn, *, irwin_id, pass_id, lat, lon,
         conn, irwin_id=irwin_id, pixel_lat=lat, pixel_lon=lon,
         current_pass_id=pass_id,
         incident_name=fires_row["incident_name"] or "(unnamed fire)",
-        data=data, now=now,
+        data=data, now=now, seed=seed,
     )
     if spotting_wire is not None:
         return spotting_wire
@@ -842,6 +896,16 @@ def _handle_pass_boundary(conn, *, irwin_id, pass_id, lat, lon,
          "drift_mi_per_hour": drift_mi_per_hour},
         source="firms", now=float(now))
     if not gate.broadcast:
+        return None
+
+    # Cold-start silent-seed: the pass aggregate + fires cursor/centroid were
+    # already updated above (the growth baseline is intact), but on the first
+    # fetch after boot we emit NOTHING and leave `data` untouched. Growth has no
+    # latch, so a genuinely-new post-seed pass boundary broadcasts normally.
+    if seed:
+        logger.info(
+            "firms cold-start silent-seed: absorbed growth for %s "
+            "(state updated, no broadcast)", irwin_id)
         return None
 
     # Drift exceeded the threshold -- emit wildfire_growth via WFIGS renderer.
@@ -902,10 +966,20 @@ def _render_growth_wire(*, incident_name, direction, speed_mph,
     )
 
 
-def _maybe_emit_halt(conn, *, data, now):
+def _maybe_emit_halt(conn, *, data, now, seed=False):
     """Find one fire matching the halt criteria, latch + broadcast.
 
     Returns the wire string when a halt event fires; otherwise None.
+
+    ``seed`` (cold-start silent-seed): halt is triggered opportunistically by
+    ANY pixel arrival (it scans all fires for idleness, independent of the
+    current pixel), so a fire that was already idle at boot WOULD otherwise
+    halt-broadcast on the next fetch's unrelated new pixel. To absorb that
+    pre-existing idle state -- mirroring how the cluster seed stamps
+    ``cluster_broadcast_at`` -- the first fetch STILL latches
+    ``halt_broadcast_at`` but emits NOTHING. Re-eligibility is unchanged: once
+    real post-seed activity advances ``last_pass_at`` past the stamp, the fire
+    can halt again legitimately.
 
     Phase-3c: the DECISION (the halt-eligibility SELECT) is delegated to
     ``gating.firms.decide``; the wire is still rendered inline here for
@@ -925,6 +999,22 @@ def _maybe_emit_halt(conn, *, data, now):
 
     p = gate.data_patch
     irwin_id = p["irwin_id"]
+
+    # Cold-start silent-seed: stamp the latch (cutover-agnostic, eager) so this
+    # pre-existing idle fire is absorbed and never halt-broadcasts on a later
+    # fetch, but emit NOTHING and leave `data` untouched. It becomes halt-
+    # eligible again once real post-seed activity advances last_pass_at past
+    # this stamp -- exactly the cluster seed's "stamp-then-stay-silent" model.
+    if seed:
+        conn.execute(
+            "UPDATE fires SET halt_broadcast_at=? WHERE irwin_id=?",
+            (float(now), irwin_id),
+        )
+        logger.info(
+            "firms cold-start silent-seed: absorbed halt for %s "
+            "(latched, no broadcast)", irwin_id)
+        return None
+
     name = p["incident_name"]
     hours = p["hours"]
     wire = f"🔥 {name} no growth in {hours}h"
@@ -1028,8 +1118,18 @@ def _close_prev_perimeter(conn, irwin_id: str, prev_pass_id: str) -> None:
 
 
 def _check_spotting(conn, *, irwin_id, pixel_lat, pixel_lon,
-                      current_pass_id, incident_name, data, now):
-    """Return spotting wire if criteria met, else None."""
+                      current_pass_id, incident_name, data, now, seed=False):
+    """Return spotting wire if criteria met, else None.
+
+    ``seed`` (cold-start silent-seed): on the first fetch after boot, suppress
+    the wire WITHOUT stamping the ``last_spotting_broadcast_at`` cooldown latch.
+    Spotting is triggered by a specific NEW pixel lying outside the prior-pass
+    perimeter; a pre-existing pixel is a dedup no-op on later fetches, so it can
+    never re-trigger. Leaving the latch clear means a genuinely-new post-seed
+    spotting pixel still fires. Spotting writes no other state to preserve.
+    """
+    if seed:
+        return None
     threshold_mi = float(adapter_config.fires.spotting_distance_threshold_mi)
     # Phase-3c: the cooldown gate (and its latch) moved into gating.firms.decide;
     # the cooldown seconds are read there. The geometry below stays inline.
