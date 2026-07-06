@@ -243,7 +243,7 @@ function AdapterPanel({ title, subtitle, enabled, onEnabled, feedSource, onFeedS
    </div>
    {!hasKey && (
     <div className="text-xs text-accent bg-accent/10 p-2">
-     API key not configured — contact admin
+     API key required — set it in the field below
     </div>
    )}
    {nativeOnly && (
@@ -287,6 +287,17 @@ const META: Record<AdapterKey, AdapterMeta> = {
  satpass: { label: 'Satellite Passes', subtitle: 'Observer pass alerts via Central', health: 'satpass', hasCentral: true, nativeOnly: false, hasKey: true },
 }
 
+// Keyed adapters → their secret env var (matches secrets_store.SECRET_LABELS).
+// Adapters NOT listed here are keyless and never show the "API key required"
+// banner. The banner for a keyed adapter is driven by the LIVE secret status
+// from GET /api/secrets, not the static META.hasKey hint below.
+const ADAPTER_SECRET_ENV: Partial<Record<AdapterKey, string>> = {
+ firms: 'FIRMS_MAP_KEY',
+ roads511: 'ROADS511_API_KEY',
+ traffic: 'TOMTOM_API_KEY',
+ // wzdx is keyless (FHWA registry) — no banner
+}
+
 const FAMILIES: { key: string; label: string; icon: typeof Cloud; adapters: AdapterKey[] }[] = [
  { key: 'central', label: 'Central', icon: Server, adapters: [] },
  { key: 'weather', label: 'Weather', icon: Cloud, adapters: ['nws'] },
@@ -318,6 +329,11 @@ export default function Environment() {
 
  // include_in_llm_context per backend adapter name — fetched from /api/adapter-meta
  const [llmMeta, setLlmMeta] = useState<Record<string, boolean>>({})
+
+ // Live secret set/unset status per env var — fetched from /api/secrets (same
+ // source the ManagedSecret widget uses). Drives the truthful "API key required"
+ // banner so it only shows when a keyed adapter's secret is genuinely unset.
+ const [secretStatus, setSecretStatus] = useState<Record<string, boolean>>({})
 
  // WFIGS/fires adapter config state
  const [wfigsConfig, setWfigsConfig] = useState<WfigsConfig>({
@@ -587,6 +603,21 @@ export default function Environment() {
      const data: NotificationsConfig = await res.json()
      setNotifConfig(data)
      setNotifOriginal(JSON.stringify(data))
+    }
+   } catch { /* best-effort */ }
+  })()
+ }, [])
+
+ // Fetch live secret status once on mount (best-effort) for the key banner.
+ useEffect(() => {
+  ;(async () => {
+   try {
+    const res = await fetch('/api/secrets')
+    if (res.ok) {
+     const data = await res.json() as { env_var: string; is_set: boolean }[]
+     const map: Record<string, boolean> = {}
+     for (const s of data) map[s.env_var] = s.is_set
+     setSecretStatus(map)
     }
    } catch { /* best-effort */ }
   })()
@@ -916,6 +947,17 @@ const save = async () => {
   status?.feeds.find((f) => f.source === META[key].health)
  const eventsFor = (key: AdapterKey): EnvEvent[] =>
   events.filter((e) => e.source === META[key].health)
+
+ // Truthful key-banner logic: keyless adapters never show the banner; keyed
+ // adapters show it ONLY when their real secret (GET /api/secrets) is unset.
+ // While secret status is still loading (undefined), default to true so we
+ // never flash a false "API key required" banner for an already-set key.
+ const effectiveHasKey = (key: AdapterKey): boolean => {
+  const envVar = ADAPTER_SECRET_ENV[key]
+  if (!envVar) return true // keyless adapter — no key needed
+  const isSet = secretStatus[envVar]
+  return isSet === undefined ? true : isSet
+ }
 
  const fam = FAMILIES.find((f) => f.key === family)!
  const activeAdapter: AdapterKey | null =
@@ -1735,7 +1777,7 @@ const save = async () => {
       onFeedSource={(v) => setAdapterField(activeAdapter, { feed_source: v })}
       hasCentral={META[activeAdapter].hasCentral}
       nativeOnly={META[activeAdapter].nativeOnly}
-      hasKey={META[activeAdapter].hasKey}
+      hasKey={effectiveHasKey(activeAdapter)}
       health={healthFor(activeAdapter)}
       events={eventsFor(activeAdapter)}
       llmContext={PANEL_META_KEY[activeAdapter] !== undefined ? (llmMeta[PANEL_META_KEY[activeAdapter]!] ?? true) : undefined}
