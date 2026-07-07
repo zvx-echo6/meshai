@@ -50,6 +50,8 @@ class ConnectionConfig:
     meshcore_baud: int = 115200
     meshcore_ble_address: str = ""             # optional; for ble
     meshcore_auto_add_contacts: bool = True     # firmware auto-adds every node it hears an advert from (so AIDA can DM anyone)
+    meshcore_ack_wait_seconds: float = 6.0       # wait for delivery ACK before falling back to path discovery
+    meshcore_discovery_wait_seconds: float = 8.0  # path-discovery timeout on the no-ACK fallback (was hardcoded 25s)
 
     def __post_init__(self):
         if self.meshcore_conn_type not in {"tcp", "serial", "ble"}:

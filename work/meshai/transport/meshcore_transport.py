@@ -76,6 +76,9 @@ class MeshCoreTransport(MeshTransport):
         # or None). None = pass-through (no filtering). Injected at construction
         # time by the factory; can also be (re)set via set_context_config().
         self._mc_context = meshcore_context
+        # DM reply tuning (config knobs; getattr defaults keep old test configs valid).
+        self._ack_wait = float(getattr(config, "meshcore_ack_wait_seconds", 6.0))
+        self._discovery_wait = float(getattr(config, "meshcore_discovery_wait_seconds", 8.0))
         self._mc = None                          # meshcore.MeshCore instance
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread: Optional[threading.Thread] = None
@@ -185,8 +188,8 @@ class MeshCoreTransport(MeshTransport):
         # response, so a subsequent send_msg will use the direct route.
         try:
             path_event = self._run_coro(
-                self._mc.commands.send_path_discovery_sync(contact, timeout=25),
-                timeout=30,
+                self._mc.commands.send_path_discovery_sync(contact, timeout=self._discovery_wait),
+                timeout=self._discovery_wait + 3,
             )
             if path_event is not None and not path_event.is_error():
                 logger.info(
@@ -235,6 +238,90 @@ class MeshCoreTransport(MeshTransport):
                     logger.debug("MeshCore: advert-path fallback for %s failed: %s", dst, exc)
         except Exception as exc:
             logger.debug("MeshCore: _establish_direct_path step-2 error for %s: %s", dst, exc)
+
+    @staticmethod
+    def _extract_expected_ack(result):
+        """Pull the ``expected_ack`` value off a MSG_SENT event, or None.
+
+        The lib's reader puts the raw 4-byte ack code at
+        ``payload["expected_ack"]`` (see reader.py MSG_SENT branch). Returns it
+        as-is (bytes on the real lib; may be a hex str in tests) or None if the
+        event has no dict payload / no ack.
+        """
+        payload = getattr(result, "payload", None)
+        if isinstance(payload, dict):
+            return payload.get("expected_ack")
+        return None
+
+    def _wait_for_ack(self, expected_ack, timeout: float) -> bool:
+        """Block until the delivery ACK matching *expected_ack* arrives, or timeout.
+
+        Mirrors ``send_msg_with_retry``'s ACK wait (messaging.py): the firmware
+        emits ``EventType.ACK`` with a hex ``code`` attribute equal to the
+        MSG_SENT ``expected_ack`` rendered as ``.hex()`` (reader.py ACK branch).
+        We run the lib's dispatcher wait on the transport loop via ``_run_coro``.
+
+        Returns True only if a matching ACK is dispatched before *timeout*;
+        False when *expected_ack* is falsy (can't confirm) or on any
+        timeout/exception. Coexists with the standing ``_on_ack_event``
+        subscription — the dispatcher supports concurrent subscribers + waiters.
+        """
+        if not expected_ack:
+            return False
+        from meshcore import EventType  # noqa: PLC0415 (lazy import, matches module)
+        try:
+            code = (
+                expected_ack.hex()
+                if isinstance(expected_ack, (bytes, bytearray))
+                else str(expected_ack)
+            )
+        except Exception:
+            return False
+        try:
+            event = self._run_coro(
+                self._mc.dispatcher.wait_for_event(
+                    EventType.ACK,
+                    attribute_filters={"code": code},
+                    timeout=timeout,
+                ),
+                timeout=timeout + 2,
+            )
+            return event is not None
+        except Exception:
+            logger.debug(
+                "MeshCore: ACK wait failed for code %r", expected_ack, exc_info=True
+            )
+            return False
+
+    def _send_dm_once(self, contact: dict, text: str, destination: str):
+        """Send one DM frame (no discovery, no retry) and log its route.
+
+        Uses plain ``send_msg`` — NOT ``send_msg_with_retry``, which calls
+        ``reset_path`` and forces flood, defeating any direct route we hold.
+        Returns the MSG_SENT event, or None if the radio produced no result.
+        """
+        result = self._run_coro(
+            self._mc.commands.send_msg(contact, text),
+            timeout=15,
+        )
+        if result is None:
+            logger.warning("MeshCoreTransport: DM to %s — no send result", destination)
+            return None
+        # Log whether the radio sent DIRECT or FLOOD from the MSG_SENT type field.
+        try:
+            sent_type = (
+                result.payload.get("type")
+                if hasattr(result, "payload") and isinstance(result.payload, dict)
+                else None
+            )
+            logger.info(
+                "MeshCore: DM to %s sent (route=%s)",
+                contact.get("adv_name") or destination,
+                "flood" if sent_type == 1 else ("direct" if sent_type == 0 else "?"),
+            )
+        except Exception:
+            pass
+        return result
 
     # ------------------------------------------------------------------
     # Channel table enumeration
@@ -640,38 +727,40 @@ class MeshCoreTransport(MeshTransport):
                         destination,
                     )
                     return False
-                # Establish a real route so the reply goes DIRECT — flood DMs are
-                # silently rejected on this mesh.
+                label = contact.get("adv_name") or destination
+                # FAST PATH: send the reply DIRECTLY (no discovery) and confirm
+                # by the delivery ACK the firmware returns. This is the common
+                # case (~1-3s) — the firmware already holds a usable route after
+                # the inbound DM primed it. We do NOT pay the path-discovery cost
+                # up front (that 25s wait was the ~25s reply-latency bug).
+                result = self._send_dm_once(contact, text, destination)
+                if result is None:
+                    return False
+                exp_ack = self._extract_expected_ack(result)
+                if self._wait_for_ack(exp_ack, self._ack_wait):
+                    logger.info("MeshCore: DM to %s ACKed (direct)", label)
+                    return True
+                # No ACK -> route is stale/unknown. NOW run path discovery to
+                # learn a direct route, resend, and re-confirm by ACK.
+                logger.info(
+                    "MeshCore: no ACK from %s in %.1fs; running path discovery and retrying",
+                    label, self._ack_wait,
+                )
                 self._establish_direct_path(contact, destination)
                 # Re-resolve so we send with the freshly-learned out_path.
                 contact = self._resolve_contact(destination) or contact
-                # Plain send_msg (NOT send_msg_with_retry — that calls reset_path
-                # which forces flood, defeating the path we just established).
-                result = self._run_coro(
-                    self._mc.commands.send_msg(contact, text),
-                    timeout=15,
-                )
+                result = self._send_dm_once(contact, text, destination)
                 if result is None:
-                    logger.warning("MeshCoreTransport: DM to %s — no send result", destination)
                     return False
-                # Log whether the radio sent DIRECT or FLOOD from RESP_CODE_SENT type field.
-                try:
-                    sent_type = (
-                        result.payload.get("type")
-                        if hasattr(result, "payload") and isinstance(result.payload, dict)
-                        else None
-                    )
-                    logger.info(
-                        "MeshCore: DM to %s sent (route=%s)",
-                        contact.get("adv_name") or destination,
-                        "flood" if sent_type == 1 else ("direct" if sent_type == 0 else "?"),
-                    )
-                except Exception:
-                    pass
-                success = not result.is_error()
-                if not success:
-                    logger.warning("MeshCoreTransport: DM send returned error event")
-                return success
+                exp_ack = self._extract_expected_ack(result)
+                acked = self._wait_for_ack(exp_ack, self._ack_wait)
+                logger.info(
+                    "MeshCore: DM to %s %s after discovery",
+                    contact.get("adv_name") or destination,
+                    "ACKed" if acked else "no ACK (sent best-effort)",
+                )
+                # Best-effort success if the frame was at least accepted by the radio.
+                return acked or (not result.is_error())
             else:
                 # Channel broadcast.
                 # Channel-index semantics do NOT cross transports: the passed
