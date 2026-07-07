@@ -52,6 +52,28 @@ async def get_categories():
         return []
 
 
+@router.get("/families")
+async def get_families():
+    """List all routable families (toggles) for the Routing UI.
+
+    Returns the built-in (static VALID_TOGGLES) families PLUS any families
+    registered at runtime by generic/config-driven sources (Integration
+    Phase A). Each entry is `{key, label, dynamic}` where `dynamic` is True
+    for families that are NOT part of the static VALID_TOGGLES set — i.e.
+    generic sources whose category was registered as a first-class family.
+    The frontend merges these with its icon table so custom families render
+    as assignable toggle rows. Read-only.
+    """
+    try:
+        from ...notifications.categories import registered_families, VALID_TOGGLES
+    except ImportError:
+        return []
+    return [
+        {"key": key, "label": label, "dynamic": key not in VALID_TOGGLES}
+        for key, label in registered_families().items()
+    ]
+
+
 @router.get("/rules")
 async def get_rules(request: Request):
     """Get configured notification rules with stats."""
