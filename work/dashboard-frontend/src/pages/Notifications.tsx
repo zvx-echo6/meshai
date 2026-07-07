@@ -13,6 +13,29 @@ import { ManagedSecret } from '@/components/ManagedSecret'
 import { KeyValueInput } from '../components/KeyValueInput'
 
 // Types
+
+// Integration C2: a named, reusable delivery target. Mirrors the backend
+// config.py::NotificationDestination field set. Defined ONCE under
+// NotificationsConfig.destinations and referenced by name from toggles/rules
+// via their `destinations` list. Only the fields relevant to `type` are used.
+export interface NotificationDestination {
+  name: string
+  type: 'mesh_broadcast' | 'meshcore_broadcast' | 'mesh_dm' | 'meshcore_dm' | 'email' | 'webhook' | 'digest'
+  broadcast_channel?: number | null
+  meshcore_channel?: string | null
+  node_ids?: string[]
+  meshcore_dm_contacts?: string[]
+  smtp_host?: string
+  smtp_port?: number
+  smtp_user?: string
+  smtp_password?: string
+  smtp_tls?: boolean
+  from_address?: string
+  recipients?: string[]
+  webhook_url?: string
+  webhook_headers?: Record<string, string>
+}
+
 interface NotificationRuleConfig {
   name: string
   enabled: boolean
@@ -39,6 +62,9 @@ interface NotificationRuleConfig {
   webhook_headers: Record<string, string>
   cooldown_minutes: number
   region_scope: string[]
+  // Integration C2: reference reusable destinations by name. When non-empty the
+  // rule delivers via the resolved destination(s); empty => inline fields below.
+  destinations?: string[]
 }
 
 export interface NotificationToggle {
@@ -62,6 +88,9 @@ export interface NotificationToggle {
   recipients: string[]
   webhook_url: string
   webhook_headers: Record<string, string>
+  // Integration C2: reference reusable destinations by name. When non-empty this
+  // family delivers via the resolved destination(s); empty => inline fields.
+  destinations?: string[]
 }
 
 export interface DigestConfig {
@@ -78,6 +107,8 @@ export interface NotificationsConfig {
   digest?: DigestConfig
   rules: NotificationRuleConfig[]
   toggles?: Record<string, NotificationToggle>
+  // Integration C2: named, reusable delivery targets (name -> destination).
+  destinations?: Record<string, NotificationDestination>
 }
 
 interface AlertCategory {
@@ -733,6 +764,7 @@ function NotificationRuleCard({
   ruleIndex,
   categories,
   regions,
+  destinationNames,
   onChange,
   onDelete,
   onDuplicate,
@@ -742,6 +774,7 @@ function NotificationRuleCard({
   ruleIndex: number
   categories: AlertCategory[]
   regions: RegionInfo[]
+  destinationNames: string[]
   onChange: (r: NotificationRuleConfig) => void
   onDelete: () => void
   onDuplicate: () => void
@@ -1255,6 +1288,31 @@ function NotificationRuleCard({
               SEND VIA
             </div>
 
+            {/* Primary path: reference reusable destinations */}
+            <div className="space-y-2">
+              <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+                Destinations
+                <InfoButton info="Deliver this rule through one or more reusable destinations defined in the Delivery Destinations section. When any are selected, they are the delivery path; the inline delivery method below is a legacy fallback used only when none are selected." />
+              </label>
+              <DestinationPicker
+                available={destinationNames}
+                selected={rule.destinations || []}
+                onChange={(v) => onChange({ ...rule, destinations: v })}
+              />
+              {(rule.destinations?.length || 0) > 0 && (
+                <p className="text-xs text-slate-500">
+                  Delivers via {rule.destinations!.length} destination{rule.destinations!.length !== 1 ? 's' : ''}. The inline delivery method below is ignored while destinations are selected.
+                </p>
+              )}
+            </div>
+
+            {/* Legacy inline delivery — kept for back-compat */}
+            <details className="group" open={(rule.destinations?.length || 0) === 0}>
+              <summary className="flex items-center gap-2 cursor-pointer select-none text-xs text-slate-400 hover:text-slate-200 uppercase tracking-wide">
+                <ChevronRight size={14} className="group-open:rotate-90 transition-transform" />
+                Advanced / legacy inline delivery
+              </summary>
+              <div className="mt-3 space-y-4">
             <div className="space-y-1">
               <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
                 Delivery Method
@@ -1388,6 +1446,8 @@ function NotificationRuleCard({
                 <ChannelTestButton rule={rule} />
               </>
             )}
+              </div>
+            </details>
           </div>
 
           {/* Behavior section */}
@@ -1718,6 +1778,8 @@ function mergeMeshtasticAndOtherFields(
   base.recipients = mine.recipients
   base.webhook_url = mine.webhook_url
   base.webhook_headers = mine.webhook_headers
+  // Integration C2: destination references are edited on this page.
+  base.destinations = mine.destinations || []
 
   // NOTE: do NOT overlay gating fields (enabled, min_severity, freshness_seconds,
   // cooldown_seconds, regions) — those are managed by Data Feeds > Family Settings.
@@ -1883,6 +1945,325 @@ function OtherChannelsGrid({
 }
 
 
+// ---------------------------------------------------------------------------
+// Integration C2 — unified Delivery Destinations
+// ---------------------------------------------------------------------------
+
+// The destination types, in the order the picker/select presents them. Mirrors
+// NotificationDestination.type on the backend.
+const DESTINATION_TYPE_OPTIONS: { value: NotificationDestination['type']; label: string; Icon: typeof Activity }[] = [
+  { value: 'mesh_broadcast', label: 'Mesh broadcast', Icon: Radio },
+  { value: 'meshcore_broadcast', label: 'MeshCore broadcast', Icon: Radio },
+  { value: 'mesh_dm', label: 'Mesh DM', Icon: MessageSquare },
+  { value: 'meshcore_dm', label: 'MeshCore DM', Icon: MessageSquare },
+  { value: 'email', label: 'Email', Icon: Mail },
+  { value: 'webhook', label: 'Webhook', Icon: Globe },
+  { value: 'digest', label: 'Digest', Icon: Clock },
+]
+
+// A single editable destination card. Shows ONLY the fields relevant to the
+// chosen type. `dest` is fully controlled; edits flow up via onChange (field
+// patch), onRename (the id/key changes), and onDelete.
+function DestinationCard({
+  dest,
+  onChange,
+  onRename,
+  onDelete,
+}: {
+  dest: NotificationDestination
+  onChange: (patch: Partial<NotificationDestination>) => void
+  onRename: (name: string) => void
+  onDelete: () => void
+}) {
+  const meta = DESTINATION_TYPE_OPTIONS.find((o) => o.value === dest.type) ?? DESTINATION_TYPE_OPTIONS[0]
+  const Icon = meta.Icon
+  return (
+    <div className="border border-[#1e2a3a] p-3 space-y-3 bg-[#0a0e17]">
+      <div className="flex items-start gap-2">
+        <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <TextInput
+            label="Name"
+            value={dest.name}
+            onChange={onRename}
+            placeholder="e.g. ops-email, discord-hook"
+            helper="Unique id referenced by families & rules"
+          />
+          <div className="space-y-1">
+            <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+              Type
+            </label>
+            <select
+              value={dest.type}
+              onChange={(e) => onChange({ type: e.target.value as NotificationDestination['type'] })}
+              className="w-full px-3 py-2 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-200 focus:outline-none focus:border-accent"
+            >
+              {DESTINATION_TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onDelete}
+          className="mt-6 p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded flex-shrink-0"
+          title="Delete destination"
+        >
+          <Trash2 size={14} />
+        </button>
+      </div>
+
+      {/* Type-specific fields */}
+      <div className="space-y-3 pl-3 border-l border-[#1e2a3a]">
+        <div className="flex items-center gap-2 text-xs text-slate-500">
+          <Icon size={13} /> {meta.label} settings
+        </div>
+
+        {dest.type === 'mesh_broadcast' && (
+          <NumberInput
+            label="Broadcast channel"
+            value={dest.broadcast_channel ?? 0}
+            onChange={(v) => onChange({ broadcast_channel: v })}
+            min={0}
+            helper="Meshtastic channel index (0 = LongFast primary)"
+          />
+        )}
+
+        {dest.type === 'meshcore_broadcast' && (
+          <TextInput
+            label="MeshCore channel"
+            value={dest.meshcore_channel || ''}
+            onChange={(v) => onChange({ meshcore_channel: v })}
+            placeholder="e.g. aida"
+            helper="MeshCore channel NAME on the companion"
+          />
+        )}
+
+        {dest.type === 'mesh_dm' && (
+          <ListInput
+            label="DM node IDs"
+            value={dest.node_ids || []}
+            onChange={(v) => onChange({ node_ids: v })}
+            placeholder="!hex_id"
+            helper="Meshtastic DM recipients (hex node IDs)"
+          />
+        )}
+
+        {dest.type === 'meshcore_dm' && (
+          <ListInput
+            label="MeshCore DM contacts"
+            value={dest.meshcore_dm_contacts || []}
+            onChange={(v) => onChange({ meshcore_dm_contacts: v })}
+            placeholder="Contact name"
+            helper="MeshCore companion contact names"
+          />
+        )}
+
+        {dest.type === 'email' && (
+          <div className="space-y-3">
+            <ListInput
+              label="Recipients"
+              value={dest.recipients || []}
+              onChange={(v) => onChange({ recipients: v })}
+              placeholder="ops@example.com"
+              helper="Email addresses to receive alerts"
+            />
+            <div className="grid grid-cols-2 gap-3">
+              <TextInput label="SMTP host" value={dest.smtp_host || ''} onChange={(v) => onChange({ smtp_host: v })} placeholder="smtp.example.com" />
+              <NumberInput label="SMTP port" value={dest.smtp_port ?? 587} onChange={(v) => onChange({ smtp_port: v })} min={1} max={65535} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <TextInput label="Username" value={dest.smtp_user || ''} onChange={(v) => onChange({ smtp_user: v })} />
+              <TextInput label="Password" type="password" value={dest.smtp_password || ''} onChange={(v) => onChange({ smtp_password: v })} helper="SMTP password (App Password for Gmail)" />
+            </div>
+            <Toggle label="Use TLS" checked={dest.smtp_tls ?? true} onChange={(v) => onChange({ smtp_tls: v })} />
+            <TextInput label="From address" value={dest.from_address || ''} onChange={(v) => onChange({ from_address: v })} placeholder="alerts@example.com" />
+          </div>
+        )}
+
+        {dest.type === 'webhook' && (
+          <div className="space-y-3">
+            <TextInput
+              label="Webhook URL"
+              value={dest.webhook_url || ''}
+              onChange={(v) => onChange({ webhook_url: v })}
+              placeholder="https://discord.com/api/webhooks/..."
+              helper="POST alert as JSON"
+              info="Works with Discord webhooks, ntfy.sh, Slack, Home Assistant, Pushover, or any HTTP POST endpoint."
+            />
+            <KeyValueInput
+              label="Webhook Headers"
+              value={dest.webhook_headers || {}}
+              onChange={(v) => onChange({ webhook_headers: v })}
+              helper="Custom HTTP headers (e.g. Authorization)"
+              keyPlaceholder="Header"
+              valuePlaceholder="Value"
+            />
+          </div>
+        )}
+
+        {dest.type === 'digest' && (
+          <p className="text-xs text-slate-600 italic">
+            Delivers into the daily digest (schedule/included families configured above).
+            No per-destination fields.
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// The single place delivery targets are defined. Controlled: receives the
+// destinations record and emits an updated record. Cards are keyed by array
+// index (not the name) so editing the Name field never remounts the input.
+function DestinationsManager({
+  destinations,
+  onChange,
+}: {
+  destinations: Record<string, NotificationDestination>
+  onChange: (d: Record<string, NotificationDestination>) => void
+}) {
+  const entries = Object.entries(destinations)
+
+  const updateEntry = (i: number, patch: Partial<NotificationDestination>) => {
+    onChange(Object.fromEntries(entries.map(([k, v], j) => (j === i ? [k, { ...v, ...patch }] : [k, v]))))
+  }
+  const renameEntry = (i: number, newName: string) => {
+    onChange(Object.fromEntries(entries.map(([k, v], j) => (j === i ? [newName, { ...v, name: newName }] : [k, v]))))
+  }
+  const deleteEntry = (i: number) => {
+    onChange(Object.fromEntries(entries.filter((_, j) => j !== i)))
+  }
+  const addDestination = () => {
+    const existing = new Set(entries.map(([k]) => k))
+    let n = entries.length + 1
+    let name = `destination-${n}`
+    while (existing.has(name)) { n++; name = `destination-${n}` }
+    onChange({ ...destinations, [name]: { name, type: 'mesh_broadcast', broadcast_channel: 0 } })
+  }
+
+  return (
+    <div className="space-y-3">
+      {entries.length === 0 && (
+        <div className="text-xs text-slate-600 italic p-3 border border-dashed border-[#1e2a3a]">
+          No destinations defined yet. Add one to configure a delivery target (email, webhook,
+          mesh channel, digest) once, then reference it from any family or rule below.
+        </div>
+      )}
+      {entries.map(([key, dest], i) => (
+        <DestinationCard
+          key={i}
+          dest={{ ...dest, name: dest.name || key }}
+          onChange={(patch) => updateEntry(i, patch)}
+          onRename={(name) => renameEntry(i, name)}
+          onDelete={() => deleteEntry(i)}
+        />
+      ))}
+      <button
+        type="button"
+        onClick={addDestination}
+        className="w-full py-3 border border-dashed border-[#1e2a3a] text-slate-500 hover:text-slate-300 hover:border-accent flex items-center justify-center gap-2 transition-colors"
+      >
+        <Plus size={16} /> Add Destination
+      </button>
+    </div>
+  )
+}
+
+// A multi-select of destination names, rendered as toggle chips. Edits the
+// caller's `selected` string[] (a toggle.destinations or rule.destinations).
+function DestinationPicker({
+  available,
+  selected,
+  onChange,
+}: {
+  available: string[]
+  selected: string[]
+  onChange: (v: string[]) => void
+}) {
+  if (available.length === 0) {
+    return (
+      <p className="text-xs text-slate-600 italic">
+        No destinations defined yet — add one under <span className="text-slate-400">Delivery Destinations</span> above.
+      </p>
+    )
+  }
+  const toggle = (name: string) => {
+    if (selected.includes(name)) onChange(selected.filter((s) => s !== name))
+    else onChange([...selected, name])
+  }
+  return (
+    <div className="flex flex-wrap gap-2">
+      {available.map((name) => {
+        const on = selected.includes(name)
+        return (
+          <button
+            key={name}
+            type="button"
+            onClick={() => toggle(name)}
+            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-sm transition-colors ${
+              on ? 'bg-accent text-white' : 'bg-[#1e2a3a] text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            {on && <Check size={12} />}
+            {name}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// Per-family destination picker grid. The PRIMARY delivery surface: pick which
+// reusable destinations each family delivers through. The inline severity matrix
+// / SMTP / webhook editors live below under the Advanced/legacy disclosure.
+function FamilyDestinationsGrid({
+  toggles,
+  destinationNames,
+  onChange,
+}: {
+  toggles: Record<string, NotificationToggle>
+  destinationNames: string[]
+  onChange: (t: Record<string, NotificationToggle>) => void
+}) {
+  const families = useFamilies()
+  const upd = (fam: string, patch: Partial<NotificationToggle>) =>
+    onChange({ ...toggles, [fam]: { ...(toggles[fam] || {}), ...patch } as NotificationToggle })
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+        Per-family Destinations
+        <InfoButton info="Pick which reusable destinations each family delivers through. This is the primary delivery path — the inline Meshtastic/other-channel editors below are a legacy fallback used only when no destinations are selected." />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {families.map(({ key, label, Icon }) => {
+          const t = toggles[key] || ({} as NotificationToggle)
+          const selected = t.destinations || []
+          return (
+            <div key={key} className="border border-[#1e2a3a] p-3 space-y-3">
+              <div className="flex items-center gap-2 text-sm text-slate-200">
+                <Icon size={15} /> {label}
+              </div>
+              <DestinationPicker
+                available={destinationNames}
+                selected={selected}
+                onChange={(v) => upd(key, { destinations: v })}
+              />
+              {selected.length > 0 && (
+                <p className="text-xs text-slate-500">
+                  Delivers via {selected.length} destination{selected.length !== 1 ? 's' : ''}. The inline
+                  channel matrix &amp; fields below are the legacy fallback.
+                </p>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export default function Notifications() {
   const { setDirty } = useDirty()
   const families = useFamilies()
@@ -1960,7 +2341,8 @@ export default function Notifications() {
         enabled: config.enabled,   // global master switch lives on this page
         band_conditions_tz: config.band_conditions_tz,  // top-level, edited on this page
         digest: config.digest,     // daily digest schedule/include, edited on this page
-        rules: config.rules,       // rules are only edited on this page
+        rules: config.rules,       // rules are only edited on this page (incl. destination refs)
+        destinations: config.destinations || {},  // C2: the reusable-destinations registry, edited here
         toggles: { ...(fresh.toggles || {}) },
       }
       const myToggles = config.toggles || {}
@@ -2032,6 +2414,7 @@ export default function Notifications() {
     webhook_headers: {},
     cooldown_minutes: 10,
     region_scope: [],
+    destinations: [],
   })
 
   const addRule = () => {
@@ -2379,17 +2762,53 @@ export default function Notifications() {
           )
         })()}
 
-        {/* Meshtastic delivery grids — always visible regardless of master switch */}
+        {/* Delivery Destinations — define each target ONCE, reference everywhere */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
+              Delivery Destinations
+              <InfoButton info="Define each delivery target (mesh channel, email, webhook, digest) ONCE here, then reference it by name from any family or rule. This replaces re-typing the same SMTP/webhook config in multiple places." />
+            </label>
+            <span className="text-xs text-slate-500">
+              {Object.keys(config.destinations || {}).length} destination{Object.keys(config.destinations || {}).length !== 1 ? 's' : ''}
+            </span>
+          </div>
+          <DestinationsManager
+            destinations={config.destinations || {}}
+            onChange={(d) => setConfig({ ...config, destinations: d })}
+          />
+        </div>
+
+        {/* Per-family delivery — primary picker + legacy inline editors */}
         {config.toggles && (
           <>
-            <MeshtasticDeliveryGrid
+            <FamilyDestinationsGrid
               toggles={config.toggles}
+              destinationNames={Object.keys(config.destinations || {})}
               onChange={(t) => setConfig({ ...config, toggles: t })}
             />
-            <OtherChannelsGrid
-              toggles={config.toggles}
-              onChange={(t) => setConfig({ ...config, toggles: t })}
-            />
+
+            {/* Legacy inline delivery — kept for back-compat, no longer the primary surface */}
+            <details className="group border border-[#1e2a3a] rounded">
+              <summary className="flex items-center gap-2 cursor-pointer select-none px-3 py-2 text-xs text-slate-400 hover:text-slate-200 uppercase tracking-wide">
+                <ChevronRight size={14} className="group-open:rotate-90 transition-transform" />
+                Advanced / legacy inline delivery
+              </summary>
+              <div className="p-3 space-y-6 border-t border-[#1e2a3a]">
+                <p className="text-xs text-slate-600">
+                  Per-family inline channel matrix &amp; SMTP/webhook fields. Used only when a family has
+                  no destinations selected above. Prefer defining a destination and picking it.
+                </p>
+                <MeshtasticDeliveryGrid
+                  toggles={config.toggles}
+                  onChange={(t) => setConfig({ ...config, toggles: t })}
+                />
+                <OtherChannelsGrid
+                  toggles={config.toggles}
+                  onChange={(t) => setConfig({ ...config, toggles: t })}
+                />
+              </div>
+            </details>
           </>
         )}
 
@@ -2413,7 +2832,9 @@ export default function Notifications() {
                   rule={rule}
                   ruleIndex={i}
                   categories={categories}
-                  regions={regions}                  onChange={(r) => {
+                  regions={regions}
+                  destinationNames={Object.keys(config.destinations || {})}
+                  onChange={(r) => {
                     const newRules = [...(config.rules || [])]
                     newRules[i] = r
                     setConfig({ ...config, rules: newRules })
