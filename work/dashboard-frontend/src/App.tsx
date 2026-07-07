@@ -37,7 +37,9 @@ function App() {
           <Route path="/config" element={<Config />} />
           <Route path="/alerts" element={<ActivityLog />} />
           <Route path="/activity" element={<ActivityLog />} />
-          <Route path="/notifications" element={<Notifications />} />
+          <Route path="/meshtastic/routing" element={<Notifications />} />
+          {/* Legacy /notifications -> Meshtastic Routing */}
+          <Route path="/notifications" element={<Navigate to="/meshtastic/routing" replace />} />
           <Route path="/reference" element={<Reference />} />
           <Route path="/adapter-config" element={<AdapterConfig />} />
 

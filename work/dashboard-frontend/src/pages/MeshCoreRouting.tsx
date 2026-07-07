@@ -297,7 +297,7 @@ export default function MeshCoreRouting() {
             Data Feeds
           </Link>
           . Meshtastic delivery is on{' '}
-          <Link to="/notifications" className="text-accent hover:underline">
+          <Link to="/meshtastic/routing" className="text-accent hover:underline">
             Meshtastic Routing
           </Link>
           . This page edits only the MeshCore delivery for each family.

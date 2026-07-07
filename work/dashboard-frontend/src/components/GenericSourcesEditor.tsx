@@ -295,7 +295,7 @@ export default function GenericSourcesEditor() {
           coverage-gated pipeline. Use <span className="text-accent">Preview</span> to fetch a
           URL and read its structure before filling in the paths. Once saved, a custom source
           becomes a routable family —{' '}
-          <a href="/notifications" className="text-accent hover:underline">
+          <a href="/meshtastic/routing" className="text-accent hover:underline">
             enable its family in Notifications
           </a>{' '}
           to route it to a channel.
