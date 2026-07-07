@@ -15,7 +15,7 @@ from meshai.persistence.observer_locations import (
 # -- schema / migration -------------------------------------------------------
 
 def test_schema_version_is_25():
-    assert SCHEMA_VERSION == 25
+    assert SCHEMA_VERSION == 26
 
 
 def test_observer_locations_table_exists():
@@ -30,7 +30,7 @@ def test_schema_meta_at_current():
     conn = get_db()
     row = conn.execute(
         "SELECT value FROM schema_meta WHERE key='version'").fetchone()
-    assert int(row["value"]) == 25
+    assert int(row["value"]) == 26
 
 
 # -- accessors ----------------------------------------------------------------

@@ -14,6 +14,7 @@ Read-only library; no writes to any table.
 """
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import time
@@ -273,6 +274,64 @@ class EnvReporter:
             when = _fmt_epoch(r["occurred_at"]) if r["occurred_at"] else "?"
             ts = " TSUNAMI" if r["tsunami_warning"] else ""
             lines.append(f"  - {mag} {place}, {depth} depth, {when}{ts}")
+        return "\n".join(lines)[:_block_cap()]
+
+    def build_generic_detail(self, *, hours: int = 24,
+                               limit: int = 20,
+                               now: Optional[int] = None) -> str:
+        """LLM block for config-driven generic sources (env/generic_http.py).
+
+        Groups active generic_events by source, showing recent items (title +
+        a couple of key mapped data fields) so a mesh user can ask the LLM
+        about ANY configured feed. Honors the ``generic_http`` adapter's
+        include_in_llm_context gate.
+        """
+        if not self._adapter_included("generic_http"):
+            return ""
+        now = now if now is not None else int(time.time())
+        try: conn = self._conn_factory()
+        except Exception: return ""
+
+        try:
+            rows = conn.execute(
+                "SELECT source, event_id, category, title, lat, lon, severity, "
+                "data_json, last_seen FROM generic_events "
+                "WHERE last_seen >= ? ORDER BY source, last_seen DESC",
+                (now - hours * 3600,),
+            ).fetchall()
+        except Exception:
+            return ""
+        if not rows:
+            return ""
+
+        # Bucket by source, capping items per source so no single feed hogs
+        # the block budget.
+        by_source: dict = {}
+        for r in rows:
+            by_source.setdefault(r["source"], []).append(r)
+
+        lines = [f"CONFIGURED DATA SOURCES (last {hours}h):"]
+        for src, items in by_source.items():
+            cat = items[0]["category"] or "generic"
+            lines.append(f"{src} ({cat}): {len(items)} item(s)")
+            for r in items[:limit]:
+                title = r["title"] or r["event_id"]
+                extras = []
+                try:
+                    data = json.loads(r["data_json"]) if r["data_json"] else {}
+                except Exception:
+                    data = {}
+                for k, v in data.items():
+                    if k.startswith("_") or k in ("title", "latitude",
+                                                  "longitude", "geometry"):
+                        continue
+                    if v is None:
+                        continue
+                    extras.append(f"{k}: {v}")
+                    if len(extras) >= 3:
+                        break
+                tail = (" — " + ", ".join(extras)) if extras else ""
+                lines.append(f"  - {title}{tail}")
         return "\n".join(lines)[:_block_cap()]
 
     def build_traffic_detail(self, *, state: Optional[str] = "ID",
@@ -537,6 +596,7 @@ class EnvReporter:
             self.build_satpass_detail(now=now),
             self.build_avalanche_detail(now=now),
             self.build_ducting_detail(now=now),
+            self.build_generic_detail(now=now),
         ]
         return "\n\n".join(p for p in parts if p)
 

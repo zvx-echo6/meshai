@@ -57,6 +57,8 @@ SECTION_TO_FILE: dict[str, str] = {
     "dashboard": "dashboard.yaml",
     "danger_zones": "danger_zones.yaml",
     "coverage": "config.yaml",
+    # Top-level list section (like mesh_sources): the whole file IS the list.
+    "generic_sources": "generic_sources.yaml",
 }
 
 # Fields that should be written to local.yaml instead of domain files

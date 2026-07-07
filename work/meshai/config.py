@@ -847,6 +847,13 @@ class Config:
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
     danger_zones: DangerZonesConfig = field(default_factory=DangerZonesConfig)
     coverage: Coverage = field(default_factory=Coverage)
+    # Config-driven REST/GeoJSON sources for the universal GenericHttpAdapter.
+    # Each entry is a PLAIN DICT (not a nested dataclass — the adapter parses
+    # and validates it) so the loader passes it through verbatim in both
+    # directions. Keys: name, enabled, url, items_path, id_path, lat_path,
+    # lon_path, geometry_path, title_path, time_path, category, poll_seconds,
+    # severity, field_mappings:[{source_path,dest_key}], summary_template, emoji.
+    generic_sources: list = field(default_factory=list)
 
     _config_path: Optional[Path] = field(default=None, repr=False)
 
