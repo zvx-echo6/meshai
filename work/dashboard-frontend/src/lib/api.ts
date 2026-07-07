@@ -302,6 +302,74 @@ export async function updateConfig(
   return response.json()
 }
 
+// ---- Generic (no-code) data sources ------------------------------------
+
+export interface FieldMapping {
+  source_path: string
+  dest_key: string
+}
+
+export interface GenericSource {
+  name: string
+  enabled: boolean
+  url: string
+  items_path: string
+  id_path: string
+  lat_path?: string
+  lon_path?: string
+  geometry_path?: string
+  title_path?: string
+  time_path?: string
+  category: string
+  poll_seconds: number
+  severity: string
+  field_mappings: FieldMapping[]
+  summary_template?: string
+  emoji?: string
+}
+
+export interface GenericSourcePreview {
+  ok: boolean
+  status?: number
+  error?: string
+  sample?: string
+  item_count?: number | null
+  first_item?: string
+  items_path_note?: string
+}
+
+export async function fetchGenericSources(): Promise<GenericSource[]> {
+  return fetchJson<GenericSource[]>('/api/config/generic_sources')
+}
+
+export async function saveGenericSources(
+  sources: GenericSource[]
+): Promise<{ saved: boolean; restart_required: boolean; changed_keys?: string[] }> {
+  const response = await fetch('/api/config/generic_sources', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(sources),
+  })
+  const result = await response.json()
+  if (!response.ok) {
+    throw new Error((result as { detail?: string }).detail || `Save failed (${response.status})`)
+  }
+  return result
+}
+
+export async function previewGenericSource(
+  url: string,
+  items_path?: string
+): Promise<GenericSourcePreview> {
+  const response = await fetch('/api/generic-sources/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url, items_path }),
+  })
+  // The endpoint never raises; it returns {ok:false,error} on failure too.
+  return response.json()
+}
+
 export async function fetchAlerts(): Promise<Alert[]> {
   return fetchJson<Alert[]>('/api/alerts/active')
 }

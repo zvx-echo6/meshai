@@ -52,6 +52,7 @@ def create_app() -> FastAPI:
     # Import and include API routers
     from .api.system_routes import router as system_router
     from .api.config_routes import router as config_router
+    from .api.generic_sources_routes import router as generic_sources_router
     from .api.mesh_routes import router as mesh_router
     from .api.mesh_send_routes import router as mesh_send_router
     from .api.env_routes import router as env_router
@@ -65,6 +66,7 @@ def create_app() -> FastAPI:
     app.include_router(adapter_config_router, prefix="/api")
     app.include_router(curation_router, prefix="/api")
     app.include_router(config_router, prefix="/api")
+    app.include_router(generic_sources_router, prefix="/api")
     app.include_router(mesh_router, prefix="/api")
     app.include_router(mesh_send_router, prefix="/api")
     app.include_router(env_router, prefix="/api")

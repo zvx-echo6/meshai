@@ -34,6 +34,7 @@ RESTART_REQUIRED_SECTIONS = {
     "dashboard",
     "environmental",
     "coverage",
+    "generic_sources",
 }
 
 # Valid config section names
@@ -58,6 +59,7 @@ VALID_SECTIONS = {
     "dashboard",
     "danger_zones",
     "coverage",
+    "generic_sources",
 }
 
 
