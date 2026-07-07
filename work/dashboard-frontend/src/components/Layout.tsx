@@ -60,6 +60,7 @@ const navGroups: NavGroup[] = [
     items: [
       { path: '/meshtastic/connection', label: 'Connection', icon: Wifi },
       { path: '/notifications', label: 'Routing', icon: BellRing },
+      { path: '/region-routing', label: 'Region Routing', icon: Map },
       { path: '/meshtastic/scheduled', label: 'Scheduled Broadcasts', icon: Calendar },
       { path: '/meshtastic/nodes', label: 'Nodes & Health', icon: Activity },
       { path: '/meshtastic/danger-zones', label: 'Danger Zones', icon: AlertTriangle },
