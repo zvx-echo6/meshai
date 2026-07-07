@@ -261,22 +261,35 @@ class Dispatcher:
             )
             return
         for rule in rules:
-            try:
-                channel = self._channel_factory(rule, self._connector)
-                payload = make_payload_from_event(event)
-                success = await channel.deliver(payload, rule)
-                if success:
-                    self._logger.info(
-                        f"Dispatched event {event.id} via {rule.delivery_type}"
+            # v0.16 (Integration C1): a rule that references reusable
+            # destinations fans out to each resolved destination; a rule with
+            # EMPTY `destinations` delivers via its own inline delivery_type +
+            # fields exactly as before (drule IS rule -> byte-identical).
+            if getattr(rule, "destinations", None):
+                # Opted in: fan out to resolved destinations only (unknown names
+                # are skipped; no silent fallback to the rule's inline fields).
+                dests = self._resolve_destinations(rule.destinations)
+                delivery = [self._destination_to_rule(d, event) for d in dests
+                            if getattr(d, "type", "") != "digest"]
+            else:
+                delivery = [rule]
+            for drule in delivery:
+                try:
+                    channel = self._channel_factory(drule, self._connector)
+                    payload = make_payload_from_event(event)
+                    success = await channel.deliver(payload, drule)
+                    if success:
+                        self._logger.info(
+                            f"Dispatched event {event.id} via {drule.delivery_type}"
+                        )
+                    else:
+                        self._logger.warning(
+                            f"Channel delivery returned False for rule {rule.name}"
+                        )
+                except Exception:
+                    self._logger.exception(
+                        f"Channel delivery failed for rule {rule.name}"
                     )
-                else:
-                    self._logger.warning(
-                        f"Channel delivery returned False for rule {rule.name}"
-                    )
-            except Exception:
-                self._logger.exception(
-                    f"Channel delivery failed for rule {rule.name}"
-                )
 
     async def _dispatch_toggles(self, event: Event) -> None:
         """Route an event through its family master-toggle (parallel to rules).
@@ -373,9 +386,30 @@ class Dispatcher:
         event_rank = self.SEVERITY_RANK.get(event.severity, 0)
         if event_rank < self.SEVERITY_RANK.get(getattr(tog, "min_severity", "routine"), 0):
             return
-        sev_channels = getattr(tog, "severity_channels", None) or {}
-        ch_types = [c for c in sev_channels.get(event.severity, []) if c != "digest"]
-        if not ch_types:
+        # v0.16 (Integration C1) — destinations vs inline routing.
+        # If the toggle references reusable NotificationDestinations, deliver
+        # via those resolved destinations (each carries its own delivery type),
+        # gated ONLY by the region scope + min_severity floor already applied
+        # above. The severity_channels matrix is intentionally BYPASSED on the
+        # destination path: a shared destination is the single source of truth
+        # for its delivery type + fields. When `destinations` is EMPTY (all
+        # pre-C1 config) the existing severity_channels -> inline-field path
+        # runs completely unchanged (zero regression).
+        # Opt-in is decided by the presence of a reference list, NOT by whether
+        # it resolves: a toggle that references destinations but whose names are
+        # unknown delivers NOTHING (it does not silently fall back to the inline
+        # fields, which would broadcast stale/duplicate config unexpectedly).
+        if getattr(tog, "destinations", None):
+            dests = self._resolve_destinations(tog.destinations)
+            # digest-typed destinations belong to the digest scheduler, not the
+            # live broadcast path (mirrors the inline "digest" exclusion below).
+            delivery_plan = [("dest", d) for d in dests
+                             if getattr(d, "type", "") != "digest"]
+        else:
+            sev_channels = getattr(tog, "severity_channels", None) or {}
+            ch_types = [c for c in sev_channels.get(event.severity, []) if c != "digest"]
+            delivery_plan = [("toggle", ct) for ct in ch_types]
+        if not delivery_plan:
             return
 
         # ---------- Section 3 — per-toggle cooldown (check only) ----------
@@ -454,11 +488,16 @@ class Dispatcher:
                 pass
 
         delivered_any = False
-        for ch_type in ch_types:
+        for _kind, _item in delivery_plan:
             rule = None
             payload = None
             try:
-                rule = self._toggle_to_rule(tog, ch_type, event)
+                if _kind == "dest":
+                    ch_type = getattr(_item, "type", "")
+                    rule = self._destination_to_rule(_item, event)
+                else:
+                    ch_type = _item
+                    rule = self._toggle_to_rule(tog, ch_type, event)
                 channel = self._channel_factory(rule, self._connector)
                 if friendly is not None and ch_type in (
                     "mesh_broadcast", "mesh_dm", "meshcore_broadcast", "meshcore_dm"
@@ -732,6 +771,53 @@ class Dispatcher:
                 self._logger.exception(
                     "post-broadcast: handler commit-callback raised"
                 )
+
+    def _resolve_destinations(self, names) -> list:
+        """Resolve destination NAMES -> NotificationDestination objects via
+        config.notifications.destinations (Integration C1).
+
+        Returns [] for an empty/None input so callers fall back to the inline
+        delivery path unchanged. Unknown names are skipped with a warning (never
+        raised) so a dangling reference degrades gracefully rather than dropping
+        the whole broadcast.
+        """
+        if not names:
+            return []
+        registry = getattr(self._config.notifications, "destinations", None)
+        if not isinstance(registry, dict) or not registry:
+            self._logger.warning(
+                "dispatcher: destinations referenced (%s) but none configured", names)
+            return []
+        out = []
+        for nm in names:
+            dest = registry.get(nm)
+            if dest is None:
+                self._logger.warning(
+                    "dispatcher: unknown destination %r referenced; skipping", nm)
+                continue
+            out.append(dest)
+        return out
+
+    def _destination_to_rule(self, dest, event: Event):
+        """Synthesize a NotificationRuleConfig from a shared destination's
+        fields (mirrors _toggle_to_rule) so it maps to create_channel identically
+        to an inline rule."""
+        from meshai.config import NotificationRuleConfig
+        return NotificationRuleConfig(
+            name=f"dest:{getattr(dest, 'name', '')}",
+            enabled=True, trigger_type="condition",
+            delivery_type=getattr(dest, "type", ""),
+            broadcast_channel=(getattr(dest, "broadcast_channel", None) or 0),
+            meshcore_channel=getattr(dest, "meshcore_channel", None),
+            node_ids=list(getattr(dest, "node_ids", []) or []),
+            meshcore_dm_contacts=list(getattr(dest, "meshcore_dm_contacts", []) or []),
+            smtp_host=getattr(dest, "smtp_host", ""), smtp_port=getattr(dest, "smtp_port", 587),
+            smtp_user=getattr(dest, "smtp_user", ""), smtp_password=getattr(dest, "smtp_password", ""),
+            smtp_tls=getattr(dest, "smtp_tls", True), from_address=getattr(dest, "from_address", ""),
+            recipients=list(getattr(dest, "recipients", []) or []),
+            webhook_url=getattr(dest, "webhook_url", ""),
+            webhook_headers=dict(getattr(dest, "webhook_headers", {}) or {}),
+        )
 
     def _toggle_to_rule(self, tog, ch_type: str, event: Event):
         from meshai.config import NotificationRuleConfig

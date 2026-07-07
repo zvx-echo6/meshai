@@ -592,6 +592,12 @@ class NotificationRuleConfig:
     webhook_url: str = ""
     webhook_headers: dict = field(default_factory=dict)
 
+    # Integration C1: names of shared NotificationDestinations. When NON-EMPTY,
+    # the dispatcher delivers via the resolved destinations instead of the inline
+    # fields above. When EMPTY (default / all pre-C1 rules) the inline path runs
+    # unchanged. Inline fields are retained as the fallback and never deleted.
+    destinations: list = field(default_factory=list)
+
     # Behavior
     cooldown_minutes: int = 10
 
@@ -630,6 +636,9 @@ class NotificationToggle:
     recipients: list = field(default_factory=list)
     webhook_url: str = ""
     webhook_headers: dict = field(default_factory=dict)
+    # Integration C1: names of shared NotificationDestinations. NON-EMPTY =>
+    # deliver via resolved destinations; EMPTY => existing inline path unchanged.
+    destinations: list = field(default_factory=list)
 
 
 TOGGLE_FAMILIES = [
@@ -699,6 +708,45 @@ class DigestConfig:
 
 
 @dataclass
+class NotificationDestination:
+    """A named, reusable delivery target (Integration C1).
+
+    Delivery config used to be DUPLICATED inline on every ``NotificationToggle``
+    and ``NotificationRuleConfig`` (an operator configured the same SMTP/webhook
+    twice). A ``NotificationDestination`` lets a delivery target be defined ONCE
+    under ``NotificationsConfig.destinations`` and referenced by name from
+    toggles/rules via their ``destinations`` list. The field set mirrors the
+    inline delivery fields exactly, so a destination maps to ``create_channel``
+    identically to an inline rule (only the fields relevant to ``type`` are used).
+    """
+
+    name: str = ""                 # id, referenced by toggles/rules
+    type: str = "mesh_broadcast"   # mesh_broadcast|meshcore_broadcast|mesh_dm|meshcore_dm|email|webhook|digest
+
+    # Mesh broadcast fields
+    broadcast_channel: Optional[int] = None
+    # Per-family MeshCore channel NAME on the companion; None = not on MeshCore.
+    meshcore_channel: Optional[str] = None
+
+    # DM fields
+    node_ids: list = field(default_factory=list)
+    meshcore_dm_contacts: list = field(default_factory=list)
+
+    # Email fields
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_tls: bool = True
+    from_address: str = ""
+    recipients: list = field(default_factory=list)
+
+    # Webhook fields
+    webhook_url: str = ""
+    webhook_headers: dict = field(default_factory=dict)
+
+
+@dataclass
 class NotificationsConfig:
     """Notification system settings."""
 
@@ -720,6 +768,108 @@ class NotificationsConfig:
     toggles: dict = field(default_factory=_default_toggles)  # family -> NotificationToggle
     digest: DigestConfig = field(default_factory=DigestConfig)
     rules: list = field(default_factory=list)  # List of NotificationRuleConfig
+    # Integration C1: named, reusable delivery targets (name -> NotificationDestination).
+    # Toggles/rules reference these by name via their own `destinations` list;
+    # empty reference list => the inline delivery fields are used (unchanged).
+    destinations: dict = field(default_factory=dict)
+
+
+# Fields copied verbatim from an inline (toggle/rule) delivery config onto a
+# NotificationDestination of a given type. Used only by synthesize_destinations.
+_DEST_TYPE_FIELDS = {
+    "mesh_broadcast": ("broadcast_channel",),
+    "meshcore_broadcast": ("meshcore_channel",),
+    "mesh_dm": ("node_ids",),
+    "meshcore_dm": ("meshcore_dm_contacts",),
+    "email": ("smtp_host", "smtp_port", "smtp_user", "smtp_password",
+              "smtp_tls", "from_address", "recipients"),
+    "webhook": ("webhook_url", "webhook_headers"),
+}
+
+
+def synthesize_destinations(config) -> None:
+    """Populate ``config.notifications.destinations`` from the inline delivery
+    fields on toggles/rules, and set each entry's ``destinations`` reference
+    list -- a DISPLAY/opt-in convenience for the C2 UI ("convert to
+    destinations").
+
+    IMPORTANT — this is NOT wired into the dispatcher and MUST NOT be
+    auto-run as part of load/save. It is intentionally decoupled because it
+    is NOT guaranteed byte-identical for toggles: a toggle's per-severity
+    ``severity_channels`` routing (different channel TYPES at different
+    severities) collapses into a flat destination set, and the dispatcher's
+    destination path fires all referenced destinations subject only to the
+    ``min_severity`` floor (see dispatcher._dispatch_toggles). Only invoke it
+    from the UI on an explicit operator action, and only where that flattening
+    is acceptable. Default delivery stays on the inline fallback path.
+
+    Idempotent: entries that already reference destinations are left untouched;
+    identical inline delivery configs are de-duplicated to a shared destination.
+    """
+    notif = getattr(config, "notifications", None)
+    if notif is None:
+        return
+    registry = getattr(notif, "destinations", None)
+    if not isinstance(registry, dict):
+        registry = {}
+        notif.destinations = registry
+
+    # signature -> destination name, so identical configs share one destination.
+    sig_to_name: dict = {}
+    for nm, dest in registry.items():
+        sig_to_name.setdefault(_dest_signature(dest), nm)
+
+    def _intern(dtype: str, source) -> str:
+        """Create-or-find a destination of dtype from source's inline fields."""
+        dest = NotificationDestination(type=dtype)
+        for f in _DEST_TYPE_FIELDS.get(dtype, ()):  # copy only relevant fields
+            setattr(dest, f, getattr(source, f, getattr(dest, f)))
+        sig = _dest_signature(dest)
+        if sig in sig_to_name:
+            return sig_to_name[sig]
+        name = f"{dtype}_{len([n for n in registry if registry[n].type == dtype]) + 1}"
+        while name in registry:
+            name += "_x"
+        dest.name = name
+        registry[name] = dest
+        sig_to_name[sig] = name
+        return name
+
+    # Toggles: union of channel types across all severity rows (minus digest).
+    for tog in (getattr(notif, "toggles", None) or {}).values():
+        if getattr(tog, "destinations", None):
+            continue
+        types = []
+        for row in (getattr(tog, "severity_channels", None) or {}).values():
+            for t in row:
+                if t != "digest" and t not in types:
+                    types.append(t)
+        refs = [_intern(t, tog) for t in types if t in _DEST_TYPE_FIELDS]
+        if refs:
+            tog.destinations = refs
+
+    # Rules: single delivery type.
+    for rule in (getattr(notif, "rules", None) or []):
+        if getattr(rule, "destinations", None):
+            continue
+        dtype = getattr(rule, "delivery_type", "")
+        if dtype in _DEST_TYPE_FIELDS:
+            rule.destinations = [_intern(dtype, rule)]
+
+
+def _dest_signature(dest) -> tuple:
+    """Hashable identity of a destination's delivery-relevant fields."""
+    dtype = getattr(dest, "type", "")
+    parts = [dtype]
+    for f in _DEST_TYPE_FIELDS.get(dtype, ()):
+        v = getattr(dest, f, None)
+        if isinstance(v, list):
+            v = tuple(v)
+        elif isinstance(v, dict):
+            v = tuple(sorted(v.items()))
+        parts.append((f, v))
+    return tuple(parts)
+
 
 @dataclass
 class DashboardConfig:
@@ -992,6 +1142,14 @@ def _dict_to_dataclass(cls, data: dict):
                 notifications.toggles = {
                     name: _dict_to_dataclass(NotificationToggle, t) if isinstance(t, dict) else t
                     for name, t in value["toggles"].items()
+                }
+            # Integration C1: destinations is a dict of name -> NotificationDestination.
+            # field_type is a bare `dict`, so the generic nested-dataclass handler
+            # never coerces it -- do it explicitly here (mirrors toggles above).
+            if "destinations" in value and isinstance(value["destinations"], dict):
+                notifications.destinations = {
+                    name: _dict_to_dataclass(NotificationDestination, d) if isinstance(d, dict) else d
+                    for name, d in value["destinations"].items()
                 }
             if "channels" in value and isinstance(value["channels"], list) and value["channels"]:
                 _migrate_legacy_channels(notifications, value)
