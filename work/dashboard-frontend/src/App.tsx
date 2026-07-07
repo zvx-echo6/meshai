@@ -22,7 +22,6 @@ import ScheduledBroadcasts from './pages/ScheduledBroadcasts'
 import MeshtasticDangerZones from './pages/MeshtasticDangerZones'
 import MeshCoreDangerZones from './pages/MeshCoreDangerZones'
 import Coverage from './pages/Coverage'
-import RegionRoutingMatrix from './pages/RegionRoutingMatrix'
 import { ToastProvider } from './components/ToastProvider'
 import { DirtyProvider } from './context/DirtyContext'
 
@@ -59,9 +58,6 @@ function App() {
           <Route path="/meshtastic/scheduled" element={<ScheduledBroadcasts family="meshtastic" />} />
           <Route path="/meshtastic/nodes" element={<MeshtasticNodes />} />
           <Route path="/meshtastic/danger-zones" element={<MeshtasticDangerZones />} />
-
-          {/* Region routing matrix */}
-          <Route path="/region-routing" element={<RegionRoutingMatrix />} />
 
           {/* MeshCore routes */}
           <Route path="/meshcore/connection" element={<MeshCoreConnection />} />

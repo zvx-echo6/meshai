@@ -5,11 +5,14 @@ import { Save, RotateCcw, RefreshCw, Check, MessageSquare, ExternalLink } from '
 import {
   SeverityChannelMatrix,
   ListInput,
+  Toggle,
   InfoButton,
   TOGGLE_FAMILY_META,
   MC_CHANNELS,
   type NotificationToggle,
   type NotificationsConfig,
+  type RegionCell,
+  type RegionRoutes,
 } from './Notifications'
 
 // Merge only the MeshCore-owned fields of `mine` into `fresh`, preserving every
@@ -40,23 +43,75 @@ function mergeMeshcoreFields(
   return base
 }
 
+// Merge region_routes, overlaying only the MC (.mc) field from mine and
+// preserving the MT (.mt) field from fresh. Drops cells where both are null/empty.
+function mergeRegionRoutesForMc(
+  fresh: RegionRoutes | undefined,
+  mine: RegionRoutes | undefined,
+): RegionRoutes {
+  const enabled = mine?.enabled ?? fresh?.enabled ?? false
+  const freshCells = fresh?.cells || {}
+  const mineCells = mine?.cells || {}
+
+  const allFamilies = new Set([...Object.keys(freshCells), ...Object.keys(mineCells)])
+  const newCells: Record<string, Record<string, RegionCell>> = {}
+
+  for (const fam of allFamilies) {
+    const freshFam = freshCells[fam] || {}
+    const mineFam = mineCells[fam] || {}
+    const allRegions = new Set([...Object.keys(freshFam), ...Object.keys(mineFam)])
+    const newFam: Record<string, RegionCell> = {}
+
+    for (const region of allRegions) {
+      const freshCell = freshFam[region]
+      const mineCell = mineFam[region]
+      const rawMc = mineCell !== undefined ? (mineCell.mc || null) : (freshCell?.mc ?? null)
+      const merged: RegionCell = {
+        mt: freshCell?.mt ?? null,
+        mc: rawMc,
+        min_severity: mineCell?.min_severity ?? freshCell?.min_severity ?? 'routine',
+        enabled: mineCell?.enabled ?? freshCell?.enabled ?? true,
+      }
+      const mcVal = merged.mc
+      if (merged.mt !== null || (mcVal !== null && mcVal.trim() !== '')) {
+        newFam[region] = merged
+      }
+    }
+
+    if (Object.keys(newFam).length > 0) {
+      newCells[fam] = newFam
+    }
+  }
+
+  return { enabled, cells: newCells }
+}
+
 export default function MeshCoreRouting() {
   const { setDirty } = useDirty()
   const [config, setConfig] = useState<NotificationsConfig | null>(null)
   const [originalConfig, setOriginalConfig] = useState<NotificationsConfig | null>(null)
+  const [regionNames, setRegionNames] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [hasChanges, setHasChanges] = useState(false)
 
+  // Local map: family key -> explicitly toggled on/off for region expand.
+  const [regionExpandedMap, setRegionExpandedMap] = useState<Record<string, boolean | undefined>>({})
+
   const fetchConfig = useCallback(async () => {
     try {
-      const res = await fetch('/api/config/notifications')
-      if (!res.ok) throw new Error('Failed to fetch notifications config')
-      const data: NotificationsConfig = await res.json()
+      const [configRes, regionsRes] = await Promise.all([
+        fetch('/api/config/notifications'),
+        fetch('/api/notifications/regions'),
+      ])
+      if (!configRes.ok) throw new Error('Failed to fetch notifications config')
+      const data: NotificationsConfig = await configRes.json()
+      const regionsData: string[] = regionsRes.ok ? await regionsRes.json() : []
       setConfig(data)
       setOriginalConfig(JSON.parse(JSON.stringify(data)))
+      setRegionNames(Array.isArray(regionsData) ? regionsData : [])
       setHasChanges(false)
       setError(null)
     } catch (err) {
@@ -94,6 +149,38 @@ export default function MeshCoreRouting() {
     })
   }
 
+  const setMcForRegion = (family: string, region: string, mc: string | null) => {
+    if (!config) return
+    const existing: RegionCell = config.region_routes?.cells?.[family]?.[region] ?? {
+      mt: null, mc: null, min_severity: 'routine', enabled: true,
+    }
+    const newCells = {
+      ...(config.region_routes?.cells || {}),
+      [family]: {
+        ...(config.region_routes?.cells?.[family] || {}),
+        [region]: { ...existing, mc },
+      },
+    }
+    setConfig({
+      ...config,
+      region_routes: { enabled: config.region_routes?.enabled ?? false, cells: newCells },
+    })
+  }
+
+  const clearMcForFamily = (family: string) => {
+    if (!config) return
+    const familyCells = config.region_routes?.cells?.[family] || {}
+    const clearedFamily: Record<string, RegionCell> = {}
+    for (const [r, c] of Object.entries(familyCells)) {
+      clearedFamily[r] = { ...c, mc: null }
+    }
+    const newCells = { ...(config.region_routes?.cells || {}), [family]: clearedFamily }
+    setConfig({
+      ...config,
+      region_routes: { enabled: config.region_routes?.enabled ?? false, cells: newCells },
+    })
+  }
+
   const saveConfig = async () => {
     if (!config) return
     setSaving(true)
@@ -106,7 +193,11 @@ export default function MeshCoreRouting() {
       if (!freshRes.ok) throw new Error('Failed to re-fetch notifications config')
       const fresh: NotificationsConfig = await freshRes.json()
 
-      const merged: NotificationsConfig = { ...fresh, toggles: { ...(fresh.toggles || {}) } }
+      const merged: NotificationsConfig = {
+        ...fresh,
+        toggles: { ...(fresh.toggles || {}) },
+        region_routes: mergeRegionRoutesForMc(fresh.region_routes, config.region_routes),
+      }
       const myToggles = config.toggles || {}
       for (const { key } of TOGGLE_FAMILY_META) {
         const mine = myToggles[key]
@@ -120,7 +211,7 @@ export default function MeshCoreRouting() {
         body: JSON.stringify(merged),
       })
       const result = await res.json()
-      if (!res.ok) throw new Error(result.detail || 'Save failed')
+      if (!res.ok) throw new Error((result as { detail?: string }).detail || 'Save failed')
 
       setConfig(merged)
       setOriginalConfig(JSON.parse(JSON.stringify(merged)))
@@ -197,7 +288,7 @@ export default function MeshCoreRouting() {
         </div>
       </div>
 
-      {/* Cross-link note: gating on Data Feeds, MT+Other delivery on Meshtastic Routing */}
+      {/* Cross-link note */}
       <div className="flex items-start gap-2 p-3 bg-[#0a0e17] border border-[#1e2a3a] rounded text-sm text-slate-400">
         <ExternalLink size={16} className="text-accent mt-0.5 flex-shrink-0" />
         <div>
@@ -205,7 +296,7 @@ export default function MeshCoreRouting() {
           <Link to="/environment" className="text-accent hover:underline">
             Data Feeds
           </Link>
-          . Meshtastic and email/webhook/digest delivery is on{' '}
+          . Meshtastic delivery is on{' '}
           <Link to="/notifications" className="text-accent hover:underline">
             Meshtastic Routing
           </Link>
@@ -233,12 +324,21 @@ export default function MeshCoreRouting() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {TOGGLE_FAMILY_META.map(({ key, label, Icon }) => {
             const t = toggles[key] || ({} as NotificationToggle)
+            const familyCells = config.region_routes?.cells?.[key] || {}
+            const hasAnyMc = regionNames.some(r => {
+              const mc = familyCells[r]?.mc
+              return mc !== null && mc !== undefined && mc.trim() !== ''
+            })
+            const localOverride = regionExpandedMap[key]
+            const showRegion = localOverride !== undefined ? localOverride : hasAnyMc
+
             return (
               <div key={key} className="border border-[#1e2a3a] p-3 space-y-3">
                 <div className="flex items-center gap-2 text-sm text-slate-200">
                   <Icon size={15} /> {label}
                 </div>
 
+                {/* MC delivery matrix */}
                 <div className="space-y-3 p-3 bg-[#0a0e17] border border-[#1e2a3a]">
                   <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
                     <MessageSquare size={13} />
@@ -275,6 +375,50 @@ export default function MeshCoreRouting() {
                     helper="MeshCore DM recipients (names or pubkeys)"
                     info="Contact names or pubkeys on the MeshCore companion. Used when meshcore_dm is enabled for a severity."
                   />
+                </div>
+
+                {/* Region-based routing expand */}
+                <div className="border border-[#1e2a3a] p-3 space-y-2">
+                  <Toggle
+                    label="Region-based routing"
+                    checked={showRegion}
+                    onChange={(on) => {
+                      setRegionExpandedMap(m => ({ ...m, [key]: on }))
+                      if (!on) clearMcForFamily(key)
+                    }}
+                    helper="Route this family to different MC channels per region"
+                  />
+                  {showRegion && (
+                    regionNames.length === 0 ? (
+                      <p className="text-xs text-slate-500 italic">
+                        No regions yet — add them on the{' '}
+                        <Link to="/coverage" className="text-accent hover:underline">Coverage</Link> page.
+                      </p>
+                    ) : (
+                      <div className="space-y-1.5 pt-1">
+                        {regionNames.map(region => {
+                          const cell: RegionCell = familyCells[region] ?? {
+                            mt: null, mc: null, min_severity: 'routine', enabled: true,
+                          }
+                          return (
+                            <div key={region} className="flex items-center gap-2">
+                              <span className="text-xs text-slate-400 flex-1 min-w-0 truncate">{region}</span>
+                              <input
+                                type="text"
+                                value={cell.mc ?? ''}
+                                onChange={(e) => {
+                                  const v = e.target.value
+                                  setMcForRegion(key, region, v === '' ? null : v)
+                                }}
+                                placeholder="channel"
+                                className="w-28 px-2 py-1 bg-[#0a0e17] border border-[#1e2a3a] rounded text-xs text-slate-200 font-mono focus:outline-none focus:border-accent"
+                              />
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  )}
                 </div>
               </div>
             )
