@@ -59,23 +59,51 @@ async def get_alert_history(
 @router.get("/activity")
 async def get_activity(
     request: Request,
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    transport: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
 ):
-    """Activity Log: most recent outbound mesh broadcasts, newest first.
+    """Activity Log: outbound mesh broadcasts, newest first.
 
-    Reads mesh_broadcasts_out from the persistence/migration DB (get_db) and
-    returns every column as a plain dict. Legacy rows keep NULL
-    transport/success. If the table doesn't exist yet, returns [].
+    Reads the FULL mesh_broadcasts_out audit log from the persistence DB
+    (get_db) and returns every column as a plain dict. This is the whole
+    outbound feed -- every category (weather/fires/satpass/band/traffic)
+    across BOTH transports (meshtastic + meshcore). Nothing is filtered by
+    default; the chatty scheduled categories (satpass, band) no longer crowd
+    lower-frequency ones out of view because callers can page (offset) and
+    narrow (transport / category).
+
+    Params:
+      limit    -- page size (default 100, max 1000), newest-first.
+      offset   -- rows to skip for pagination (default 0).
+      transport-- OPTIONAL: 'meshtastic' | 'meshcore'. Omit = both.
+      category -- OPTIONAL: source_event_table value (e.g. 'nws_alerts',
+                  'fires', 'satpass_events'). Omit = all categories.
+
+    Legacy pre-audit rows keep NULL transport/success and are still returned
+    on the unfiltered feed. If the table doesn't exist yet, returns [].
     """
     from meshai.persistence import get_db
 
+    where = []
+    params: list = []
+    if transport:
+        where.append("transport = ?")
+        params.append(transport)
+    if category:
+        where.append("source_event_table = ?")
+        params.append(category)
+
+    sql = "SELECT * FROM mesh_broadcasts_out"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY sent_at DESC, id DESC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+
     try:
         conn = get_db()
-        rows = conn.execute(
-            "SELECT * FROM mesh_broadcasts_out "
-            "ORDER BY sent_at DESC, id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     except Exception:
         return []
     return [dict(r) for r in rows]

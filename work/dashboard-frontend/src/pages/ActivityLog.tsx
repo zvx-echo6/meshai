@@ -49,10 +49,36 @@ function familyLabel(table: string | null): string {
 
 // --- component -------------------------------------------------------------
 
+// Transport filter options.
+const TRANSPORTS = [
+  { value: 'all', label: 'All meshes' },
+  { value: 'meshtastic', label: 'Meshtastic' },
+  { value: 'meshcore', label: 'MeshCore' },
+]
+
+// Category filter options. Values are the raw source_event_table stored on
+// each broadcast row; labels are operator-friendly. Kept explicit (not
+// derived from the current window) so lower-frequency categories like
+// weather are reachable even when chatty satpass/band rows dominate the feed.
+const CATEGORIES = [
+  { value: 'all', label: 'All types' },
+  { value: 'nws_alerts', label: 'Weather' },
+  { value: 'fires', label: 'Fires' },
+  { value: 'fire_digest_broadcasts', label: 'Fire digest' },
+  { value: 'satpass_events', label: 'Satellite' },
+  { value: 'band_conditions_broadcasts', label: 'Band' },
+  { value: 'traffic_events', label: 'Traffic' },
+]
+
+const PAGE = 100
+
 export default function ActivityLog() {
   const [entries, setEntries] = useState<ActivityEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [transport, setTransport] = useState('all')
+  const [category, setCategory] = useState('all')
+  const [limit, setLimit] = useState(PAGE)
 
   useEffect(() => {
     document.title = 'Activity Log — MeshAI'
@@ -61,7 +87,7 @@ export default function ActivityLog() {
   useEffect(() => {
     let alive = true
     const load = () => {
-      fetchActivity()
+      fetchActivity(limit, transport, category)
         .then((data) => {
           if (!alive) return
           setEntries(data)
@@ -80,7 +106,7 @@ export default function ActivityLog() {
       alive = false
       clearInterval(interval)
     }
-  }, [])
+  }, [limit, transport, category])
 
   if (loading) {
     return (
@@ -101,13 +127,36 @@ export default function ActivityLog() {
   return (
     <div className="space-y-4">
       <div className="bg-bg-card border border-border">
-        <div className="p-4 border-b border-border flex items-center gap-2">
+        <div className="p-4 border-b border-border flex items-center flex-wrap gap-2">
           <Activity size={14} className="text-[#f59e0b]" />
           <h2 className="text-sm font-medium text-slate-300">
             Activity Log
           </h2>
+
+          {/* Filters — default 'all' shows the full feed (every category,
+              both meshes). Narrowing surfaces lower-frequency categories
+              (e.g. weather) and the MeshCore side. */}
+          <select
+            value={transport}
+            onChange={(e) => { setTransport(e.target.value); setLimit(PAGE) }}
+            className="text-xs bg-bg-hover text-slate-300 border border-border rounded px-2 py-1"
+          >
+            {TRANSPORTS.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+          <select
+            value={category}
+            onChange={(e) => { setCategory(e.target.value); setLimit(PAGE) }}
+            className="text-xs bg-bg-hover text-slate-300 border border-border rounded px-2 py-1"
+          >
+            {CATEGORIES.map((c) => (
+              <option key={c.value} value={c.value}>{c.label}</option>
+            ))}
+          </select>
+
           <span className="text-xs text-slate-500 ml-auto">
-            {entries.length} recent broadcast{entries.length === 1 ? '' : 's'} · newest first
+            {entries.length} broadcast{entries.length === 1 ? '' : 's'} · newest first
           </span>
         </div>
 
@@ -173,6 +222,21 @@ export default function ActivityLog() {
               )
             })}
           </ul>
+        )}
+
+        {/* Load more — pages further back so lower-frequency categories
+            (weather, older MeshCore sends) remain reachable even when chatty
+            satpass/band broadcasts fill the newest window. Shown only when the
+            page came back full (more rows likely exist). */}
+        {entries.length >= limit && (
+          <div className="p-3 border-t border-border flex justify-center">
+            <button
+              onClick={() => setLimit((n) => n + PAGE)}
+              className="text-xs px-3 py-1 rounded bg-bg-hover text-slate-300 border border-border hover:bg-bg-card transition-colors"
+            >
+              Load more
+            </button>
+          </div>
         )}
       </div>
     </div>
