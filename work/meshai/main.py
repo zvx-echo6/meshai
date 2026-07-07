@@ -419,7 +419,15 @@ class MeshAI:
                 _cov_bbox,
                 "native",
             )
-            if _sat_scope is not None:
+            # Only seed the synthetic coverage-centroid observer when the
+            # operator has NOT listed explicit satpass observers. Explicit
+            # observers win — the centroid is meaningless to listeners and, if
+            # seeded alongside real stations, leaks into broadcasts as the
+            # stale "coverage_center" region. (Existing DB rows are left for an
+            # ops cleanup; this only stops re-creating it.)
+            _explicit_observers = list(
+                getattr(self.config.environmental.satpass, "observers", None) or [])
+            if _sat_scope is not None and not _explicit_observers:
                 lat, lon = _sat_scope["centroid"]
                 observers_to_seed = [
                     {"slug": "coverage_center", "name": "Coverage Center",

@@ -175,18 +175,13 @@ def test_noaa18_wire_message_format():
     assert result is not None
     wire, _ = result
 
-    lines = wire.split("\n")
-    assert len(lines) == 2, f"Expected 2 lines, got {len(lines)}: {wire!r}"
-
-    # Line 1: satellite name + bucket + compass sweep (aos->peak->los)
-    assert "NOAA 18" in lines[0]
-    assert "low pass" in lines[0]  # 22.69 < 30 = low pass
-    assert "SE" in lines[0]   # aos_compass
-    assert "ENE" in lines[0]  # peak_compass (new)
-    assert "N" in lines[0]    # los_compass
-
-    # Line 2: duration + time window ("min window")
-    assert "min window" in lines[1]
+    # Single clean line: name, numeric elevation, aos->peak->los compass sweep.
+    assert "\n" not in wire, f"Expected single line: {wire!r}"
+    assert "NOAA 18" in wire        # no mapping -> cleaned catalog name
+    assert "max 23°" in wire   # 22.69 rounds to 23, not "low pass"
+    assert "low pass" not in wire
+    assert "min window" not in wire
+    assert "SE→ENE→N" in wire  # aos -> peak -> los
 
 
 def test_missing_norad_id_rejected():

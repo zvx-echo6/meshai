@@ -159,8 +159,10 @@ class SatpassAdapter:
             "aos_compass": entry["aos_compass"],
             "los_compass": exit_["los_compass"],
             "peak_compass": best["peak_compass"],
-            "entry_observer": entry["observer"],
-            "exit_observer": exit_["observer"],
+            # Entry/exit carry the FRIENDLY observer name for the wire's region
+            # parenthetical; observer_list stays slugs for the audit column.
+            "entry_observer": entry.get("observer_label") or entry["observer"],
+            "exit_observer": exit_.get("observer_label") or exit_["observer"],
             "observer_list": ",".join(r["observer"] for r in by_aos),
         }
 
@@ -208,6 +210,7 @@ class SatpassAdapter:
                         "norad_id": norad,
                         "sat_name": name,
                         "observer": obs["slug"],
+                        "observer_label": obs.get("name") or obs["slug"],
                         "max_elevation": p.max_elevation,
                         "aos_epoch": aos_epoch,
                         "los_epoch": los_epoch,
