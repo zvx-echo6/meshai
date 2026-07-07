@@ -21,7 +21,7 @@ import logging
 from typing import Callable
 
 from meshai.notifications.events import Event
-from meshai.coverage_area import MonitoringArea, classify_event_areas
+from meshai.coverage_area import MonitoringArea, classify_event_areas, event_region_names
 
 
 # Weather-alert categories (from env/nws.py::_derive_category) for which an
@@ -57,6 +57,7 @@ class CoverageFilter:
         areas: list[MonitoringArea] | None = None,
         enabled: bool = True,
         excluded_adapters: set[str] | None = None,
+        region_tagging: bool = False,
     ):
         """Initialize.
 
@@ -67,11 +68,15 @@ class CoverageFilter:
             enabled: Master switch; False makes the filter a no-op.
             excluded_adapters: Set of source/adapter names that bypass the gate.
                 Matching is against event.source.
+            region_tagging: P1 flag; when True (and areas non-empty), stamp
+                event.region / event.regions from named areas BEFORE the gate.
+                Never clobbers a preset regions list.
         """
         self._next = next_handler
         self._areas: list[MonitoringArea] = areas or []
         self._enabled = enabled
         self._excluded: set[str] = excluded_adapters or set()
+        self._region_tagging = region_tagging
         self._logger = logging.getLogger("meshai.pipeline.coverage_filter")
 
     def handle(self, event: Event) -> None:
@@ -85,6 +90,16 @@ class CoverageFilter:
         if event.source in self._excluded:
             self._next(event)
             return
+
+        # P1 region tagging — stamp event.region / event.regions from named
+        # coverage areas BEFORE the gate so the gate verdict is unchanged.
+        # Only runs when region_tagging=True, areas are configured, and the
+        # event doesn't already carry regions (never clobbers satpass tags).
+        if self._region_tagging and self._areas and not event.regions:
+            names = event_region_names(event, self._areas)
+            if names:
+                event.regions = names
+                event.region = names[0]
 
         verdict = classify_event_areas(event, self._areas)
 

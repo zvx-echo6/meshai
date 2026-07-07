@@ -35,6 +35,7 @@ class MonitoringArea:
     south: float
     east: float
     west: float
+    name: str | None = None  # P1: optional label; unnamed areas never contribute to region tagging
 
     def as_box(self):
         # shapely box(minx, miny, maxx, maxy) -> (west, south, east, north)
@@ -150,18 +151,54 @@ def areas_from_config(coverage_cfg) -> list[MonitoringArea]:
                         south=float(a["south"]),
                         east=float(a["east"]),
                         west=float(a["west"]),
+                        name=(a.get("name") or None),
                     ))
                 except (KeyError, TypeError, ValueError) as exc:
                     logger.warning("Skipping malformed coverage area %r: %s", a, exc)
         return result
 
-    # Fall back to the legacy single-bbox field
+    # Fall back to the legacy single-bbox field (no name — legacy compat)
     bbox = getattr(coverage_cfg, "bbox", None) or []
     if bbox and len(bbox) == 4:
         west, south, east, north = (float(v) for v in bbox)
-        return [MonitoringArea(north=north, south=south, east=east, west=west)]
+        return [MonitoringArea(north=north, south=south, east=east, west=west, name=None)]
 
     return []
+
+
+# ---------------------------------------------------------------------------
+# _event_geom_json — shared geometry extraction helper (used by gate + tagger)
+# ---------------------------------------------------------------------------
+
+def _event_geom_json(event: Any) -> str | None:
+    """Extract a GeoJSON string from an event using the standard priority chain.
+
+    Priority (mirrors Central's archive chain):
+      1. event.data["geometry"] — full GeoJSON dict (richest, preferred)
+      2. event.data["bbox"]     — [west, south, east, north]
+      3. (event.lon, event.lat) — Point centroid [lon, lat] in GeoJSON order
+
+    Returns None when no geometry can be constructed.
+    Shared between classify_event_areas (gate) and event_region_names (tagger)
+    so both operate on identical geometry; gate behaviour is byte-identical.
+    """
+    data: dict[str, Any] = getattr(event, "data", None) or {}
+    geo: dict[str, Any] = {}
+
+    geometry = data.get("geometry")
+    if geometry:
+        geo["geometry"] = geometry
+    else:
+        bbox = data.get("bbox")
+        if bbox:
+            geo["bbox"] = bbox
+        else:
+            lat = getattr(event, "lat", None)
+            lon = getattr(event, "lon", None)
+            if lat is not None and lon is not None:
+                geo["centroid"] = [lon, lat]  # GeoJSON coordinate order: [lon, lat]
+
+    return build_geom_json(geo if geo else None)
 
 
 # ---------------------------------------------------------------------------
@@ -190,24 +227,53 @@ def classify_event_areas(event: Any, areas: list[MonitoringArea]) -> str:
       2. event.data["bbox"]     — [west, south, east, north]
       3. (event.lon, event.lat) — Point centroid [lon, lat] in GeoJSON order
     """
-    data: dict[str, Any] = getattr(event, "data", None) or {}
-    geo: dict[str, Any] = {}
-
-    geometry = data.get("geometry")
-    if geometry:
-        geo["geometry"] = geometry
-    else:
-        bbox = data.get("bbox")
-        if bbox:
-            geo["bbox"] = bbox
-        else:
-            lat = getattr(event, "lat", None)
-            lon = getattr(event, "lon", None)
-            if lat is not None and lon is not None:
-                geo["centroid"] = [lon, lat]  # GeoJSON coordinate order: [lon, lat]
-
-    geom_json = build_geom_json(geo if geo else None)
+    geom_json = _event_geom_json(event)
     return classify_geom_areas(geom_json, areas)
+
+
+# ---------------------------------------------------------------------------
+# matching_area_names — additive region-name collector (P1 tagger)
+# ---------------------------------------------------------------------------
+
+def matching_area_names(geom_json: str | None, areas: list[MonitoringArea]) -> list[str]:
+    """Return names of every NAMED area whose bbox the geometry intersects.
+
+    - Returns names in config order, deduped (first occurrence wins).
+    - Unnamed areas (name is None or empty) never contribute.
+    - null/parse-error geometry -> [] (never raises).
+    - Empty areas list -> [].
+    - Does NOT short-circuit on first match — all matching named areas are
+      collected (additive, not a gate).  classify_geom_areas is unchanged.
+    """
+    if not geom_json or not areas:
+        return []
+    try:
+        geom = shape(json.loads(geom_json))
+    except Exception:
+        return []
+    seen: set[str] = set()
+    result: list[str] = []
+    for area in areas:
+        if not area.name:
+            continue
+        try:
+            if geom.intersects(area.as_box()):
+                if area.name not in seen:
+                    seen.add(area.name)
+                    result.append(area.name)
+        except Exception:
+            pass
+    return result
+
+
+def event_region_names(event: Any, areas: list[MonitoringArea]) -> list[str]:
+    """Return region names for an event by matching its geometry against named areas.
+
+    Convenience wrapper: extracts geometry via _event_geom_json (same chain as
+    the coverage gate) and delegates to matching_area_names.
+    Returns [] when no geometry, no named areas, or parse error.
+    """
+    return matching_area_names(_event_geom_json(event), areas)
 
 
 def event_in_areas(event: Any, areas: list[MonitoringArea]) -> bool:

@@ -4,6 +4,9 @@ from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 
+from meshai.config import RegionRouteMatrix, _dataclass_to_dict, _dict_to_dataclass, NotificationsConfig
+from meshai.config_loader import save_section, get_config_dir_from_path
+
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 
@@ -333,3 +336,104 @@ async def send_rule_live(request: Request, rule_index: int):
     )
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# P3 region-routing primitives
+# ---------------------------------------------------------------------------
+
+
+class RegionRoutingBody(BaseModel):
+    """Request body for POST /notifications/region-routing."""
+    enabled: bool = False
+    cells: Dict[str, Any] = {}
+
+
+@router.get("/regions")
+async def get_regions(request: Request):
+    """List distinct named region names from config.coverage.areas.
+
+    Returns config-order, deduplicated list[str] of non-empty area names.
+    Satpass observer labels are not included here (deferred to P2).
+    """
+    config = getattr(request.app.state, "config", None)
+    if config is None:
+        return []
+
+    areas = getattr(getattr(config, "coverage", None), "areas", None) or []
+    seen: set[str] = set()
+    result: list[str] = []
+    for area in areas:
+        # areas may be raw dicts (from config loader) or MonitoringArea objects
+        if isinstance(area, dict):
+            name = area.get("name") or None
+        else:
+            name = getattr(area, "name", None)
+        if name and name not in seen:
+            seen.add(name)
+            result.append(name)
+    return result
+
+
+@router.get("/region-routing")
+async def get_region_routing(request: Request):
+    """Return the current region×family routing matrix.
+
+    Shape: {"enabled": bool, "cells": {family: {region: {mt, mc, min_severity, enabled}}}}
+    Defaults to enabled=false, cells={} when not configured.
+    """
+    config = getattr(request.app.state, "config", None)
+    if config is None:
+        return {"enabled": False, "cells": {}}
+
+    rr = getattr(getattr(config, "notifications", None), "region_routes", None)
+    if rr is None:
+        return {"enabled": False, "cells": {}}
+
+    return {"enabled": bool(rr.enabled), "cells": rr.cells}
+
+
+@router.post("/region-routing")
+async def save_region_routing(request: Request, body: RegionRoutingBody):
+    """Save the region×family routing matrix (read-modify-write).
+
+    Only region_routes is updated; all other notification fields
+    (toggles, rules, destinations, etc.) survive untouched.
+
+    Returns: {"ok": true, "saved": {"enabled": bool, "cells": {...}}}
+    """
+    config = getattr(request.app.state, "config", None)
+    config_path = getattr(request.app.state, "config_path", None)
+    if config is None or config_path is None:
+        raise HTTPException(status_code=500, detail="Config not available")
+
+    # Build the new RegionRouteMatrix from the request body.
+    new_rr = RegionRouteMatrix(enabled=body.enabled, cells=body.cells)
+
+    # Explicit server-side read-modify-write:
+    # 1. Serialize the CURRENT notifications object to dict (preserves toggles/rules/destinations).
+    current_notif = getattr(config, "notifications", None)
+    if current_notif is None:
+        from meshai.config import NotificationsConfig as _NC
+        current_notif = _NC()
+
+    notif_dict = _dataclass_to_dict(current_notif)
+
+    # 2. Overlay ONLY region_routes with the new value.
+    notif_dict["region_routes"] = _dataclass_to_dict(new_rr)
+
+    # 3. Persist via the multi-file-aware save_section.
+    try:
+        config_dir = get_config_dir_from_path(config_path)
+        save_section("notifications", notif_dict, config_dir)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Save failed: {exc}")
+
+    # 4. Update in-memory config so a subsequent GET reflects the save.
+    try:
+        config.notifications.region_routes = new_rr
+    except Exception:
+        pass  # best-effort; disk is authoritative
+
+    saved = {"enabled": new_rr.enabled, "cells": new_rr.cells}
+    return {"ok": True, "saved": saved}
