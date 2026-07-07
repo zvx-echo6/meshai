@@ -35,6 +35,69 @@ VALID_TOGGLES = frozenset({
 })
 
 
+# ---------------------------------------------------------------------------
+# Dynamic category/family registry (Integration Phase A)
+#
+# ALERT_CATEGORIES / VALID_TOGGLES above enumerate the built-in families.
+# Generic config-driven data sources (env/generic_http.py) carry an arbitrary
+# `category` that is NOT in that static table, so historically get_toggle()
+# returned None, the ToggleFilter treated the event as "other", and dropped it.
+# These runtime registries let a generic source register its category as a
+# first-class family with its own toggle, so its events resolve to that family
+# and become routable. Both dicts are EMPTY until something registers, so
+# behavior for every built-in category is byte-identical to before.
+# ---------------------------------------------------------------------------
+
+_DYNAMIC_CATEGORIES: dict[str, str] = {}   # category id -> family
+_DYNAMIC_FAMILIES: dict[str, str] = {}     # family -> human label
+
+
+def register_family(family: str, label: Optional[str] = None) -> None:
+    """Register a family (toggle) at runtime. Idempotent.
+
+    A re-registration with no label leaves any existing label untouched; a
+    call with a label sets/updates it. When no label is supplied for a
+    first-time family, a title-cased default is derived from the family id.
+    """
+    if not family:
+        return
+    if label is None and family in _DYNAMIC_FAMILIES:
+        return
+    _DYNAMIC_FAMILIES[family] = (
+        label or _DYNAMIC_FAMILIES.get(family) or family.replace("_", " ").title()
+    )
+
+
+def register_category(category: str, family: str, name: Optional[str] = None) -> None:
+    """Register a category -> family mapping at runtime.
+
+    Records category->family and registers the family if not already known.
+    `name` is an optional display hint for the category (reserved for Phase B
+    surfacing; not required for routing).
+    """
+    if not category or not family:
+        return
+    _DYNAMIC_CATEGORIES[category] = family
+    if family not in _DYNAMIC_FAMILIES:
+        register_family(family)
+
+
+def all_toggles() -> frozenset:
+    """Static base VALID_TOGGLES plus any dynamically registered families."""
+    return VALID_TOGGLES | set(_DYNAMIC_FAMILIES)
+
+
+def registered_families() -> dict:
+    """family -> label for ALL families (static + dynamic).
+
+    Static families get a title-cased label; dynamic families use their
+    registered label. For Phase B's API to enumerate routable families.
+    """
+    fams = {t: t.replace("_", " ").title() for t in VALID_TOGGLES}
+    fams.update(_DYNAMIC_FAMILIES)
+    return fams
+
+
 # Prefix fallback for categories not enumerated in ALERT_CATEGORIES (resolves the
 # v0.4 "category -> other" gap for phases 2.7-2.14 emitted categories).
 _TOGGLE_PREFIX_FALLBACK = [
@@ -566,14 +629,17 @@ def categories_for_toggle(toggle: str) -> list[str]:
     Returns:
         List of category IDs that have this toggle assigned
     """
-    if toggle not in VALID_TOGGLES:
+    if toggle not in all_toggles():
         return []
 
-    return [
+    result = [
         cat_id
         for cat_id, cat_info in ALERT_CATEGORIES.items()
         if cat_info.get("toggle") == toggle
     ]
+    # Dynamically-registered categories that route to this family.
+    result.extend(c for c, fam in _DYNAMIC_CATEGORIES.items() if fam == toggle)
+    return result
 
 
 def get_toggle(category_name: str) -> Optional[str]:
@@ -585,6 +651,12 @@ def get_toggle(category_name: str) -> Optional[str]:
     Returns:
         Toggle name (e.g., "mesh_health") or None if category unknown
     """
+    # Dynamic registry first: a registered generic category resolves to its
+    # own family, NOT the ALERT_CATEGORIES entry or the mesh_health prefix
+    # fallback. Empty until a generic source registers, so built-ins unchanged.
+    dynamic = _DYNAMIC_CATEGORIES.get(category_name)
+    if dynamic:
+        return dynamic
     cat_info = ALERT_CATEGORIES.get(category_name)
     if cat_info:
         return cat_info.get("toggle")
