@@ -206,9 +206,26 @@ class NICFFiresAdapter:
 
             new_events.append(event)
 
-        # Check if data changed
-        old_ids = {e["event_id"] for e in self._events}
-        new_ids = {e["event_id"] for e in new_events}
+        # Change detection must reflect each fire's GROWTH, not just the set of
+        # fire names. Comparing event_id sets alone made acreage/containment growth
+        # of an already-known fire invisible: tick() returned False, so the store
+        # never re-ran _ingest_fires and the Phase-3 fire decider never saw the
+        # growth. Include acres + containment in the signature so a growing fire
+        # flips changed=True; the decider (forward-only + cooldown) stays the
+        # broadcast gate, so no backlog is dumped.
+        def _change_sig(e):
+            try:
+                acres = int(round(float(e.get("acres") or 0)))
+            except (TypeError, ValueError):
+                acres = 0
+            try:
+                pct = int(float(e.get("pct_contained") or 0))
+            except (TypeError, ValueError):
+                pct = 0
+            return (e["event_id"], acres, pct)
+
+        old_ids = {_change_sig(e) for e in self._events}
+        new_ids = {_change_sig(e) for e in new_events}
         changed = old_ids != new_ids
 
         self._events = new_events
