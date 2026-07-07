@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 
-from meshai.env.generic_http import GenericHttpAdapter, _dig
+from urllib.error import HTTPError
+
+from meshai.env.generic_http import GenericHttpAdapter, _BROWSER_UA, _dig
 from meshai.env.store import EnvironmentalStore
 from meshai.config import EnvironmentalConfig
 from meshai.notifications.pipeline.bus import EventBus
@@ -199,7 +201,7 @@ def _make_store_with_generic():
 def test_cold_start_silent_first_poll_seeds_persists_no_emit():
     store, adapter, captured = _make_store_with_generic()
     # Stub the network fetch with one active outage.
-    adapter._fetch = lambda url: _payload([IDAHO_POWER_ITEM])
+    adapter._fetch = lambda url, extra_headers=None: _payload([IDAHO_POWER_ITEM])
 
     store.refresh()  # poll 1 == pre-existing backlog
 
@@ -217,13 +219,13 @@ def test_cold_start_silent_first_poll_seeds_persists_no_emit():
 
 def test_later_poll_broadcasts_newly_received_item():
     store, adapter, captured = _make_store_with_generic()
-    adapter._fetch = lambda url: _payload([IDAHO_POWER_ITEM])
+    adapter._fetch = lambda url, extra_headers=None: _payload([IDAHO_POWER_ITEM])
     store.refresh()  # poll 1 — seed silently
     assert captured == []
 
     # A genuinely NEW outage appears on a later poll -> it must broadcast.
     new_item = dict(IDAHO_POWER_ITEM, omsOutageId="456", omsCustomerCount=99)
-    adapter._fetch = lambda url: _payload([IDAHO_POWER_ITEM, new_item])
+    adapter._fetch = lambda url, extra_headers=None: _payload([IDAHO_POWER_ITEM, new_item])
     adapter._last_poll.clear()  # force cadence to elapse
     store.refresh()  # poll 2
 
@@ -236,10 +238,135 @@ def test_later_poll_broadcasts_newly_received_item():
     assert n == 2
 
 
+# ===========================================================================
+# _fetch: browser UA default, per-source header override, 403 retry
+# ===========================================================================
+
+def test_fetch_uses_browser_ua_by_default(monkeypatch):
+    """Default fetch sends the browser UA (not the WAF-tripping MeshAI/1.0)."""
+    captured = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"ok": true}'
+
+    def _fake_urlopen(req, timeout=None):
+        captured["headers"] = dict(req.headers)
+        return _Resp()
+
+    monkeypatch.setattr("meshai.env.generic_http.urlopen", _fake_urlopen)
+    adapter = GenericHttpAdapter([IDAHO_POWER_SOURCE])
+    result = adapter._fetch("https://example.com/feed")
+
+    assert result == {"ok": True}
+    # urllib title-cases header names in Request.headers.
+    assert captured["headers"].get("User-agent") == _BROWSER_UA
+
+
+def test_fetch_per_source_headers_override_ua_and_add_auth(monkeypatch):
+    """A source's headers dict overrides the UA and adds arbitrary auth."""
+    captured = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"ok": true}'
+
+    def _fake_urlopen(req, timeout=None):
+        captured["headers"] = dict(req.headers)
+        return _Resp()
+
+    monkeypatch.setattr("meshai.env.generic_http.urlopen", _fake_urlopen)
+    adapter = GenericHttpAdapter([IDAHO_POWER_SOURCE])
+    result = adapter._fetch(
+        "https://example.com/feed",
+        extra_headers={"User-Agent": "X", "Authorization": "Bearer y"},
+    )
+
+    assert result == {"ok": True}
+    assert captured["headers"].get("User-agent") == "X"        # overridden
+    assert captured["headers"].get("Authorization") == "Bearer y"  # added
+
+
+def test_fetch_retries_once_on_403_then_succeeds(monkeypatch):
+    """First 403 (WAF block) is retried once and the retry's JSON is returned."""
+    calls = {"n": 0}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"ok": true}'
+
+    def _fake_urlopen(req, timeout=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise HTTPError("https://example.com/feed", 403, "Forbidden", {}, None)
+        return _Resp()
+
+    monkeypatch.setattr("meshai.env.generic_http.urlopen", _fake_urlopen)
+    monkeypatch.setattr("meshai.env.generic_http.time.sleep", lambda *_: None)
+    adapter = GenericHttpAdapter([IDAHO_POWER_SOURCE])
+    result = adapter._fetch("https://example.com/feed")
+
+    assert result == {"ok": True}
+    assert calls["n"] == 2, "must retry exactly once on 403"
+
+
+def test_fetch_persistent_403_returns_none_after_one_retry(monkeypatch):
+    """A feed that 403s on both attempts gives up (None) after the single retry."""
+    calls = {"n": 0}
+
+    def _fake_urlopen(req, timeout=None):
+        calls["n"] += 1
+        raise HTTPError("https://example.com/feed", 403, "Forbidden", {}, None)
+
+    monkeypatch.setattr("meshai.env.generic_http.urlopen", _fake_urlopen)
+    monkeypatch.setattr("meshai.env.generic_http.time.sleep", lambda *_: None)
+    adapter = GenericHttpAdapter([IDAHO_POWER_SOURCE])
+    result = adapter._fetch("https://example.com/feed")
+
+    assert result is None
+    assert calls["n"] == 2, "one initial attempt + one retry, then give up"
+    assert adapter._last_error == "HTTP 403"
+
+
+def test_poll_source_threads_source_headers_into_fetch(monkeypatch):
+    """_poll_source passes the source's headers through to _fetch."""
+    seen = {}
+
+    def _fake_fetch(url, extra_headers=None):
+        seen["url"] = url
+        seen["extra_headers"] = extra_headers
+        return _payload([IDAHO_POWER_ITEM])
+
+    source = dict(IDAHO_POWER_SOURCE, headers={"Authorization": "Bearer z"})
+    adapter = GenericHttpAdapter([source])
+    adapter._fetch = _fake_fetch
+    adapter._poll_source(source, now=1000.0)
+
+    assert seen["extra_headers"] == {"Authorization": "Bearer z"}
+
+
 def test_build_generic_detail_reader():
     from meshai.notifications.env_reporter import EnvReporter
     store, adapter, captured = _make_store_with_generic()
-    adapter._fetch = lambda url: _payload([IDAHO_POWER_ITEM])
+    adapter._fetch = lambda url, extra_headers=None: _payload([IDAHO_POWER_ITEM])
     store.refresh()
 
     text = EnvReporter().build_generic_detail()

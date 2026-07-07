@@ -37,6 +37,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Browser-like default User-Agent. The old short "MeshAI/1.0" UA intermittently
+# trips WAFs (Idaho Power's Azure Front Door 403s it ~2/30 requests); a
+# browser UA gets 200 every time. A source can still override this (or add
+# auth) via its optional per-source `headers` dict.
+_BROWSER_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
 # Only substitute {word} tokens in summary_template so stray braces in data
 # values can never blow up the formatter.
 _TEMPLATE_TOKEN = re.compile(r"\{(\w+)\}")
@@ -88,6 +95,7 @@ class GenericHttpAdapter:
           category, poll_seconds, severity,
           field_mappings: [{source_path, dest_key}, ...],
           summary_template, emoji,
+          headers: {header_name: value, ...},   # optional — UA/auth override
         }
     """
 
@@ -153,7 +161,7 @@ class GenericHttpAdapter:
     def _poll_source(self, source: dict, now: float) -> bool:
         """Fetch + map one source. Returns True if its id-set changed."""
         name = source.get("name") or source.get("url")
-        raw = self._fetch(source["url"])
+        raw = self._fetch(source["url"], extra_headers=source.get("headers"))
         if raw is None:
             return False
 
@@ -187,32 +195,47 @@ class GenericHttpAdapter:
                         name, len(mapped))
         return changed
 
-    def _fetch(self, url: str):
+    def _fetch(self, url: str, extra_headers: dict = None):
         """GET ``url`` and return parsed JSON, or None on any error.
 
-        stdlib urllib (mirrors env/usgs_quake.py); 30s timeout; UA header.
+        stdlib urllib (mirrors env/usgs_quake.py); 30s timeout. Defaults to a
+        browser-like User-Agent (WAFs 403 the short "MeshAI/1.0" UA); a source's
+        optional ``headers`` dict is layered on top so it can override the UA or
+        add auth (e.g. ``Authorization``). Retries ONCE on a 403/429 (a WAF
+        that intermittently blocks succeeds on the immediate retry).
         """
-        headers = {"User-Agent": "MeshAI/1.0", "Accept": "application/json"}
-        try:
-            req = Request(url, headers=headers)
-            with urlopen(req, timeout=30) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except HTTPError as e:
-            logger.warning("generic_http HTTP error %s for %s", e.code, url)
-            self._last_error = f"HTTP {e.code}"
-            self._consecutive_errors += 1
-            return None
-        except URLError as e:
-            logger.warning("generic_http connection error for %s: %s",
-                           url, e.reason)
-            self._last_error = str(e.reason)
-            self._consecutive_errors += 1
-            return None
-        except Exception as e:
-            logger.warning("generic_http fetch error for %s: %s", url, e)
-            self._last_error = str(e)
-            self._consecutive_errors += 1
-            return None
+        headers = {"User-Agent": _BROWSER_UA,
+                   "Accept": "application/json, text/plain, */*"}
+        headers.update(extra_headers or {})
+        for attempt in (1, 2):
+            try:
+                req = Request(url, headers=headers)
+                with urlopen(req, timeout=30) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except HTTPError as e:
+                # Retry once on a WAF-style block (403/429) — the live test
+                # showed an immediate retry succeeds.
+                if attempt == 1 and e.code in (403, 429):
+                    logger.info("generic_http HTTP %s for %s — retrying once",
+                                e.code, url)
+                    time.sleep(1)
+                    continue
+                logger.warning("generic_http HTTP error %s for %s", e.code, url)
+                self._last_error = f"HTTP {e.code}"
+                self._consecutive_errors += 1
+                return None
+            except URLError as e:
+                logger.warning("generic_http connection error for %s: %s",
+                               url, e.reason)
+                self._last_error = str(e.reason)
+                self._consecutive_errors += 1
+                return None
+            except Exception as e:
+                logger.warning("generic_http fetch error for %s: %s", url, e)
+                self._last_error = str(e)
+                self._consecutive_errors += 1
+                return None
+        return None
 
     # ------------------------------------------------------------------
     # Item -> internal event dict

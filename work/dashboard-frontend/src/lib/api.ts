@@ -326,6 +326,9 @@ export interface GenericSource {
   field_mappings: FieldMapping[]
   summary_template?: string
   emoji?: string
+  // Optional custom request headers (e.g. User-Agent override or Authorization).
+  // Empty/absent = the default browser UA. Sent on both poll and preview.
+  headers?: Record<string, string>
 }
 
 export interface GenericSourcePreview {
@@ -359,12 +362,13 @@ export async function saveGenericSources(
 
 export async function previewGenericSource(
   url: string,
-  items_path?: string
+  items_path?: string,
+  headers?: Record<string, string>
 ): Promise<GenericSourcePreview> {
   const response = await fetch('/api/generic-sources/preview', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url, items_path }),
+    body: JSON.stringify({ url, items_path, headers }),
   })
   // The endpoint never raises; it returns {ok:false,error} on failure too.
   return response.json()

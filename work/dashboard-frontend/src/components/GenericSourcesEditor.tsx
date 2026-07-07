@@ -31,6 +31,7 @@ function blankSource(n: number): GenericSource {
     field_mappings: [],
     summary_template: '',
     emoji: '',
+    headers: {},
   }
 }
 
@@ -176,12 +177,43 @@ export default function GenericSourcesEditor() {
     )
   }
 
+  // Headers are stored as a Record<string,string> on the source; edit them as
+  // an ordered list of key/value rows (mirrors the field_mappings editor),
+  // rebuilding the record on each change.
+  const headerEntries = (s: GenericSource): [string, string][] =>
+    Object.entries(s.headers ?? {})
+
+  const setHeaderEntries = (idx: number, entries: [string, string][]) => {
+    const obj: Record<string, string> = {}
+    for (const [k, v] of entries) obj[k] = v
+    update(idx, { headers: obj })
+  }
+
+  const addHeader = (idx: number) => {
+    if (!sources) return
+    setHeaderEntries(idx, [...headerEntries(sources[idx]), ['', '']])
+  }
+
+  const updateHeader = (idx: number, hIdx: number, key: string, value: string) => {
+    if (!sources) return
+    const entries = headerEntries(sources[idx])
+    entries[hIdx] = [key, value]
+    setHeaderEntries(idx, entries)
+  }
+
+  const removeHeader = (idx: number, hIdx: number) => {
+    if (!sources) return
+    const entries = headerEntries(sources[idx])
+    entries.splice(hIdx, 1)
+    setHeaderEntries(idx, entries)
+  }
+
   const runPreview = async (idx: number) => {
     if (!sources) return
     const src = sources[idx]
     setPreviewing((p) => ({ ...p, [idx]: true }))
     try {
-      const res = await previewGenericSource(src.url, src.items_path)
+      const res = await previewGenericSource(src.url, src.items_path, src.headers)
       setPreviews((p) => ({ ...p, [idx]: res }))
     } catch (e) {
       setPreviews((p) => ({
@@ -389,6 +421,55 @@ export default function GenericSourcesEditor() {
                   placeholder="id · omsOutageId · properties.id"
                   mono
                 />
+              </div>
+
+              {/* Headers (optional) */}
+              <div className="border border-border p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666]">
+                    Headers (optional)
+                  </div>
+                  <button
+                    onClick={() => addHeader(i)}
+                    className="flex items-center gap-1 px-2 py-1 text-xs bg-accent/20 hover:bg-accent/30 text-accent border border-accent/30"
+                  >
+                    <Plus size={12} /> Add header
+                  </button>
+                </div>
+                <p className="text-xs text-[#555]">
+                  Custom request headers, e.g. <code>User-Agent</code> or{' '}
+                  <code>Authorization</code>. Leave empty for the default browser UA.
+                </p>
+                {Object.entries(src.headers ?? {}).length > 0 && (
+                  <div className="space-y-2">
+                    {Object.entries(src.headers ?? {}).map(([hKey, hVal], hIdx) => (
+                      <div key={hIdx} className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={hKey}
+                          onChange={(e) => updateHeader(i, hIdx, e.target.value, hVal)}
+                          placeholder="header name (e.g. Authorization)"
+                          className="flex-1 bg-[#0d0d0d] border border-border px-2 py-1.5 text-xs font-mono text-[#e0e0e0] placeholder:text-[#555]"
+                        />
+                        <span className="text-[#555] text-xs">:</span>
+                        <input
+                          type="text"
+                          value={hVal}
+                          onChange={(e) => updateHeader(i, hIdx, hKey, e.target.value)}
+                          placeholder="value (e.g. Bearer …)"
+                          className="flex-1 bg-[#0d0d0d] border border-border px-2 py-1.5 text-xs font-mono text-[#e0e0e0] placeholder:text-[#555]"
+                        />
+                        <button
+                          onClick={() => removeHeader(i, hIdx)}
+                          title="Remove header"
+                          className="flex items-center px-2 py-1.5 text-xs text-[#777] hover:text-red-400 border border-border"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Location */}
