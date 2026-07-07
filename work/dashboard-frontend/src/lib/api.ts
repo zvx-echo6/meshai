@@ -320,8 +320,16 @@ export async function fetchAlertHistory(
   return fetchJson<AlertHistoryResponse | AlertHistoryItem[]>(`/api/alerts/history?${params.toString()}`)
 }
 
-export async function fetchActivity(limit = 100): Promise<ActivityEntry[]> {
-  return fetchJson<ActivityEntry[]>(`/api/activity?limit=${limit}`)
+export async function fetchActivity(
+  limit = 100,
+  transport?: string,
+  category?: string,
+): Promise<ActivityEntry[]> {
+  const params = new URLSearchParams()
+  params.set('limit', limit.toString())
+  if (transport && transport !== 'all') params.set('transport', transport)
+  if (category && category !== 'all') params.set('category', category)
+  return fetchJson<ActivityEntry[]>(`/api/activity?${params.toString()}`)
 }
 
 export async function fetchEnvStatus(): Promise<EnvStatus> {
