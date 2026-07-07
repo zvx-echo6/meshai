@@ -50,6 +50,7 @@ const navGroups: NavGroup[] = [
       { path: '/', label: 'Dashboard', icon: LayoutDashboard },
       { path: '/config', label: 'Settings', icon: Settings },
       { path: '/environment', label: 'Data Feeds', icon: Cloud },
+      { path: '/data-sources', label: 'Data Sources', icon: Layers },
       { path: '/activity', label: 'Activity Log', icon: Activity },
       { path: '/places', label: 'Places', icon: MapPin },
       { path: '/coverage', label: 'Coverage', icon: Map },
