@@ -617,6 +617,34 @@ class MeshAI:
             )
             logger.info("Notification router initialized")
 
+            # Integration Phase A: register each enabled generic source's
+            # category as a first-class routable family with its own
+            # (default-disabled) toggle, BEFORE build_pipeline reads the toggle
+            # set. Without this a generic category resolves to "other" in the
+            # ToggleFilter and is silently dropped. The injected toggles are
+            # disabled by default (operator opts in via Routing — Phase B).
+            from .notifications import categories as _categories
+            from .config import ensure_family_toggles
+            _generic_families = []
+            for _src in (self.config.generic_sources or []):
+                if not isinstance(_src, dict) or not _src.get("enabled", True):
+                    continue
+                _cat = _src.get("category")
+                if not _cat:
+                    continue
+                _fam = _src.get("family") or _cat
+                _label = _src.get("family_label") or _fam.replace("_", " ").title()
+                _categories.register_category(
+                    _cat, family=_fam, name=_src.get("name"))
+                _categories.register_family(_fam, _label)
+                _generic_families.append(_fam)
+            if _generic_families:
+                ensure_family_toggles(self.config, _generic_families)
+                logger.info(
+                    "Registered generic source families "
+                    "(default-disabled toggles): %s",
+                    sorted(set(_generic_families)))
+
             # Notification pipeline (v0.3 EventBus). Built here so env
             # adapters constructed below can emit Events into the live
             # pipeline at runtime via EnvironmentalStore(event_bus=...).

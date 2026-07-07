@@ -655,6 +655,34 @@ def _default_toggles() -> dict:
     }
 
 
+def ensure_family_toggles(config, families) -> None:
+    """Inject a default (disabled) NotificationToggle for each family in
+    `families` not already present in ``config.notifications.toggles``.
+
+    Mirrors ``_default_toggles()`` for a static family (same defaults,
+    disabled). Existing toggles are NEVER clobbered — this only ADDS. Used at
+    startup so a generic source's dynamically-registered family becomes a real,
+    operator-configurable (default-disabled) toggle in the routing set.
+    """
+    toggles = getattr(config.notifications, "toggles", None)
+    if toggles is None:
+        toggles = {}
+        config.notifications.toggles = toggles
+    for fam in families:
+        if not fam or fam in toggles:
+            continue
+        toggles[fam] = NotificationToggle(
+            name=fam,
+            enabled=False,
+            min_severity="priority",
+            regions=[],
+            severity_channels={
+                "priority": ["mesh_broadcast"],
+                "immediate": ["mesh_broadcast", "mesh_dm"],
+            },
+        )
+
+
 @dataclass
 class TogglesConfig:
     """Master toggle filter settings."""
