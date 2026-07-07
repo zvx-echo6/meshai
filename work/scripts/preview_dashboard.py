@@ -51,6 +51,22 @@ for _attr in ("notification_router", "env_store", "alert_engine", "health_engine
     if not hasattr(app.state, _attr):
         setattr(app.state, _attr, None)
 
+# PREVIEW-ONLY: coverage is a restart-required section, so a normal deploy keeps
+# the running config stale until restart. In the preview we want create/delete/save
+# to reflect immediately, so reload the in-memory config from disk after any
+# /api/config write. (Prod keeps the restart-gated semantics; this hook is local.)
+@app.middleware("http")
+async def _reload_config_after_write(request, call_next):
+    response = await call_next(request)
+    try:
+        if (request.method in ("PUT", "POST", "DELETE", "PATCH")
+                and request.url.path.startswith("/api/config")):
+            app.state.config = load_config(cfg_dir)
+    except Exception:
+        pass
+    return response
+
+
 if __name__ == "__main__":
     print(f"[preview] config dir : {cfg_dir}")
     print(f"[preview] config path: {app.state.config_path}")

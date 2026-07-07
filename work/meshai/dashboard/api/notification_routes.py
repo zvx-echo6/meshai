@@ -4,8 +4,12 @@ from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 
+import contextlib
+import io
+from pathlib import Path
+
 from meshai.config import RegionRouteMatrix, _dataclass_to_dict, _dict_to_dataclass, NotificationsConfig
-from meshai.config_loader import save_section, get_config_dir_from_path
+from meshai.config_loader import save_section, get_config_dir_from_path, load_config
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -357,10 +361,26 @@ async def get_regions(request: Request):
     Satpass observer labels are not included here (deferred to P2).
     """
     config = getattr(request.app.state, "config", None)
-    if config is None:
-        return []
 
-    areas = getattr(getattr(config, "coverage", None), "areas", None) or []
+    # Prefer the ON-DISK coverage areas so newly-saved regions appear in the
+    # routing matrix WITHOUT a bot restart. `coverage` is a restart-required
+    # section, so the in-memory config intentionally lags disk until restart --
+    # but that gate is about the engine re-scoping fetches, not about the routing
+    # UI seeing region NAMES. Fall back to the in-memory config on any error.
+    areas = None
+    cfg_path = getattr(request.app.state, "config_path", None)
+    if cfg_path is not None:
+        try:
+            cfg_dir = get_config_dir_from_path(Path(cfg_path))
+            with contextlib.redirect_stdout(io.StringIO()):
+                disk_cfg = load_config(cfg_dir)
+            areas = getattr(getattr(disk_cfg, "coverage", None), "areas", None)
+        except Exception:
+            areas = None
+    if areas is None:
+        if config is None:
+            return []
+        areas = getattr(getattr(config, "coverage", None), "areas", None) or []
     seen: set[str] = set()
     result: list[str] = []
     for area in areas:
