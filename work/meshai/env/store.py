@@ -40,7 +40,11 @@ class EnvironmentalStore:
         event_bus: Optional["EventBus"] = None,
         coverage_bbox: list = None,
         coverage_excluded: list = None,
+        generic_sources: list = None,
     ):
+        # Config-driven REST/GeoJSON sources (top-level config.generic_sources)
+        # for the universal GenericHttpAdapter. Plain list of dicts.
+        self._generic_sources = generic_sources or []
         self._adapters = {}  # name -> adapter instance
         self._failed_adapters = {}  # name -> last_error string
         self._events = {}  # (source, event_id) -> event dict
@@ -90,6 +94,13 @@ class EnvironmentalStore:
         # LATER poll is a genuine ignition and broadcasts "New".
         self._fires_seeded: bool = False
 
+        # Generic-source cold-start silent-seed gate (PER source name), mirror
+        # of _fires_seeded. The FIRST non-empty poll for a given generic source
+        # seeds every current item (records it seen + persists it) and emits
+        # NOTHING — that batch is pre-existing backlog. Items that first appear
+        # on a LATER poll broadcast. Keyed by the bare configured source name.
+        self._generic_seeded: set[str] = set()
+
         # Create adapter instances with error isolation
         self._register_adapter("nws", config.nws, ".nws", "NWSAlertsAdapter",
             lambda cfg: (cfg, self._coverage_for("nws")))
@@ -132,6 +143,22 @@ class EnvironmentalStore:
                 err_msg = f"{type(e).__name__}: {e}"
                 logger.warning("Failed to initialize firms adapter: %s", err_msg)
                 self._failed_adapters["firms"] = err_msg
+
+        # Universal config-driven REST/GeoJSON sources. ONE adapter instance
+        # handles every source in config.generic_sources; construct it only
+        # when at least one source is configured. Guarded like firms so a bad
+        # import/config never takes the whole store down.
+        if self._generic_sources:
+            try:
+                from .generic_http import GenericHttpAdapter
+                self._generic = GenericHttpAdapter(
+                    self._generic_sources,
+                    self._coverage_for("generic_http"))
+                self._adapters["generic_http"] = self._generic
+            except Exception as e:
+                err_msg = f"{type(e).__name__}: {e}"
+                logger.warning("Failed to initialize generic_http adapter: %s", err_msg)
+                self._failed_adapters["generic_http"] = err_msg
 
         _central = [n for n in ("nws", "swpc", "ducting", "fires", "avalanche", "usgs", "usgs_quake", "traffic", "roads511", "wzdx", "firms", "satpass")
                     if getattr(getattr(config, n, None), "feed_source", "native") == "central"]
@@ -298,6 +325,10 @@ class EnvironmentalStore:
                 key = (evt["source"], evt["event_id"])
                 self._events[key] = evt
             self._ingest_fires(adapter)
+        elif name == "generic_http":
+            # Universal config-driven sources: custom ingest with COLD-START-
+            # SILENT per source name + persist-every-item (see _ingest_generic).
+            self._ingest_generic(adapter)
         elif name == "avalanche":
             # Avalanche: re-emit on danger_level rise (Update:) not just new
             # events. The rise is a legitimate CONTENT change, so it passes
@@ -445,6 +476,87 @@ class EnvironmentalStore:
         # ingests) — so this flip only ever happens on a real full-state sweep.
         if events:
             self._fires_seeded = True
+
+    def _ingest_generic(self, adapter) -> None:
+        """Native generic-source ingest — COLD-START-SILENT per source.
+
+        Mirrors the ``_fires_seeded`` cold-start pattern, but PER configured
+        source name:
+
+          1. The FIRST non-empty poll for a given source seeds every current
+             item into the received-delta seen-set and PERSISTS it, but emits
+             NOTHING — that batch is pre-existing backlog.
+          2. On later polls, only items whose key is not already seen (they
+             newly appeared upstream = "just received") broadcast via
+             ``_emit_event`` (which runs the coverage/decider path).
+          3. EVERY item — seeded or new — is upserted into ``generic_events``
+             so the LLM (env_reporter.build_generic_detail) sees it immediately.
+             Dedup is by (source, event_id).
+
+        The received-delta seen-set is namespaced by the event's ``source``
+        (``generic:<name>``) so distinct sources never cross-contaminate.
+        """
+        conn = None
+        try:
+            from meshai.persistence import get_db
+            conn = get_db()
+        except Exception as e:
+            logger.warning("generic ingest skipped persistence (DB unavailable): %s", e)
+
+        # Group this poll's events by bare source name to apply the per-source
+        # cold-start gate consistently across all of that source's items.
+        by_source: dict = {}
+        for evt in adapter.get_active():
+            by_source.setdefault(evt.get("_source") or "?", []).append(evt)
+
+        for src_name, items in by_source.items():
+            cold_start = src_name not in self._generic_seeded
+            for evt in items:
+                key = (evt["source"], evt["event_id"])
+                self._events[key] = evt   # always track current state
+                if conn is not None:
+                    self._persist_generic(conn, evt)
+
+                seen = self._seen.setdefault(evt["source"], set())
+                seen_key = self._seen_key(evt)
+                if cold_start:
+                    seen.add(seen_key)     # silent seed — backlog, no emit
+                    continue
+                if seen_key in seen:
+                    continue               # already received (prior poll)
+                seen.add(seen_key)
+                if self._event_bus is not None and hasattr(adapter, "to_event"):
+                    self._emit_event(adapter, evt)
+            # First non-empty poll for this source complete: later polls emit.
+            if items:
+                self._generic_seeded.add(src_name)
+
+    def _persist_generic(self, conn, evt: dict) -> None:
+        """Upsert one generic event into ``generic_events`` (source keyed by
+        the bare configured name). Mirrors how _ingest_fires writes the fires
+        table. Never fatal — a persistence error logs and continues."""
+        now = int(time.time())
+        try:
+            conn.execute(
+                "INSERT INTO generic_events(source, event_id, category, title, "
+                "lat, lon, severity, data_json, first_seen, last_seen) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(source, event_id) DO UPDATE SET "
+                "category=excluded.category, title=excluded.title, "
+                "lat=excluded.lat, lon=excluded.lon, "
+                "severity=excluded.severity, data_json=excluded.data_json, "
+                "last_seen=excluded.last_seen",
+                (
+                    evt.get("_source"), evt["event_id"], evt.get("category"),
+                    evt.get("title"), evt.get("latitude"), evt.get("longitude"),
+                    evt.get("severity"),
+                    json.dumps(evt.get("data", {}), default=str),
+                    now, now,
+                ),
+            )
+        except Exception:
+            logger.exception("generic persist failed for %s",
+                             evt.get("event_id", "?"))
 
     def _seed_from_persistent(self) -> None:
         """Pre-seed ``self._seen`` from the durable hazard tables at startup.

@@ -655,6 +655,7 @@ class MeshAI:
                 config=env_cfg, region_anchors=region_anchors,
                 coverage_bbox=coverage_bbox, event_bus=self.event_bus,
                 coverage_excluded=cov.excluded_adapters,
+                generic_sources=self.config.generic_sources,
             )
             logger.info(f"Environmental feeds enabled ({len(self.env_store._adapters)} adapters)")
         else:
