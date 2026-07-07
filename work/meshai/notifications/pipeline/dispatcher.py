@@ -370,6 +370,176 @@ class Dispatcher:
                 )
                 return
 
+        # ---------- Section 1.5 — region_routes matrix branch (P3) ----------
+        # Authoritative on match: when the matrix is enabled AND this event's
+        # region resolves to at least one cell, the matrix block handles ALL
+        # delivery (dedup, cooldown, channel, audit) and returns. Sections 2–6
+        # run ONLY when the matrix is disabled, has no cells for this family,
+        # or no event region matches any cell — preserving byte-identical
+        # behaviour for all existing config.
+        rr = getattr(self._config.notifications, "region_routes", None)
+        _matrix_matched = None
+        if rr is not None and getattr(rr, "enabled", False):
+            fam_cells = (getattr(rr, "cells", None) or {}).get(fam)
+            if fam_cells:
+                ev_regions = [r for r in ([event.region, *(event.regions or [])]) if r]
+                _seen_r: set = set()
+                _mlist: list = []
+                for r in ev_regions:
+                    if r in _seen_r or r not in fam_cells:
+                        continue
+                    _seen_r.add(r)
+                    _mlist.append((r, fam_cells[r]))
+                if _mlist:
+                    _matrix_matched = _mlist
+
+        if _matrix_matched is not None:
+            # ---- Authoritative matrix delivery block ----
+            # Collapse to one send per distinct (ch_type, chan_val), tracking
+            # which regions feed it. This lets MT "SWI Alerts" carry roads +
+            # fires for SW Idaho with one broadcast while MC keeps per-family
+            # names distinct.
+            event_rank = self.SEVERITY_RANK.get(event.severity, 0)
+            _chans: dict = {}   # (ch_type, chan_val) -> [region, ...]
+            for _mr, _cell in _matrix_matched:
+                _enabled_cell = _cell.get("enabled", True) if isinstance(_cell, dict) \
+                    else getattr(_cell, "enabled", True)
+                if not _enabled_cell:
+                    continue
+                _floor = ((_cell.get("min_severity") if isinstance(_cell, dict)
+                            else getattr(_cell, "min_severity", None)) or "routine")
+                if event_rank < self.SEVERITY_RANK.get(_floor, 0):
+                    continue   # below per-cell floor for this region
+                _mt = _cell.get("mt") if isinstance(_cell, dict) else getattr(_cell, "mt", None)
+                _mc = _cell.get("mc") if isinstance(_cell, dict) else getattr(_cell, "mc", None)
+                if _mt is not None:
+                    _chans.setdefault(("mesh_broadcast", _mt), []).append(_mr)
+                if _mc:   # truthy: non-empty string
+                    _chans.setdefault(("meshcore_broadcast", _mc), []).append(_mr)
+
+            if not _chans:
+                # Every matched region below its floor or cell disabled/empty.
+                # Authoritative no-send: do NOT fall through to toggle default.
+                return
+
+            # Compose once; reused across all channels (shadow render skipped).
+            try:
+                friendly = compose_mesh_message(event)
+            except Exception:
+                self._logger.exception(
+                    "matrix: mesh composer crashed; falling back to legacy message"
+                )
+                friendly = None
+
+            _cooldown_s = int(getattr(tog, "cooldown_seconds", 300) or 0)
+            _dd_suffix = str((event.data or {}).get("_dedup_suffix", "") or "")
+            _dd_id = (event.id or "") + ("#" + _dd_suffix if _dd_suffix else "")
+            _cd_suffix = (event.data or {}).get("_cooldown_suffix", "") or ""
+
+            _now = time.time()
+
+            for (_ch_type, _chan_val), _regions in _chans.items():
+                # Per-(transport, channel) dedup check — the key is a 2-tuple
+                # (source, "id#suffix|ch_type|chan") so each channel dedups
+                # independently AND the key matches the boot-restore form
+                # (dispatcher construction rehydrates _dedup_lru as 2-tuples).
+                # A 4-tuple here would miss after every restart and re-broadcast
+                # the whole matrix backlog — a restart flood. A failed channel
+                # leaves no dedup trace, so it retries next sweep.
+                _dk = (event.source or "", f"{_dd_id}|{_ch_type}|{_chan_val}")
+                if _dk in self._dedup_lru:
+                    self._dedup_lru.move_to_end(_dk)
+                    self._dedup_dropped += 1
+                    self._persist_state()
+                    self._persist_dedup(_dk, _now)
+                    continue  # skip THIS channel only; other channels still run
+
+                # Per-region cooldown check — skip channel only when EVERY
+                # region feeding it is still within its cooldown window.
+                if _cooldown_s > 0:
+                    _all_cooled = True
+                    for _rg in _regions:
+                        _rk = (
+                            getattr(tog, "name", "") or fam,
+                            event.category,
+                            _rg + ("|" + _cd_suffix if _cd_suffix else ""),
+                        )
+                        _last = self._toggle_cooldown.get(_rk)
+                        if _last is None or (_now - _last) >= _cooldown_s:
+                            _all_cooled = False
+                            break
+                    if _all_cooled:
+                        self._cooldown_dropped += 1
+                        self._persist_state()
+                        continue  # skip channel
+
+                # Deliver
+                _rule = None
+                _payload = None
+                _success = False
+                try:
+                    _rule = self._toggle_to_rule(
+                        tog, _ch_type, event,
+                        mt_override=(_chan_val if _ch_type == "mesh_broadcast" else None),
+                        mc_override=(_chan_val if _ch_type == "meshcore_broadcast" else None),
+                    )
+                    _channel = self._channel_factory(_rule, self._connector)
+                    if friendly is not None and _ch_type in (
+                        "mesh_broadcast", "mesh_dm", "meshcore_broadcast", "meshcore_dm"
+                    ):
+                        _payload = make_payload_from_event(event, message=friendly)
+                    else:
+                        _payload = make_payload_from_event(event)
+                    _success = await _channel.deliver(_payload, _rule)
+                    if _success:
+                        self._logger.info(
+                            "matrix: dispatched %s via %s ch=%s regions=%s",
+                            event.id, _ch_type, _chan_val, _regions,
+                        )
+                    else:
+                        self._logger.warning(
+                            "matrix: channel delivery returned False %s ch=%s",
+                            _ch_type, _chan_val,
+                        )
+                    self._post_broadcast_commit(
+                        event, _payload, _rule, _ch_type, success=bool(_success)
+                    )
+                except Exception:
+                    self._logger.exception(
+                        "matrix: channel delivery failed for %s ch=%s",
+                        _ch_type, _chan_val,
+                    )
+                    self._post_broadcast_commit(
+                        event, _payload, _rule, _ch_type, success=False
+                    )
+
+                # Arm guards on success only — a failed delivery leaves no
+                # trace so the next sweep can retry this channel.
+                if _success:
+                    _commit_now = time.time()
+                    # Dedup: the same channel-qualified 2-tuple in memory and DB
+                    # so mesh_broadcast and meshcore_broadcast on one event each
+                    # get their own row, and the key matches the boot-restore form
+                    # (survives restart -> no re-broadcast flood).
+                    self._dedup_lru[_dk] = True
+                    self._persist_dedup(_dk, _commit_now)
+                    _lru_max = int(adapter_config.dispatcher.dedup_lru_max)
+                    while len(self._dedup_lru) > _lru_max:
+                        self._dedup_lru.popitem(last=False)
+                    # Cooldown: arm for every region that fed this channel.
+                    if _cooldown_s > 0:
+                        for _rg in _regions:
+                            _rk = (
+                                getattr(tog, "name", "") or fam,
+                                event.category,
+                                _rg + ("|" + _cd_suffix if _cd_suffix else ""),
+                            )
+                            self._toggle_cooldown[_rk] = _commit_now
+                            self._persist_cooldown(_rk, _commit_now, _cooldown_s)
+
+            # Authoritative: the matrix handled this event; skip toggle default.
+            return
+
         # ---------- Section 2 — region scope + severity floor + matrix ----
         # v0.6-4 (B13 fix): resolution before commitment. Region scope, the
         # min_severity floor, and severity_channels matrix resolution all
@@ -819,13 +989,30 @@ class Dispatcher:
             webhook_headers=dict(getattr(dest, "webhook_headers", {}) or {}),
         )
 
-    def _toggle_to_rule(self, tog, ch_type: str, event: Event):
+    def _toggle_to_rule(self, tog, ch_type: str, event: Event, *,
+                        mt_override=None, mc_override=None):
+        """Synthesize a NotificationRuleConfig from a toggle's delivery fields.
+
+        mt_override / mc_override (keyword-only): when provided by the matrix
+        branch, these replace the toggle's own broadcast_channel /
+        meshcore_channel so each matrix cell can route to its assigned channel
+        without mutating the toggle config. Existing callers pass neither
+        keyword → output is byte-identical to the pre-matrix signature.
+        """
         from meshai.config import NotificationRuleConfig
+        broadcast_channel = (
+            mt_override if mt_override is not None
+            else (getattr(tog, "broadcast_channel", None) or 0)
+        )
+        meshcore_channel = (
+            mc_override if mc_override is not None
+            else getattr(tog, "meshcore_channel", None)
+        )
         return NotificationRuleConfig(
             name=f"toggle:{getattr(tog, 'name', '')}",
             enabled=True, trigger_type="condition", delivery_type=ch_type,
-            broadcast_channel=(getattr(tog, "broadcast_channel", None) or 0),
-            meshcore_channel=getattr(tog, "meshcore_channel", None),
+            broadcast_channel=broadcast_channel,
+            meshcore_channel=meshcore_channel,
             node_ids=list(getattr(tog, "node_ids", []) or []),
             meshcore_dm_contacts=list(getattr(tog, "meshcore_dm_contacts", []) or []),
             smtp_host=getattr(tog, "smtp_host", ""), smtp_port=getattr(tog, "smtp_port", 587),

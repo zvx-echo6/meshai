@@ -123,6 +123,7 @@ def build_pipeline(config, llm_backend, connector=None) -> EventBus:
         areas=_coverage_areas,
         enabled=getattr(config.coverage, "enabled", True),
         excluded_adapters=set(getattr(config.coverage, "excluded_adapters", None) or []),
+        region_tagging=getattr(config.coverage, "region_tagging", False),
     )
 
     toggle_filter = ToggleFilter(

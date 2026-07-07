@@ -1773,7 +1773,7 @@ const save = async () => {
      <p className="text-xs text-[#777]">
       Per-family gating: enable/disable each notification family, set its minimum severity threshold,
       freshness window, and cooldown. Delivery routing (which mesh channels, email, webhook) is
-      configured on the <a href="/notifications" className="text-accent hover:underline">Meshtastic Routing</a> and{' '}
+      configured on the <a href="/meshtastic/routing" className="text-accent hover:underline">Meshtastic Routing</a> and{' '}
       <a href="/meshcore/routing" className="text-accent hover:underline">MeshCore Routing</a> pages.
      </p>
      {notifError && <div className="text-sm text-red-400 bg-red-500/10 p-3">{notifError}</div>}

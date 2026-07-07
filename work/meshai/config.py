@@ -747,6 +747,26 @@ class NotificationDestination:
 
 
 @dataclass
+class RegionRouteMatrix:
+    """Compact region×family routing matrix (P3 primitive).
+
+    enabled: master switch; False = matrix never consulted (byte-identical to today).
+    cells: nested dict family -> region -> cell_dict.
+           Cell shape (plain dict, not a dataclass):
+             cells[family][region] = {
+                 "mt": int | null,     # Meshtastic channel index for this cell
+                 "mc": str | null,     # MeshCore channel name for this cell
+                 "min_severity": str,  # floor: "routine"|"priority"|"immediate"
+                 "enabled": bool,      # False = cell ignored even when matrix enabled
+             }
+           Sparse: only filled cells are stored; omitted cells are no-ops.
+    """
+
+    enabled: bool = False
+    cells: dict = field(default_factory=dict)
+
+
+@dataclass
 class NotificationsConfig:
     """Notification system settings."""
 
@@ -772,6 +792,8 @@ class NotificationsConfig:
     # Toggles/rules reference these by name via their own `destinations` list;
     # empty reference list => the inline delivery fields are used (unchanged).
     destinations: dict = field(default_factory=dict)
+    # P3: compact region×family routing matrix (default-inert when enabled=False).
+    region_routes: RegionRouteMatrix = field(default_factory=RegionRouteMatrix)
 
 
 # Fields copied verbatim from an inline (toggle/rule) delivery config onto a
@@ -997,6 +1019,7 @@ class Coverage:
     enabled: bool = True                        # master switch for deriving adapter scope from bbox
     excluded_adapters: list = field(default_factory=list)  # adapters that OPT OUT of coverage bbox and use their own config
     areas: list = field(default_factory=list)  # multi-box list [{name,west,south,east,north}]; empty = use bbox fallback
+    region_tagging: bool = False               # P1: when True, CoverageFilter stamps event.region/regions from named areas
 
 
 @dataclass
@@ -1151,6 +1174,13 @@ def _dict_to_dataclass(cls, data: dict):
                     name: _dict_to_dataclass(NotificationDestination, d) if isinstance(d, dict) else d
                     for name, d in value["destinations"].items()
                 }
+            # P3: coerce region_routes dict -> RegionRouteMatrix (mirrors destinations above).
+            if "region_routes" in value and isinstance(value["region_routes"], dict):
+                rr = value["region_routes"]
+                notifications.region_routes = RegionRouteMatrix(
+                    enabled=bool(rr.get("enabled", False)),
+                    cells=rr.get("cells", {}),
+                )
             if "channels" in value and isinstance(value["channels"], list) and value["channels"]:
                 _migrate_legacy_channels(notifications, value)
             kwargs[key] = notifications
