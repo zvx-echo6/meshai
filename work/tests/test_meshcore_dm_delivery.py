@@ -1,13 +1,17 @@
-"""Focused tests for the MeshCore DM direct-route delivery fix.
+"""Focused tests for the MeshCore DM ACK-confirmed fast-path delivery.
 
 Verifies that send_message(..., destination=...) resolves the destination to
-the full contact object, calls _establish_direct_path (path discovery via
-send_path_discovery_sync) BEFORE send_msg, uses plain send_msg (NOT
+the full contact object, sends the reply DIRECTLY first (fast path) and only
+runs _establish_direct_path (path discovery via send_path_discovery_sync) on
+the no-ACK fallback — never before the first send.  Uses plain send_msg (NOT
 send_msg_with_retry), and correctly maps the return value to True/False:
   - non-error Event returned  → True  (sent, route logged)
   - None returned             → False (no send result)
   - error Event returned      → False
   - contact not in roster     → False (logged warning, send never called)
+
+Note: these mocks provide no dispatcher ACK, so _wait_for_ack returns False and
+every send exercises the no-ACK fallback (discovery + resend) leg.
 
 The meshcore lib is mocked via sys.modules (same pattern as the existing
 transport test module).  _run_coro is patched to execute the coroutine
@@ -195,7 +199,8 @@ def _transport_with_mc_mock(contact=_CONTACT_DICT):
 # ---------------------------------------------------------------------------
 
 class TestMeshCoreDMDelivery:
-    """send_message with destination= must call path discovery then plain send_msg."""
+    """send_message with destination= sends directly first (ACK fast path); path
+    discovery is a no-ACK fallback that runs after the first send, not before."""
 
     def test_successful_dm_returns_true(self):
         """Non-error send_msg result → True."""
@@ -205,8 +210,14 @@ class TestMeshCoreDMDelivery:
 
         assert result is True
 
-    def test_path_discovery_called_before_send_msg(self):
-        """send_path_discovery_sync must be called before send_msg."""
+    def test_fast_path_sends_before_discovery(self):
+        """ACK-confirmed fast path: send_msg goes out FIRST; path discovery only
+        runs on the no-ACK fallback (i.e. AFTER the first send), never before it.
+
+        (This mock has no dispatcher ACK, so _wait_for_ack returns False and the
+        no-ACK fallback always fires — which is exactly what exercises the
+        discovery-then-resend leg here.)
+        """
         t, mc = _transport_with_mc_mock()
         call_order = []
 
@@ -223,10 +234,11 @@ class TestMeshCoreDMDelivery:
 
         t.send_message("hello", destination="aabbccdd1122")
 
-        assert "discovery" in call_order, "send_path_discovery_sync was never called"
         assert "send_msg" in call_order, "send_msg was never called"
-        assert call_order.index("discovery") < call_order.index("send_msg"), (
-            "send_path_discovery_sync must be called before send_msg"
+        assert "discovery" in call_order, "send_path_discovery_sync was never called (no-ACK fallback)"
+        # The reply is sent DIRECTLY first; discovery is a fallback that comes after.
+        assert call_order.index("send_msg") < call_order.index("discovery"), (
+            "fast path must send the reply before running path discovery"
         )
 
     def test_send_msg_used_not_send_msg_with_retry(self):

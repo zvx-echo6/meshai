@@ -339,43 +339,82 @@ class TestSendMessageChannel:
 _DM_CONTACT = {"public_key": "a" * 64, "adv_name": "TestContact", "out_path_len": -1}
 
 
+def _msg_sent(expected_ack=b"\x01\x02\x03\x04", type_=0, is_error=False):
+    """Build a fake MSG_SENT event carrying an expected_ack (like reader.py)."""
+    ev = MagicMock()
+    ev.is_error.return_value = is_error
+    ev.payload = {"type": type_, "expected_ack": expected_ack}
+    return ev
+
+
 class TestSendMessageDM:
-    def test_dispatches_send_msg_with_retry(self):
-        """DM send: path discovery then plain send_msg (not send_msg_with_retry)."""
+    def test_fast_path_acked_no_discovery(self):
+        """ACK to the direct send → success WITHOUT path discovery, send_msg once."""
         t, mc, _ = _transport_with_mock_mc()
         try:
-            # Supply a resolved contact so _resolve_contact succeeds.
             mc.get_contact_by_key_prefix.return_value = _DM_CONTACT
             mc.ensure_contacts = AsyncMock(return_value=True)
-            # Path discovery must be awaitable.
-            path_ev = MagicMock()
-            path_ev.is_error.return_value = False
-            mc.commands.send_path_discovery_sync = AsyncMock(return_value=path_ev)
-            ok = MagicMock()
-            ok.is_error.return_value = False
-            ok.payload = {"type": 0, "expected_ack": "00000000"}
-            mc.commands.send_msg = AsyncMock(return_value=ok)
+            mc.commands.send_msg = AsyncMock(return_value=_msg_sent())
+            # Delivery ACK arrives → wait_for_event returns a matching ACK event.
+            ack_ev = MagicMock()
+            mc.dispatcher.wait_for_event = AsyncMock(return_value=ack_ev)
+            # Spy: discovery must NOT run on the fast path.
+            t._establish_direct_path = MagicMock()
+
             result = t.send_message("hi DM", destination="aabbcc")
+
             assert result is True
-            # Must use send_msg (not send_msg_with_retry) with the CONTACT OBJECT.
+            t._establish_direct_path.assert_not_called()
             mc.commands.send_msg.assert_awaited_once_with(_DM_CONTACT, "hi DM")
+            # ACK was matched on the hex of expected_ack (b"\x01\x02\x03\x04").
+            _, kwargs = mc.dispatcher.wait_for_event.await_args
+            assert kwargs["attribute_filters"] == {"code": "01020304"}
         finally:
             _cleanup(t)
 
-    def test_send_msg_with_retry_error_returns_false(self):
-        """Error event from send_msg → False."""
+    def test_no_ack_falls_back_to_discovery_then_acks(self):
+        """No ACK on the direct send → discovery + resend; 2nd ACK → success."""
         t, mc, _ = _transport_with_mock_mc()
         try:
             mc.get_contact_by_key_prefix.return_value = _DM_CONTACT
             mc.ensure_contacts = AsyncMock(return_value=True)
-            path_ev = MagicMock()
-            path_ev.is_error.return_value = False
-            mc.commands.send_path_discovery_sync = AsyncMock(return_value=path_ev)
-            err = MagicMock()
-            err.is_error.return_value = True
-            err.payload = {"reason": "test"}
-            mc.commands.send_msg = AsyncMock(return_value=err)
+            mc.commands.send_msg = AsyncMock(return_value=_msg_sent())
+            ack_ev = MagicMock()
+            # 1st wait times out (None); 2nd (post-discovery) returns an ACK.
+            mc.dispatcher.wait_for_event = AsyncMock(side_effect=[None, ack_ev])
+            t._establish_direct_path = MagicMock()
+
+            result = t.send_message("hi DM", destination="aabbcc")
+
+            assert result is True
+            t._establish_direct_path.assert_called_once()
+            assert mc.commands.send_msg.await_count == 2
+        finally:
+            _cleanup(t)
+
+    def test_wait_for_ack_false_on_none_and_on_exception(self):
+        """_wait_for_ack: falsy exp_ack → False; wait_for_event raising → False."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            # Falsy expected_ack short-circuits without touching the dispatcher.
+            assert t._wait_for_ack(None, 1.0) is False
+            assert t._wait_for_ack(b"", 1.0) is False
+            # A raising wait_for_event is swallowed → False.
+            mc.dispatcher.wait_for_event = AsyncMock(side_effect=RuntimeError("boom"))
+            assert t._wait_for_ack(b"\x01\x02\x03\x04", 1.0) is False
+        finally:
+            _cleanup(t)
+
+    def test_direct_send_no_result_returns_false(self):
+        """send_msg returning None (no radio result) → False, no discovery."""
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            mc.get_contact_by_key_prefix.return_value = _DM_CONTACT
+            mc.ensure_contacts = AsyncMock(return_value=True)
+            mc.commands.send_msg = AsyncMock(return_value=None)
+            t._establish_direct_path = MagicMock()
             assert t.send_message("hi", destination="deadbeef") is False
+            t._establish_direct_path.assert_not_called()
         finally:
             _cleanup(t)
 
