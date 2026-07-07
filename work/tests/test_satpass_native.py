@@ -136,9 +136,9 @@ def test_two_observers_consolidate_to_one_broadcast(monkeypatch):
     assert row["los_at"] == T0 + 400                # twin (latest LOS)
     assert "boise" in row["observer"] and "twin" in row["observer"]
 
-    # Wire carries entry->exit region + aos->peak->los compass sweep.
+    # Wire carries entry->exit region (FRIENDLY names) + aos->peak->los sweep.
     wire = evt["wire"]
-    assert "boise→twin" in wire               # entry -> exit
+    assert "(Boise→Twin Falls)" in wire       # friendly entry -> exit
     assert "SW→S→NE" in wire             # aos -> peak(twin) -> los
 
 

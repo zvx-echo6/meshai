@@ -22,13 +22,13 @@ Severity mapping:
     3 = priority  (>= 45 deg max elevation)
     <= 2 = routine
 
-Broadcast wire format (two lines, LoRa-tight):
-    Consolidated (multi-observer):
-        Line 1: 🛰️ {name} {bucket}, {aos_compass}→{los_compass}
-        Line 2: {duration} min window, {rise}–{set} {AM/PM} MDT ({entry_obs}→{exit_obs})
-    Single observer:
-        Line 1: 🛰️ {name} {bucket}, {aos_compass}→{los_compass}
-        Line 2: {duration} min window, {rise}–{set} {AM/PM} MDT
+Broadcast wire format (single line, LoRa-tight, absolute local time — a
+~12h-ahead heads-up):
+    🛰️ {short_name} {rise} {AM/PM} {TZ}[ tomorrow], max {el}° {compass} ({dur} min)[ (region)]
+    - short_name: short ham designation (ISS/AO-27/AO-91), else cleaned catalog
+    - compass: aos→peak→los with consecutive duplicates collapsed (no E→E→E)
+    - region: appended ONLY for a genuine multi-observer sweep with different
+      friendly names; dropped for a single observer or the synthetic coverage_center
 DM wire format (compact, exact degrees):
     {name} {HH:MM}–{HH:MM} {TZ} max {el}° {aos_compass}→{los_compass}
 """
@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -113,12 +114,98 @@ def _parse_iso_epoch(s) -> Optional[int]:
 
 
 def _elevation_bucket(max_el: float) -> str:
-    """Map max elevation to human-readable bucket name."""
+    """Map max elevation to human-readable bucket name.
+
+    Retained for the DM/other paths; the broadcast wire now shows numeric
+    degrees (`max NN°`) instead of a bucket word.
+    """
     if max_el >= 60:
         return "overhead"
     if max_el >= 30:
         return "high pass"
     return "low pass"
+
+
+# Short ham designations for common broadcast satellites, keyed by NORAD id.
+# Listeners recognize "AO-91" far faster than the cluttered catalog name
+# "RADFXSAT (FOX-1B)".
+_SHORT_SAT_NAMES = {
+    25544: "ISS",
+    22825: "AO-27",
+    43017: "AO-91",
+}
+
+# Name-substring fallback (upper-cased contains) for when the NORAD id isn't
+# in the map but the catalog name is recognizable.
+_SHORT_NAME_SUBSTR = (
+    ("ZARYA", "ISS"),
+    ("EYESAT", "AO-27"),
+    ("AO-27", "AO-27"),
+    ("RADFXSAT", "AO-91"),
+    ("FOX-1B", "AO-91"),
+)
+
+
+def _short_sat_name(norad_id: Optional[int], sat_name: Optional[str]) -> str:
+    """Resolve a short, listener-friendly satellite name.
+
+    NORAD-id map first, then a name-substring fallback, then a cleaned
+    catalog name (parenthetical stripped, e.g. "RADFXSAT (FOX-1B)" ->
+    "RADFXSAT"). Always returns a non-empty string.
+    """
+    nid: Optional[int] = None
+    if norad_id is not None:
+        try:
+            nid = int(norad_id)
+        except (TypeError, ValueError):
+            nid = None
+    if nid is not None and nid in _SHORT_SAT_NAMES:
+        return _SHORT_SAT_NAMES[nid]
+
+    up = (sat_name or "").upper()
+    for sub, short in _SHORT_NAME_SUBSTR:
+        if sub in up:
+            return short
+
+    cleaned = re.sub(r"\s*\(.*?\)", "", sat_name or "").strip()
+    return cleaned or (sat_name or "").strip() or "SAT"
+
+
+def _collapse_compass(*points: Optional[str]) -> str:
+    """Join compass points, dropping empties and consecutive duplicates.
+
+    "E","E","E" -> "E"; "E","SE","SE" -> "E→SE"; "S","W","NW" -> "S→W→NW".
+    """
+    out: list[str] = []
+    for p in points:
+        if not p:
+            continue
+        if not out or out[-1] != p:
+            out.append(p)
+    return "→".join(out)
+
+
+# Synthetic coverage-centroid observer markers — these are meaningless to
+# listeners, so the region parenthetical is dropped when either endpoint is one.
+_SYNTHETIC_OBSERVERS = {"coverage_center", "coverage center"}
+
+
+def _is_synthetic_observer(label: Optional[str]) -> bool:
+    return bool(label) and label.strip().lower() in _SYNTHETIC_OBSERVERS
+
+
+def _region_paren(entry: Optional[str], exit_: Optional[str]) -> str:
+    """Region suffix for a genuine multi-observer sweep, else ''.
+
+    Only rendered when both endpoints exist, differ, and neither is the
+    synthetic coverage-centroid observer. Single observer / synthetic ->
+    no parenthetical.
+    """
+    if not entry or not exit_ or entry == exit_:
+        return ""
+    if _is_synthetic_observer(entry) or _is_synthetic_observer(exit_):
+        return ""
+    return f" ({entry}→{exit_})"
 
 
 def _format_time_12h(epoch: Optional[int]) -> str:
@@ -204,54 +291,53 @@ def format_pass(*, sat_name: str, max_el: float,
                 broadcast: bool = True,
                 entry_observer: Optional[str] = None,
                 exit_observer: Optional[str] = None,
-                peak_compass: Optional[str] = None) -> str:
+                peak_compass: Optional[str] = None,
+                norad_id: Optional[int] = None) -> str:
     """Unified pass formatter with mode switch.
 
-    broadcast=True:  Two-line format with buckets, 12h times, LoRa budget.
-        🛰️ {name} {bucket}, {aos_compass}→[peak_compass→]{los_compass}
-        {duration} min window, {rise}–{set} {AM/PM} {TZ} [tomorrow] [(region)]
+    broadcast=True:  Single clean line, absolute local time (a ~12h-ahead
+        heads-up), LoRa budget.
+        🛰️ {short_name} {rise} {AM/PM} {TZ}[ tomorrow], max {el}° {compass} ({dur} min)[ (region)]
 
     broadcast=False: Compact DM format with exact degrees.
         {name} {HH:MM}–{HH:MM} {TZ} max {el}° {aos_compass}→[peak→]{los_compass}
 
-    peak_compass: compass direction at peak elevation. When provided, the
-        compass segment renders as aos→peak→los; when None it stays aos→los
-        (preserving legacy callers that don't thread the peak field).
+    peak_compass: compass direction at peak elevation. Threaded through the
+        compass sweep (aos→peak→los); consecutive duplicate points are
+        collapsed so a degenerate "E→E→E" renders as "E".
+
+    norad_id: used to resolve the short ham name for the broadcast wire.
     """
-    # Compass sweep segment: include the peak point only when supplied.
-    if peak_compass:
-        compass_seg = f"{aos_compass}→{peak_compass}→{los_compass}"
+    # Compass sweep segment: aos->peak->los with consecutive duplicates dropped.
+    compass_seg = _collapse_compass(aos_compass, peak_compass, los_compass)
+
+    # Duration in whole minutes
+    if aos_epoch is not None and los_epoch is not None:
+        dur_min = max(1, round((los_epoch - aos_epoch) / 60))
     else:
-        compass_seg = f"{aos_compass}→{los_compass}"
+        dur_min = 0
 
     if broadcast:
-        bucket = _elevation_bucket(max_el)
-        # Duration in whole minutes
-        if aos_epoch is not None and los_epoch is not None:
-            dur_min = max(1, round((los_epoch - aos_epoch) / 60))
-        else:
-            dur_min = 0
+        name = _short_sat_name(norad_id, sat_name)
         rise_str = _format_time_12h(aos_epoch)
-        set_str = _format_time_12h(los_epoch)
-        ampm = _format_ampm(los_epoch)
+        ampm = _format_ampm(aos_epoch)
         tz = _tz_abbr(aos_epoch)
         date_lbl = _date_label(aos_epoch)
+        el = int(round(max_el)) if max_el is not None else 0
+        region = _region_paren(entry_observer, exit_observer)
 
-        line1 = f"\U0001F6F0\uFE0F {sat_name} {bucket}, {compass_seg}"
-
-        # Build time portion
-        time_part = f"{dur_min} min window, {rise_str}\u2013{set_str} {ampm} {tz}{date_lbl}"
-
-        # Region parenthetical: multi-observer sweep or single-observer location
-        if entry_observer and exit_observer and entry_observer != exit_observer:
-            line2 = f"{time_part} ({entry_observer}\u2192{exit_observer})"
-        elif entry_observer:
-            line2 = f"{time_part} ({entry_observer})"
-        else:
-            line2 = time_part
+        # Elevation + compass; the compass may be empty when no azimuth data
+        # was available, in which case it is simply omitted (no stray space).
+        core = f"max {el}\u00B0"
+        if compass_seg:
+            core += f" {compass_seg}"
+        line = (
+            f"\U0001F6F0\uFE0F {name} {rise_str} {ampm} {tz}{date_lbl}, "
+            f"{core} ({dur_min} min){region}"
+        )
 
         # Safety cap: fit the broadcast string to the mesh packet budget.
-        return fit_to_budget(f"{line1}\n{line2}", budget_for("satpass"))
+        return fit_to_budget(line, budget_for("satpass"))
     else:
         # DM format: compact with exact degrees
         aos_str = _format_time_24h(aos_epoch)
@@ -500,7 +586,7 @@ def gate_consolidated_pass(consolidated: dict, *,
         return None
 
     # Build consolidated wire — always pass observer names for region context
-    wire = format_pass(sat_name=sat_name, max_el=max_el,
+    wire = format_pass(sat_name=sat_name, max_el=max_el, norad_id=norad_id,
                       aos_epoch=aos_epoch, los_epoch=los_epoch,
                       aos_compass=aos_compass, los_compass=los_compass,
                       peak_compass=peak_compass,

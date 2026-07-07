@@ -333,12 +333,11 @@ class TestElevationDefault:
 class TestBroadcastWireFormat:
     """Two-line format, buckets, byte budget."""
 
-    def test_exact_two_line_example(self):
-        """Formatter produces the exact two-line example from spec."""
+    def test_exact_single_line_example(self):
+        """Formatter produces the exact single-line target format."""
         from meshai.central.satpass_handler import format_pass
 
-        # ISS high pass, SW→NE, 6 minute window, 8:38–8:44 PM MDT
-        # We need epoch values that produce 8:38 PM and 8:44 PM MDT
+        # ISS, SW->NE, 6-minute window, rises 8:38 PM MDT, max 55 deg.
         from zoneinfo import ZoneInfo
         tz = ZoneInfo("America/Boise")
         aos_dt = datetime(2026, 6, 12, 20, 38, 0, tzinfo=tz)
@@ -347,22 +346,19 @@ class TestBroadcastWireFormat:
         los_epoch = int(los_dt.timestamp())
 
         wire = format_pass(
-            sat_name="ISS", max_el=55.0,
+            sat_name="ISS", norad_id=25544, max_el=55.0,
             aos_epoch=aos_epoch, los_epoch=los_epoch,
             aos_compass="SW", los_compass="NE",
             broadcast=True,
         )
 
-        lines = wire.split("\n")
-        assert len(lines) == 2
-
-        # No peak_compass passed here \u2192 the sweep stays aos\u2192los (SW\u2192NE).
-        assert lines[0] == "\U0001F6F0\uFE0F ISS high pass, SW\u2192NE"
-        # line2 renders "min window" + a date qualifier for a pass not
-        # occurring today (the fixed 2026-06-12 date is always in the past
-        # relative to run time).
-        assert lines[1].startswith("6 min window, 8:38\u20138:44 PM MDT")
-        assert lines[1] == "6 min window, 8:38\u20138:44 PM MDT Fri Jun 12"
+        # Single line: absolute local rise time, numeric max elevation, and a
+        # date qualifier ("Fri Jun 12" \u2014 the fixed date is always in the past).
+        assert "\n" not in wire
+        assert wire == (
+            "\U0001F6F0\uFE0F ISS 8:38 PM MDT Fri Jun 12, "
+            "max 55\u00B0 SW\u2192NE (6 min)"
+        )
 
     def test_bucket_overhead_at_60(self):
         """max_el=60 should be 'overhead'."""
@@ -648,3 +644,96 @@ class TestStalenessGuard:
         # but the staleness guard specifically must not block it.
         # Since all other filters pass, wire should be produced.
         assert result is not None, "None los_epoch should fall through staleness guard"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 6. CLEAN FORMAT: short names, degrees, compass collapse, friendly obs
+# ══════════════════════════════════════════════════════════════════════
+
+class TestCleanBroadcastFormat:
+    """The format-cleanup rules (short names, degrees, compass, observers)."""
+
+    @staticmethod
+    def _wire(**kw):
+        from meshai.central.satpass_handler import format_pass
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("America/Boise")
+        base = dict(
+            sat_name="X", max_el=50.0,
+            aos_epoch=int(datetime(2026, 6, 12, 20, 38, 0, tzinfo=tz).timestamp()),
+            los_epoch=int(datetime(2026, 6, 12, 20, 44, 0, tzinfo=tz).timestamp()),
+            aos_compass="S", los_compass="N", broadcast=True,
+        )
+        base.update(kw)
+        return format_pass(**base)
+
+    def test_short_name_ao91_from_norad(self):
+        wire = self._wire(norad_id=43017, sat_name="RADFXSAT (FOX-1B)")
+        assert "AO-91" in wire
+        assert "RADFXSAT" not in wire
+        assert "FOX-1B" not in wire
+
+    def test_short_name_iss_and_ao27(self):
+        assert "ISS" in self._wire(norad_id=25544, sat_name="ISS (ZARYA)")
+        assert "AO-27" in self._wire(norad_id=22825, sat_name="EYESAT-1 (AO-27)")
+
+    def test_short_name_substring_fallback(self):
+        # No NORAD mapping, but the catalog name is recognizable.
+        wire = self._wire(norad_id=99999, sat_name="RADFXSAT (FOX-1B)")
+        assert "AO-91" in wire
+
+    def test_unmapped_name_is_cleaned(self):
+        # Parenthetical stripped for an unmapped satellite.
+        wire = self._wire(norad_id=40000, sat_name="METEOR-M2 (WEATHER)")
+        assert "METEOR-M2" in wire
+        assert "(WEATHER)" not in wire
+
+    def test_compass_collapse_all_equal(self):
+        wire = self._wire(aos_compass="E", peak_compass="E", los_compass="E")
+        assert "E→E→E" not in wire
+        assert " E " in wire  # a lone collapsed "E"
+
+    def test_compass_collapse_trailing_dup(self):
+        wire = self._wire(aos_compass="E", peak_compass="SE", los_compass="SE")
+        assert "E→SE" in wire
+        assert "E→SE→SE" not in wire
+
+    def test_compass_no_collapse_when_distinct(self):
+        wire = self._wire(aos_compass="S", peak_compass="W", los_compass="NW")
+        assert "S→W→NW" in wire
+
+    def test_shows_numeric_degrees_not_bucket(self):
+        wire = self._wire(max_el=77.0)
+        assert "max 77°" in wire
+        assert "high pass" not in wire
+        assert "overhead" not in wire
+
+    def test_multi_observer_region_shown(self):
+        wire = self._wire(entry_observer="Treasure Valley",
+                          exit_observer="Magic Valley")
+        assert "(Treasure Valley→Magic Valley)" in wire
+
+    def test_single_observer_no_region(self):
+        wire = self._wire(entry_observer="Boise", exit_observer="Boise")
+        assert "(" not in wire.split("min)")[-1]  # nothing after the (N min)
+
+    def test_coverage_center_region_dropped(self):
+        wire = self._wire(entry_observer="coverage_center",
+                          exit_observer="Magic Valley")
+        assert "coverage_center" not in wire
+        assert "Coverage Center" not in wire
+        # Also the friendly synthetic label form.
+        wire2 = self._wire(entry_observer="Coverage Center",
+                           exit_observer="Magic Valley")
+        assert "Coverage Center" not in wire2
+
+    def test_golden_line(self):
+        # A full golden line matching the target format for a sample pass.
+        wire = self._wire(
+            norad_id=25544, sat_name="ISS (ZARYA)", max_el=77.0,
+            aos_compass="S", peak_compass=None, los_compass="NW",
+        )
+        assert wire == (
+            "\U0001F6F0️ ISS 8:38 PM MDT Fri Jun 12, "
+            "max 77° S→NW (6 min)"
+        )

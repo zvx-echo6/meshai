@@ -185,12 +185,9 @@ def test_satpass_predict_compass_from_raw_azimuths():
     assert result is not None, "handler returned None for satpass_predict envelope"
     wire, _ = result
 
-    lines = wire.split("\n")
-    assert len(lines) == 2, f"Expected 2 lines, got {len(lines)}: {wire!r}"
-
-    # Line 1 format: name bucket, aos→peak→los. Raw azimuths convert
-    # to a non-empty 3-point compass sweep.
-    compass = lines[0].split(", ")[-1]
+    # Single-line wire: extract the compass segment between "max NN° " and " (".
+    assert "\n" not in wire, f"Expected single line: {wire!r}"
+    compass = wire.split("° ", 1)[1].split(" (", 1)[0]
     parts = compass.split("\u2192")
     assert len(parts) == 3, f"Expected aos->peak->los sweep, got {parts!r}"
     # 163.2 -> S, 245.0 -> SW (peak), 348.7 -> N  (8-point compass)
@@ -218,9 +215,9 @@ def test_n2yo_precomputed_compass_unchanged():
     assert result is not None, "handler returned None for n2yo envelope"
     wire, _ = result
 
-    lines = wire.split("\n")
-    # Must use the precomputed strings verbatim: SE→ENE→N
-    compass = lines[0].split(", ")[-1]
+    # Single-line wire: must use the precomputed strings verbatim: SE→ENE→N.
+    assert "\n" not in wire, f"Expected single line: {wire!r}"
+    compass = wire.split("° ", 1)[1].split(" (", 1)[0]
     parts = compass.split("\u2192")
     assert len(parts) == 3, f"Expected aos->peak->los sweep, got {parts!r}"
     assert parts[0] == "SE", f"Expected precomputed aos SE: {parts!r}"
@@ -255,8 +252,12 @@ def test_no_compass_no_azimuth_no_crash():
     assert result is not None, "handler crashed or returned None — should produce wire with empty compass"
     wire, _ = result
 
-    lines = wire.split("\n")
-    assert len(lines) == 2
-    # Arrow still present even with empty (peak empty -> no peak segment):
-    assert "\u2192" in lines[0], f"Expected arrow in line 1 even with empty compass: {lines[0]!r}"
+    # Single clean line; with no azimuth data the compass segment is simply
+    # omitted (no arrow, no stray double space) and the wire still renders.
+    assert "\n" not in wire, f"Expected single line: {wire!r}"
+    assert wire.startswith("\U0001F6F0")
+    assert "max" in wire
+    assert "min)" in wire
+    assert "\u2192" not in wire     # empty compass -> no sweep arrows
+    assert "\u00b0  (" not in wire  # no stray double space where compass would be
     # No crash = test passes

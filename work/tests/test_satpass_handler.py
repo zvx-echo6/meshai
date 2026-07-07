@@ -154,7 +154,7 @@ class TestSatpassHandler:
         assert result2 is None
 
     def test_wire_format(self, mock_adapter_config):
-        """Wire format should have 2 lines with correct info."""
+        """Wire is a single clean line: short name, degrees, collapsed compass."""
         env = _envelope(sat_name="ISS", max_el=75, observer="Boise",
                         direction="S", aos_compass="SW", los_compass="NE")
         result = _ingest_and_consolidate(env, "central.sat.pass.iss",
@@ -162,14 +162,12 @@ class TestSatpassHandler:
         assert result is not None
         wire, _ = result
 
-        lines = wire.split("\n")
-        assert len(lines) == 2
-        assert "ISS" in lines[0]
-        assert "overhead" in lines[0]
-        assert "SW" in lines[0]        # aos_compass
-        assert "S" in lines[0]         # peak_compass (new)
-        assert "NE" in lines[0]        # los_compass
-        assert "min window" in lines[1]
+        assert "\n" not in wire          # single line now
+        assert "ISS" in wire
+        assert "max 75°" in wire    # numeric elevation, not a bucket word
+        assert "overhead" not in wire
+        assert "min window" not in wire
+        assert "SW→S→NE" in wire  # aos -> peak -> los, collapsed
 
     def test_commit_callback_attached(self, mock_adapter_config):
         """Broadcast should attach commit callback (on the consolidation data)."""
