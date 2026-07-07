@@ -91,15 +91,24 @@ class CoverageFilter:
             self._next(event)
             return
 
-        # P1 region tagging — stamp event.region / event.regions from named
+        # Region tagging — stamp event.region / event.regions from named
         # coverage areas BEFORE the gate so the gate verdict is unchanged.
-        # Only runs when region_tagging=True, areas are configured, and the
-        # event doesn't already carry regions (never clobbers satpass tags).
-        if self._region_tagging and self._areas and not event.regions:
+        # Runs whenever named areas exist and the event doesn't already carry
+        # regions (never clobbers satpass/adapter-preset tags). Deliberately NOT
+        # gated on a separate flag: the Coverage GUI save omits such a flag and
+        # would reset it, silently turning tagging off. If you named your
+        # coverage areas, events get tagged; region_routes.enabled gates ROUTING.
+        if self._areas and not event.regions:
             names = event_region_names(event, self._areas)
             if names:
                 event.regions = names
                 event.region = names[0]
+            # Measurement/observability: one DEBUG line per tagged event so the
+            # real per-family region-coverage rate can be read from the logs.
+            self._logger.debug(
+                "region-tag: category=%s source=%s -> %s",
+                event.category, event.source, names or "NONE",
+            )
 
         verdict = classify_event_areas(event, self._areas)
 
