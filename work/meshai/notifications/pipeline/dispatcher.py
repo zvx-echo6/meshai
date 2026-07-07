@@ -439,17 +439,19 @@ class Dispatcher:
             _now = time.time()
 
             for (_ch_type, _chan_val), _regions in _chans.items():
-                # Per-(transport, channel) dedup check — 4-tuple key so each
-                # channel deduplicates independently; a failed channel leaves
-                # no dedup trace, so it retries next sweep.
-                _dk = (event.source or "", _dd_id, _ch_type, str(_chan_val))
+                # Per-(transport, channel) dedup check — the key is a 2-tuple
+                # (source, "id#suffix|ch_type|chan") so each channel dedups
+                # independently AND the key matches the boot-restore form
+                # (dispatcher construction rehydrates _dedup_lru as 2-tuples).
+                # A 4-tuple here would miss after every restart and re-broadcast
+                # the whole matrix backlog — a restart flood. A failed channel
+                # leaves no dedup trace, so it retries next sweep.
+                _dk = (event.source or "", f"{_dd_id}|{_ch_type}|{_chan_val}")
                 if _dk in self._dedup_lru:
                     self._dedup_lru.move_to_end(_dk)
                     self._dedup_dropped += 1
                     self._persist_state()
-                    self._persist_dedup(
-                        (_dk[0], f"{_dk[1]}|{_ch_type}|{_chan_val}"), _now
-                    )
+                    self._persist_dedup(_dk, _now)
                     continue  # skip THIS channel only; other channels still run
 
                 # Per-region cooldown check — skip channel only when EVERY
@@ -515,13 +517,12 @@ class Dispatcher:
                 # trace so the next sweep can retry this channel.
                 if _success:
                     _commit_now = time.time()
-                    # Dedup: 4-tuple in memory; channel-qualified id in DB so
-                    # a mesh_broadcast and meshcore_broadcast on the same event
-                    # each get their own dedup row.
+                    # Dedup: the same channel-qualified 2-tuple in memory and DB
+                    # so mesh_broadcast and meshcore_broadcast on one event each
+                    # get their own row, and the key matches the boot-restore form
+                    # (survives restart -> no re-broadcast flood).
                     self._dedup_lru[_dk] = True
-                    self._persist_dedup(
-                        (_dk[0], f"{_dk[1]}|{_ch_type}|{_chan_val}"), _commit_now
-                    )
+                    self._persist_dedup(_dk, _commit_now)
                     _lru_max = int(adapter_config.dispatcher.dedup_lru_max)
                     while len(self._dedup_lru) > _lru_max:
                         self._dedup_lru.popitem(last=False)

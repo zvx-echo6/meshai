@@ -272,12 +272,12 @@ def test_per_channel_dedup_failed_channel_retries():
     asyncio.run(d.dispatch(ev))
     assert len(_rec) == 2  # both attempted
 
-    mb_keys = [k for k in d._dedup_lru if k[2] == "mesh_broadcast"] if _rec else []
-    mc_keys = [k for k in d._dedup_lru if len(k) == 4 and k[2] == "meshcore_broadcast"]
-    # meshcore_broadcast succeeded → recorded in dedup_lru; mesh_broadcast failed → NOT
-    assert any(k[2] == "meshcore_broadcast" for k in d._dedup_lru), \
+    # Dedup keys are 2-tuples (source, "id#suffix|ch_type|chan") — the channel
+    # is baked into the second element (this shape survives the boot restore).
+    # meshcore_broadcast succeeded → recorded; mesh_broadcast failed → NOT.
+    assert any("meshcore_broadcast" in k[1] for k in d._dedup_lru), \
         "meshcore_broadcast (success) must be in dedup_lru"
-    assert not any(k[2] == "mesh_broadcast" for k in d._dedup_lru), \
+    assert not any("|mesh_broadcast|" in k[1] for k in d._dedup_lru), \
         "mesh_broadcast (failed) must NOT be in dedup_lru"
 
     # Second dispatch same event: meshcore_broadcast deduped; mesh_broadcast retries.
@@ -416,3 +416,25 @@ def test_matrix_resolves_from_event_regions_list():
     # Each region maps to a distinct mt index → two sends
     channels = {r["broadcast_channel"] for r in rec}
     assert channels == {1, 3}
+
+
+def test_restart_dedup_key_matches_boot_restore_form():
+    """Regression (restart-flood): the matrix dedup key MUST equal the boot-
+    restore shape — a 2-tuple (source, "id|ch_type|chan"). Dispatcher
+    construction rehydrates _dedup_lru as 2-tuples; a 4-tuple check key would
+    miss after every restart and re-broadcast the whole matrix backlog."""
+    cfg = _base_cfg(fam="fire", cooldown_s=0)
+    cfg.notifications.region_routes = _rr(
+        {"fire": {"SCI": {"mt": 3, "mc": None,
+                          "min_severity": "routine", "enabled": True}}}
+    )
+    d, rec = _make_dispatcher(cfg)
+    ev = _ev(fam="fire", region="SCI", eid="restart-test")
+    # Exactly what dispatcher.__init__ restores from dispatcher_dedup:
+    d._dedup_lru[("test", "restart-test|mesh_broadcast|3")] = True
+    asyncio.run(d.dispatch(ev))
+    mesh_sends = [r for r in rec if r["delivery_type"] == "mesh_broadcast"]
+    assert mesh_sends == [], (
+        "matrix must dedup against the restored 2-tuple key; a re-broadcast "
+        "here is the restart-flood bug"
+    )
