@@ -1427,7 +1427,13 @@ function NotificationRuleCard({
 }
 
 // Main Notifications Page Component
-export const TOGGLE_FAMILY_META: { key: string; label: string; Icon: typeof Activity }[] = [
+export type FamilyMeta = { key: string; label: string; Icon: typeof Activity }
+
+// Static base list of built-in families with their curated icons. This stays the
+// canonical export (Environment.tsx still imports it directly). Dynamic/generic
+// families registered at runtime are layered on top via useFamilies() below —
+// this list is NEVER mutated.
+export const TOGGLE_FAMILY_META: FamilyMeta[] = [
   { key: 'mesh_health', label: 'Mesh Health', Icon: Activity },
   { key: 'weather', label: 'Weather', Icon: Cloud },
   { key: 'fire', label: 'Fire', Icon: Flame },
@@ -1438,6 +1444,63 @@ export const TOGGLE_FAMILY_META: { key: string; label: string; Icon: typeof Acti
   { key: 'seismic', label: 'Seismic', Icon: Mountain },
   { key: 'tracking', label: 'Tracking', Icon: MapPin },
 ]
+
+// Shape returned by GET /api/notifications/families.
+type ApiFamily = { key: string; label: string; dynamic: boolean }
+
+// Merge the static built-ins with API-reported families. Static entries win on a
+// key collision (keep their curated icon + label); any family NOT already in the
+// static set is appended with a generic Layers icon and its API label. Dedups by key.
+function mergeFamilies(apiFamilies: ApiFamily[]): FamilyMeta[] {
+  const seen = new Set(TOGGLE_FAMILY_META.map((f) => f.key))
+  const extra: FamilyMeta[] = []
+  for (const f of apiFamilies) {
+    if (!f || !f.key || seen.has(f.key)) continue  // static wins; skip dupes
+    seen.add(f.key)
+    extra.push({ key: f.key, label: f.label || f.key, Icon: Layers })
+  }
+  return [...TOGGLE_FAMILY_META, ...extra]
+}
+
+// Module-level cache so the several consumers of useFamilies() (the two delivery
+// grids, the category picker, the save loop) share a SINGLE fetch rather than
+// each issuing their own request on mount.
+let _familiesCache: FamilyMeta[] | null = null
+let _familiesPromise: Promise<FamilyMeta[]> | null = null
+
+// Returns the MERGED family list (static built-ins + registered dynamic families).
+// While the fetch is in-flight — or if it fails — it returns just the static
+// TOGGLE_FAMILY_META, so the UI always renders the built-ins and degrades
+// gracefully. Once families are known they render as ordinary assignable rows.
+export function useFamilies(): FamilyMeta[] {
+  const [families, setFamilies] = useState<FamilyMeta[]>(_familiesCache ?? TOGGLE_FAMILY_META)
+
+  useEffect(() => {
+    let cancelled = false
+    if (_familiesCache) {
+      setFamilies(_familiesCache)
+      return
+    }
+    if (!_familiesPromise) {
+      _familiesPromise = fetch('/api/notifications/families')
+        .then((r) => (r.ok ? r.json() : []))
+        .then((data: unknown) => {
+          const merged = mergeFamilies(Array.isArray(data) ? (data as ApiFamily[]) : [])
+          _familiesCache = merged
+          return merged
+        })
+        .catch(() => TOGGLE_FAMILY_META)  // fall back to static on error
+    }
+    _familiesPromise.then((merged) => {
+      if (!cancelled) setFamilies(merged)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  return families
+}
 
 // Grouped category picker — shows categories family-by-family using TOGGLE_FAMILY_META
 // for icons/labels/order. Each family has a Select-all / Clear control and a count.
@@ -1453,10 +1516,11 @@ function GroupedCategoryPicker({
   onToggle: (catId: string) => void
   onSelectMany: (catIds: string[], action: 'add' | 'remove') => void
 }) {
-  const FAMILY_KEYS = new Set(TOGGLE_FAMILY_META.map(f => f.key))
+  const families = useFamilies()
+  const FAMILY_KEYS = new Set(families.map(f => f.key))
   // Group by toggle, preserving family order; collect unknowns into "other".
   const byFamily = new Map<string, AlertCategory[]>()
-  TOGGLE_FAMILY_META.forEach(f => byFamily.set(f.key, []))
+  families.forEach(f => byFamily.set(f.key, []))
   const other: AlertCategory[] = []
   for (const cat of categories) {
     const fam = cat.toggle
@@ -1546,7 +1610,7 @@ function GroupedCategoryPicker({
 
   return (
     <div className="max-h-96 overflow-y-auto border border-[#1e2a3a] p-2 space-y-2">
-      {TOGGLE_FAMILY_META.map(f => renderGroup(f.key, f.label, f.Icon, byFamily.get(f.key) || []))}
+      {families.map(f => renderGroup(f.key, f.label, f.Icon, byFamily.get(f.key) || []))}
       {renderGroup('other', 'Other', null, other)}
     </div>
   )
@@ -1669,6 +1733,7 @@ function MeshtasticDeliveryGrid({
   toggles: Record<string, NotificationToggle>
   onChange: (t: Record<string, NotificationToggle>) => void
 }) {
+  const families = useFamilies()
   const upd = (fam: string, patch: Partial<NotificationToggle>) =>
     onChange({ ...toggles, [fam]: { ...(toggles[fam] || {}), ...patch } as NotificationToggle })
 
@@ -1679,7 +1744,7 @@ function MeshtasticDeliveryGrid({
         <InfoButton info="Per-family Meshtastic delivery matrix. Choose which channels fire at each severity, the broadcast channel index, and DM node IDs. Family on/off and severity threshold are configured on the Data Feeds page." />
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {TOGGLE_FAMILY_META.map(({ key, label, Icon }) => {
+        {families.map(({ key, label, Icon }) => {
           const t = toggles[key] || ({} as NotificationToggle)
           return (
             <div key={key} className="border border-[#1e2a3a] p-3 space-y-3">
@@ -1730,6 +1795,7 @@ function OtherChannelsGrid({
   toggles: Record<string, NotificationToggle>
   onChange: (t: Record<string, NotificationToggle>) => void
 }) {
+  const families = useFamilies()
   const upd = (fam: string, patch: Partial<NotificationToggle>) =>
     onChange({ ...toggles, [fam]: { ...(toggles[fam] || {}), ...patch } as NotificationToggle })
 
@@ -1740,7 +1806,7 @@ function OtherChannelsGrid({
         <InfoButton info="Per-family delivery via email, webhook, and digest. The severity matrix selects which of these channels fire at each level. Email SMTP settings are behind the collapsible below each family." />
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {TOGGLE_FAMILY_META.map(({ key, label, Icon }) => {
+        {families.map(({ key, label, Icon }) => {
           const t = toggles[key] || ({} as NotificationToggle)
           return (
             <div key={key} className="border border-[#1e2a3a] p-3 space-y-3">
@@ -1819,6 +1885,7 @@ function OtherChannelsGrid({
 
 export default function Notifications() {
   const { setDirty } = useDirty()
+  const families = useFamilies()
   const [config, setConfig] = useState<NotificationsConfig | null>(null)
   const [originalConfig, setOriginalConfig] = useState<NotificationsConfig | null>(null)
   const [categories, setCategories] = useState<AlertCategory[]>([])
@@ -1897,7 +1964,7 @@ export default function Notifications() {
         toggles: { ...(fresh.toggles || {}) },
       }
       const myToggles = config.toggles || {}
-      for (const { key } of TOGGLE_FAMILY_META) {
+      for (const { key } of families) {
         const mine = myToggles[key]
         if (!mine) continue
         merged.toggles![key] = mergeMeshtasticAndOtherFields(
