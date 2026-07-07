@@ -74,7 +74,15 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
-export default function GenericSources() {
+/**
+ * Self-contained editor for generic (no-code) custom data sources.
+ *
+ * Owns its own data lifecycle: fetches generic_sources on mount, tracks a
+ * dirty flag, and saves via saveGenericSources (raising a restart banner when
+ * the backend reports one). Rendered as the "Custom Sources" section of the
+ * Data Feeds page — a custom source is just another data feed.
+ */
+export default function GenericSourcesEditor() {
   const [sources, setSources] = useState<GenericSource[] | null>(null)
   const [original, setOriginal] = useState<string>('')
   const [loading, setLoading] = useState(true)
@@ -88,7 +96,6 @@ export default function GenericSources() {
   const [previewing, setPreviewing] = useState<Record<number, boolean>>({})
 
   useEffect(() => {
-    document.title = 'Data Sources — MeshAI'
     fetchGenericSources()
       .then((data) => {
         const list = Array.isArray(data) ? data : []
@@ -201,7 +208,7 @@ export default function GenericSources() {
     try {
       const result = await saveGenericSources(sources)
       setOriginal(JSON.stringify(sources))
-      setSuccess('Data sources saved')
+      setSuccess('Custom sources saved')
       setTimeout(() => setSuccess(null), 3000)
       if (result.restart_required) {
         notifyRestartRequired(Array.isArray(result.changed_keys) ? result.changed_keys : [])
@@ -215,14 +222,14 @@ export default function GenericSources() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64 text-[#777]">
-        Loading data sources…
+      <div className="flex items-center justify-center h-32 text-[#777]">
+        Loading custom sources…
       </div>
     )
   }
   if (!sources) {
     return (
-      <div className="flex items-center justify-center h-64 text-red-400">
+      <div className="flex items-center justify-center h-32 text-red-400">
         {error || 'No config'}
       </div>
     )
@@ -248,13 +255,18 @@ export default function GenericSources() {
 
   return (
     <div className="space-y-6 max-w-4xl">
-      {/* Page description + action bar */}
+      {/* Section description + action bar */}
       <div className="flex items-start justify-between gap-4">
         <p className="text-sm text-[#777]">
           Point MeshAI at any public REST or GeoJSON feed — no code. Each source polls a URL,
           maps its JSON fields to an event via dotted paths, and broadcasts through the normal
           coverage-gated pipeline. Use <span className="text-accent">Preview</span> to fetch a
-          URL and read its structure before filling in the paths.
+          URL and read its structure before filling in the paths. Once saved, a custom source
+          becomes a routable family —{' '}
+          <a href="/notifications" className="text-accent hover:underline">
+            enable its family in Notifications
+          </a>{' '}
+          to route it to a channel.
         </p>
         {hasChanges && actionButtons}
       </div>
@@ -264,7 +276,7 @@ export default function GenericSources() {
 
       {sources.length === 0 && (
         <div className="border border-border p-6 text-center text-sm text-[#666]">
-          No data sources yet. Click “Add source” to wire up a public feed.
+          No custom sources yet. Click “Add source” to wire up a public feed.
         </div>
       )}
 

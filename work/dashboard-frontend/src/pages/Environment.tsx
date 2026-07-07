@@ -15,6 +15,7 @@ import {
 import { TOGGLE_FAMILY_META, type NotificationToggle, type NotificationsConfig } from './Notifications'
 import AdapterConfig, { CURATED_KEYS } from './AdapterConfig'
 import { ManagedSecret } from '@/components/ManagedSecret'
+import GenericSourcesEditor from '@/components/GenericSourcesEditor'
 
 type FeedSource = 'native' | 'central'
 
@@ -1892,6 +1893,20 @@ const save = async () => {
      </AdapterPanel>
     </>
    )}
+
+   {/* ── Custom Sources — generic no-code feeds, first-class data feeds ───── */}
+   <div className="pt-4 mt-2 border-t border-border space-y-4">
+    <div>
+     <h2 className="text-base font-semibold text-white flex items-center gap-2">
+      <Sliders size={16} /> Custom Sources
+     </h2>
+     <p className="text-xs text-[#666] mt-1">
+      Point MeshAI at any public REST/GeoJSON feed; it becomes a routable family in
+      Notifications — sitting alongside the built-in feeds above.
+     </p>
+    </div>
+    <GenericSourcesEditor />
+   </div>
 
    {/* ── Advanced: Geocoder — infra, not a feed ──────────────────────────── */}
    <details className="group border border-border p-4">
