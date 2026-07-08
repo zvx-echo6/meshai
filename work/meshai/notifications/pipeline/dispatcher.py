@@ -83,6 +83,7 @@ class Dispatcher:
         # from config so it can be tuned at runtime via /api/config PUT.
         self._first_event_at: Optional[float] = None
         self._cold_start_dropped = 0
+        self._severity_floor_dropped = 0
         # (toggle.name, category, region) -> last-fire wall-clock seconds
         self._toggle_cooldown: dict[tuple[str, str, str], float] = {}
         # Insertion-ordered (source, event.id) -> sentinel; evict oldest at cap.
@@ -118,7 +119,8 @@ class Dispatcher:
         try:
             row = conn.execute(
                 "SELECT cold_start_anchor, stale_dropped, cooldown_dropped, "
-                "dedup_dropped, cold_start_dropped FROM dispatcher_state WHERE id=1"
+                "dedup_dropped, cold_start_dropped, severity_floor_dropped "
+                "FROM dispatcher_state WHERE id=1"
             ).fetchone()
         except Exception:
             self._logger.debug(
@@ -131,12 +133,13 @@ class Dispatcher:
             self._cooldown_dropped = int(row["cooldown_dropped"] or 0)
             self._dedup_dropped = int(row["dedup_dropped"] or 0)
             self._cold_start_dropped = int(row["cold_start_dropped"] or 0)
+            self._severity_floor_dropped = int(row["severity_floor_dropped"] or 0)
             self._logger.info(
                 "dispatcher state restored: cold_start_anchor=%s "
-                "stale=%d cooldown=%d dedup=%d cold_start=%d",
+                "stale=%d cooldown=%d dedup=%d cold_start=%d sev_floor=%d",
                 self._first_event_at, self._stale_dropped,
                 self._cooldown_dropped, self._dedup_dropped,
-                self._cold_start_dropped,
+                self._cold_start_dropped, self._severity_floor_dropped,
             )
 
         # Cooldowns: every row restored verbatim (the in-memory prune
@@ -180,10 +183,10 @@ class Dispatcher:
             conn.execute(
                 "UPDATE dispatcher_state SET cold_start_anchor=?, "
                 "stale_dropped=?, cooldown_dropped=?, dedup_dropped=?, "
-                "cold_start_dropped=?, updated_at=? WHERE id=1",
+                "cold_start_dropped=?, severity_floor_dropped=?, updated_at=? WHERE id=1",
                 (self._first_event_at, self._stale_dropped,
                  self._cooldown_dropped, self._dedup_dropped,
-                 self._cold_start_dropped, time.time()),
+                 self._cold_start_dropped, self._severity_floor_dropped, time.time()),
             )
         except Exception:
             self._logger.exception(
@@ -409,6 +412,16 @@ class Dispatcher:
                 _floor = ((_cell.get("min_severity") if isinstance(_cell, dict)
                             else getattr(_cell, "min_severity", None)) or "routine")
                 if event_rank < self.SEVERITY_RANK.get(_floor, 0):
+                    self._logger.warning(
+                        "severity-floor drop: source=%s category=%s id=%s severity=%s "
+                        "< floor=%s (matrix ch=%s region=%s)",
+                        event.source, event.category, event.id, event.severity,
+                        _floor,
+                        _cell.get("mt") if isinstance(_cell, dict) else getattr(_cell, "mt", "?"),
+                        _mr,
+                    )
+                    self._severity_floor_dropped += 1
+                    self._persist_state()
                     continue   # below per-cell floor for this region
                 _mt = _cell.get("mt") if isinstance(_cell, dict) else getattr(_cell, "mt", None)
                 _mc = _cell.get("mc") if isinstance(_cell, dict) else getattr(_cell, "mc", None)
@@ -554,7 +567,16 @@ class Dispatcher:
             if not (set(regions) & ev_regions):
                 return
         event_rank = self.SEVERITY_RANK.get(event.severity, 0)
-        if event_rank < self.SEVERITY_RANK.get(getattr(tog, "min_severity", "routine"), 0):
+        _tog_floor = getattr(tog, "min_severity", "routine")
+        if event_rank < self.SEVERITY_RANK.get(_tog_floor, 0):
+            self._logger.warning(
+                "severity-floor drop: source=%s category=%s id=%s severity=%s "
+                "< floor=%s (toggle=%s)",
+                event.source, event.category, event.id, event.severity,
+                _tog_floor, fam,
+            )
+            self._severity_floor_dropped += 1
+            self._persist_state()
             return
         # v0.16 (Integration C1) — destinations vs inline routing.
         # If the toggle references reusable NotificationDestinations, deliver
@@ -735,6 +757,7 @@ class Dispatcher:
             "cooldown_dropped": self._cooldown_dropped,
             "dedup_dropped": self._dedup_dropped,
             "cold_start_dropped": self._cold_start_dropped,
+            "severity_floor_dropped": self._severity_floor_dropped,
             "cold_start_anchor_at": self._first_event_at,
             "cooldown_keys": len(self._toggle_cooldown),
             "dedup_lru_size": len(self._dedup_lru),

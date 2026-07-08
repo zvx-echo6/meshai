@@ -727,6 +727,22 @@ class EnvironmentalStore:
                         return
                     # Apply data_patch into event.data
                     event.data.update(gate.data_patch)
+                    # Promote decider overrides onto the Event itself, mirroring the
+                    # Central path (central/consumer.py). Deciders stamp
+                    # _severity_override (fire: "priority" on every New/Update) and,
+                    # for fire New/tombstone, a category override. Merging them into
+                    # event.data alone left event.severity at the adapter's value
+                    # ("routine" for fires >=25 km from an anchor), which silently
+                    # failed the toggle/matrix min_severity floors. Native and Central
+                    # must share identical broadcast decisions. satpass/firms already
+                    # self-consume this in-adapter; this fixes it for every other
+                    # cut-over category at the shared choke point.
+                    _sev_override = gate.data_patch.get("_severity_override")
+                    if _sev_override:
+                        event.severity = _sev_override
+                    _cat_override = gate.data_patch.get("category")
+                    if _cat_override:
+                        event.category = _cat_override
                     if gate.commit is not None:
                         event.data["_on_broadcast_committed"] = gate.commit
             except Exception as _gate_exc:
