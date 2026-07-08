@@ -78,7 +78,11 @@ async def meshcore_send_advert(request: Request):
     if mc is None or not getattr(mc, "connected", False):
         return {"sent": False, "detail": "MeshCore not connected"}
     try:
-        ok = bool(mc.send_advert())
+        send_fn = getattr(mc, "send_advert_async", None)
+        if send_fn is not None:
+            ok = bool(await send_fn())
+        else:
+            ok = bool(mc.send_advert())
         detail = "Self-advert sent" if ok else "send_advert returned False"
         logger.info("dashboard: meshcore manual advert sent=%s", ok)
         return {"sent": ok, "detail": detail}
@@ -124,7 +128,11 @@ async def meshcore_telemetry_poll(request: Request):
     if not contact:
         return {"available": False, "detail": "Missing 'contact'"}
     try:
-        data = mc.req_telemetry(contact)
+        poll_fn = getattr(mc, "req_telemetry_async", None)
+        if poll_fn is not None:
+            data = await poll_fn(contact)
+        else:
+            data = mc.req_telemetry(contact)
         if data is None:
             return {"available": False, "contact": contact, "detail": "No telemetry response"}
         return {"available": True, "contact": contact, "data": data}
@@ -155,7 +163,7 @@ async def test_send(request: Request, body: TestSendRequest):
             except (ValueError, TypeError):
                 result = {"sent": False, "detail": f"invalid meshtastic channel index: {body.channel!r}"}
             else:
-                ok = bool(connector.send_message(text, destination=None, channel=idx, transport="meshtastic"))
+                ok = bool(await connector.send_message_async(text, destination=None, channel=idx, transport="meshtastic"))
                 result = {"sent": ok, "detail": f"sent to meshtastic channel {idx}" if ok else "send returned False"}
     elif body.transport == "meshcore":
         child = _find_child(connector, "meshcore")
@@ -163,7 +171,7 @@ async def test_send(request: Request, body: TestSendRequest):
             result = {"sent": False, "detail": "meshcore not connected"}
         else:
             name = str(body.channel)
-            ok = bool(connector.send_message(text, destination=None, meshcore_channel=name, transport="meshcore"))
+            ok = bool(await connector.send_message_async(text, destination=None, meshcore_channel=name, transport="meshcore"))
             if ok:
                 result = {"sent": True, "detail": f"sent to '{name}'"}
             else:

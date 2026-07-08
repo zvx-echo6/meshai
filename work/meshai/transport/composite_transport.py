@@ -107,10 +107,34 @@ class CompositeTransport(MeshTransport):
         child = self.meshcore_child()
         return child.send_advert() if child is not None else False
 
+    async def send_advert_async(self) -> bool:
+        """Async passthrough to the MeshCore child's send_advert_async(); False if no child."""
+        child = self.meshcore_child()
+        if child is None:
+            return False
+        fn = getattr(child, "send_advert_async", None)
+        if fn is not None:
+            return await fn()
+        # Fallback: sync version in executor.
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, child.send_advert)
+
     def req_telemetry(self, contact_id):
         """Passthrough to the MeshCore child's on-demand telemetry poll; None if no child."""
         child = self.meshcore_child()
         return child.req_telemetry(contact_id) if child is not None else None
+
+    async def req_telemetry_async(self, contact_id: str):
+        """Async passthrough to the MeshCore child's req_telemetry_async(); None if no child."""
+        child = self.meshcore_child()
+        if child is None:
+            return None
+        fn = getattr(child, "req_telemetry_async", None)
+        if fn is not None:
+            return await fn(contact_id)
+        # Fallback: sync version in executor.
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: child.req_telemetry(contact_id))
 
     def get_telemetry_cache(self):
         """Passthrough to the MeshCore child's telemetry cache; [] if no meshcore child."""
@@ -222,6 +246,119 @@ class CompositeTransport(MeshTransport):
     # ------------------------------------------------------------------
     # Message I/O
     # ------------------------------------------------------------------
+
+    async def send_message_async(
+        self,
+        text: str,
+        destination: Optional[str] = None,
+        channel: int = 0,
+        transport: Optional[str] = None,
+        meshcore_channel: Optional[str] = None,
+    ) -> bool:
+        """Async send through per-child queues, with the same routing logic as send_message().
+
+        Each child's send_message_async() goes through that child's serialized queue,
+        so Meshtastic and MeshCore sends are each independently paced.  For broadcasts
+        the two are awaited sequentially (Meshtastic first, then MeshCore).
+        """
+        if destination is None:
+            return await self._broadcast_async(text, channel, meshcore_channel=meshcore_channel,
+                                               transport=transport)
+        if transport is not None:
+            return await self._send_hinted_async(text, destination, channel, transport)
+        return await self._send_unhinted_async(text, destination, channel)
+
+    async def _broadcast_async(
+        self, text: str, channel: int,
+        meshcore_channel: Optional[str] = None,
+        transport: Optional[str] = None,
+    ) -> bool:
+        if transport is not None:
+            child = self._by_name.get(transport)
+            if child is None:
+                return False
+            name = _child_name(child)
+            if not child.connected:
+                return False
+            try:
+                if name == "meshcore":
+                    return await child.send_message_async(
+                        text, destination=None, meshcore_channel=meshcore_channel
+                    )
+                else:
+                    return await child.send_message_async(text, destination=None, channel=channel)
+            except Exception as exc:
+                logger.error("CompositeTransport: async hinted broadcast via %r raised: %s", name, exc)
+                return False
+
+        any_ok = False
+        for child in self._children:
+            name = _child_name(child)
+            if not child.connected:
+                continue
+            if name == "meshcore" and meshcore_channel is None:
+                continue
+            child_channel = meshcore_channel if name == "meshcore" else channel
+            try:
+                ok = await child.send_message_async(text, destination=None, channel=child_channel)
+                if ok:
+                    any_ok = True
+                else:
+                    logger.warning("CompositeTransport: async broadcast via %r returned False", name)
+            except Exception as exc:
+                logger.error("CompositeTransport: async broadcast via %r raised: %s", name, exc)
+        return any_ok
+
+    async def _send_hinted_async(
+        self, text: str, destination: str, channel: int, transport_hint: str
+    ) -> bool:
+        child = self._resolve_child_for_hint(transport_hint)
+        if child is None:
+            logger.error(
+                "CompositeTransport: no child with name %r for async DM; known: %s",
+                transport_hint, list(self._by_name),
+            )
+            return False
+        if not child.connected:
+            return False
+        try:
+            return await child.send_message_async(text, destination=destination, channel=channel)
+        except Exception as exc:
+            logger.error(
+                "CompositeTransport: async hinted send via %r raised: %s",
+                _child_name(child), exc,
+            )
+            return False
+
+    async def _send_unhinted_async(self, text: str, destination: str, channel: int) -> bool:
+        child = self._best_child_for_destination(destination)
+        if child is not None:
+            try:
+                return await child.send_message_async(text, destination=destination, channel=channel)
+            except Exception as exc:
+                logger.error(
+                    "CompositeTransport: async unhinted send via %r raised: %s",
+                    _child_name(child), exc,
+                )
+                return False
+        logger.warning(
+            "CompositeTransport: async DM destination %r unresolved; fanning to all children",
+            destination,
+        )
+        any_ok = False
+        for child in self._children:
+            if not child.connected:
+                continue
+            try:
+                ok = await child.send_message_async(text, destination=destination, channel=channel)
+                if ok:
+                    any_ok = True
+            except Exception as exc:
+                logger.error(
+                    "CompositeTransport: async DM fan via %r raised: %s",
+                    _child_name(child), exc,
+                )
+        return any_ok
 
     def send_message(
         self,

@@ -11,12 +11,14 @@ imported (and the test suite can run) without the lib installed.
 """
 
 import asyncio
+import concurrent.futures
 import logging
 import threading
 import time as _time
 from typing import Callable, Optional
 
 from .base import MeshTransport
+from .send_queue import RadioSendQueue
 from ..connector import MeshMessage
 
 logger = logging.getLogger(__name__)
@@ -125,6 +127,9 @@ class MeshCoreTransport(MeshTransport):
         #   _telemetry_failures: contact-id -> consecutive-timeout count
         self._telemetry_cache: dict[str, dict] = {}
         self._telemetry_failures: dict[str, int] = {}
+        # --- per-radio send queue (on the MC dedicated loop) ---
+        self._mc_send_queue: Optional[asyncio.Queue] = None
+        self._mc_drain_task: Optional[asyncio.Task] = None
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -324,6 +329,339 @@ class MeshCoreTransport(MeshTransport):
             )
             return False
 
+    # ------------------------------------------------------------------
+    # Async send helpers — run ON the MC dedicated loop (no _run_coro).
+    # These are called from the MC drain task directly.
+    # ------------------------------------------------------------------
+
+    async def _resolve_contact_async(self, dest: str):
+        """Resolve contact on the MC loop (no _run_coro, no deadlock risk)."""
+        if self._mc is None:
+            return None
+        try:
+            contact = self._mc.get_contact_by_key_prefix(dest)
+            if contact is not None:
+                return contact
+        except Exception:
+            return None
+        # Cache miss: force a full re-fetch from firmware.
+        try:
+            await asyncio.wait_for(self._mc.commands.get_contacts(lastmod=0), timeout=15)
+        except Exception:
+            logger.debug("MC: _resolve_contact_async get_contacts failed for %s", dest, exc_info=True)
+        try:
+            return self._mc.get_contact_by_key_prefix(dest)
+        except Exception:
+            return None
+
+    async def _send_dm_once_async(self, contact: dict, text: str, destination: str):
+        """Send one DM frame on the MC loop; returns MSG_SENT event or None."""
+        try:
+            result = await asyncio.wait_for(
+                self._mc.commands.send_msg(contact, text), timeout=15
+            )
+        except Exception as exc:
+            logger.warning("MC: _send_dm_once_async to %s failed: %s", destination, exc)
+            return None
+        if result is None:
+            logger.warning("MC: _send_dm_once_async to %s — no send result", destination)
+            return None
+        try:
+            sent_type = (
+                result.payload.get("type")
+                if hasattr(result, "payload") and isinstance(result.payload, dict)
+                else None
+            )
+            logger.info(
+                "MC: DM to %s sent (route=%s)",
+                contact.get("adv_name") or destination,
+                "flood" if sent_type == 1 else ("direct" if sent_type == 0 else "?"),
+            )
+        except Exception:
+            pass
+        return result
+
+    async def _wait_for_ack_async(self, expected_ack, timeout: float) -> bool:
+        """Wait for delivery ACK on the MC loop."""
+        if not expected_ack:
+            return False
+        from meshcore import EventType  # noqa: PLC0415
+        try:
+            code = (
+                expected_ack.hex()
+                if isinstance(expected_ack, (bytes, bytearray))
+                else str(expected_ack)
+            )
+        except Exception:
+            return False
+        try:
+            event = await asyncio.wait_for(
+                self._mc.dispatcher.wait_for_event(
+                    EventType.ACK,
+                    attribute_filters={"code": code},
+                    timeout=timeout,
+                ),
+                timeout=timeout + 2,
+            )
+            return event is not None
+        except Exception:
+            logger.debug("MC: _wait_for_ack_async failed for %r", expected_ack, exc_info=True)
+            return False
+
+    async def _establish_direct_path_async(self, contact: dict, dst: str) -> None:
+        """Path discovery on the MC loop (async version of _establish_direct_path)."""
+        label = contact.get("adv_name") or dst
+        try:
+            path_event = await asyncio.wait_for(
+                self._mc.commands.send_path_discovery_sync(contact, timeout=self._discovery_wait),
+                timeout=self._discovery_wait + 3,
+            )
+            if path_event is not None and not path_event.is_error():
+                logger.info("MC: path discovery to %s succeeded", label)
+            else:
+                logger.info("MC: path discovery to %s no PATH_RESPONSE; trying advert-path fallback", label)
+        except Exception as exc:
+            logger.debug("MC: send_path_discovery_sync to %s failed: %s", dst, exc)
+
+        try:
+            fresh_contact = await self._resolve_contact_async(dst) or contact
+            if fresh_contact.get("out_path_len", -1) < 0:
+                try:
+                    ap_event = await asyncio.wait_for(
+                        self._mc.commands.get_advert_path(fresh_contact), timeout=10
+                    )
+                    if (
+                        ap_event is not None
+                        and not ap_event.is_error()
+                        and isinstance(getattr(ap_event, "payload", None), dict)
+                    ):
+                        path_hex = ap_event.payload.get("path", "")
+                        path_len = ap_event.payload.get("path_len", -1)
+                        if path_len > 0 and path_hex:
+                            await asyncio.wait_for(
+                                self._mc.commands.update_contact(fresh_contact, path=path_hex),
+                                timeout=10,
+                            )
+                            logger.info(
+                                "MC: seeded direct path for %s (len=%d)",
+                                fresh_contact.get("adv_name") or dst, path_len,
+                            )
+                except Exception as exc:
+                    logger.debug("MC: advert-path fallback for %s failed: %s", dst, exc)
+        except Exception as exc:
+            logger.debug("MC: _establish_direct_path_async step-2 for %s: %s", dst, exc)
+
+    async def _enumerate_channels_async(self) -> None:
+        """Channel enumeration on the MC loop (async version of _enumerate_channels)."""
+        self._chan_name_to_idx = {}
+        try:
+            empty_run = 0
+            for idx in range(40):
+                try:
+                    event = await asyncio.wait_for(
+                        self._mc.commands.get_channel(idx), timeout=5
+                    )
+                except Exception as exc:
+                    logger.debug("MC: get_channel(%d) async failed, ending: %s", idx, exc)
+                    break
+                if not event:
+                    break
+                is_err = getattr(event, "is_error", None)
+                if callable(is_err) and event.is_error():
+                    break
+                payload = event.payload or {}
+                name = payload.get("channel_name", "")
+                slot = payload.get("channel_idx", idx)
+                if not name:
+                    empty_run += 1
+                    if empty_run >= 3:
+                        break
+                    continue
+                self._chan_name_to_idx[name] = slot
+                empty_run = 0
+        except Exception as exc:
+            logger.warning("MC: async channel enumeration error: %s", exc)
+            self._chan_name_to_idx = {}
+        logger.info("MC: async enumerated %d named channel(s)", len(self._chan_name_to_idx))
+
+    async def _do_mc_dm_send_async(self, text: str, destination: str) -> bool:
+        """Full DM send path on the MC loop (replaces send_message() DM branch)."""
+        if self._mc is None:
+            return False
+        contact = await self._resolve_contact_async(destination)
+        if contact is None:
+            logger.warning("MC: could not resolve contact %s; cannot DM", destination)
+            return False
+        label = contact.get("adv_name") or destination
+
+        # Fast path: send and wait for ACK.
+        result = await self._send_dm_once_async(contact, text, destination)
+        if result is None:
+            return False
+        exp_ack = self._extract_expected_ack(result)
+        if await self._wait_for_ack_async(exp_ack, self._ack_wait):
+            logger.info("MC: DM to %s ACKed (direct)", label)
+            return True
+
+        # No ACK: path discovery + retry.
+        logger.info("MC: no ACK from %s in %.1fs; running path discovery", label, self._ack_wait)
+        await self._establish_direct_path_async(contact, destination)
+        contact = await self._resolve_contact_async(destination) or contact
+        result = await self._send_dm_once_async(contact, text, destination)
+        if result is None:
+            return False
+        exp_ack = self._extract_expected_ack(result)
+        acked = await self._wait_for_ack_async(exp_ack, self._ack_wait)
+        logger.info(
+            "MC: DM to %s %s after discovery",
+            contact.get("adv_name") or destination,
+            "ACKed" if acked else "no ACK (sent best-effort)",
+        )
+        return acked or (not result.is_error())
+
+    async def _do_mc_broadcast_async(self, text: str, meshcore_channel: str) -> bool:
+        """Channel broadcast on the MC loop (replaces send_message() broadcast branch)."""
+        if self._mc is None:
+            return False
+        idx = self._chan_name_to_idx.get(meshcore_channel)
+        if idx is None:
+            # Lazy async re-enumeration (no _run_coro deadlock risk).
+            await self._enumerate_channels_async()
+            idx = self._chan_name_to_idx.get(meshcore_channel)
+        if idx is None:
+            logger.warning("MC channel '%s' not on companion; skipping", meshcore_channel)
+            return False
+        try:
+            result = await asyncio.wait_for(
+                self._mc.commands.send_chan_msg(idx, text), timeout=10
+            )
+            success = not result.is_error()
+            if not success:
+                logger.warning("MC: broadcast returned error event")
+            return success
+        except Exception as exc:
+            logger.error("MC: _do_mc_broadcast_async failed: %s", exc)
+            return False
+
+    async def _do_mc_advert_async(self) -> bool:
+        """Send self-advert on the MC loop (queued version)."""
+        if self._mc is None or not self._connected:
+            return False
+        try:
+            await self._mc.commands.send_advert(flood=True)
+            self._last_advert_sent = _time.time()
+            return True
+        except Exception as exc:
+            logger.warning("MC: queued advert failed: %s", exc)
+            return False
+
+    # ------------------------------------------------------------------
+    # MC send queue management
+    # ------------------------------------------------------------------
+
+    async def _mc_drain_loop(self) -> None:
+        """Drain loop for the MC send queue — runs on the MC dedicated loop."""
+        while True:
+            item = await self._mc_send_queue.get()
+            async_fn, cfut = item
+            result = False
+            try:
+                result = await async_fn()
+            except asyncio.CancelledError:
+                if cfut is not None and not cfut.done():
+                    cfut.cancel()
+                raise
+            except Exception as exc:
+                logger.error("MC queue drain: send job raised: %s", exc, exc_info=True)
+                if cfut is not None and not cfut.done():
+                    cfut.set_exception(exc)
+            else:
+                if cfut is not None and not cfut.done():
+                    cfut.set_result(result)
+
+            # Pace: read live from config.
+            pacing = max(0.25, getattr(self.config, "meshcore_send_pacing_seconds", 2.0))
+            await asyncio.sleep(pacing)
+
+    def _start_mc_queue(self) -> None:
+        """Arm the MC send queue + drain task on the MC dedicated loop.
+        Call via loop.call_soon_threadsafe from the main thread after connect."""
+        self._mc_send_queue = asyncio.Queue()
+        self._mc_drain_task = asyncio.get_event_loop().create_task(
+            self._mc_drain_loop(), name="mc-send-queue-drain"
+        )
+        logger.debug("MC: send queue drain task started")
+
+    def _cancel_mc_queue(self) -> None:
+        """Cancel the MC drain task (thread-safe).  Called at disconnect."""
+        task = self._mc_drain_task
+        self._mc_drain_task = None
+        if task is not None and self._loop is not None and self._loop.is_running():
+            self._loop.call_soon_threadsafe(task.cancel)
+
+    async def send_message_async(
+        self,
+        text: str,
+        destination: Optional[str] = None,
+        channel: int = 0,
+        transport: Optional[str] = None,
+        meshcore_channel: Optional[str] = None,
+    ) -> bool:
+        """Async send through the MC per-radio queue (called from the main loop).
+
+        Enqueues the job on the MC loop's queue and awaits the actual send
+        result via a concurrent.futures.Future bridge.
+        """
+        if self._mc is None or not self._connected:
+            return False
+        if self._mc_send_queue is None or self._loop is None or not self._loop.is_running():
+            # Queue not started yet (e.g. initial advert at connect) — fall back.
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                None,
+                lambda: self.send_message(text, destination, channel, transport, meshcore_channel),
+            )
+
+        cfut: concurrent.futures.Future = concurrent.futures.Future()
+
+        if destination:
+            async def _job() -> bool:
+                return await self._do_mc_dm_send_async(text, destination)
+        else:
+            if meshcore_channel is None:
+                logger.debug("MC: send_message_async meshcore_channel=None, skipping broadcast")
+                return True
+            async def _job() -> bool:
+                return await self._do_mc_broadcast_async(text, meshcore_channel)
+
+        # Enqueue on MC loop from main loop.
+        asyncio.run_coroutine_threadsafe(
+            self._mc_send_queue.put((_job, cfut)),
+            self._loop,
+        )
+
+        main_loop = asyncio.get_event_loop()
+        return await asyncio.wrap_future(cfut, loop=main_loop)
+
+    def _enqueue_mc_fire_forget(self, async_fn) -> None:
+        """Enqueue fire-and-forget from any thread (for advert/telemetry loops)."""
+        if self._mc_send_queue is None or self._loop is None or not self._loop.is_running():
+            logger.debug("MC: fire-and-forget dropped (queue not started)")
+            return
+        asyncio.run_coroutine_threadsafe(
+            self._mc_send_queue.put((async_fn, None)),
+            self._loop,
+        )
+
+    async def _enqueue_mc_loop_send(self, async_fn) -> bool:
+        """Enqueue from within the MC loop and await the result (for advert/telemetry loops)."""
+        if self._mc_send_queue is None:
+            # Queue not started; fall through to direct call.
+            return await async_fn()
+        cfut: concurrent.futures.Future = concurrent.futures.Future()
+        await self._mc_send_queue.put((async_fn, cfut))
+        return await asyncio.wrap_future(cfut)
+
     def _send_dm_once(self, contact: dict, text: str, destination: str):
         """Send one DM frame (no discovery, no retry) and log its route.
 
@@ -489,13 +827,33 @@ class MeshCoreTransport(MeshTransport):
             logger.warning("MeshCore: send_advert failed: %s", exc)
             return False
 
+    async def send_advert_async(self) -> bool:
+        """Async self-advertisement through the MC per-radio queue (main-loop caller).
+
+        Mirrors ``send_message_async`` — enqueues ``_do_mc_advert_async`` on the
+        MC loop queue from the main loop, awaits the result via a
+        concurrent.futures.Future bridge.  Falls back to a thread-executor
+        wrapping the synchronous ``send_advert`` when the queue isn't running.
+        """
+        if self._mc is None or not self._connected:
+            return False
+        if self._mc_send_queue is None or self._loop is None or not self._loop.is_running():
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self.send_advert)
+
+        cfut: concurrent.futures.Future = concurrent.futures.Future()
+        asyncio.run_coroutine_threadsafe(
+            self._mc_send_queue.put((self._do_mc_advert_async, cfut)),
+            self._loop,
+        )
+        main_loop = asyncio.get_event_loop()
+        return await asyncio.wrap_future(cfut, loop=main_loop)
+
     async def _periodic_advert_loop(self, interval: int) -> None:
         """Periodic self-advertisement coroutine (runs as a Task on the dedicated loop).
 
-        Sleeps *interval* seconds, sends one flood advert, repeats.  Stops on
-        CancelledError (raised by ``_cancel_periodic_advert`` at disconnect) or
-        when the transport drops its connection.  No overlap is possible because
-        the loop awaits the sleep before each send.
+        Sleeps *interval* seconds, sends one flood advert via the send queue
+        (serialized with other MC sends), repeats.  Stops on CancelledError.
         """
         try:
             while True:
@@ -503,13 +861,15 @@ class MeshCoreTransport(MeshTransport):
                 if not self._connected or self._mc is None:
                     return
                 try:
-                    await self._mc.commands.send_advert(flood=True)
-                    self._last_advert_sent = _time.time()
-                    logger.info("MeshCore: sent periodic self-advert")
+                    ok = await self._enqueue_mc_loop_send(self._do_mc_advert_async)
+                    if ok:
+                        logger.info("MC: sent periodic self-advert")
+                    else:
+                        logger.warning("MC: periodic send_advert returned False")
                 except Exception as exc:
-                    logger.warning("MeshCore: periodic send_advert failed: %s", exc)
+                    logger.warning("MC: periodic send_advert failed: %s", exc)
         except asyncio.CancelledError:
-            logger.debug("MeshCore: periodic advert task cancelled")
+            logger.debug("MC: periodic advert task cancelled")
             raise
 
     def _schedule_periodic_advert(self, interval: int) -> None:
@@ -531,6 +891,8 @@ class MeshCoreTransport(MeshTransport):
         self._advert_task = None
         if task is not None and self._loop is not None and self._loop.is_running():
             self._loop.call_soon_threadsafe(task.cancel)
+        # Also cancel the MC send queue drain.
+        self._cancel_mc_queue()
 
     # ------------------------------------------------------------------
     # Telemetry (MeshCore sensor auto-poll)
@@ -614,26 +976,33 @@ class MeshCoreTransport(MeshTransport):
     async def _req_telemetry_async(self, contact_id):
         """Resolve, request+await, decode telemetry for *contact_id* (on the loop).
 
-        Runs entirely on the dedicated event loop so the poller (already on that
-        loop) can await it directly WITHOUT a nested _run_coro deadlock.  Updates
-        the shared cache/failure bookkeeping so poller and on-demand paths agree.
+        Runs entirely on the dedicated event loop.  Now routes the actual radio
+        request through the MC send queue so it serializes with other MC sends.
         Returns the decoded dict, or None on unresolved/timeout/no-response/error.
         """
         contact = self._resolve_contact(contact_id)
         if contact is None:
             return None
-        try:
-            lpp = await self._mc.commands.req_telemetry_sync(contact, min_timeout=5)
-        except Exception as exc:
-            logger.warning("MeshCore: req_telemetry(%s) error: %s", contact_id, exc)
-            self._record_telemetry_result(contact_id, None)
-            return None
-        if lpp is None:
-            self._record_telemetry_result(contact_id, None)
-            return None
-        data = self._decode_lpp(lpp)
-        self._record_telemetry_result(contact_id, data)
-        return data
+
+        async def _telem_job() -> bool:
+            """Wraps the telemetry fetch; result is stored in cache, job returns True on data."""
+            try:
+                lpp = await self._mc.commands.req_telemetry_sync(contact, min_timeout=5)
+            except Exception as exc:
+                logger.warning("MC: req_telemetry(%s) error: %s", contact_id, exc)
+                self._record_telemetry_result(contact_id, None)
+                return False
+            if lpp is None:
+                self._record_telemetry_result(contact_id, None)
+                return False
+            data = self._decode_lpp(lpp)
+            self._record_telemetry_result(contact_id, data)
+            return True
+
+        await self._enqueue_mc_loop_send(_telem_job)
+        # Return the now-updated cache entry's data field.
+        entry = self._telemetry_cache.get(contact_id)
+        return entry.get("data") if entry else None
 
     def req_telemetry(self, contact_id):
         """On-demand telemetry poll for *contact_id* (sync, bridged to the loop).
@@ -652,6 +1021,41 @@ class MeshCoreTransport(MeshTransport):
         except Exception as exc:
             logger.warning("MeshCore: req_telemetry(%s) failed: %s", contact_id, exc)
             return None
+
+    async def req_telemetry_async(self, contact_id: str):
+        """Async on-demand telemetry poll (main-loop caller, routes through MC queue).
+
+        Mirrors ``req_telemetry`` but awaitable from the main asyncio event loop.
+        Enqueues the poll job on the MC loop queue via a concurrent.futures.Future
+        bridge, then returns the cache entry's data.  Falls back to run_in_executor
+        wrapping the synchronous ``req_telemetry`` when the queue isn't running.
+        """
+        if self._mc is None or not self._connected:
+            return None
+        if self._mc_send_queue is None or self._loop is None or not self._loop.is_running():
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, lambda: self.req_telemetry(contact_id))
+
+        cfut: concurrent.futures.Future = concurrent.futures.Future()
+
+        async def _telem_job_outer() -> bool:
+            """Bridge: runs _req_telemetry_async on the MC loop; caches result."""
+            try:
+                data = await self._req_telemetry_async(contact_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("MC: req_telemetry_async(%s) failed: %s", contact_id, exc)
+                return False
+            return data is not None
+
+        asyncio.run_coroutine_threadsafe(
+            self._mc_send_queue.put((_telem_job_outer, cfut)),
+            self._loop,
+        )
+        main_loop = asyncio.get_event_loop()
+        await asyncio.wrap_future(cfut, loop=main_loop)
+        # Result is in the telemetry cache after the job completes.
+        entry = self._telemetry_cache.get(contact_id)
+        return entry.get("data") if entry else None
 
     def get_telemetry_cache(self) -> list[dict]:
         """Return the current telemetry cache entries (list of dicts)."""
@@ -794,7 +1198,9 @@ class MeshCoreTransport(MeshTransport):
             except Exception as exc:  # older firmware may not support CMD 58
                 logger.warning("MeshCore: set_autoadd_config not supported/failed (non-fatal): %s", exc)
         await self._mc.start_auto_message_fetching()
-        logger.info("MeshCore: subscriptions registered; auto message-fetch started")
+        # Arm the MC send queue on this dedicated loop (runs after connect).
+        self._start_mc_queue()
+        logger.info("MeshCore: subscriptions registered; auto message-fetch started; send queue armed")
 
     async def _do_disconnect(self) -> None:
         """Stop fetching and close the meshcore connection."""

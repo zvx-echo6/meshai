@@ -15,13 +15,25 @@ from meshai.notifications.channels import (
 )
 
 
+def _mock_conn():
+    """Create a MagicMock connector with send_message_async wired to send_message.
+
+    Channels now call send_message_async (async) instead of send_message (sync).
+    side_effect delegates to send_message so existing call_count / call_args
+    assertions remain valid.
+    """
+    c = MagicMock()
+    c.send_message_async = AsyncMock(side_effect=lambda *a, **kw: c.send_message(*a, **kw))
+    return c
+
+
 # ============================================================
 # MESH CHANNEL RENDERING TESTS
 # ============================================================
 
 def test_mesh_channel_uses_mesh_renderer():
     """MeshBroadcastChannel renders long messages to multiple chunks."""
-    mock_connector = MagicMock()
+    mock_connector = _mock_conn()
 
     channel = MeshBroadcastChannel(
         connector=mock_connector,
@@ -52,7 +64,7 @@ def test_mesh_channel_uses_mesh_renderer():
 
 def test_mesh_channel_uses_payload_message_directly_when_chunk_metadata_set():
     """Pre-chunked payloads (from digest) skip re-rendering."""
-    mock_connector = MagicMock()
+    mock_connector = _mock_conn()
 
     channel = MeshBroadcastChannel(
         connector=mock_connector,
@@ -81,7 +93,7 @@ def test_mesh_channel_uses_payload_message_directly_when_chunk_metadata_set():
 
 def test_mesh_dm_channel_uses_mesh_renderer():
     """MeshDMChannel renders long messages to chunks for each recipient."""
-    mock_connector = MagicMock()
+    mock_connector = _mock_conn()
 
     channel = MeshDMChannel(
         connector=mock_connector,
@@ -106,7 +118,7 @@ def test_mesh_dm_channel_uses_mesh_renderer():
 
 def test_mesh_dm_channel_uses_payload_message_directly_when_chunk_metadata_set():
     """Pre-chunked DM payloads skip re-rendering."""
-    mock_connector = MagicMock()
+    mock_connector = _mock_conn()
 
     channel = MeshDMChannel(
         connector=mock_connector,
@@ -229,7 +241,7 @@ def test_mesh_broadcast_routes_to_meshtastic_only():
     from meshai.config import NotificationRuleConfig
     from meshai.notifications.channels import create_channel
 
-    mock_connector = MagicMock()
+    mock_connector = _mock_conn()
     rule = NotificationRuleConfig(
         name="toggle:fire",
         delivery_type="mesh_broadcast",
@@ -266,7 +278,7 @@ def test_meshcore_broadcast_routes_to_meshcore_only():
     from meshai.notifications.channels import MeshCoreBroadcastChannel, create_channel
 
     # Simulate a CompositeTransport connector with a meshcore child.
-    mock_connector = MagicMock()
+    mock_connector = _mock_conn()
     mock_connector._by_name = {"meshcore": MagicMock(), "meshtastic": MagicMock()}
     mock_connector.send_message.return_value = True
 
@@ -303,7 +315,7 @@ def test_broadcast_render_loop_threads_meshcore_channel():
     from meshai.config import NotificationRuleConfig
     from meshai.notifications.channels import create_channel
 
-    mock_connector = MagicMock()
+    mock_connector = _mock_conn()
     # Connector has a meshcore child so the no-op guard passes.
     mock_connector._by_name = {"meshcore": MagicMock(), "meshtastic": MagicMock()}
     mock_connector.send_message.return_value = True

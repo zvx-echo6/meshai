@@ -76,11 +76,26 @@ class FakeChild:
         destination: Optional[str] = None,
         channel: int = 0,
         transport: Optional[str] = None,
+        meshcore_channel: Optional[str] = None,
     ) -> bool:
         self.send_calls.append(
             {"text": text, "destination": destination, "channel": channel, "transport": transport}
         )
         return True
+
+    async def send_message_async(
+        self,
+        text: str,
+        destination: Optional[str] = None,
+        channel: int = 0,
+        transport: Optional[str] = None,
+        meshcore_channel: Optional[str] = None,
+    ) -> bool:
+        """Async variant required by composite transport after send-queue refactor."""
+        return self.send_message(
+            text=text, destination=destination, channel=channel,
+            transport=transport, meshcore_channel=meshcore_channel,
+        )
 
     def set_message_callback(self, callback, loop) -> None:
         self._callback = callback

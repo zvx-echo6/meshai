@@ -6,7 +6,7 @@ Uses a bare FastAPI() + TestClient with a hand-seeded ``app.state.connector``
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -22,6 +22,10 @@ def _child(transport_name, connected=True, known=None):
     c.connected = connected
     if known is not None:
         c.known_channels.return_value = list(known)
+    # Wire async variants so routes can await them; side_effect preserves the
+    # sync mock's return_value and call recording for existing assertions.
+    c.send_advert_async = AsyncMock(side_effect=lambda: c.send_advert())
+    c.req_telemetry_async = AsyncMock(side_effect=lambda cid: c.req_telemetry(cid))
     return c
 
 
@@ -35,6 +39,11 @@ def _composite(children, send_result=True):
     connector.transport_name = None
     connector.children = list(children)
     connector.send_message.return_value = send_result
+    # Wire the async variant — routes now call send_message_async; side_effect
+    # delegates to the sync mock so existing call_args assertions still pass.
+    connector.send_message_async = AsyncMock(
+        side_effect=lambda *a, **kw: connector.send_message(*a, **kw)
+    )
     return connector
 
 
