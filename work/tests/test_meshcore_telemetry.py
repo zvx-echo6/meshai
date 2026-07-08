@@ -377,6 +377,10 @@ def _child(transport_name, connected=True):
     c = MagicMock()
     c.transport_name = transport_name
     c.connected = connected
+    # The dashboard route now calls req_telemetry_async; wire it to delegate to
+    # the sync mock so existing test setup (c.req_telemetry.return_value = ...)
+    # and assertions are unaffected.
+    c.req_telemetry_async = AsyncMock(side_effect=lambda cid: c.req_telemetry(cid))
     return c
 
 

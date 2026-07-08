@@ -16,6 +16,7 @@ from pubsub import pub
 
 from .config import ConnectionConfig
 from .transport.base import MeshTransport
+from .transport.send_queue import RadioSendQueue
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,8 @@ class MeshtasticTransport(MeshTransport):
         self._wake: Optional[asyncio.Event] = None  # created by main once loop exists
         self._link_path = "/tmp/meshai.link"
         self._reconnect_lock = threading.Lock()
+        # --- per-radio send queue (serialized + paced) ---
+        self._mt_queue: Optional[RadioSendQueue] = None
 
     @property
     def connected(self) -> bool:
@@ -119,6 +122,15 @@ class MeshtasticTransport(MeshTransport):
 
     def disconnect(self) -> None:
         """Close connection to Meshtastic node."""
+        # Stop the send queue drain and wait for it to finish so all pending
+        # futures are resolved before the interface is torn down.
+        if self._mt_queue is not None and self._mt_queue.running and self._loop is not None:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._mt_queue.stop(), self._loop
+                ).result(timeout=5.0)
+            except Exception:
+                pass
         if self._interface:
             try:
                 pub.unsubscribe(self._on_receive, "meshtastic.receive.text")
@@ -140,7 +152,7 @@ class MeshtasticTransport(MeshTransport):
     def set_message_callback(
         self, callback: Callable[[MeshMessage], None], loop: asyncio.AbstractEventLoop
     ) -> None:
-        """Set callback for incoming messages.
+        """Set callback for incoming messages and start the send queue drain.
 
         Args:
             callback: Async function to call with MeshMessage
@@ -148,6 +160,14 @@ class MeshtasticTransport(MeshTransport):
         """
         self._message_callback = callback
         self._loop = loop
+        # Start the per-radio send queue on the main event loop.
+        pacing_fn = lambda: max(0.25, getattr(self.config, "meshtastic_send_pacing_seconds", 2.0))
+        self._mt_queue = RadioSendQueue(pacing_fn=pacing_fn)
+
+        def _start_drain() -> None:
+            self._mt_queue.start(loop)
+
+        loop.call_soon_threadsafe(_start_drain)
 
     def _cache_node_info(self) -> None:
         """Cache node names and positions from node database."""
@@ -348,6 +368,68 @@ class MeshtasticTransport(MeshTransport):
                     logger.warning(f"  reconnect attempt {attempt} failed: {e!r}; sleeping {backoff:.0f}s")
                     time.sleep(backoff)
                     backoff = min(backoff * 2, maxd)
+
+    async def send_message_async(
+        self,
+        text: str,
+        destination: Optional[str] = None,
+        channel: int = 0,
+        transport: Optional[str] = None,
+        meshcore_channel: Optional[str] = None,
+    ) -> bool:
+        """Async send through the Meshtastic per-radio queue.
+
+        Enqueues the send job and awaits the ACTUAL radio-acceptance result so
+        the caller (e.g. channel.deliver) gets the real success bool.  Falls
+        back to a direct executor call if the queue has not been started yet
+        (e.g. during tests or before set_message_callback is called).
+        """
+        if self._mt_queue is None or not self._mt_queue.running:
+            # Queue not started: run in executor to avoid blocking the loop.
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                None,
+                lambda: self.send_message(text, destination, channel, transport, meshcore_channel),
+            )
+
+        def _job() -> bool:
+            return self._blocking_mt_send(text, destination, channel)
+
+        async def _async_job() -> bool:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, _job)
+
+        return await self._mt_queue.enqueue_async(_async_job)
+
+    def _blocking_mt_send(
+        self,
+        text: str,
+        destination: Optional[str],
+        channel: int,
+    ) -> bool:
+        """Synchronous Meshtastic send — called from the thread executor by the drain."""
+        if not self._interface:
+            logger.error("Cannot send: not connected")
+            return False
+        try:
+            if destination:
+                if isinstance(destination, int):
+                    dest_num = destination
+                elif destination.startswith("!"):
+                    dest_num = int(destination[1:], 16)
+                elif destination.isdigit():
+                    dest_num = int(destination)
+                else:
+                    dest_num = int(destination, 16)
+                self._interface.sendText(text=text, destinationId=dest_num, channelIndex=channel)
+            else:
+                from meshtastic import BROADCAST_NUM
+                self._interface.sendText(text=text, destinationId=BROADCAST_NUM, channelIndex=channel)
+            logger.debug("MT send to %s: %s…", destination or "broadcast", text[:50])
+            return True
+        except Exception as exc:
+            logger.error("MT send failed: %s", exc)
+            return False
 
     def send_message(
         self,

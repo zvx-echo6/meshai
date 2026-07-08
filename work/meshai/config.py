@@ -53,6 +53,12 @@ class ConnectionConfig:
     meshcore_ack_wait_seconds: float = 6.0       # wait for delivery ACK before falling back to path discovery
     meshcore_discovery_wait_seconds: float = 8.0  # path-discovery timeout on the no-ACK fallback (was hardcoded 25s)
 
+    # --- Send-queue pacing (per-radio serialization) ---
+    # Minimum gap between consecutive outbound sends on each radio.
+    # A floor of 0.25 s is always enforced at runtime (max(0.25, pacing_value)).
+    meshtastic_send_pacing_seconds: float = 2.0
+    meshcore_send_pacing_seconds: float = 2.0
+
     # --- MeshCore telemetry auto-poll settings ---
     # Selected contacts (names or pubkeys) to auto-poll for telemetry; empty = none.
     meshcore_telemetry_contacts: list = field(default_factory=list)

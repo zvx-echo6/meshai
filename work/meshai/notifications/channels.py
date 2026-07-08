@@ -80,26 +80,29 @@ class MeshBroadcastChannel(NotificationChannel):
         try:
             # If payload already has chunk metadata (from digest), use message directly
             if alert.chunk_index is not None:
-                self._connector.send_message(
+                ok = await self._connector.send_message_async(
                     text=alert.message or "",
                     destination=None,
                     channel=self._channel,
                     transport=self._transport,
                 )
-                logger.info("Broadcast pre-chunked alert to channel %d", self._channel)
-                return True
+                logger.info("Broadcast pre-chunked alert to channel %d (ok=%s)", self._channel, ok)
+                return bool(ok)
 
             # Render to chunks for single-event delivery
             chunks = self._renderer.render(alert)
+            success = True
             for chunk in chunks:
-                self._connector.send_message(
+                ok = await self._connector.send_message_async(
                     text=chunk,
                     destination=None,
                     channel=self._channel,
                     transport=self._transport,
                 )
-            logger.info("Broadcast %d chunk(s) to channel %d", len(chunks), self._channel)
-            return True
+                if not ok:
+                    success = False
+            logger.info("Broadcast %d chunk(s) to channel %d (success=%s)", len(chunks), self._channel, success)
+            return success
         except Exception as e:
             logger.error("Failed to broadcast alert: %s", e)
             return False
@@ -134,15 +137,15 @@ class MeshBroadcastChannel(NotificationChannel):
                 if hasattr(ch, 'settings') and hasattr(ch.settings, 'name'):
                     channel_name = ch.settings.name or f'Channel {self._channel}'
 
-            # Send actual test message
-            self._connector.send_message(
+            # Send actual test message (async path through queue)
+            ok = await self._connector.send_message_async(
                 text="MeshAI channel test - if you see this, delivery works",
                 destination=None,
                 channel=self._channel,
             )
 
             return {
-                "success": True,
+                "success": ok,
                 "message": f"Sent to channel {self._channel}: {channel_name}",
                 "error": "",
                 "details": {
@@ -164,12 +167,12 @@ class MeshBroadcastChannel(NotificationChannel):
             return False, "Not connected to radio"
 
         try:
-            self._connector.send_message(
+            ok = bool(await self._connector.send_message_async(
                 text=message,
                 destination=None,
                 channel=self._channel,
-            )
-            return True, f"Sent to mesh channel {self._channel}"
+            ))
+            return ok, f"Sent to mesh channel {self._channel}" if ok else "Mesh broadcast returned False"
         except Exception as e:
             return False, f"Mesh broadcast failed: {e}"
 
@@ -214,32 +217,35 @@ class MeshCoreBroadcastChannel(NotificationChannel):
         try:
             # If payload already has chunk metadata (from digest), use message directly
             if alert.chunk_index is not None:
-                self._connector.send_message(
+                ok = await self._connector.send_message_async(
                     text=alert.message or "",
                     destination=None,
                     meshcore_channel=self._meshcore_channel,
                     transport="meshcore",
                 )
                 logger.info(
-                    "MeshCore broadcast pre-chunked alert to channel %r",
-                    self._meshcore_channel,
+                    "MeshCore broadcast pre-chunked alert to channel %r (ok=%s)",
+                    self._meshcore_channel, ok,
                 )
-                return True
+                return bool(ok)
 
             # Render to chunks for single-event delivery
             chunks = self._renderer.render(alert)
+            success = True
             for chunk in chunks:
-                self._connector.send_message(
+                ok = await self._connector.send_message_async(
                     text=chunk,
                     destination=None,
                     meshcore_channel=self._meshcore_channel,
                     transport="meshcore",
                 )
+                if not ok:
+                    success = False
             logger.info(
-                "MeshCore broadcast %d chunk(s) to channel %r",
-                len(chunks), self._meshcore_channel,
+                "MeshCore broadcast %d chunk(s) to channel %r (success=%s)",
+                len(chunks), self._meshcore_channel, success,
             )
-            return True
+            return success
         except Exception as e:
             logger.error("Failed to MeshCore broadcast alert: %s", e)
             return False
@@ -267,13 +273,13 @@ class MeshCoreBroadcastChannel(NotificationChannel):
         if not self._meshcore_channel:
             return False, "No MeshCore channel configured"
         try:
-            self._connector.send_message(
+            ok = bool(await self._connector.send_message_async(
                 text=message,
                 destination=None,
                 meshcore_channel=self._meshcore_channel,
                 transport="meshcore",
-            )
-            return True, f"Sent to MeshCore channel {self._meshcore_channel!r}"
+            ))
+            return ok, f"Sent to MeshCore channel {self._meshcore_channel!r}" if ok else "MeshCore broadcast returned False"
         except Exception as e:
             return False, f"MeshCore broadcast failed: {e}"
 
@@ -310,12 +316,14 @@ class MeshDMChannel(NotificationChannel):
             for message in messages:
                 try:
                     node_id = str(node_id)
-                    self._connector.send_message(
+                    ok = await self._connector.send_message_async(
                         text=message,
                         destination=node_id,
                         channel=0,
                         transport=self._transport_hint,
                     )
+                    if not ok:
+                        success = False
                 except Exception as e:
                     logger.error("Failed to DM %s: %s", node_id, e)
                     success = False
@@ -346,12 +354,14 @@ class MeshDMChannel(NotificationChannel):
         for node_id in self._node_ids:
             try:
                 node_id = str(node_id)
-                self._connector.send_message(
+                ok = await self._connector.send_message_async(
                     text="MeshAI DM test",
                     destination=node_id,
                     channel=0,
                 )
-                results.append({"node": node_id, "success": True})
+                results.append({"node": node_id, "success": ok})
+                if not ok:
+                    all_success = False
             except Exception as e:
                 results.append({"node": node_id, "success": False, "error": str(e)})
                 all_success = False
@@ -396,8 +406,11 @@ class MeshDMChannel(NotificationChannel):
         for node_id in self._node_ids:
             try:
                 node_id = str(node_id)
-                self._connector.send_message(text=message, destination=node_id, channel=0)
-                success_count += 1
+                ok = await self._connector.send_message_async(text=message, destination=node_id, channel=0)
+                if ok:
+                    success_count += 1
+                else:
+                    errors.append(f"{node_id}: send returned False")
             except Exception as e:
                 errors.append(f"{node_id}: {e}")
 
@@ -452,11 +465,13 @@ class MeshCoreDMChannel(NotificationChannel):
         for contact in self._contacts:
             for message in messages:
                 try:
-                    self._connector.send_message(
+                    ok = await self._connector.send_message_async(
                         text=message,
                         destination=str(contact),
                         transport="meshcore",
                     )
+                    if not ok:
+                        success = False
                 except Exception as e:
                     logger.error("Failed to MeshCore DM %s: %s", contact, e)
                     success = False
@@ -496,12 +511,15 @@ class MeshCoreDMChannel(NotificationChannel):
         errors = []
         for contact in self._contacts:
             try:
-                self._connector.send_message(
+                ok = await self._connector.send_message_async(
                     text=message,
                     destination=str(contact),
                     transport="meshcore",
                 )
-                success_count += 1
+                if ok:
+                    success_count += 1
+                else:
+                    errors.append(f"{contact}: send returned False")
             except Exception as e:
                 errors.append(f"{contact}: {e}")
         if success_count == len(self._contacts):

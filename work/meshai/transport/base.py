@@ -3,6 +3,7 @@
 import abc
 import asyncio
 from typing import Callable, Optional
+import concurrent.futures
 
 
 class MeshTransport(abc.ABC):
@@ -58,6 +59,30 @@ class MeshTransport(abc.ABC):
         Returns:
             True if send was initiated successfully.
         """
+
+    async def send_message_async(
+        self,
+        text: str,
+        destination: Optional[str] = None,
+        channel: int = 0,
+        transport: Optional[str] = None,
+        meshcore_channel: Optional[str] = None,
+    ) -> bool:
+        """Async send through the per-radio serialized queue.
+
+        Default implementation runs ``send_message()`` in the default thread
+        executor so it never blocks the event loop.  Concrete subclasses with
+        a send queue override this to enqueue the job and await the actual
+        radio result.
+
+        Returns:
+            True if the send was accepted by the radio.
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: self.send_message(text, destination, channel, transport, meshcore_channel),
+        )
 
     @abc.abstractmethod
     def set_message_callback(

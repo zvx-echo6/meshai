@@ -44,6 +44,10 @@ class StubConnector:
             {"text": text, "destination": destination, "channel": channel})
         return True
 
+    async def send_message_async(self, text=None, destination=None, channel=0, **kw):
+        """Async variant required by channels.py after send-queue refactor."""
+        return self.send_message(text=text, destination=destination, channel=channel, **kw)
+
 
 class FakeDataStore:
     """Minimal stand-in exposing get_nodes_by_roles with the SAME filter

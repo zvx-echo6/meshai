@@ -51,7 +51,7 @@ class Responder:
                 delay = random.uniform(self.config.delay_min, self.config.delay_max)
                 await asyncio.sleep(delay)
 
-            sent = self.connector.send_message(
+            sent = await self.connector.send_message_async(
                 text=msg,
                 destination=destination,
                 channel=channel,

@@ -5,7 +5,7 @@ feat/meshcore-first-class-delivery (meshcore_broadcast, meshcore_dm).
 """
 
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from meshai.config import Config, NotificationToggle
 from meshai.notifications.pipeline.dispatcher import Dispatcher
@@ -198,11 +198,17 @@ def test_meshcore_broadcast_routes_to_meshcore_child_only():
     meshtastic_child.connected = True
     meshtastic_child.transport_name = "meshtastic"
     meshtastic_child.send_message.return_value = True
+    meshtastic_child.send_message_async = AsyncMock(
+        side_effect=lambda *a, **kw: meshtastic_child.send_message(*a, **kw)
+    )
 
     meshcore_child = MagicMock()
     meshcore_child.connected = True
     meshcore_child.transport_name = "meshcore"
     meshcore_child.send_message.return_value = True
+    meshcore_child.send_message_async = AsyncMock(
+        side_effect=lambda *a, **kw: meshcore_child.send_message(*a, **kw)
+    )
 
     from meshai.transport.composite_transport import CompositeTransport
     connector = CompositeTransport([meshtastic_child, meshcore_child])
@@ -249,11 +255,17 @@ def test_mesh_broadcast_routes_to_meshtastic_child_only():
     meshtastic_child.connected = True
     meshtastic_child.transport_name = "meshtastic"
     meshtastic_child.send_message.return_value = True
+    meshtastic_child.send_message_async = AsyncMock(
+        side_effect=lambda *a, **kw: meshtastic_child.send_message(*a, **kw)
+    )
 
     meshcore_child = MagicMock()
     meshcore_child.connected = True
     meshcore_child.transport_name = "meshcore"
     meshcore_child.send_message.return_value = True
+    meshcore_child.send_message_async = AsyncMock(
+        side_effect=lambda *a, **kw: meshcore_child.send_message(*a, **kw)
+    )
 
     from meshai.transport.composite_transport import CompositeTransport
     connector = CompositeTransport([meshtastic_child, meshcore_child])
@@ -295,6 +307,9 @@ def test_meshcore_dm_routes_to_meshcore_contacts():
     mock_connector = MagicMock()
     mock_connector._by_name = {"meshcore": MagicMock(), "meshtastic": MagicMock()}
     mock_connector.send_message.return_value = True
+    mock_connector.send_message_async = AsyncMock(
+        side_effect=lambda *a, **kw: mock_connector.send_message(*a, **kw)
+    )
 
     from meshai.config import NotificationRuleConfig
     import time as _time
@@ -408,6 +423,9 @@ def test_meshtastic_only_config_unchanged():
     # Simulate a plain MeshtasticTransport (no _by_name, transport_name=meshtastic).
     mock_connector.transport_name = "meshtastic"
     mock_connector.send_message.return_value = True
+    mock_connector.send_message_async = AsyncMock(
+        side_effect=lambda *a, **kw: mock_connector.send_message(*a, **kw)
+    )
     # No _by_name attribute (not a CompositeTransport).
     del mock_connector._by_name
 
