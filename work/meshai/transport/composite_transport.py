@@ -300,7 +300,12 @@ class CompositeTransport(MeshTransport):
                 continue
             child_channel = meshcore_channel if name == "meshcore" else channel
             try:
-                ok = await child.send_message_async(text, destination=None, channel=child_channel)
+                if name == "meshcore":
+                    ok = await child.send_message_async(
+                        text, destination=None, meshcore_channel=child_channel
+                    )
+                else:
+                    ok = await child.send_message_async(text, destination=None, channel=child_channel)
                 if ok:
                     any_ok = True
                 else:

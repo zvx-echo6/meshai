@@ -122,10 +122,13 @@ class MeshtasticTransport(MeshTransport):
 
     def disconnect(self) -> None:
         """Close connection to Meshtastic node."""
-        # Stop the send queue drain (best-effort; ignore if not started).
+        # Stop the send queue drain and wait for it to finish so all pending
+        # futures are resolved before the interface is torn down.
         if self._mt_queue is not None and self._mt_queue.running and self._loop is not None:
             try:
-                asyncio.run_coroutine_threadsafe(self._mt_queue.stop(), self._loop)
+                asyncio.run_coroutine_threadsafe(
+                    self._mt_queue.stop(), self._loop
+                ).result(timeout=5.0)
             except Exception:
                 pass
         if self._interface:

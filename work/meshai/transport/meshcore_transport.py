@@ -585,7 +585,27 @@ class MeshCoreTransport(MeshTransport):
 
     def _start_mc_queue(self) -> None:
         """Arm the MC send queue + drain task on the MC dedicated loop.
-        Call via loop.call_soon_threadsafe from the main thread after connect."""
+
+        Call from within the MC dedicated loop (e.g. via
+        ``loop.call_soon_threadsafe`` from the main thread after connect).
+
+        On reconnect (called a second time), the old drain task is cancelled
+        and all futures still sitting in the old queue are cancelled so no
+        caller hangs indefinitely awaiting a result from a pre-reconnect send.
+        """
+        # Reconnect path: cancel the old drain and resolve outstanding futures.
+        old_task = self._mc_drain_task
+        old_queue = self._mc_send_queue
+        if old_task is not None:
+            old_task.cancel()
+        if old_queue is not None:
+            while True:
+                try:
+                    _, cfut = old_queue.get_nowait()
+                    if cfut is not None and not cfut.done():
+                        cfut.cancel()
+                except asyncio.QueueEmpty:
+                    break
         self._mc_send_queue = asyncio.Queue()
         self._mc_drain_task = asyncio.get_event_loop().create_task(
             self._mc_drain_loop(), name="mc-send-queue-drain"
@@ -593,11 +613,35 @@ class MeshCoreTransport(MeshTransport):
         logger.debug("MC: send queue drain task started")
 
     def _cancel_mc_queue(self) -> None:
-        """Cancel the MC drain task (thread-safe).  Called at disconnect."""
+        """Cancel the MC drain task and resolve all pending futures (thread-safe).
+
+        Called at disconnect.  Schedules a teardown callback on the MC loop that:
+          1. Cancels the drain task.
+          2. Drains the remaining queue with ``get_nowait()`` and cancels every
+             pending ``concurrent.futures.Future`` so no caller hangs at
+             ``await asyncio.wrap_future(cfut)`` after teardown.
+
+        The in-flight future (if the drain was mid-job when cancel fires) is
+        handled by the drain's own ``except CancelledError`` handler.
+        """
         task = self._mc_drain_task
+        queue = self._mc_send_queue
         self._mc_drain_task = None
-        if task is not None and self._loop is not None and self._loop.is_running():
-            self._loop.call_soon_threadsafe(task.cancel)
+
+        def _teardown() -> None:
+            if task is not None:
+                task.cancel()
+            if queue is not None:
+                while True:
+                    try:
+                        _, cfut = queue.get_nowait()
+                        if cfut is not None and not cfut.done():
+                            cfut.cancel()
+                    except asyncio.QueueEmpty:
+                        break
+
+        if self._loop is not None and self._loop.is_running():
+            self._loop.call_soon_threadsafe(_teardown)
 
     async def send_message_async(
         self,
@@ -630,7 +674,7 @@ class MeshCoreTransport(MeshTransport):
         else:
             if meshcore_channel is None:
                 logger.debug("MC: send_message_async meshcore_channel=None, skipping broadcast")
-                return True
+                return False  # nothing sent — do not report success
             async def _job() -> bool:
                 return await self._do_mc_broadcast_async(text, meshcore_channel)
 
@@ -974,35 +1018,36 @@ class MeshCoreTransport(MeshTransport):
         self._telemetry_cache[contact_id] = entry
 
     async def _req_telemetry_async(self, contact_id):
-        """Resolve, request+await, decode telemetry for *contact_id* (on the loop).
+        """Resolve, request+await, decode telemetry for *contact_id* on the MC loop.
 
-        Runs entirely on the dedicated event loop.  Now routes the actual radio
-        request through the MC send queue so it serializes with other MC sends.
+        Runs INLINE on the dedicated event loop — intentionally does NOT
+        re-enqueue on the send queue.  Callers that need queue serialization
+        with other MC sends (``req_telemetry_async`` for on-demand polls,
+        ``_telemetry_poll_loop`` for periodic polls) wrap their call to this
+        method inside a queue job via ``_enqueue_mc_loop_send`` or the
+        cfut-bridge in ``req_telemetry_async``.
+
+        Never calling ``_enqueue_mc_loop_send`` here is critical: the drain
+        task is single-threaded, so a nested enqueue + await from inside a
+        drain job would deadlock the queue permanently.
+
         Returns the decoded dict, or None on unresolved/timeout/no-response/error.
         """
         contact = self._resolve_contact(contact_id)
         if contact is None:
             return None
-
-        async def _telem_job() -> bool:
-            """Wraps the telemetry fetch; result is stored in cache, job returns True on data."""
-            try:
-                lpp = await self._mc.commands.req_telemetry_sync(contact, min_timeout=5)
-            except Exception as exc:
-                logger.warning("MC: req_telemetry(%s) error: %s", contact_id, exc)
-                self._record_telemetry_result(contact_id, None)
-                return False
-            if lpp is None:
-                self._record_telemetry_result(contact_id, None)
-                return False
-            data = self._decode_lpp(lpp)
-            self._record_telemetry_result(contact_id, data)
-            return True
-
-        await self._enqueue_mc_loop_send(_telem_job)
-        # Return the now-updated cache entry's data field.
-        entry = self._telemetry_cache.get(contact_id)
-        return entry.get("data") if entry else None
+        try:
+            lpp = await self._mc.commands.req_telemetry_sync(contact, min_timeout=5)
+        except Exception as exc:
+            logger.warning("MC: req_telemetry(%s) error: %s", contact_id, exc)
+            self._record_telemetry_result(contact_id, None)
+            return None
+        if lpp is None:
+            self._record_telemetry_result(contact_id, None)
+            return None
+        data = self._decode_lpp(lpp)
+        self._record_telemetry_result(contact_id, data)
+        return data
 
     def req_telemetry(self, contact_id):
         """On-demand telemetry poll for *contact_id* (sync, bridged to the loop).
@@ -1104,8 +1149,18 @@ class MeshCoreTransport(MeshTransport):
                     if self._telemetry_failures.get(c, 0) >= _TELEMETRY_MAX_FAILURES:
                         continue
                     try:
-                        data = await self._req_telemetry_async(c)
-                        if data is not None:
+                        # Wrap in a queue job so this poll is serialized with
+                        # other MC sends (broadcasts, adverts).  _req_telemetry_async
+                        # is inline — it must NOT be called bare here or it would
+                        # bypass the send queue and race with concurrent sends.
+                        _c = c  # capture for closure
+
+                        async def _poll_job(_cid=_c) -> bool:
+                            data = await self._req_telemetry_async(_cid)
+                            return data is not None
+
+                        ok = await self._enqueue_mc_loop_send(_poll_job)
+                        if ok:
                             logger.info("MeshCore: telemetry polled %s", c)
                         else:
                             logger.debug("MeshCore: telemetry miss for %s", c)

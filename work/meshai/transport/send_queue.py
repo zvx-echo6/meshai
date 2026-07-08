@@ -76,10 +76,14 @@ class RadioSendQueue:
         logger.debug("RadioSendQueue: drain task started on loop %r", loop)
 
     async def stop(self) -> None:
-        """Cancel the drain task and wait for it to finish.
+        """Cancel the drain task, drain the remaining queue, and resolve all
+        pending futures with CancelledError.
 
-        Any futures still in the queue are left unresolved; callers will see
-        CancelledError if they are awaiting them.
+        After this returns every caller blocked at
+        ``await asyncio.wrap_future(cfut)`` for an enqueued item will see
+        ``asyncio.CancelledError`` raised promptly — no caller hangs
+        indefinitely.  The in-flight future (if the drain was mid-job) is
+        already cancelled by the drain's own ``except CancelledError`` handler.
         """
         if self._drain_task is None:
             return
@@ -89,6 +93,15 @@ class RadioSendQueue:
         except asyncio.CancelledError:
             pass
         self._drain_task = None
+        # Resolve all futures still sitting in the queue so no caller hangs.
+        if self._queue is not None:
+            while True:
+                try:
+                    _, cfut = self._queue.get_nowait()
+                    if cfut is not None and not cfut.done():
+                        cfut.cancel()
+                except asyncio.QueueEmpty:
+                    break
         logger.debug("RadioSendQueue: drain task stopped")
 
     @property

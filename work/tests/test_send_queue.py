@@ -404,3 +404,208 @@ class TestConfig:
         cfg2 = _dict_to_dataclass(ConnectionConfig, d)
         assert cfg2.meshtastic_send_pacing_seconds == 3.5
         assert cfg2.meshcore_send_pacing_seconds == 1.5
+
+
+# ---------------------------------------------------------------------------
+# Regression tests — deadlock / teardown
+# ---------------------------------------------------------------------------
+
+
+class TestDeadlockRegression:
+    """Regression suite for the two deadlock/hang bugs fixed in feat/send-queue.
+
+    Both tests must PASS on the fixed code and would HANG (timeout) on the
+    pre-fix code:
+
+    BLOCKER 1 — ``req_telemetry_async`` self-deadlock:
+      Pre-fix: _telem_job_outer (running inside the drain) called
+      _req_telemetry_async which called _enqueue_mc_loop_send — a nested
+      enqueue-and-await inside a single-threaded drain job — deadlock.
+      Post-fix: _req_telemetry_async is inline; no nested enqueue.
+
+    BLOCKER 2 — pending futures abandoned on teardown/reconnect:
+      Pre-fix: stop() only cancelled the drain task; queue-sitting items had
+      their concurrent.futures.Futures left unresolved, so
+      ``await asyncio.wrap_future(cfut)`` callers hung indefinitely.
+      Post-fix: stop() drains the remaining queue and cancels every cfut.
+    """
+
+    @pytest.mark.asyncio
+    async def test_telemetry_queue_no_deadlock(self):
+        """req_telemetry_async must not self-deadlock the MC drain (BLOCKER 1).
+
+        Drives the on-demand telemetry poll through a real _mc_send_queue
+        (not mocked) with fake MC commands.  Asserts it resolves within 2 s
+        and that a subsequent send on the same queue also drains (queue not
+        wedged).  With the pre-fix code this would hang at the asyncio.wait_for
+        timeout because the nested _enqueue_mc_loop_send deadlocks the drain.
+        """
+        from meshai.config import ConnectionConfig
+        from meshai.transport.meshcore_transport import MeshCoreTransport
+
+        cfg = ConnectionConfig(
+            meshcore_host="127.0.0.1",
+            meshcore_send_pacing_seconds=0.01,
+        )
+        mc = MeshCoreTransport(cfg)
+        loop = asyncio.get_event_loop()
+
+        # Arm the MC queue directly (bypass connect() / TCP).
+        mc._loop = loop
+        mc._connected = True
+        mc._mc_send_queue = asyncio.Queue()
+        mc._mc_drain_task = loop.create_task(
+            mc._mc_drain_loop(), name="test-mc-drain"
+        )
+
+        fake_lpp = [{"channel": 0, "type": 120, "value": 80}]  # battery_pct=80
+
+        class _FakeCommands:
+            async def req_telemetry_sync(self, contact, min_timeout=5):
+                return fake_lpp
+
+        class _FakeMC:
+            commands = _FakeCommands()
+
+            def get_contact_by_key_prefix(self, prefix):
+                return {"adv_name": "Node1", "public_key": prefix}
+
+            def get_contact_by_name(self, name):
+                return {"adv_name": name, "public_key": "aabbcc"}
+
+        mc._mc = _FakeMC()
+
+        # Must complete within 2 s; pre-fix code deadlocks here.
+        data = await asyncio.wait_for(
+            mc.req_telemetry_async("aabbcc"),
+            timeout=2.0,
+        )
+        assert data is not None, "expected telemetry data back from cache"
+        assert data.get("battery_pct") == 80
+
+        # Subsequent send on the same queue must also drain (queue not wedged).
+        done = asyncio.Event()
+
+        async def _normal_send() -> bool:
+            done.set()
+            return True
+
+        ok = await asyncio.wait_for(
+            mc._enqueue_mc_loop_send(_normal_send), timeout=2.0
+        )
+        assert ok is True
+        assert done.is_set()
+
+        # Cleanup.
+        mc._mc_drain_task.cancel()
+        try:
+            await mc._mc_drain_task
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_teardown_resolves_pending_futures(self):
+        """RadioSendQueue.stop() must resolve all pending futures (BLOCKER 2).
+
+        Enqueues a slow job to occupy the drain, then enqueues three more that
+        sit in the queue.  Calls stop() mid-drain and asserts every future is
+        done (not pending/hanging) and resolves promptly to
+        CancelledError/exception.  With pre-fix code the pending futs would
+        never be set so the assert would fail or the test would time out.
+        """
+        q = RadioSendQueue(pacing_fn=lambda: 10.0)  # huge pacing keeps drain idle long
+        loop = asyncio.get_event_loop()
+        q.start(loop)
+
+        drain_started = asyncio.Event()
+
+        async def _slow_job():
+            drain_started.set()
+            await asyncio.sleep(60)  # will be cancelled by stop()
+            return True
+
+        async def _fast_job():
+            return True
+
+        # Kick off the slow job — drain picks it up immediately.
+        slow_task = asyncio.ensure_future(q.enqueue_async(_slow_job))
+        await asyncio.wait_for(drain_started.wait(), timeout=1.0)
+
+        # Enqueue three more jobs while drain is occupied by slow_job.
+        pending_tasks = [
+            asyncio.ensure_future(q.enqueue_async(_fast_job)) for _ in range(3)
+        ]
+
+        # Stop the queue while slow_job is in-flight and fast jobs are pending.
+        await q.stop()
+        # Give the event loop one tick to propagate cfut cancellations into
+        # the asyncio tasks waiting at wrap_future(cfut).
+        await asyncio.sleep(0)
+
+        # Every future must be resolved — none hanging indefinitely.
+        # Await them with a short timeout; pre-fix code they would never complete.
+        all_tasks = [slow_task] + pending_tasks
+        done, pending_set = await asyncio.wait(all_tasks, timeout=1.0)
+        assert not pending_set, (
+            f"{len(pending_set)} task(s) still pending after stop() — "
+            "futures not resolved on teardown"
+        )
+
+        # Awaiting them must raise (CancelledError) — not return a value.
+        for task in all_tasks:
+            assert task.done()
+            with pytest.raises(
+                (asyncio.CancelledError, concurrent.futures.CancelledError, Exception)
+            ):
+                task.result()
+
+    @pytest.mark.asyncio
+    async def test_reconnect_resolves_old_futures(self):
+        """_start_mc_queue on reconnect must cancel futures from the old queue
+        (BLOCKER 2 reconnect path).
+
+        Arms the queue, enqueues three items without draining them, then calls
+        _start_mc_queue again (simulating reconnect).  All three old futures
+        must be cancelled so no caller hangs.  Pre-fix code would leave them
+        unresolved.
+        """
+        from meshai.config import ConnectionConfig
+        from meshai.transport.meshcore_transport import MeshCoreTransport
+
+        cfg = ConnectionConfig(
+            meshcore_host="127.0.0.1",
+            meshcore_send_pacing_seconds=0.01,
+        )
+        mc = MeshCoreTransport(cfg)
+        loop = asyncio.get_event_loop()
+        mc._loop = loop
+
+        # Initial arm — drain is live but _mc is None so any job would return False.
+        mc._start_mc_queue()
+        await asyncio.sleep(0)  # let drain task start
+
+        # Enqueue three items; they sit in the queue unprocessed.
+        pending_cfuts: list[concurrent.futures.Future] = []
+        for _ in range(3):
+            cfut: concurrent.futures.Future = concurrent.futures.Future()
+            async def _noop() -> bool:
+                return True
+            await mc._mc_send_queue.put((_noop, cfut))
+            pending_cfuts.append(cfut)
+
+        # Simulate reconnect: _start_mc_queue replaces the queue.
+        # The fix must cancel old cfuts before creating the new queue.
+        mc._start_mc_queue()
+        await asyncio.sleep(0.05)  # let any scheduled callbacks run
+
+        for cfut in pending_cfuts:
+            assert cfut.done(), "old cfut not resolved after _start_mc_queue reconnect"
+            assert cfut.cancelled(), "old cfut should be cancelled"
+
+        # Cleanup new drain.
+        if mc._mc_drain_task is not None:
+            mc._mc_drain_task.cancel()
+            try:
+                await mc._mc_drain_task
+            except asyncio.CancelledError:
+                pass

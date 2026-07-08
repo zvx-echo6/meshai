@@ -55,7 +55,7 @@ class ConnectionConfig:
 
     # --- Send-queue pacing (per-radio serialization) ---
     # Minimum gap between consecutive outbound sends on each radio.
-    # Floor of 0.25 s is enforced at runtime; 0 disables the floor (use pacing value as-is, still floored at 0.25).
+    # A floor of 0.25 s is always enforced at runtime (max(0.25, pacing_value)).
     meshtastic_send_pacing_seconds: float = 2.0
     meshcore_send_pacing_seconds: float = 2.0
 
