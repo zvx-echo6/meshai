@@ -32,6 +32,7 @@ VALID_TOGGLES = frozenset({
     "avalanche",
     "seismic",
     "tracking",
+    "satpass",
 })
 
 

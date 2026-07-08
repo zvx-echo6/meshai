@@ -266,14 +266,56 @@ def matching_area_names(geom_json: str | None, areas: list[MonitoringArea]) -> l
     return result
 
 
+def observer_region_names(event: Any, areas: list[MonitoringArea]) -> list[str]:
+    """Region names for an event tagged by its satpass observer coordinates.
+
+    For each observer slug in event.data['observer_list'], look up its lat/lon
+    via get_observers() and collect every NAMED area whose bbox contains it.
+    Union, config order, deduped. Returns [] when there's no observer_list, no
+    resolvable coords, or no observer falls in any named area. Fail-open on any
+    error (return []).
+    """
+    data = getattr(event, "data", None) or {}
+    ol = data.get("observer_list")
+    if not ol or not areas:
+        return []
+    slugs = [s.strip() for s in str(ol).split(",") if s.strip()]
+    if not slugs:
+        return []
+    try:
+        from meshai.persistence.observer_locations import get_observers
+        coords = {o["slug"]: (o["lat"], o["lon"]) for o in get_observers()}
+    except Exception:
+        return []
+    out: list[str] = []
+    for s in slugs:
+        c = coords.get(s)
+        if not c:
+            continue
+        try:
+            lat, lon = float(c[0]), float(c[1])
+        except (TypeError, ValueError):
+            continue
+        for a in areas:
+            if a.name and a.name not in out and a.south <= lat <= a.north and a.west <= lon <= a.east:
+                out.append(a.name)
+    return out
+
+
 def event_region_names(event: Any, areas: list[MonitoringArea]) -> list[str]:
     """Return region names for an event by matching its geometry against named areas.
 
-    Convenience wrapper: extracts geometry via _event_geom_json (same chain as
-    the coverage gate) and delegates to matching_area_names.
+    Primary path: extracts geometry via _event_geom_json (same chain as the
+    coverage gate) and delegates to matching_area_names.
+    Fallback path: when geometry yields no names (e.g. satpass events have no
+    polygon), tries observer_region_names() which maps satpass observer
+    coordinates to named coverage areas.
     Returns [] when no geometry, no named areas, or parse error.
     """
-    return matching_area_names(_event_geom_json(event), areas)
+    names = matching_area_names(_event_geom_json(event), areas)
+    if not names:
+        names = observer_region_names(event, areas)
+    return names
 
 
 def event_in_areas(event: Any, areas: list[MonitoringArea]) -> bool:
