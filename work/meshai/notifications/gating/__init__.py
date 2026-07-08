@@ -64,11 +64,15 @@ from meshai.notifications.gating import swpc as _swpc_gate_mod  # noqa: E402,F40
 register("geomagnetic_storm", _swpc_gate_mod.decide)
 register("rf_propagation_alert", _swpc_gate_mod.decide)
 
-# Phase-2: NWS weather alerts (weather_warning + weather_statement).
-# weather_watch and weather_advisory are not yet migrated (Phase-2 scope).
+# Phase-2: NWS weather alerts (weather_warning + weather_statement +
+# weather_watch + weather_advisory).  All four categories share the same
+# NWS gating decider; the severity override in _severity_override_for()
+# correctly fires only for _warning categories.
 from meshai.notifications.gating import nws as _nws_gate_mod  # noqa: E402,F401
-register("weather_warning", _nws_gate_mod.decide)
+register("weather_warning",  _nws_gate_mod.decide)
 register("weather_statement", _nws_gate_mod.decide)
+register("weather_watch",    _nws_gate_mod.decide)
+register("weather_advisory", _nws_gate_mod.decide)
 
 # Phase-2: incident / roads categories.
 # One decider handles all four; it reads external_id to decide dedup path.
