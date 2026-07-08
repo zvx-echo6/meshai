@@ -2,9 +2,9 @@
 
 Each radio (Meshtastic, MeshCore) gets its own RadioSendQueue instance.
 The drain task pops one job at a time, executes the async send, resolves the
-caller's Future with the actual bool result, then sleeps pacing_seconds before
-popping the next job — enforcing strict FIFO serialization with configurable
-inter-packet spacing.
+caller's Future with the actual bool result, then sleeps a randomized jitter
+drawn from random.uniform(pace_min, pace_max) before popping the next job —
+enforcing strict FIFO serialization with configurable inter-packet spacing.
 
 Design notes
 ------------
@@ -15,14 +15,15 @@ Design notes
   same future can be set from within ANY event loop (the MC drain runs on the
   MC loop; callers on the main loop wrap it via ``asyncio.wrap_future``).
 * The queue is UNBOUNDED — no messages are ever dropped.
-* Pacing is read live from the supplied callable on every drain cycle so a
-  config-GUI change takes effect on the next send without restart.
+* Pacing min/max are read live from the supplied callables on every drain cycle
+  so a config-GUI change takes effect on the next send without restart.
 """
 from __future__ import annotations
 
 import asyncio
 import concurrent.futures
 import logging
+import random
 from typing import Awaitable, Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -35,7 +36,10 @@ class RadioSendQueue:
 
     Usage::
 
-        q = RadioSendQueue(pacing_fn=lambda: cfg.meshtastic_send_pacing_seconds)
+        q = RadioSendQueue(
+            pace_min_fn=lambda: cfg.meshtastic_send_pacing_min_seconds,
+            pace_max_fn=lambda: cfg.meshtastic_send_pacing_max_seconds,
+        )
         # On the event loop where the drain should run:
         q.start(loop)
         ...
@@ -48,14 +52,23 @@ class RadioSendQueue:
         await q.stop()
     """
 
-    def __init__(self, pacing_fn: Callable[[], float]) -> None:
+    def __init__(
+        self,
+        pace_min_fn: Callable[[], float],
+        pace_max_fn: Callable[[], float],
+    ) -> None:
         """
         Args:
-            pacing_fn: Zero-argument callable that returns the current pacing
-                       gap in seconds.  Called on every drain iteration so
-                       config-GUI changes take effect immediately.
+            pace_min_fn: Zero-argument callable returning the minimum pacing
+                         gap in seconds.  Called on every drain iteration so
+                         config-GUI changes take effect immediately.
+            pace_max_fn: Zero-argument callable returning the maximum pacing
+                         gap in seconds.  The actual sleep is
+                         random.uniform(pace_min, pace_max); a floor of
+                         _PACING_FLOOR (0.25 s) is always enforced.
         """
-        self._pacing_fn = pacing_fn
+        self._pace_min_fn = pace_min_fn
+        self._pace_max_fn = pace_max_fn
         self._queue: Optional[asyncio.Queue] = None
         self._drain_task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -179,5 +192,6 @@ class RadioSendQueue:
                     cfut.set_result(result)
 
             # Pace: read live so config-GUI changes take effect next send.
-            pacing = max(_PACING_FLOOR, self._pacing_fn())
-            await asyncio.sleep(pacing)
+            pace_min = max(_PACING_FLOOR, self._pace_min_fn())
+            pace_max = max(pace_min, self._pace_max_fn())
+            await asyncio.sleep(random.uniform(pace_min, pace_max))

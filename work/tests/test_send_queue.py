@@ -2,7 +2,8 @@
 
 Covers:
 - FIFO ordering (no reordering, no drops)
-- Pacing: consecutive timestamps >= pacing_seconds (0.05 s in tests)
+- Pacing: consecutive timestamps >= pace_min (0.05 s in tests)
+- Jitter: gaps vary (not constant) and stay within [pace_min, pace_max]
 - Event loop not blocked during burst
 - Concurrent tasks make progress while queue drains
 - Config floor enforced (min 0.25 s)
@@ -28,13 +29,16 @@ from meshai.transport.send_queue import RadioSendQueue, _PACING_FLOOR
 # ---------------------------------------------------------------------------
 
 
-def _make_queue(pacing: float = 0.05) -> RadioSendQueue:
-    return RadioSendQueue(pacing_fn=lambda: pacing)
+def _make_queue(pace_min: float = 0.05, pace_max: float = 0.09) -> RadioSendQueue:
+    return RadioSendQueue(
+        pace_min_fn=lambda: pace_min,
+        pace_max_fn=lambda: pace_max,
+    )
 
 
-async def _run_with_queue(pacing: float, jobs) -> list:
+async def _run_with_queue(pace_min: float, pace_max: float, jobs) -> list:
     """Run *jobs* (list of async callables) through a queue; return results in order."""
-    q = _make_queue(pacing)
+    q = _make_queue(pace_min, pace_max)
     loop = asyncio.get_event_loop()
     q.start(loop)
     results = []
@@ -62,7 +66,7 @@ class TestFIFO:
                 return True
             return _job
 
-        q = _make_queue(pacing=0.01)
+        q = _make_queue(pace_min=0.01, pace_max=0.02)
         loop = asyncio.get_event_loop()
         q.start(loop)
 
@@ -93,7 +97,7 @@ class TestFIFO:
                 return True
             return _job
 
-        q = _make_queue(pacing=0.01)
+        q = _make_queue(pace_min=0.01, pace_max=0.02)
         loop = asyncio.get_event_loop()
         q.start(loop)
 
@@ -114,16 +118,20 @@ class TestFIFO:
 
 class TestPacing:
     @pytest.mark.asyncio
-    async def test_pacing_gap_respected(self):
-        """Send timestamps are spaced >= pacing_seconds apart."""
-        pacing = 0.05
+    async def test_pacing_gap_within_range(self):
+        """Send timestamps are spaced >= pace_min and <= pace_max + scheduling tolerance.
+
+        Uses values above the 0.25s floor so the drain doesn't clamp them.
+        """
+        pace_min = 0.26
+        pace_max = 0.36
         timestamps: list[float] = []
 
         async def _job():
             timestamps.append(time.monotonic())
             return True
 
-        q = _make_queue(pacing=pacing)
+        q = _make_queue(pace_min=pace_min, pace_max=pace_max)
         loop = asyncio.get_event_loop()
         q.start(loop)
 
@@ -135,28 +143,70 @@ class TestPacing:
         assert len(timestamps) == N
         for i in range(1, N):
             gap = timestamps[i] - timestamps[i - 1]
-            assert gap >= pacing * 0.9, f"gap[{i}]={gap:.3f} < pacing={pacing}"
+            # Allow 10% under-shoot for scheduling jitter.
+            assert gap >= pace_min * 0.9, f"gap[{i}]={gap:.4f} below pace_min={pace_min}"
+            # Allow 100ms scheduling overshoot headroom.
+            assert gap <= pace_max + 0.10, f"gap[{i}]={gap:.4f} above pace_max={pace_max}+headroom"
 
     @pytest.mark.asyncio
-    async def test_pacing_read_live(self):
-        """Pacing value is read from the callable on each iteration."""
-        pacing_value = 0.05
+    async def test_jitter_applied(self):
+        """Gaps are not all identical — jitter is actually applied.
+
+        Uses values above the 0.25s floor (pace_min=0.26, pace_max=0.36) so the
+        drain sees a real [0.26, 0.36] window and at least two distinct inter-send
+        gaps are observed (i.e. not all constant).
+        """
+        pace_min = 0.26
+        pace_max = 0.36
         timestamps: list[float] = []
 
         async def _job():
             timestamps.append(time.monotonic())
             return True
 
-        q = RadioSendQueue(pacing_fn=lambda: pacing_value)
+        q = _make_queue(pace_min=pace_min, pace_max=pace_max)
         loop = asyncio.get_event_loop()
         q.start(loop)
 
-        # Enqueue first
+        N = 8
+        futs = [asyncio.ensure_future(q.enqueue_async(_job)) for _ in range(N)]
+        await asyncio.gather(*futs)
+        await q.stop()
+
+        assert len(timestamps) == N
+        # Round gaps to 2 decimal places to group near-equal values.
+        gaps = [round(timestamps[i] - timestamps[i - 1], 2) for i in range(1, N)]
+        distinct = len(set(gaps))
+        assert distinct >= 2, (
+            f"Expected jitter to produce >= 2 distinct gap values, "
+            f"got {distinct} distinct values in gaps={gaps}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_pacing_read_live(self):
+        """Pacing values are read from the callables on each iteration."""
+        pace_min_value = 0.05
+        pace_max_value = 0.09
+        timestamps: list[float] = []
+
+        async def _job():
+            timestamps.append(time.monotonic())
+            return True
+
+        q = RadioSendQueue(
+            pace_min_fn=lambda: pace_min_value,
+            pace_max_fn=lambda: pace_max_value,
+        )
+        loop = asyncio.get_event_loop()
+        q.start(loop)
+
+        # Enqueue first batch
         futs = [asyncio.ensure_future(q.enqueue_async(_job)) for _ in range(2)]
         await asyncio.gather(*futs)
 
         # Change pacing and run 2 more
-        pacing_value = 0.10
+        pace_min_value = 0.10
+        pace_max_value = 0.14
         futs = [asyncio.ensure_future(q.enqueue_async(_job)) for _ in range(2)]
         await asyncio.gather(*futs)
 
@@ -171,9 +221,12 @@ class TestPacing:
 
 class TestPacingFloor:
     @pytest.mark.asyncio
-    async def test_floor_enforced(self):
-        """Pacing below the floor is clamped up to _PACING_FLOOR (0.25 s)."""
-        q = RadioSendQueue(pacing_fn=lambda: 0.001)  # way below floor
+    async def test_floor_enforced_on_small_min(self):
+        """When pace_min is below the floor, the floor (0.25 s) is enforced."""
+        q = RadioSendQueue(
+            pace_min_fn=lambda: 0.001,  # way below floor
+            pace_max_fn=lambda: 0.001,
+        )
         loop = asyncio.get_event_loop()
         q.start(loop)
 
@@ -191,8 +244,45 @@ class TestPacingFloor:
         gap = timestamps[1] - timestamps[0]
         assert gap >= _PACING_FLOOR * 0.9, f"floor not enforced: gap={gap:.3f}"
 
+    @pytest.mark.asyncio
+    async def test_floor_enforced_via_config_post_init(self):
+        """ConnectionConfig.__post_init__ clamps pace_min < 0.25 up to 0.25."""
+        from meshai.config import ConnectionConfig
+        cfg = ConnectionConfig(
+            meshtastic_send_pacing_min_seconds=0.05,
+            meshtastic_send_pacing_max_seconds=0.09,
+        )
+        # __post_init__ clamps: min becomes 0.25, max becomes max(0.25, 0.09)=0.25
+        assert cfg.meshtastic_send_pacing_min_seconds == 0.25
+        assert cfg.meshtastic_send_pacing_max_seconds == 0.25
+
     def test_floor_constant(self):
         assert _PACING_FLOOR == 0.25
+
+    @pytest.mark.asyncio
+    async def test_max_clamped_to_min_when_below(self):
+        """When pace_max < pace_min, max is treated as min (no error; uniform(x,x)=x)."""
+        q = RadioSendQueue(
+            pace_min_fn=lambda: 0.06,
+            pace_max_fn=lambda: 0.03,  # below min
+        )
+        loop = asyncio.get_event_loop()
+        q.start(loop)
+
+        timestamps: list[float] = []
+
+        async def _job():
+            timestamps.append(time.monotonic())
+            return True
+
+        futs = [asyncio.ensure_future(q.enqueue_async(_job)) for _ in range(2)]
+        await asyncio.gather(*futs)
+        await q.stop()
+
+        assert len(timestamps) == 2
+        gap = timestamps[1] - timestamps[0]
+        # pace_max < pace_min → clamped to pace_min (0.06), then floor max(0.25, 0.06)=0.25
+        assert gap >= _PACING_FLOOR * 0.9, f"floor not enforced: gap={gap:.3f}"
 
 
 # ---------------------------------------------------------------------------
@@ -204,8 +294,9 @@ class TestNonBlocking:
     @pytest.mark.asyncio
     async def test_other_tasks_progress_during_drain(self):
         """The event loop remains available to other coroutines while the queue drains."""
-        pacing = 0.05
-        q = _make_queue(pacing=pacing)
+        pace_min = 0.05
+        pace_max = 0.09
+        q = _make_queue(pace_min=pace_min, pace_max=pace_max)
         loop = asyncio.get_event_loop()
         q.start(loop)
 
@@ -233,7 +324,7 @@ class TestNonBlocking:
     @pytest.mark.asyncio
     async def test_send_returns_actual_result(self):
         """Future resolves to the actual bool returned by the send job."""
-        q = _make_queue(pacing=0.01)
+        q = _make_queue(pace_min=0.01, pace_max=0.02)
         loop = asyncio.get_event_loop()
         q.start(loop)
 
@@ -272,7 +363,7 @@ class TestSerialization:
             active_intervals.append((start, end))
             return True
 
-        q = _make_queue(pacing=0.01)
+        q = _make_queue(pace_min=0.01, pace_max=0.02)
         loop = asyncio.get_event_loop()
         q.start(loop)
 
@@ -292,7 +383,7 @@ class TestSerialization:
 class TestLifecycle:
     @pytest.mark.asyncio
     async def test_start_stop(self):
-        q = _make_queue(pacing=0.01)
+        q = _make_queue(pace_min=0.01, pace_max=0.02)
         loop = asyncio.get_event_loop()
         assert not q.running
         q.start(loop)
@@ -310,7 +401,7 @@ class TestLifecycle:
             processed.append(1)
             return True
 
-        q = _make_queue(pacing=0.01)
+        q = _make_queue(pace_min=0.01, pace_max=0.02)
         loop = asyncio.get_event_loop()
         q.start(loop)
         # Enqueue a slow job + a second job
@@ -322,14 +413,14 @@ class TestLifecycle:
 
     @pytest.mark.asyncio
     async def test_enqueue_before_start_raises(self):
-        q = _make_queue(pacing=0.01)
+        q = _make_queue(pace_min=0.01, pace_max=0.02)
         with pytest.raises(RuntimeError, match="start"):
             await q.enqueue_async(lambda: None)
 
     @pytest.mark.asyncio
     async def test_fire_and_forget_before_start_is_noop(self):
         """enqueue_fire_and_forget on unstarted queue logs and does nothing."""
-        q = _make_queue(pacing=0.01)
+        q = _make_queue(pace_min=0.01, pace_max=0.02)
         # Should not raise
         q.enqueue_fire_and_forget(lambda: None)
 
@@ -362,14 +453,18 @@ class TestMTFallback:
         from meshai.config import ConnectionConfig
         from meshai.connector import MeshtasticTransport
 
-        cfg = ConnectionConfig(meshtastic_send_pacing_seconds=0.05)
+        cfg = ConnectionConfig(
+            meshtastic_send_pacing_min_seconds=0.25,  # at floor after __post_init__
+            meshtastic_send_pacing_max_seconds=0.30,
+        )
         mt = MeshtasticTransport(cfg)
 
         # Arm queue manually (normally done by set_message_callback)
         loop = asyncio.get_event_loop()
         from meshai.transport.send_queue import RadioSendQueue
-        pacing_fn = lambda: max(0.25, getattr(cfg, "meshtastic_send_pacing_seconds", 2.0))
-        mt._mt_queue = RadioSendQueue(pacing_fn=pacing_fn)
+        pace_min_fn = lambda: getattr(cfg, "meshtastic_send_pacing_min_seconds", 2.2)
+        pace_max_fn = lambda: getattr(cfg, "meshtastic_send_pacing_max_seconds", 2.6)
+        mt._mt_queue = RadioSendQueue(pace_min_fn=pace_min_fn, pace_max_fn=pace_max_fn)
         mt._mt_queue.start(loop)
 
         calls = []
@@ -392,18 +487,49 @@ class TestConfig:
     def test_pacing_defaults(self):
         from meshai.config import ConnectionConfig
         cfg = ConnectionConfig()
-        assert cfg.meshtastic_send_pacing_seconds == 2.0
-        assert cfg.meshcore_send_pacing_seconds == 2.0
+        assert cfg.meshtastic_send_pacing_min_seconds == 2.2
+        assert cfg.meshtastic_send_pacing_max_seconds == 2.6
+        assert cfg.meshcore_send_pacing_min_seconds == 2.2
+        assert cfg.meshcore_send_pacing_max_seconds == 2.6
 
     def test_pacing_round_trips(self):
         from meshai.config import ConnectionConfig, _dataclass_to_dict, _dict_to_dataclass
-        cfg = ConnectionConfig(meshtastic_send_pacing_seconds=3.5, meshcore_send_pacing_seconds=1.5)
+        cfg = ConnectionConfig(
+            meshtastic_send_pacing_min_seconds=3.5,
+            meshtastic_send_pacing_max_seconds=4.0,
+            meshcore_send_pacing_min_seconds=1.5,
+            meshcore_send_pacing_max_seconds=2.0,
+        )
         d = _dataclass_to_dict(cfg)
-        assert d["meshtastic_send_pacing_seconds"] == 3.5
-        assert d["meshcore_send_pacing_seconds"] == 1.5
+        assert d["meshtastic_send_pacing_min_seconds"] == 3.5
+        assert d["meshtastic_send_pacing_max_seconds"] == 4.0
+        assert d["meshcore_send_pacing_min_seconds"] == 1.5
+        assert d["meshcore_send_pacing_max_seconds"] == 2.0
         cfg2 = _dict_to_dataclass(ConnectionConfig, d)
-        assert cfg2.meshtastic_send_pacing_seconds == 3.5
-        assert cfg2.meshcore_send_pacing_seconds == 1.5
+        assert cfg2.meshtastic_send_pacing_min_seconds == 3.5
+        assert cfg2.meshtastic_send_pacing_max_seconds == 4.0
+        assert cfg2.meshcore_send_pacing_min_seconds == 1.5
+        assert cfg2.meshcore_send_pacing_max_seconds == 2.0
+
+    def test_max_clamped_when_below_min(self):
+        """If max < min in config, __post_init__ raises max to equal min."""
+        from meshai.config import ConnectionConfig
+        cfg = ConnectionConfig(
+            meshtastic_send_pacing_min_seconds=3.0,
+            meshtastic_send_pacing_max_seconds=2.0,  # below min → clamped to min
+        )
+        assert cfg.meshtastic_send_pacing_max_seconds == 3.0
+
+    def test_min_clamped_to_floor(self):
+        """If min < 0.25, __post_init__ raises min to 0.25 and max follows."""
+        from meshai.config import ConnectionConfig
+        cfg = ConnectionConfig(
+            meshtastic_send_pacing_min_seconds=0.1,
+            meshtastic_send_pacing_max_seconds=0.2,
+        )
+        assert cfg.meshtastic_send_pacing_min_seconds == 0.25
+        # max was 0.2 < new min 0.25, so max is also clamped to 0.25
+        assert cfg.meshtastic_send_pacing_max_seconds == 0.25
 
 
 # ---------------------------------------------------------------------------
@@ -445,7 +571,8 @@ class TestDeadlockRegression:
 
         cfg = ConnectionConfig(
             meshcore_host="127.0.0.1",
-            meshcore_send_pacing_seconds=0.01,
+            meshcore_send_pacing_min_seconds=0.25,
+            meshcore_send_pacing_max_seconds=0.30,
         )
         mc = MeshCoreTransport(cfg)
         loop = asyncio.get_event_loop()
@@ -513,7 +640,10 @@ class TestDeadlockRegression:
         CancelledError/exception.  With pre-fix code the pending futs would
         never be set so the assert would fail or the test would time out.
         """
-        q = RadioSendQueue(pacing_fn=lambda: 10.0)  # huge pacing keeps drain idle long
+        q = RadioSendQueue(
+            pace_min_fn=lambda: 10.0,
+            pace_max_fn=lambda: 10.0,
+        )  # huge pacing keeps drain idle long
         loop = asyncio.get_event_loop()
         q.start(loop)
 
@@ -574,7 +704,8 @@ class TestDeadlockRegression:
 
         cfg = ConnectionConfig(
             meshcore_host="127.0.0.1",
-            meshcore_send_pacing_seconds=0.01,
+            meshcore_send_pacing_min_seconds=0.25,
+            meshcore_send_pacing_max_seconds=0.30,
         )
         mc = MeshCoreTransport(cfg)
         loop = asyncio.get_event_loop()

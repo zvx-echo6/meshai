@@ -161,8 +161,9 @@ class MeshtasticTransport(MeshTransport):
         self._message_callback = callback
         self._loop = loop
         # Start the per-radio send queue on the main event loop.
-        pacing_fn = lambda: max(0.25, getattr(self.config, "meshtastic_send_pacing_seconds", 2.0))
-        self._mt_queue = RadioSendQueue(pacing_fn=pacing_fn)
+        pace_min_fn = lambda: getattr(self.config, "meshtastic_send_pacing_min_seconds", 2.2)
+        pace_max_fn = lambda: getattr(self.config, "meshtastic_send_pacing_max_seconds", 2.6)
+        self._mt_queue = RadioSendQueue(pace_min_fn=pace_min_fn, pace_max_fn=pace_max_fn)
 
         def _start_drain() -> None:
             self._mt_queue.start(loop)
