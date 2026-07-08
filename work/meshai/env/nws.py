@@ -269,11 +269,21 @@ class NWSAlertsAdapter:
             }
 
             # Attach the RAW GeoJSON alert geometry (Polygon / MultiPolygon /
-            # None) to the event. This is the authoritative field the pipeline
-            # coverage gate intersects against configured areas. Zone-only NWS
-            # alerts have geometry=None; the fail-closed gate drops those.
+            # None) — the authoritative field the coverage gate intersects
+            # against configured areas. Zone-only NWS alerts have geometry=None;
+            # resolve those from affectedZones (cached zone shapes) so
+            # in-coverage zone alerts get placed + region-tagged instead of
+            # dropped by the fail-closed gate.
             geom = feature.get("geometry")
+            if geom is None:
+                zurls = props.get("affectedZones") or []
+                if zurls:
+                    from meshai.env.nws_zones import resolve_zones_geometry
+                    resolved = resolve_zones_geometry(zurls)
+                    if resolved:
+                        geom = resolved
             event["geometry"] = geom
+            event["affected_zones"] = props.get("affectedZones", [])
 
             # Compute a best-effort centroid (fallback / nice-to-have; the
             # geometry above is authoritative). Handle Polygon and MultiPolygon.
@@ -293,6 +303,18 @@ class NWSAlertsAdapter:
                         lon_sum = sum(c[0] for c in ring)
                         event["lat"] = lat_sum / len(ring)
                         event["lon"] = lon_sum / len(ring)
+                    elif geom.get("type") == "MultiPolygon" and coords:
+                        # Average all outer-ring vertices across all polygons
+                        all_lats: list[float] = []
+                        all_lons: list[float] = []
+                        for poly_coords in coords:
+                            if poly_coords:
+                                ring = poly_coords[0]
+                                all_lats.extend(c[1] for c in ring)
+                                all_lons.extend(c[0] for c in ring)
+                        if all_lats:
+                            event["lat"] = sum(all_lats) / len(all_lats)
+                            event["lon"] = sum(all_lons) / len(all_lons)
                 except Exception:
                     pass
 
