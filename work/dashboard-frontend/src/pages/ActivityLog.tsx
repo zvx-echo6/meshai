@@ -62,14 +62,20 @@ const TABLE_LABELS: Record<string, string> = {
 //   hydro.py             → "🌊 …"
 //   swpc.py              → "🧲 …" | "☀️ …"
 //   quake.py             → "🌐 …"
+//   nws.py / composer (legacy) → "⏳ WX: …" | "🌡️ …" (heat, PR #96)
+//   incident_handler.py (legacy) → "⚠️ Road Incident …"
+// NOTE: more-specific prefixes must appear before shorter ones that share a leading char.
 const TEXT_HINTS: Array<[string, string]> = [
   ['🔥', 'Fire'],
   ['🚧', 'Traffic'],
+  ['⚠️ Road Incident', 'Traffic'],  // legacy incident rows (⚠️ = U+26A0+FE0F)
   ['⛷', 'Avalanche'],
   ['🌊', 'Hydro'],
   ['🧲', 'Space Wx'],
   ['☀️', 'Space Wx'],
   ['🌐', 'Quake'],
+  ['⏳', 'Weather'],   // legacy weather-watch rows: "⏳ WX: …"
+  ['🌡️', 'Weather'],  // legacy heat-alert rows (PR #96 NWS heat format)
 ]
 
 // Type/family tag derived from source_event_table, with text-prefix fallback
