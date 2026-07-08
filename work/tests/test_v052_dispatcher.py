@@ -358,6 +358,6 @@ def test_dispatch_stats_exposes_all_counters():
     stats = d.dispatch_stats()
     assert set(stats.keys()) == {
         "stale_dropped", "cooldown_dropped", "dedup_dropped",
-        "cold_start_dropped", "cold_start_anchor_at",
+        "cold_start_dropped", "severity_floor_dropped", "cold_start_anchor_at",
         "cooldown_keys", "dedup_lru_size",
     }
