@@ -367,14 +367,28 @@ async def get_edges(request: Request):
 
 @router.get("/channels")
 async def get_channels(request: Request):
-    """Get radio channels from the connected Meshtastic interface."""
+    """Get radio channels from the connected Meshtastic interface.
+
+    Works with both a bare MeshtasticTransport (connector._interface) and a
+    CompositeTransport (connector.meshtastic_child()._interface). The previous
+    implementation read ``connector._interface`` directly, which does not exist
+    on CompositeTransport, causing it to always return [] when MeshCore is also
+    configured.
+    """
     connector = getattr(request.app.state, "connector", None)
 
     if not connector or not connector.connected:
         return []
 
     try:
-        interface = connector._interface
+        # Resolve the Meshtastic child for CompositeTransport; fall back to the
+        # connector itself for bare MeshtasticTransport.
+        from meshai.transport.composite_transport import CompositeTransport
+        if isinstance(connector, CompositeTransport):
+            mt = connector.meshtastic_child()
+        else:
+            mt = connector
+        interface = getattr(mt, "_interface", None) if mt is not None else None
         if not interface or not hasattr(interface, "localNode"):
             return []
 
