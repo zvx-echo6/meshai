@@ -28,6 +28,10 @@ def _build_fake_meshcore():
         CHANNEL_MSG_RECV = "CHANNEL_MSG_RECV"
         DISCONNECTED = "DISCONNECTED"
         CONNECTED = "CONNECTED"
+        # Added in main alongside ACK-wait delivery confirmation — required by
+        # _setup_subscriptions(); fake must include them or connect() blows up.
+        ACK = "acknowledgement"
+        NEW_CONTACT = "new_contact"
 
     mod.EventType = EventType
 

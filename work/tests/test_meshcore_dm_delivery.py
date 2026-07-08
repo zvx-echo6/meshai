@@ -50,6 +50,7 @@ def _ensure_fake_meshcore():
         DISCONNECTED = "DISCONNECTED"
         CONNECTED = "CONNECTED"
         ACK = "ACK"
+        NEW_CONTACT = "NEW_CONTACT"
 
     mod.EventType = EventType
 
