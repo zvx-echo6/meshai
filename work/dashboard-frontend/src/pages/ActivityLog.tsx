@@ -40,11 +40,49 @@ function channelLabel(channel: string | number | null): string {
   return channel.startsWith('#') ? channel : `#${channel}`
 }
 
-// Type/family tag derived from source_event_table (e.g. 'fires' -> 'fire').
-function familyLabel(table: string | null): string {
-  if (!table) return 'broadcast'
-  const t = table.replace(/_/g, ' ').trim()
-  return t.endsWith('s') ? t.slice(0, -1) : t
+// Explicit label table for known source_event_table values.
+const TABLE_LABELS: Record<string, string> = {
+  nws_alerts:                 'Weather',
+  fires:                      'Fire',
+  fire_digest_broadcasts:     'Fire digest',
+  satpass_events:             'Satellite',
+  band_conditions_broadcasts: 'Band',
+  traffic_events:             'Traffic',
+  quake_events:               'Quake',
+  swpc_events:                'Space Wx',
+  gauge_readings:             'Hydro',
+  event_log:                  'Avalanche',
+}
+
+// Text-prefix / emoji heuristics for legacy NULL-source rows.
+// Derived from actual formatter outputs:
+//   fires.py / firms.py  → "🔥 …"
+//   work_zone.py (wzdx/511/traffic) → "🚧 …"
+//   avalanche.py         → "⛷ …"
+//   hydro.py             → "🌊 …"
+//   swpc.py              → "🧲 …" | "☀️ …"
+//   quake.py             → "🌐 …"
+const TEXT_HINTS: Array<[string, string]> = [
+  ['🔥', 'Fire'],
+  ['🚧', 'Traffic'],
+  ['⛷', 'Avalanche'],
+  ['🌊', 'Hydro'],
+  ['🧲', 'Space Wx'],
+  ['☀️', 'Space Wx'],
+  ['🌐', 'Quake'],
+]
+
+// Type/family tag derived from source_event_table, with text-prefix fallback
+// for legacy NULL-source rows (native adapter broadcasts before the fix).
+function familyLabel(table: string | null, text?: string | null): string {
+  if (table) return TABLE_LABELS[table] ?? table.replace(/_/g, ' ').replace(/s$/, '')
+  // NULL source_event_table: try emoji prefix heuristic on the broadcast text.
+  if (text) {
+    for (const [prefix, label] of TEXT_HINTS) {
+      if (text.startsWith(prefix)) return label
+    }
+  }
+  return 'broadcast'
 }
 
 // --- component -------------------------------------------------------------
@@ -193,7 +231,7 @@ export default function ActivityLog() {
                           {channelLabel(e.channel)}
                         </span>
                         <span className="text-xs px-2 py-0.5 rounded-full bg-[#f59e0b]/10 text-[#f59e0b]">
-                          {familyLabel(e.source_event_table)}
+                          {familyLabel(e.source_event_table, e.text)}
                         </span>
                         {e.success === 1 && (
                           <span className="text-xs text-green-500">Sent</span>

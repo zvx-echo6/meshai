@@ -906,6 +906,17 @@ class Dispatcher:
         {"mesh_broadcast", "meshcore_broadcast", "mesh_dm", "meshcore_dm"}
     )
 
+    # Fallback: map event.source → canonical audit table for native env
+    # adapters that do not stamp _broadcast_audit on their events.
+    # Only include mappings confirmed against the adapters + schema.
+    _SOURCE_TO_TABLE: dict = {
+        "nws":     "nws_alerts",
+        "nifc":    "fires",
+        "wzdx":    "traffic_events",
+        "traffic": "traffic_events",
+        "511":     "traffic_events",
+    }
+
     def _post_broadcast_commit(self, event, payload, rule, ch_type: str,
                                *, success: bool = True) -> None:
         """Persistence side-effects of a per-mesh broadcast delivery.
@@ -934,6 +945,17 @@ class Dispatcher:
         # --- Audit row (always, for any mesh delivery attempt) ---
         if ch_type in self._MESH_CH_TYPES:
             audit = data.get("_broadcast_audit") if data else None
+            # Resolve audit table/pk: use handler-stamped _broadcast_audit when
+            # present; otherwise fall back to _SOURCE_TO_TABLE keyed by
+            # event.source (native env adapters don't stamp _broadcast_audit).
+            if isinstance(audit, dict):
+                audit_table = audit.get("table")
+                audit_pk = audit.get("pk")
+            else:
+                audit_table = self._SOURCE_TO_TABLE.get(
+                    getattr(event, "source", "") or ""
+                )
+                audit_pk = None
             try:
                 from meshai.persistence import get_db
                 conn = get_db()
@@ -947,8 +969,8 @@ class Dispatcher:
                     "VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (
                         int(committed_at), recipient, channel, text,
-                        audit.get("table") if isinstance(audit, dict) else None,
-                        audit.get("pk") if isinstance(audit, dict) else None,
+                        audit_table,
+                        audit_pk,
                         bytes_sent, 0,
                         transport, 1 if success else 0,
                     ),
