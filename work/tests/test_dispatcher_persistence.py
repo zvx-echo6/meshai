@@ -501,3 +501,114 @@ def test_dispatcher_construct_when_db_unavailable(monkeypatch, tmp_path):
     d = Dispatcher(cfg, factory)   # must not raise
     assert d._stale_dropped == 0
     assert d._first_event_at is None
+
+
+# ============================================================================
+# _SOURCE_TO_TABLE fallback — native adapter events without _broadcast_audit
+# ============================================================================
+
+def test_source_to_table_fallback_stamps_audit_row(db_path):
+    """_post_broadcast_commit must write source_event_table via _SOURCE_TO_TABLE
+    when the event has no _broadcast_audit.  Covers the core Fix 1 regression
+    guard: event.source='nws' → source_event_table='nws_alerts'.
+    """
+    from unittest.mock import MagicMock
+    from meshai.notifications.events import make_event
+    from meshai.notifications.pipeline.dispatcher import Dispatcher
+    from meshai.persistence import get_db
+
+    cfg = _build_config(cold_start_grace=0)
+    factory, _ = _mk_channel_factory()
+    d = Dispatcher(cfg, factory)
+
+    # Build a native NWS event — no _broadcast_audit, no data dict at all.
+    ev = make_event(
+        source="nws",
+        category="weather_alert",
+        severity="priority",
+        region="US-ID",
+        title="⚠️ Winter Weather Advisory",
+        lat=43.6, lon=-116.2,
+    )
+
+    # Fake a minimal rule + payload for the internal commit call.
+    rule = MagicMock()
+    rule.broadcast_channel = 1
+    rule.delivery_types = ["mesh_broadcast"]
+
+    payload = MagicMock()
+    payload.message = "⚠️ Winter Weather Advisory — test"
+
+    # Call _post_broadcast_commit directly — does NOT transmit anything.
+    d._post_broadcast_commit(ev, payload, rule, "mesh_broadcast", success=True)
+
+    conn = get_db()
+    row = conn.execute(
+        "SELECT source_event_table, source_event_pk, transport "
+        "FROM mesh_broadcasts_out ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None, "No audit row was written"
+    assert row["source_event_table"] == "nws_alerts", (
+        f"Expected 'nws_alerts', got {row['source_event_table']!r}"
+    )
+    assert row["source_event_pk"] is None, "pk should be NULL for fallback path"
+
+
+def test_source_to_table_fallback_all_native_sources(db_path):
+    """Verify _SOURCE_TO_TABLE covers all five native adapter sources."""
+    from meshai.notifications.pipeline.dispatcher import Dispatcher
+    expected = {
+        "nws":     "nws_alerts",
+        "nifc":    "fires",
+        "wzdx":    "traffic_events",
+        "traffic": "traffic_events",
+        "511":     "traffic_events",
+    }
+    cfg = _build_config()
+    factory, _ = _mk_channel_factory()
+    d = Dispatcher(cfg, factory)
+    assert d._SOURCE_TO_TABLE == expected, (
+        f"Map mismatch: {d._SOURCE_TO_TABLE!r}"
+    )
+
+
+def test_broadcast_audit_present_not_overridden(db_path):
+    """When _broadcast_audit IS stamped, _post_broadcast_commit must use its
+    table/pk, NOT the _SOURCE_TO_TABLE fallback."""
+    from unittest.mock import MagicMock
+    from meshai.notifications.events import make_event
+    from meshai.notifications.pipeline.dispatcher import Dispatcher
+    from meshai.persistence import get_db
+
+    cfg = _build_config(cold_start_grace=0)
+    factory, _ = _mk_channel_factory()
+    d = Dispatcher(cfg, factory)
+
+    ev = make_event(
+        source="nws",
+        category="weather_alert",
+        severity="priority",
+        region="US-ID",
+        title="⚠️ Test explicit audit",
+        lat=43.6, lon=-116.2,
+    )
+    # Stamp explicit audit (as Central handlers do).
+    ev.data["_broadcast_audit"] = {"table": "nws_alerts", "pk": "CAP-XYZ-001"}
+
+    rule = MagicMock()
+    rule.broadcast_channel = 1
+    rule.delivery_types = ["mesh_broadcast"]
+    payload = MagicMock()
+    payload.message = "⚠️ Test explicit audit"
+
+    d._post_broadcast_commit(ev, payload, rule, "mesh_broadcast", success=True)
+
+    conn = get_db()
+    row = conn.execute(
+        "SELECT source_event_table, source_event_pk "
+        "FROM mesh_broadcasts_out ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert row["source_event_table"] == "nws_alerts"
+    assert row["source_event_pk"] == "CAP-XYZ-001", (
+        f"Expected pk='CAP-XYZ-001', got {row['source_event_pk']!r}"
+    )
