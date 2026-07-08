@@ -24,6 +24,30 @@ logger = logging.getLogger(__name__)
 # Default timeout for command futures (seconds).
 _COMMAND_TIMEOUT = 10.0
 
+# --- Telemetry auto-poll tuning -------------------------------------------
+# Hard floor on the auto-poll interval (seconds) — airtime protection: a
+# misconfigured tiny interval can never flood the mesh with telemetry requests.
+_TELEMETRY_MIN_INTERVAL_SECONDS = 300
+# Consecutive-timeout threshold before a contact is marked unavailable and
+# dropped from the auto-poll rotation (a manual "Poll now" un-sticks it).
+_TELEMETRY_MAX_FAILURES = 3
+
+# Numeric Cayenne-LPP type id → decoded field name.  Ids not in this map are
+# passed through as ``lpp_<id>`` so nothing is silently dropped.
+_LPP_ID_TO_FIELD = {
+    101: "illuminance",
+    103: "temperature",
+    104: "humidity",
+    115: "barometer",
+    116: "voltage",
+    117: "current",
+    120: "battery_pct",
+    121: "altitude",
+    128: "power",
+    130: "distance",
+    136: "gps",
+}
+
 
 def mc_context_allows(cfg, msg, idx_to_name):
     """Return True if a MeshCore inbound MeshMessage should be forwarded.
@@ -94,6 +118,13 @@ class MeshCoreTransport(MeshTransport):
         self._last_advert_sent: Optional[float] = None   # epoch seconds or None
         # asyncio.Task handle for the periodic advert loop; None when inactive.
         self._advert_task = None
+        # asyncio.Task handle for the telemetry auto-poll loop; None when inactive.
+        self._telemetry_task = None
+        # Telemetry availability/bookkeeping (shared by poller + on-demand):
+        #   _telemetry_cache: contact-id -> {contact, data, polled_at, available}
+        #   _telemetry_failures: contact-id -> consecutive-timeout count
+        self._telemetry_cache: dict[str, dict] = {}
+        self._telemetry_failures: dict[str, int] = {}
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -502,6 +533,208 @@ class MeshCoreTransport(MeshTransport):
             self._loop.call_soon_threadsafe(task.cancel)
 
     # ------------------------------------------------------------------
+    # Telemetry (MeshCore sensor auto-poll)
+    # ------------------------------------------------------------------
+
+    def _resolve_contact(self, contact_id: str):
+        """Resolve *contact_id* (a pubkey/prefix OR a name) to a contact dict.
+
+        Mirrors DM / get_node_name resolution: try key-prefix first, then name.
+        Returns the raw contact dict, or None if not resolvable / not connected.
+        """
+        if self._mc is None or not self._connected:
+            return None
+        try:
+            contact = self._mc.get_contact_by_key_prefix(contact_id)
+            if contact:
+                return contact
+        except Exception:
+            pass
+        try:
+            contact = self._mc.get_contact_by_name(contact_id)
+            if contact:
+                return contact
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _decode_lpp(lpp) -> dict:
+        """Decode a MeshCore telemetry ``lpp`` list into a flat field dict.
+
+        Each element is ``{"channel": int, "type": int, "value": <num|dict>}``.
+        The numeric ``type`` id is mapped to a field name via _LPP_ID_TO_FIELD;
+        unknown ids become ``lpp_<id>``.  The original list is always preserved
+        under the ``raw`` key.
+        """
+        out: dict = {}
+        for elem in (lpp or []):
+            if not isinstance(elem, dict):
+                continue
+            lpp_id = elem.get("type")
+            field_name = _LPP_ID_TO_FIELD.get(lpp_id, f"lpp_{lpp_id}")
+            out[field_name] = elem.get("value")
+        out["raw"] = lpp
+        return out
+
+    def _record_telemetry_result(self, contact_id: str, data) -> None:
+        """Update the shared cache/failure bookkeeping for a poll result.
+
+        ``data`` is a decoded dict on success or None on timeout/no-response.
+        On success: cache the reading, reset the failure counter, available=True.
+        On None: bump the failure counter; once it reaches _TELEMETRY_MAX_FAILURES
+        the entry is marked available=False (last data retained); before that the
+        entry stays available with its previous data (only polled_at is refreshed).
+        """
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        if data is not None:
+            self._telemetry_failures[contact_id] = 0
+            self._telemetry_cache[contact_id] = {
+                "contact": contact_id,
+                "data": data,
+                "polled_at": now,
+                "available": True,
+            }
+            return
+        # Miss: increment consecutive-failure counter.
+        fails = self._telemetry_failures.get(contact_id, 0) + 1
+        self._telemetry_failures[contact_id] = fails
+        prev = self._telemetry_cache.get(contact_id, {})
+        entry = {
+            "contact": contact_id,
+            "data": prev.get("data"),
+            "polled_at": now,
+            "available": prev.get("available", True),
+        }
+        if fails >= _TELEMETRY_MAX_FAILURES:
+            entry["available"] = False
+        self._telemetry_cache[contact_id] = entry
+
+    async def _req_telemetry_async(self, contact_id):
+        """Resolve, request+await, decode telemetry for *contact_id* (on the loop).
+
+        Runs entirely on the dedicated event loop so the poller (already on that
+        loop) can await it directly WITHOUT a nested _run_coro deadlock.  Updates
+        the shared cache/failure bookkeeping so poller and on-demand paths agree.
+        Returns the decoded dict, or None on unresolved/timeout/no-response/error.
+        """
+        contact = self._resolve_contact(contact_id)
+        if contact is None:
+            return None
+        try:
+            lpp = await self._mc.commands.req_telemetry_sync(contact, min_timeout=5)
+        except Exception as exc:
+            logger.warning("MeshCore: req_telemetry(%s) error: %s", contact_id, exc)
+            self._record_telemetry_result(contact_id, None)
+            return None
+        if lpp is None:
+            self._record_telemetry_result(contact_id, None)
+            return None
+        data = self._decode_lpp(lpp)
+        self._record_telemetry_result(contact_id, data)
+        return data
+
+    def req_telemetry(self, contact_id):
+        """On-demand telemetry poll for *contact_id* (sync, bridged to the loop).
+
+        A successful manual poll resets the contact's failure counter and flips
+        it back to available in the cache (un-sticks an unavailable node).
+        Returns the decoded telemetry dict, or None if unresolved / no response /
+        not connected.
+        """
+        if self._mc is None or not self._connected:
+            return None
+        try:
+            return self._run_coro(
+                self._req_telemetry_async(contact_id), timeout=25.0
+            )
+        except Exception as exc:
+            logger.warning("MeshCore: req_telemetry(%s) failed: %s", contact_id, exc)
+            return None
+
+    def get_telemetry_cache(self) -> list[dict]:
+        """Return the current telemetry cache entries (list of dicts)."""
+        return list(self._telemetry_cache.values())
+
+    def _effective_telemetry_interval(self):
+        """Compute the effective auto-poll interval (seconds), or None if disabled.
+
+        raw <= 0 → disabled (None).  Otherwise the raw interval clamped UP to the
+        _TELEMETRY_MIN_INTERVAL_SECONDS floor (airtime protection).
+        """
+        raw = getattr(self.config, "meshcore_telemetry_interval_seconds", 1800)
+        if raw <= 0:
+            return None
+        return max(raw, _TELEMETRY_MIN_INTERVAL_SECONDS)
+
+    async def _telemetry_poll_loop(self) -> None:
+        """Auto-poll selected contacts for telemetry (Task on the dedicated loop).
+
+        Airtime guards:
+          - min-floor: interval is clamped up to _TELEMETRY_MIN_INTERVAL_SECONDS.
+          - selected-only: iterates ONLY config.meshcore_telemetry_contacts, never
+            the whole roster.
+          - sequential + gap: one contact at a time with a 2 s gap between each
+            (the lib also serializes mesh requests with an internal lock).
+          - availability stop: contacts at/over _TELEMETRY_MAX_FAILURES are skipped
+            (not auto-polled) until a manual poll un-sticks them.
+        Stops on CancelledError (disconnect) or when the transport drops its link.
+        """
+        interval = self._effective_telemetry_interval()
+        if interval is None:
+            return  # disabled
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                if not self._connected or self._mc is None:
+                    return
+                # Read the SELECTED list fresh each cycle (GUI may have changed it).
+                contacts = list(
+                    getattr(self.config, "meshcore_telemetry_contacts", []) or []
+                )
+                for c in contacts:
+                    if not self._connected or self._mc is None:
+                        return
+                    # Availability stop: don't auto-poll a stuck contact.
+                    if self._telemetry_failures.get(c, 0) >= _TELEMETRY_MAX_FAILURES:
+                        continue
+                    try:
+                        data = await self._req_telemetry_async(c)
+                        if data is not None:
+                            logger.info("MeshCore: telemetry polled %s", c)
+                        else:
+                            logger.debug("MeshCore: telemetry miss for %s", c)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        logger.warning(
+                            "MeshCore: telemetry poll error for %s: %s", c, exc
+                        )
+                    # Sequential gap between contacts (airtime spacing).
+                    await asyncio.sleep(2)
+        except asyncio.CancelledError:
+            logger.debug("MeshCore: telemetry poll task cancelled")
+            raise
+        except Exception as exc:
+            logger.warning("MeshCore: telemetry poll loop error: %s", exc)
+
+    def _schedule_telemetry_poll(self) -> None:
+        """Create the telemetry auto-poll Task on the dedicated loop (thread-safe)."""
+        def _arm() -> None:
+            self._telemetry_task = asyncio.get_event_loop().create_task(
+                self._telemetry_poll_loop()
+            )
+        self._loop.call_soon_threadsafe(_arm)
+
+    def _cancel_telemetry_poll(self) -> None:
+        """Cancel the telemetry auto-poll task (thread-safe).  Called at disconnect."""
+        task = self._telemetry_task
+        self._telemetry_task = None
+        if task is not None and self._loop is not None and self._loop.is_running():
+            self._loop.call_soon_threadsafe(task.cancel)
+
+    # ------------------------------------------------------------------
     # Internal coroutines (run on the dedicated loop)
     # ------------------------------------------------------------------
 
@@ -663,6 +896,13 @@ class MeshCoreTransport(MeshTransport):
         if interval > 0:
             self._schedule_periodic_advert(interval)
 
+        # Arm telemetry auto-poll if configured (0 = disabled).
+        telem_interval = getattr(
+            self.config, "meshcore_telemetry_interval_seconds", 1800
+        )
+        if telem_interval > 0:
+            self._schedule_telemetry_poll()
+
         logger.info(
             "MeshCoreTransport: connected as %s (pubkey %s)",
             self._self_info.get("name", "unknown"),
@@ -671,8 +911,9 @@ class MeshCoreTransport(MeshTransport):
 
     def disconnect(self) -> None:
         """Disconnect and stop the event loop thread."""
-        # Cancel periodic advert before tearing down the loop.
+        # Cancel periodic advert + telemetry poll before tearing down the loop.
         self._cancel_periodic_advert()
+        self._cancel_telemetry_poll()
         if self._mc is not None:
             try:
                 self._run_coro(self._do_disconnect(), timeout=10.0)

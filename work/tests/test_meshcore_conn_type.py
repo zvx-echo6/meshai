@@ -28,6 +28,7 @@ def _build_recording_meshcore():
         DISCONNECTED = "DISCONNECTED"
         CONNECTED = "CONNECTED"
         ACK = "ACK"
+        NEW_CONTACT = "NEW_CONTACT"
 
     mod.EventType = EventType
 

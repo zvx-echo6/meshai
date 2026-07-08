@@ -598,7 +598,7 @@ export async function getMeshcoreChannels(): Promise<MeshcoreChannels> {
 export interface MeshcoreContact {
   name: string | null
   pubkey: string
-  type: string | null
+  type: number | null
   last_advert: number | null
   lat: number | null
   lon: number | null
@@ -634,6 +634,51 @@ export async function sendMeshcoreAdvert(): Promise<TestSendResult> {
   if (!response.ok) {
     throw new Error(`API error: ${response.status} ${response.statusText}`)
   }
+  return response.json()
+}
+
+// --- MeshCore telemetry ---
+
+export interface MeshcoreTelemetryData {
+  voltage?: number; temperature?: number; humidity?: number; battery_pct?: number;
+  current?: number; illuminance?: number; barometer?: number; power?: number;
+  altitude?: number; distance?: number; gps?: unknown;
+  raw?: unknown[];
+  [key: string]: unknown;
+}
+export interface MeshcoreTelemetryEntry {
+  contact: string;
+  data: MeshcoreTelemetryData | null;
+  polled_at: string | null;
+  available: boolean;
+}
+export interface MeshcoreTelemetry { active: boolean; entries: MeshcoreTelemetryEntry[]; }
+export interface MeshcorePollResult { available: boolean; contact: string; data?: MeshcoreTelemetryData; detail?: string; }
+
+// Connection config subset the telemetry UI reads/writes. The rest of the
+// connection object is preserved verbatim via the index signature so PUTs can
+// send the WHOLE object back (the backend coerces the body into the full
+// ConnectionConfig dataclass — a partial PUT would reset omitted fields).
+export interface ConnectionConfig {
+  meshcore_telemetry_contacts?: string[]
+  meshcore_telemetry_interval_seconds?: number
+  [key: string]: unknown
+}
+
+export async function fetchConnectionConfig(): Promise<ConnectionConfig> {
+  return fetchJson<ConnectionConfig>('/api/config/connection')
+}
+
+export async function fetchMeshcoreTelemetry(): Promise<MeshcoreTelemetry> {
+  return fetchJson<MeshcoreTelemetry>('/api/meshcore/telemetry')
+}
+
+export async function pollMeshcoreContact(contact: string): Promise<MeshcorePollResult> {
+  const response = await fetch('/api/meshcore/telemetry/poll', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contact }),
+  })
+  if (!response.ok) throw new Error(`API error: ${response.status} ${response.statusText}`)
   return response.json()
 }
 
