@@ -1,4 +1,14 @@
-"""NIFC/WFIGS Wildfire perimeter adapter."""
+"""NIFC/WFIGS Wildfire adapter — perimeter + incident-point fusion.
+
+Fetches both the WFIGS perimeter layer (fires with mapped perimeters) and the
+WFIGS incident-locations point layer (the IRWIN superset, includes fires without
+a perimeter yet) and merges them by IrwinID.  The point layer is the authoritative
+superset; the perimeter layer supplies geometry (polygon + centroid) and validated
+acreage when a perimeter exists.
+
+Result: non-perimeter fires surface without double-broadcasting (deduplicated by
+IrwinID through the same gating.fire.decide + fires table path as before).
+"""
 
 import json
 import logging
@@ -17,9 +27,10 @@ logger = logging.getLogger(__name__)
 
 
 class NICFFiresAdapter:
-    """WFIGS ArcGIS fire perimeter polling."""
+    """WFIGS ArcGIS fire perimeter + incident-point polling (merged by IrwinID)."""
 
     BASE_URL = "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Interagency_Perimeters_Current/FeatureServer/0/query"
+    POINTS_URL = "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Incident_Locations_Current/FeatureServer/0/query"
 
     def __init__(self, config: "NICFFiresConfig", region_anchors: list = None, coverage: dict = None):
         self._state = config.state
@@ -49,7 +60,7 @@ class NICFFiresAdapter:
         return self._fetch()
 
     def _build_query_params(self) -> dict:
-        """Build WFIGS ArcGIS query parameters.
+        """Build WFIGS ArcGIS perimeter query parameters (GeoJSON).
 
         When self._coverage is set, switches to an envelope spatial filter spanning
         the full coverage bbox (which may cross multiple states); the single-state
@@ -79,140 +90,247 @@ class NICFFiresAdapter:
             }
         return params
 
+    def _build_points_query_params(self) -> dict:
+        """Build WFIGS ArcGIS incident-locations point query parameters (ArcGIS JSON).
+
+        Point-layer field names carry NO attr_ prefix (different service schema).
+        Uses the same coverage envelope as the perimeter query when coverage is set,
+        falling back to a state WHERE clause otherwise.
+        """
+        out_fields = (
+            "IrwinID,IncidentName,IncidentSize,PercentContained,"
+            "FireDiscoveryDateTime,POOState,POOCounty,InitialLatitude,"
+            "InitialLongitude,UniqueFireIdentifier,IncidentTypeCategory"
+        )
+        if self._coverage is not None:
+            params = {
+                "where": "IncidentTypeCategory='WF'",
+                "outFields": out_fields,
+                "returnGeometry": "true",
+                "f": "json",
+            }
+            params.update(self._coverage["envelope"])
+        else:
+            params = {
+                "where": f"POOState='{self._state}' AND IncidentTypeCategory='WF'",
+                "outFields": out_fields,
+                "returnGeometry": "true",
+                "f": "json",
+            }
+        return params
+
     def _fetch(self) -> bool:
-        """Fetch fire perimeters from WFIGS.
+        """Fetch and merge fire perimeters + incident-point locations from WFIGS.
+
+        (a) Fetches the perimeter layer (GeoJSON) — builds perimeters_by_irwin.
+        (b) Fetches the point layer (ArcGIS JSON) — the authoritative superset.
+        (c) Merges: iterates the point set; per-fire uses perimeter geometry
+            (polygon + centroid) when available, point coordinates otherwise.
+
+        Resilience: each HTTP call is independently try/except'd. If the point
+        layer fails, falls back to perimeter-only (today's behaviour). If the
+        perimeter layer fails, uses point-only (no polygon). Consecutive error
+        counter is bumped only when BOTH layers fail (nothing new to return).
 
         Returns:
             True if data changed
         """
-        params = self._build_query_params()
-
-        url = f"{self.BASE_URL}?{urlencode(params)}"
-
         headers = {
             "User-Agent": "MeshAI/1.0",
             "Accept": "application/json",
         }
 
+        # ── (a) Perimeter layer fetch ────────────────────────────────────────
+        perim_features = []
+        perim_ok = False
         try:
+            params = self._build_query_params()
+            url = f"{self.BASE_URL}?{urlencode(params)}"
             req = Request(url, headers=headers)
             with urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-
+            perim_features = data.get("features", [])
+            perim_ok = True
         except HTTPError as e:
-            logger.warning(f"NIFC HTTP error: {e.code}")
-            self._last_error = f"HTTP {e.code}"
-            self._consecutive_errors += 1
-            return False
-
+            logger.warning(f"NIFC perimeter HTTP error: {e.code}")
         except URLError as e:
-            logger.warning(f"NIFC connection error: {e.reason}")
-            self._last_error = str(e.reason)
-            self._consecutive_errors += 1
-            return False
-
+            logger.warning(f"NIFC perimeter connection error: {e.reason}")
         except Exception as e:
-            logger.warning(f"NIFC fetch error: {e}")
-            self._last_error = str(e)
+            logger.warning(f"NIFC perimeter fetch error: {e}")
+
+        # Build perimeters_by_irwin: irwin_id -> {lat, lon, polygon, acres, pct_contained}
+        perimeters_by_irwin: dict = {}
+        for feature in perim_features:
+            try:
+                props = feature.get("properties", {})
+                geom = feature.get("geometry")
+
+                irwin_id = (
+                    props.get("attr_IrwinID")
+                    or props.get("attr_UniqueFireIdentifier")
+                )
+                if not irwin_id:
+                    continue
+
+                lat, lon = self._compute_centroid(geom)
+
+                # Store polygon for map overlay (Polygon type only, same as original)
+                polygon = None
+                if geom and geom.get("type") == "Polygon":
+                    polygon = geom.get("coordinates", [])
+
+                acres = props.get("attr_IncidentSize") or props.get("poly_GISAcres") or 0
+                pct_contained = props.get("attr_PercentContained") or 0
+
+                perimeters_by_irwin[irwin_id] = {
+                    "lat": lat,
+                    "lon": lon,
+                    "polygon": polygon,
+                    "acres": acres,
+                    "pct_contained": pct_contained,
+                }
+            except Exception as e:
+                logger.warning(f"NIFC perimeter parse error for feature: {e}")
+
+        # ── (b) Points layer fetch ───────────────────────────────────────────
+        point_features = []
+        points_ok = False
+        try:
+            params = self._build_points_query_params()
+            url = f"{self.POINTS_URL}?{urlencode(params)}"
+            req = Request(url, headers=headers)
+            with urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            # ArcGIS JSON format: data["features"][].attributes + .geometry.x/.y
+            point_features = data.get("features", [])
+            points_ok = True
+        except HTTPError as e:
+            logger.warning(f"NIFC points HTTP error: {e.code}")
+        except URLError as e:
+            logger.warning(f"NIFC points connection error: {e.reason}")
+        except Exception as e:
+            logger.warning(f"NIFC points fetch error: {e}")
+
+        # If BOTH layers failed, bump error counter and bail unchanged
+        if not perim_ok and not points_ok:
+            self._last_error = "both perimeter and points fetch failed"
             self._consecutive_errors += 1
             return False
 
-        # Parse response
-        features = data.get("features", [])
+        # ── (c) Merge: points are the authoritative superset ─────────────────
+        # If point layer failed, fall back to perimeter-only by synthesising
+        # point-style entries from the perimeter features already parsed.
+        if not points_ok:
+            logger.warning("NIFC points fetch failed — falling back to perimeter-only")
+            point_features = _perim_features_as_point_stubs(perim_features)
+
         new_events = []
         now = time.time()
 
-        for feature in features:
-            props = feature.get("properties", {})
-            geom = feature.get("geometry")
+        for feature in point_features:
+            try:
+                # ArcGIS JSON: attrs in .attributes, geometry is {x: lon, y: lat}
+                attrs = feature.get("attributes", {})
+                pt_geom = feature.get("geometry")  # {"x": lon, "y": lat} or None
 
-            name = props.get("attr_IncidentName", "Unknown Fire")
-            acres = props.get("attr_IncidentSize") or props.get("poly_GISAcres") or 0
-            pct_contained = props.get("attr_PercentContained") or 0
+                name = attrs.get("IncidentName") or "Unknown Fire"
 
-            # Compute centroid from polygon
-            lat, lon = self._compute_centroid(geom)
+                # Derive irwin_id: prefer real IRWIN GUID, then unique fire id,
+                # then fall through to event_id (computed below).
+                irwin_id_raw = (
+                    attrs.get("IrwinID")
+                    or attrs.get("UniqueFireIdentifier")
+                )
 
-            # Compute proximity to nearest anchor
-            distance_km, nearest_anchor = self._nearest_anchor_distance(lat, lon)
+                # State for event_id construction (coverage mode uses fire's own state)
+                if self._coverage is not None:
+                    event_id_state = (attrs.get("POOState") or "").strip() or self._state
+                else:
+                    event_id_state = self._state
 
-            # Severity based on distance
-            if distance_km is not None:
-                if distance_km < 25:
-                    severity = "priority"
-                elif distance_km < 50:
-                    severity = "routine"
+                event_id = f"nifc_{name.replace(' ', '_').lower()}_{event_id_state}"
+
+                irwin_id = irwin_id_raw or event_id
+
+                # ── Merge with perimeter data ────────────────────────────────
+                perim = perimeters_by_irwin.get(irwin_id)
+                if perim:
+                    # Perimeter geometry preferred: use centroid + polygon
+                    lat = perim["lat"]
+                    lon = perim["lon"]
+                    polygon = perim["polygon"]
+                    # Perimeter acres/pct preferred; fall back to point values
+                    acres = perim["acres"] or attrs.get("IncidentSize") or 0
+                    pct_contained = (
+                        perim["pct_contained"]
+                        if perim["pct_contained"] is not None
+                        else (attrs.get("PercentContained") or 0)
+                    )
+                else:
+                    # Point-only: coordinates from geometry, fallback to InitialLat/Lon
+                    if pt_geom:
+                        lat = pt_geom.get("y") or attrs.get("InitialLatitude")
+                        lon = pt_geom.get("x") or attrs.get("InitialLongitude")
+                    else:
+                        lat = attrs.get("InitialLatitude")
+                        lon = attrs.get("InitialLongitude")
+                    polygon = None
+                    acres = attrs.get("IncidentSize") or 0
+                    pct_contained = attrs.get("PercentContained") or 0
+
+                # Compute proximity to nearest anchor
+                distance_km, nearest_anchor = self._nearest_anchor_distance(lat, lon)
+
+                # Severity based on distance
+                if distance_km is not None:
+                    severity = "priority" if distance_km < 25 else "routine"
                 else:
                     severity = "routine"
-            else:
-                severity = "routine"
 
-            # Format headline
-            headline = f"{name} -- {int(acres):,} ac, {int(pct_contained)}% contained"
-            if distance_km is not None and nearest_anchor:
-                headline += f" ({int(distance_km)} km from {nearest_anchor})"
+                # Format headline
+                headline = f"{name} -- {int(acres):,} ac, {int(pct_contained)}% contained"
+                if distance_km is not None and nearest_anchor:
+                    headline += f" ({int(distance_km)} km from {nearest_anchor})"
 
-            # In coverage mode fires can span multiple states, so use the fire's own
-            # POOState for the event_id suffix. This keeps Idaho fire keys identical to
-            # the single-state path (attr_POOState="US-ID" == self._state for Idaho).
-            # Fall back to self._state when the field is absent or blank.
-            if self._coverage is not None:
-                event_id_state = (props.get("attr_POOState") or "").strip() or self._state
-            else:
-                event_id_state = self._state
+                declared_at_epoch = self._parse_discovery_epoch(
+                    attrs.get("FireDiscoveryDateTime"))
 
-            event_id = f"nifc_{name.replace(' ', '_').lower()}_{event_id_state}"
+                county = attrs.get("POOCounty") or None
 
-            # Canonical WFIGS identity + discovery date the Phase-3 fire decider
-            # (notifications/gating/fire.py::decide) reads off Event.data. Prefer
-            # the real IRWIN GUID; fall back to the unique fire id, then to the
-            # stable adapter event_id so a fire is always gate-able by the fires
-            # table even when WFIGS omits the id fields.
-            irwin_id = (
-                props.get("attr_IrwinID")
-                or props.get("attr_UniqueFireIdentifier")
-                or event_id
-            )
-            declared_at_epoch = self._parse_discovery_epoch(
-                props.get("attr_FireDiscoveryDateTime"))
+                event = {
+                    "source": "nifc",
+                    "event_id": event_id,
+                    "event_type": "Wildfire",
+                    "severity": severity,
+                    "headline": headline,
+                    "name": name,
+                    "acres": acres,
+                    "pct_contained": pct_contained,
+                    # Canonical keys the decider consumes (mirrored into Event.data
+                    # by to_event) + reused by store cold-start seeding.
+                    "irwin_id": irwin_id,
+                    "contained_pct": pct_contained,
+                    "declared_at_epoch": declared_at_epoch,
+                    "county": county,
+                    "lat": lat,
+                    "lon": lon,
+                    "distance_km": distance_km,
+                    "nearest_anchor": nearest_anchor,
+                    "state": self._state,
+                    "expires": now + 21600,  # 6 hour TTL
+                    "fetched_at": now,
+                }
 
-            event = {
-                "source": "nifc",
-                "event_id": event_id,
-                "event_type": "Wildfire",
-                "severity": severity,
-                "headline": headline,
-                "name": name,
-                "acres": acres,
-                "pct_contained": pct_contained,
-                # Canonical keys the decider consumes (mirrored into Event.data
-                # by to_event) + reused by store cold-start seeding.
-                "irwin_id": irwin_id,
-                "contained_pct": pct_contained,
-                "declared_at_epoch": declared_at_epoch,
-                "county": None,  # WFIGS perimeter layer carries no county field
-                "lat": lat,
-                "lon": lon,
-                "distance_km": distance_km,
-                "nearest_anchor": nearest_anchor,
-                "state": self._state,
-                "expires": now + 21600,  # 6 hour TTL
-                "fetched_at": now,
-            }
+                # Store polygon for map overlay (only when perimeter geometry present)
+                if polygon:
+                    event["polygon"] = polygon
 
-            # Store polygon for map overlay
-            if geom and geom.get("type") == "Polygon":
-                event["polygon"] = geom.get("coordinates", [])
+                new_events.append(event)
 
-            new_events.append(event)
+            except Exception as e:
+                logger.warning(f"NIFC merge error for feature: {e}")
 
-        # Change detection must reflect each fire's GROWTH, not just the set of
-        # fire names. Comparing event_id sets alone made acreage/containment growth
-        # of an already-known fire invisible: tick() returned False, so the store
-        # never re-ran _ingest_fires and the Phase-3 fire decider never saw the
-        # growth. Include acres + containment in the signature so a growing fire
-        # flips changed=True; the decider (forward-only + cooldown) stays the
-        # broadcast gate, so no backlog is dumped.
+        # Change detection — include acres + containment so fire growth is visible
         def _change_sig(e):
             try:
                 acres = int(round(float(e.get("acres") or 0)))
@@ -235,7 +353,12 @@ class NICFFiresAdapter:
 
         if changed:
             loc = "the coverage area" if self._coverage is not None else self._state
-            logger.info(f"NIFC fires updated: {len(new_events)} active in {loc}")
+            perim_count = len(perimeters_by_irwin)
+            point_count = len(point_features)
+            logger.info(
+                f"NIFC fires updated: {len(new_events)} active in {loc} "
+                f"(merged {point_count} point(s) + {perim_count} perimeter(s))"
+            )
 
         return changed
 
@@ -331,9 +454,9 @@ class NICFFiresAdapter:
         return (None, None)
 
     def to_event(self, evt: dict) -> Optional["Event"]:
-        """Translate a stored NIFC/WFIGS fire perimeter into a pipeline Event.
+        """Translate a stored NIFC/WFIGS fire into a pipeline Event.
 
-        Every active perimeter with a reported size maps to a single
+        Every active fire with a reported size maps to a single
         wildfire_incident category; the adapter's proximity-based severity
         (priority when near a region anchor, else routine) is passed through
         unchanged. Severity tiering is delegated to the pipeline Inhibitor.
@@ -435,3 +558,37 @@ class NICFFiresAdapter:
             "event_count": len(self._events),
             "last_fetch": self._last_tick,
         }
+
+
+# ── Fallback: synthesise point-stub dicts from perimeter GeoJSON features ──────
+# Used when the points fetch fails; lets the perimeter-only path continue to
+# work through the unified merge loop without a separate code path.
+
+def _perim_features_as_point_stubs(perim_features: list) -> list:
+    """Convert perimeter GeoJSON features to minimal ArcGIS-point-style dicts.
+
+    Used ONLY when the points fetch fails; keeps the merge loop unified.
+    The stub carries attrs under ``attributes`` and no ``geometry`` (lat/lon
+    come from the perimeter dict via perimeters_by_irwin lookup in the caller).
+    """
+    stubs = []
+    for f in perim_features:
+        props = f.get("properties", {})
+        stubs.append({
+            "attributes": {
+                "IrwinID": props.get("attr_IrwinID"),
+                "UniqueFireIdentifier": props.get("attr_UniqueFireIdentifier"),
+                "IncidentName": props.get("attr_IncidentName"),
+                "IncidentSize": props.get("attr_IncidentSize") or props.get("poly_GISAcres"),
+                "PercentContained": props.get("attr_PercentContained"),
+                "FireDiscoveryDateTime": props.get("attr_FireDiscoveryDateTime"),
+                "POOState": props.get("attr_POOState"),
+                "POOCounty": None,
+                "InitialLatitude": None,
+                "InitialLongitude": None,
+                "UniqueFireIdentifier": props.get("attr_UniqueFireIdentifier"),
+                "IncidentTypeCategory": "WF",
+            },
+            "geometry": None,
+        })
+    return stubs
