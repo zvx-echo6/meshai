@@ -546,13 +546,17 @@ def test_matrix_cell_channel_reaches_connector_send():
 
     # Build a MeshtasticTransport with a real send queue so the full
     # enqueue → drain → _blocking_mt_send path is exercised.
-    conn_cfg = ConnectionConfig(meshtastic_send_pacing_seconds=0.05)
+    conn_cfg = ConnectionConfig(
+        meshtastic_send_pacing_min_seconds=0.05,
+        meshtastic_send_pacing_max_seconds=0.09,
+    )
     mt = MeshtasticTransport(conn_cfg)
     mt._connected = True  # satisfy connected check inside deliver
 
     loop = asyncio.new_event_loop()
-    pacing_fn = lambda: max(0.25, getattr(conn_cfg, "meshtastic_send_pacing_seconds", 2.0))
-    mt._mt_queue = RadioSendQueue(pacing_fn=pacing_fn)
+    pace_min_fn = lambda: getattr(conn_cfg, "meshtastic_send_pacing_min_seconds", 2.2)
+    pace_max_fn = lambda: getattr(conn_cfg, "meshtastic_send_pacing_max_seconds", 2.6)
+    mt._mt_queue = RadioSendQueue(pace_min_fn=pace_min_fn, pace_max_fn=pace_max_fn)
     mt._mt_queue.start(loop)
     mt._loop = loop
 

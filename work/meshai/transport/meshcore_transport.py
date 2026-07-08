@@ -13,6 +13,7 @@ imported (and the test suite can run) without the lib installed.
 import asyncio
 import concurrent.futures
 import logging
+import random
 import threading
 import time as _time
 from typing import Callable, Optional
@@ -579,9 +580,10 @@ class MeshCoreTransport(MeshTransport):
                 if cfut is not None and not cfut.done():
                     cfut.set_result(result)
 
-            # Pace: read live from config.
-            pacing = max(0.25, getattr(self.config, "meshcore_send_pacing_seconds", 2.0))
-            await asyncio.sleep(pacing)
+            # Pace: read live from config; jitter drawn from [pace_min, pace_max].
+            pace_min = max(0.25, getattr(self.config, "meshcore_send_pacing_min_seconds", 2.2))
+            pace_max = max(pace_min, getattr(self.config, "meshcore_send_pacing_max_seconds", 2.6))
+            await asyncio.sleep(random.uniform(pace_min, pace_max))
 
     def _start_mc_queue(self) -> None:
         """Arm the MC send queue + drain task on the MC dedicated loop.

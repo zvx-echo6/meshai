@@ -54,10 +54,14 @@ class ConnectionConfig:
     meshcore_discovery_wait_seconds: float = 8.0  # path-discovery timeout on the no-ACK fallback (was hardcoded 25s)
 
     # --- Send-queue pacing (per-radio serialization) ---
-    # Minimum gap between consecutive outbound sends on each radio.
-    # A floor of 0.25 s is always enforced at runtime (max(0.25, pacing_value)).
-    meshtastic_send_pacing_seconds: float = 2.0
-    meshcore_send_pacing_seconds: float = 2.0
+    # Randomized jitter between consecutive outbound sends on each radio:
+    # each inter-send gap is drawn from random.uniform(pace_min, pace_max).
+    # A floor of 0.25 s is always enforced at runtime; max is clamped to >= min
+    # at __post_init__ so a misconfigured max<min is silently corrected.
+    meshtastic_send_pacing_min_seconds: float = 2.2
+    meshtastic_send_pacing_max_seconds: float = 2.6
+    meshcore_send_pacing_min_seconds: float = 2.2
+    meshcore_send_pacing_max_seconds: float = 2.6
 
     # --- MeshCore telemetry auto-poll settings ---
     # Selected contacts (names or pubkeys) to auto-poll for telemetry; empty = none.
@@ -70,6 +74,16 @@ class ConnectionConfig:
                 f"meshcore_conn_type must be one of 'tcp', 'serial', 'ble', "
                 f"got {self.meshcore_conn_type!r}"
             )
+        # Clamp pacing min to floor (0.25 s), then ensure max >= min.
+        _floor = 0.25
+        self.meshtastic_send_pacing_min_seconds = max(_floor, self.meshtastic_send_pacing_min_seconds)
+        self.meshtastic_send_pacing_max_seconds = max(
+            self.meshtastic_send_pacing_min_seconds, self.meshtastic_send_pacing_max_seconds
+        )
+        self.meshcore_send_pacing_min_seconds = max(_floor, self.meshcore_send_pacing_min_seconds)
+        self.meshcore_send_pacing_max_seconds = max(
+            self.meshcore_send_pacing_min_seconds, self.meshcore_send_pacing_max_seconds
+        )
 
 
 @dataclass
