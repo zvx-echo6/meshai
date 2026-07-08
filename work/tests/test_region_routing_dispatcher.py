@@ -438,3 +438,229 @@ def test_restart_dedup_key_matches_boot_restore_form():
         "matrix must dedup against the restored 2-tuple key; a re-broadcast "
         "here is the restart-flood bug"
     )
+
+
+# ============================================================ Defect A tests
+# Every matrix broadcast attempt writes a mesh_broadcasts_out row even when
+# the event has no _broadcast_audit stamp (native traffic/weather events).
+
+
+def test_matrix_broadcast_writes_audit_row_without_broadcast_audit():
+    """Defect A fix: a native event without _broadcast_audit must still create
+    a mesh_broadcasts_out row recording the channel, transport, and success."""
+    from meshai.persistence import get_db
+
+    cfg = _base_cfg(fam="roads", cooldown_s=0, min_severity="routine")
+    cfg.notifications.region_routes = _rr(cells={
+        "roads": {
+            "SW Idaho": {"mt": 3, "mc": None, "min_severity": "routine", "enabled": True},
+        }
+    })
+
+    # Build a native-style event with NO _broadcast_audit on its data.
+    from meshai.notifications.events import make_event
+    ev = make_event(
+        source="wzdx", category="work_zone",
+        severity="immediate", title="Lane closure on I-84",
+    )
+    ev.region = "SW Idaho"
+    # No ev.data["_broadcast_audit"] set — this is the native adapter case.
+    assert "_broadcast_audit" not in (ev.data or {}), \
+        "precondition: native event must not have _broadcast_audit"
+
+    d, rec = _make_dispatcher(cfg)
+    asyncio.run(d.dispatch(ev))
+
+    assert len(rec) == 1, "delivery should have succeeded"
+
+    # Defect A fix: the audit row must now exist even without _broadcast_audit.
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT channel, transport, success FROM mesh_broadcasts_out"
+    ).fetchall()
+    assert len(rows) == 1, (
+        f"expected 1 mesh_broadcasts_out row (got {len(rows)}); "
+        "Defect A: native events without _broadcast_audit were never audited"
+    )
+    row = rows[0]
+    assert row["channel"] == 3, \
+        f"audit row must record the matrix cell's channel (3), got {row['channel']}"
+    assert row["transport"] == "meshtastic", \
+        f"audit row transport must be 'meshtastic', got {row['transport']}"
+    assert row["success"] == 1, \
+        f"audit row success must be 1 (delivery succeeded), got {row['success']}"
+
+
+def test_matrix_broadcast_audit_row_on_failure():
+    """Defect A fix: a failed matrix delivery must still write a success=0 row."""
+    from meshai.persistence import get_db
+
+    cfg = _base_cfg(fam="roads", cooldown_s=0, min_severity="routine")
+    cfg.notifications.region_routes = _rr(cells={
+        "roads": {
+            "SW Idaho": {"mt": 5, "mc": None, "min_severity": "routine", "enabled": True},
+        }
+    })
+
+    from meshai.notifications.events import make_event
+    ev = make_event(
+        source="itd_511", category="road_closure",
+        severity="immediate", title="Road closed",
+    )
+    ev.region = "SW Idaho"
+
+    # Dispatcher that always returns False from deliver().
+    d, rec = _make_dispatcher(cfg, succeed=False)
+    asyncio.run(d.dispatch(ev))
+
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT channel, transport, success FROM mesh_broadcasts_out"
+    ).fetchall()
+    assert len(rows) == 1, "failed delivery must still create an audit row"
+    assert rows[0]["channel"] == 5
+    assert rows[0]["success"] == 0, "failed delivery must record success=0"
+
+
+# ============================================================ Defect B tests
+# The matrix cell's channel index must survive the full dispatcher→channel→
+# connector→send_queue→blocking_send chain unmodified.
+
+
+def test_matrix_cell_channel_reaches_connector_send():
+    """Defect B verification: the channel index from the matrix cell (3) must
+    be the exact value passed to connector.send_message_async, not the toggle
+    default (0) or any other value.
+
+    Uses a real MeshtasticTransport (queue path) with a patched
+    _blocking_mt_send so no radio is required. Asserts that the channel arg
+    arriving at _blocking_mt_send equals the matrix cell's mt value.
+    """
+    import asyncio
+    from unittest.mock import patch
+    from meshai.config import Config, RegionRouteMatrix, ConnectionConfig
+    from meshai.connector import MeshtasticTransport
+    from meshai.notifications.channels import create_channel
+    from meshai.notifications.pipeline.dispatcher import Dispatcher
+    from meshai.transport.send_queue import RadioSendQueue
+
+    # Build a MeshtasticTransport with a real send queue so the full
+    # enqueue → drain → _blocking_mt_send path is exercised.
+    conn_cfg = ConnectionConfig(meshtastic_send_pacing_seconds=0.05)
+    mt = MeshtasticTransport(conn_cfg)
+    mt._connected = True  # satisfy connected check inside deliver
+
+    loop = asyncio.new_event_loop()
+    pacing_fn = lambda: max(0.25, getattr(conn_cfg, "meshtastic_send_pacing_seconds", 2.0))
+    mt._mt_queue = RadioSendQueue(pacing_fn=pacing_fn)
+    mt._mt_queue.start(loop)
+    mt._loop = loop
+
+    sent_channels: list = []
+
+    def _fake_blocking_send(text, destination, channel):
+        sent_channels.append(channel)
+        return True
+
+    cfg = Config()
+    cfg.notifications.rules = []
+    cfg.notifications.cold_start_grace_seconds = 0
+    t = cfg.notifications.toggles["roads"]
+    t.enabled = True
+    t.min_severity = "routine"
+    t.severity_channels = {"routine": ["mesh_broadcast"], "immediate": ["mesh_broadcast"]}
+    t.freshness_seconds = 0
+    t.cooldown_seconds = 0
+    t.broadcast_channel = 0   # toggle default — must NOT reach the radio
+    cfg.notifications.region_routes = RegionRouteMatrix(
+        enabled=True,
+        cells={"roads": {"SW Idaho": {"mt": 3, "mc": None,
+                                       "min_severity": "routine", "enabled": True}}},
+    )
+
+    from meshai.notifications.events import make_event
+    ev = make_event(source="wzdx", category="work_zone",
+                    severity="immediate", title="Test")
+    ev.region = "SW Idaho"
+
+    with patch.object(mt, "_blocking_mt_send", side_effect=_fake_blocking_send):
+        d = Dispatcher(cfg, create_channel, connector=mt)
+        loop.run_until_complete(d.dispatch(ev))
+
+    loop.run_until_complete(mt._mt_queue.stop())
+    loop.close()
+
+    assert sent_channels, "send must have been called at least once"
+    assert all(ch == 3 for ch in sent_channels), (
+        f"ALL sends must use channel 3 (the matrix cell's mt value), "
+        f"got channels: {sent_channels}. "
+        f"If any value is 0 it means the toggle default leaked through instead "
+        f"of the matrix cell's channel."
+    )
+
+
+# ============================================================ /api/channels test
+# GET /api/channels must work on a CompositeTransport (not just bare MT).
+
+
+def test_get_channels_composite_transport():
+    """Defect: /api/channels read connector._interface which does not exist on
+    CompositeTransport → always returned []. Fix: resolve the meshtastic child
+    first via connector.meshtastic_child()."""
+    from unittest.mock import MagicMock
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from meshai.dashboard.api.mesh_routes import router
+    from meshai.transport.composite_transport import CompositeTransport
+    from meshai.connector import MeshtasticTransport
+    from meshai.config import ConnectionConfig
+
+    # Build a real CompositeTransport wrapping a fake MeshtasticTransport.
+    mt = MagicMock(spec=MeshtasticTransport)
+    mt.transport_name = "meshtastic"
+    mt.connected = True
+
+    # Fake localNode with three channels.
+    def _make_ch(idx, name, role):
+        ch = MagicMock()
+        ch.index = idx
+        ch.role = role
+        s = MagicMock()
+        s.name = name
+        ch.settings = s
+        return ch
+
+    fake_node = MagicMock()
+    fake_node.channels = [
+        _make_ch(0, "LongFast", 1),   # PRIMARY
+        _make_ch(1, "", 0),            # DISABLED
+        _make_ch(3, "SWI Alerts", 2), # SECONDARY
+    ]
+    fake_interface = MagicMock()
+    fake_interface.localNode = fake_node
+    mt._interface = fake_interface
+
+    composite = CompositeTransport([mt])
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api")
+    app.state.connector = composite
+
+    client = TestClient(app)
+    r = client.get("/api/channels")
+    assert r.status_code == 200
+    data = r.json()
+
+    assert len(data) == 3, f"expected 3 channel entries, got {data}"
+    by_idx = {c["index"]: c for c in data}
+
+    assert by_idx[0]["name"] == "LongFast"
+    assert by_idx[0]["role"] == "PRIMARY"
+    assert by_idx[0]["enabled"] is True
+
+    assert by_idx[1]["role"] == "DISABLED"
+    assert by_idx[1]["enabled"] is False
+
+    assert by_idx[3]["name"] == "SWI Alerts"
+    assert by_idx[3]["role"] == "SECONDARY"
+    assert by_idx[3]["enabled"] is True

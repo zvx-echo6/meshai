@@ -878,17 +878,26 @@ class Dispatcher:
         # Unknown / non-mesh: leave transport NULL, fall back to legacy channel.
         return None, getattr(rule, "broadcast_channel", None), "broadcast"
 
+    # Mesh channel types that get a mesh_broadcasts_out audit row.
+    _MESH_CH_TYPES = frozenset(
+        {"mesh_broadcast", "meshcore_broadcast", "mesh_dm", "meshcore_dm"}
+    )
+
     def _post_broadcast_commit(self, event, payload, rule, ch_type: str,
                                *, success: bool = True) -> None:
         """Persistence side-effects of a per-mesh broadcast delivery.
 
         Called ONCE PER MESH CHANNEL (one per delivery_type family), so a
         broadcast that fans to both meshes writes TWO mesh_broadcasts_out
-        rows -- each carrying its own `transport` + `success` flag. The row
-        is written whenever the handler signalled it wants an audit trail
-        via `event.data["_broadcast_audit"]`, REGARDLESS of success, so a
-        skip/failure (e.g. MeshCore channel-not-found -> deliver()==False)
-        is still visible as success=0.
+        rows -- each carrying its own `transport` + `success` flag.
+
+        A row is written for EVERY mesh delivery attempt (ch_type in
+        _MESH_CH_TYPES), REGARDLESS of success and REGARDLESS of whether
+        the handler stamped `_broadcast_audit` on the event. Handlers that
+        do stamp it supply `source_event_table`/`source_event_pk`; native
+        events that do not have those fields NULL (best-effort). This makes
+        region-routed traffic/weather/roads sends visible in the audit even
+        though those native adapters do not set `_broadcast_audit`.
 
         The handler-supplied `_on_broadcast_committed` callback (which
         refreshes last_broadcast_* bookkeeping) fires ONLY when the send
@@ -897,12 +906,11 @@ class Dispatcher:
         dispatch for sibling toggles.
         """
         data = getattr(event, "data", None) or {}
-        if not data:
-            return
         committed_at = time.time()
 
-        audit = data.get("_broadcast_audit")
-        if isinstance(audit, dict):
+        # --- Audit row (always, for any mesh delivery attempt) ---
+        if ch_type in self._MESH_CH_TYPES:
+            audit = data.get("_broadcast_audit") if data else None
             try:
                 from meshai.persistence import get_db
                 conn = get_db()
@@ -916,7 +924,8 @@ class Dispatcher:
                     "VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (
                         int(committed_at), recipient, channel, text,
-                        audit.get("table"), audit.get("pk"),
+                        audit.get("table") if isinstance(audit, dict) else None,
+                        audit.get("pk") if isinstance(audit, dict) else None,
                         bytes_sent, 0,
                         transport, 1 if success else 0,
                     ),
@@ -924,9 +933,13 @@ class Dispatcher:
             except Exception:
                 self._logger.exception(
                     "post-broadcast: mesh_broadcasts_out insert failed "
-                    "(table=%s pk=%s)",
-                    audit.get("table"), audit.get("pk"),
+                    "(ch_type=%s event_id=%s)",
+                    ch_type, getattr(event, "id", None),
                 )
+
+        # --- Handler callback (only on success, only when data present) ---
+        if not data:
+            return
 
         if not success:
             # A failed/skipped send is audited above but must NOT arm the
