@@ -55,6 +55,9 @@ services:
     environment:
       # API key can be set here or in config.yaml
       - LLM_API_KEY=${LLM_API_KEY:-}
+      # Staged cutover: categories fully migrated to the new formatter+decider
+      # pipeline.  Append new categories here as they clear shadow bake.
+      - MESHAI_CUTOVER_CATEGORIES=earthquake_event,geomagnetic_storm,rf_propagation_alert,avalanche_warning,avalanche_watch,weather_warning,weather_statement,weather_watch,weather_advisory,work_zone,road_incident,road_closure,traffic_congestion,stream_flow,wildfire_declared,wildfire_incident,wildfire_closed
 
     # Limit resources
     deploy:
