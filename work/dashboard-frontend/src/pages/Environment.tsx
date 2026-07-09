@@ -74,13 +74,6 @@ interface WfigsConfig {
  broadcast_on_contained: boolean
 }
 
-// Fires adapter config shape (digest settings)
-interface FiresConfig {
- digest_enabled: boolean
- digest_schedule: string[]
- digest_timezone: string
-}
-
 // ITD 511 adapter config shape
 interface Roads511Config {
  min_severity: string
@@ -345,12 +338,6 @@ export default function Environment() {
   broadcast_on_contained: true,
  })
  const [wfigsOriginal, setWfigsOriginal] = useState<string>("")
- const [firesConfig, setFiresConfig] = useState<FiresConfig>({
-  digest_enabled: true,
-  digest_schedule: ["06:00", "18:00"],
-  digest_timezone: "America/Boise",
- })
- const [firesOriginal, setFiresOriginal] = useState<string>("")
  const [tomtomConfig, setTomtomConfig] = useState<TomtomConfig>({
   min_magnitude: 4,
   drop_non_present: true,
@@ -454,21 +441,6 @@ export default function Environment() {
       }
       setWfigsConfig(cfg)
       setWfigsOriginal(JSON.stringify(cfg))
-     }
-    } catch { /* adapter-config optional */ }
-
-    // Load adapter-config for fires/digest (array → object fix: line ~367)
-    try {
-     const firesRes = await fetch("/api/adapter-config/fires")
-     if (firesRes.ok) {
-      const firesData = toMap(await firesRes.json())
-      const cfg: FiresConfig = {
-       digest_enabled: (firesData.digest_enabled?.value as boolean) ?? true,
-       digest_schedule: (firesData.digest_schedule?.value as string[]) ?? ["06:00", "18:00"],
-       digest_timezone: (firesData.digest_timezone?.value as string) ?? "America/Boise",
-      }
-      setFiresConfig(cfg)
-      setFiresOriginal(JSON.stringify(cfg))
      }
     } catch { /* adapter-config optional */ }
 
@@ -658,7 +630,6 @@ export default function Environment() {
 
  const hasEnvChanges = env !== null && JSON.stringify(env) !== original
  const hasWfigsChanges = JSON.stringify(wfigsConfig) !== wfigsOriginal
- const hasFiresChanges = JSON.stringify(firesConfig) !== firesOriginal
  const hasTomtomChanges = JSON.stringify(tomtomConfig) !== tomtomOriginal
  const hasRoads511Changes = JSON.stringify(roads511Config) !== roads511Original
  const hasWzdxChanges = JSON.stringify(wzdxConfig) !== wzdxOriginal
@@ -666,7 +637,7 @@ export default function Environment() {
  const hasAvalancheChanges = JSON.stringify(avalancheConfig) !== avalancheOriginal
  const hasSwpcChanges = JSON.stringify(swpcConfig) !== swpcOriginal
  const hasSatpassChanges = JSON.stringify(satpassConfig) !== satpassOriginal
- const hasChanges = hasEnvChanges || hasWfigsChanges || hasFiresChanges || hasTomtomChanges || hasRoads511Changes || hasWzdxChanges || hasNwsChanges || hasAvalancheChanges || hasSwpcChanges || hasSatpassChanges
+ const hasChanges = hasEnvChanges || hasWfigsChanges || hasTomtomChanges || hasRoads511Changes || hasWzdxChanges || hasNwsChanges || hasAvalancheChanges || hasSwpcChanges || hasSatpassChanges
 
  
  const saveAdapterConfig = async (adapterName: string, key: string, value: unknown) => {
@@ -729,21 +700,6 @@ const save = async () => {
      await saveAdapterConfig("wfigs", "broadcast_on_contained", wfigsConfig.broadcast_on_contained)
     }
     setWfigsOriginal(JSON.stringify(wfigsConfig))
-   }
-
-   // Save fires adapter config changes (digest)
-   if (hasFiresChanges) {
-    const orig = JSON.parse(firesOriginal) as FiresConfig
-    if (firesConfig.digest_enabled !== orig.digest_enabled) {
-     await saveAdapterConfig("fires", "digest_enabled", firesConfig.digest_enabled)
-    }
-    if (JSON.stringify(firesConfig.digest_schedule) !== JSON.stringify(orig.digest_schedule)) {
-     await saveAdapterConfig("fires", "digest_schedule", firesConfig.digest_schedule)
-    }
-    if (firesConfig.digest_timezone !== orig.digest_timezone) {
-     await saveAdapterConfig("fires", "digest_timezone", firesConfig.digest_timezone)
-    }
-    setFiresOriginal(JSON.stringify(firesConfig))
    }
 
    // Save tomtom adapter config changes
@@ -863,7 +819,6 @@ const save = async () => {
  const discard = () => {
   if (env) setEnv(JSON.parse(original))
   setWfigsConfig(JSON.parse(wfigsOriginal || JSON.stringify(wfigsConfig)))
-  setFiresConfig(JSON.parse(firesOriginal || JSON.stringify(firesConfig)))
   setTomtomConfig(JSON.parse(tomtomOriginal || JSON.stringify(tomtomConfig)))
   setRoads511Config(JSON.parse(roads511Original || JSON.stringify(roads511Config)))
   setWzdxConfig(JSON.parse(wzdxOriginal || JSON.stringify(wzdxConfig)))
@@ -1135,32 +1090,6 @@ const save = async () => {
      <div className="grid grid-cols-2 gap-4">
       <NumberInput label="Update Cooldown (hours)" value={Math.round(wfigsConfig.cooldown_seconds / 3600)} onChange={(v) => setWfigsConfig({ ...wfigsConfig, cooldown_seconds: v * 3600 })} min={0} helper="Minimum hours between updates for the same fire" />
       <NumberInput label="Freshness Window (hours)" value={Math.round(wfigsConfig.freshness_seconds / 3600)} onChange={(v) => setWfigsConfig({ ...wfigsConfig, freshness_seconds: v * 3600 })} min={0} helper="0 = always broadcast regardless of event age" />
-     </div>
-     <div className="border-t border-border pt-4 mt-2">
-      <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">Fire Digest</div>
-      <label className="flex items-center justify-between">
-       <span className="text-sm font-sans text-[#e0e0e0]">Enable daily digest</span>
-       <input type="checkbox" checked={firesConfig.digest_enabled}
-        onChange={(e) => setFiresConfig({ ...firesConfig, digest_enabled: e.target.checked })}
-        className="w-4 h-4 accent-[#f59e0b]" />
-      </label>
-      {firesConfig.digest_enabled && (
-       <div className="mt-3 space-y-3">
-        <ListInput label="Schedule (HH:MM)" value={firesConfig.digest_schedule}
-         onChange={(v) => setFiresConfig({ ...firesConfig, digest_schedule: v })}
-         helper="Digest times in HH:MM format, e.g. 06:00 and 18:00" />
-        <SelectInput label="Timezone" value={firesConfig.digest_timezone}
-         onChange={(v) => setFiresConfig({ ...firesConfig, digest_timezone: v })}
-         options={[
-          { value: 'America/Boise', label: 'Mountain — America/Boise' },
-          { value: 'America/Los_Angeles', label: 'Pacific — America/Los_Angeles' },
-          { value: 'America/Denver', label: 'Mountain — America/Denver' },
-          { value: 'America/Chicago', label: 'Central — America/Chicago' },
-          { value: 'America/New_York', label: 'Eastern — America/New_York' },
-          { value: 'UTC', label: 'UTC' },
-         ]} />
-       </div>
-      )}
      </div>
     </div>
    )

@@ -112,7 +112,6 @@ const CATEGORIES = [
   { value: 'all', label: 'All types' },
   { value: 'nws_alerts', label: 'Weather' },
   { value: 'fires', label: 'Fires' },
-  { value: 'fire_digest_broadcasts', label: 'Fire digest' },
   { value: 'satpass_events', label: 'Satellite' },
   { value: 'band_conditions_broadcasts', label: 'Band' },
   { value: 'traffic_events', label: 'Traffic' },

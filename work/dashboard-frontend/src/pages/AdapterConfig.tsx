@@ -22,7 +22,6 @@ import {
 // Advanced (raw) view to avoid double-editing.
 export const CURATED_KEYS: Record<string, string[]> = {
  wfigs: ['allowed_incident_types', 'freshness_seconds', 'cooldown_seconds', 'broadcast_on_acres', 'broadcast_on_contained'],
- fires: ['digest_enabled', 'digest_schedule', 'digest_timezone'],
  tomtom_incidents: ['min_magnitude', 'drop_non_present', 'drop_zero_magnitude'],
  itd_511: ['min_severity', 'enabled_categories', 'enabled_sub_types'],
  wzdx: ['broadcast', 'min_severity', 'sub_types'],

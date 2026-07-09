@@ -40,6 +40,7 @@ class EnvironmentalStore:
         event_bus: Optional["EventBus"] = None,
         coverage_bbox: list = None,
         coverage_excluded: list = None,
+        coverage_areas: list = None,
         generic_sources: list = None,
     ):
         # Config-driven REST/GeoJSON sources (top-level config.generic_sources)
@@ -55,6 +56,38 @@ class EnvironmentalStore:
         self._region_anchors = region_anchors or []
         self._coverage_bbox = coverage_bbox or []
         self._coverage_excluded = set(coverage_excluded or [])
+
+        # ── Fire-ingest coverage-scope gate ──────────────────────────────
+        # The exact per-area MonitoringArea union the dispatch-level
+        # CoverageFilter gates on (areas_from_config(config.coverage) — the
+        # SAME set-union Shapely membership test). Built ONCE here and reused
+        # per-fire in _ingest_fires so an out-of-area fire is never STORED
+        # (thus never tracked / alerted / reminded / re-ingested), keeping
+        # ingest scope == dispatch scope. Fail-OPEN: an empty list (coverage
+        # disabled or no areas configured) means the gate is a no-op and every
+        # fire is stored, preserving current behaviour. `coverage_areas` is the
+        # raw config.coverage.areas dict-list; areas_from_config also honours
+        # the legacy single-`bbox` fallback via the `.bbox` attribute, so we
+        # wrap the raw list in a tiny shim exposing both fields.
+        self._fire_coverage_areas = []
+        try:
+            from meshai.coverage_area import areas_from_config
+
+            class _CoverageShim:
+                def __init__(self, areas, bbox):
+                    self.areas = areas or []
+                    self.bbox = bbox or []
+
+            # Only build a real gate when this adapter is NOT on the coverage
+            # opt-out list ("fires"), mirroring _coverage_for's escape hatch:
+            # an excluded fires adapter falls back to no coverage gating.
+            if "fires" not in self._coverage_excluded:
+                self._fire_coverage_areas = areas_from_config(
+                    _CoverageShim(coverage_areas, self._coverage_bbox))
+        except Exception:
+            logger.exception(
+                "fire coverage-scope gate init failed; failing OPEN (no gate)")
+            self._fire_coverage_areas = []
 
         # ── Received-delta gate (NATIVE-only) ────────────────────────────
         # The model the operator demanded: a native adapter broadcasts an item
@@ -356,6 +389,31 @@ class EnvironmentalStore:
         # seeded — the leak-proof invariant behind the wzdx staging fix.
         self._seeded.update(touched)
 
+    def _fire_out_of_coverage(self, lat, lon) -> bool:
+        """True iff (lat, lon) lies OUTSIDE every configured coverage area.
+
+        Mirrors the dispatch-level CoverageFilter membership exactly: builds a
+        GeoJSON Point from the fire's (lon, lat) and classifies it against
+        ``self._fire_coverage_areas`` with the SAME set-union Shapely test
+        (classify_geom_areas). Only ``out-of-bounds`` returns True (drop);
+        every other verdict — in-bounds, or an unlocatable / unparseable point
+        (null-geom / invalid-geom) — returns False (fail-OPEN, keep), matching
+        the fire path's fail-open semantics. Callers must already have checked
+        that ``self._fire_coverage_areas`` is non-empty.
+        """
+        try:
+            if lat is None or lon is None:
+                return False  # unlocatable fire -> fail open (keep/store)
+            from meshai.coverage_area import build_geom_json, classify_geom_areas
+            geom_json = build_geom_json({"centroid": [lon, lat]})
+            verdict = classify_geom_areas(geom_json, self._fire_coverage_areas)
+            return verdict == "out-of-bounds"
+        except Exception:
+            logger.exception(
+                "fire coverage-scope test failed for (%s,%s); failing OPEN",
+                lat, lon)
+            return False
+
     def _ingest_fires(self, adapter) -> None:
         """Native WFIGS fire ingest — Phase-3 growth-decider path.
 
@@ -411,6 +469,22 @@ class EnvironmentalStore:
                 acres = evt.get("acres")
                 contained = evt.get("contained_pct")
                 declared = evt.get("declared_at_epoch")
+
+                # ── Coverage-scope drop ──────────────────────────────────
+                # BEFORE any store write (cold-start seed AND live
+                # INSERT/UPDATE), drop a fire whose (lat, lon) falls OUTSIDE
+                # every configured coverage area. Uses the SAME per-area
+                # set-union Shapely membership test as the dispatch-level
+                # CoverageFilter (classify_geom_areas over the areas built in
+                # __init__), so ingest scope == dispatch scope. Fail-OPEN: with
+                # no coverage areas the list is empty and this never drops.
+                if self._fire_coverage_areas and self._fire_out_of_coverage(
+                        evt.get("lat"), evt.get("lon")):
+                    logger.info(
+                        "coverage: skipped out-of-area fire %s (%s,%s)",
+                        evt.get("name") or irwin_id,
+                        evt.get("lat"), evt.get("lon"))
+                    continue
 
                 row = conn.execute(
                     "SELECT last_broadcast_at FROM fires WHERE irwin_id=?",

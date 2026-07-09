@@ -113,9 +113,9 @@ class MeshAI:
         # now that we are inside the running event loop.
         if self.event_bus is not None:
             from .notifications.pipeline import start_pipeline
-            # v0.7-fire-tracker-4 llm_backend hook: surface the LLM into
-            # the pipeline components dict BEFORE start_pipeline spawns the
-            # scheduled broadcasters. FireDigestScheduler reads this.
+            # Surface the LLM into the pipeline components dict BEFORE
+            # start_pipeline spawns the scheduled broadcasters, so any
+            # component that reads comps["llm_backend"] can find it.
             try:
                 comps = getattr(self.event_bus, "_pipeline_components", {}) or {}
                 comps["llm_backend"] = self.llm
@@ -679,10 +679,16 @@ class MeshAI:
             from meshai.coverage import enclosing_bbox
             cov = self.config.coverage
             coverage_bbox = (enclosing_bbox(cov.areas) or cov.bbox) if cov.enabled else []
+            # Per-area list for the store's fire-ingest coverage gate (the SAME
+            # areas the dispatch-level CoverageFilter uses, so ingest scope ==
+            # dispatch scope). Only when coverage is enabled — a disabled
+            # coverage leaves this empty so the ingest gate fails OPEN.
+            coverage_areas = cov.areas if cov.enabled else []
             self.env_store = EnvironmentalStore(
                 config=env_cfg, region_anchors=region_anchors,
                 coverage_bbox=coverage_bbox, event_bus=self.event_bus,
                 coverage_excluded=cov.excluded_adapters,
+                coverage_areas=coverage_areas,
                 generic_sources=self.config.generic_sources,
             )
             logger.info(f"Environmental feeds enabled ({len(self.env_store._adapters)} adapters)")

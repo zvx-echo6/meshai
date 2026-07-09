@@ -670,16 +670,11 @@ def test_wfigs_discovery_is_date_only():
 
 
 # ============================================================================
-# Fire-digest kill-switch does NOT touch the per-fire wfigs path: a new-fire
-# envelope still produces a broadcast even though digest broadcast is disabled.
+# A new-fire envelope produces a per-fire wfigs broadcast.
 # ============================================================================
 
 
-def test_per_fire_wfigs_broadcasts_while_digest_disabled(mem_db, no_photon):
-    from meshai.adapter_config import adapter_config
-    # Default posture: the twice-daily digest broadcast is OFF.
-    assert bool(adapter_config.fires.digest_broadcast_enabled) is False
-    # ... yet a new per-fire wfigs alert still broadcasts.
+def test_per_fire_wfigs_broadcasts_new_fire(mem_db, no_photon):
     env = _make_active_envelope(geocoder_city="Burley")
     data = {}
     wire = handle_wfigs(cn.normalize(env), env, env["subject"],
