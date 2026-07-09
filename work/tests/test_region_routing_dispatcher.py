@@ -17,9 +17,9 @@ Test inventory
 5. per_region_cooldown_independence   — cooldown on region A does not block region B
 6. per_channel_dedup_independence     — failed channel leaves no dedup; retries on next call
 7. authoritative_no_double_send       — matrix match does NOT also fire toggle default
-8. empty_chans_authoritative_no_send  — every cell below floor → return, no toggle fallback
+8. below_floor_cell_suppresses      — matched below-floor cell still owns its ENABLED transport (muted); a DISABLED transport falls through
 9. dedup_suppresses_repeat_same_channel — same event id + same channel → dedup on second call
-10. cell_disabled_flag_skipped         — cell with enabled=False is ignored
+10. disabled_cell_suppresses         — matched disabled cell still owns its ENABLED transport (muted); a DISABLED transport falls through
 """
 
 import asyncio
@@ -27,7 +27,7 @@ import time
 
 import pytest
 
-from meshai.config import Config, RegionRouteMatrix
+from meshai.config import Config, RegionRouteMatrix, NotificationDestination
 from meshai.notifications.pipeline.dispatcher import Dispatcher
 from meshai.notifications.events import make_event
 
@@ -85,8 +85,17 @@ def _base_cfg(fam="fire", cooldown_s=0, min_severity="priority"):
     return cfg
 
 
-def _rr(cells: dict, enabled: bool = True) -> RegionRouteMatrix:
-    return RegionRouteMatrix(enabled=enabled, cells=cells)
+def _rr(cells: dict, enabled: bool = True,
+        mt_enabled: bool = None, mc_enabled: bool = None) -> RegionRouteMatrix:
+    # v0.16.x per-transport split: legacy `enabled=` maps to BOTH transports so
+    # existing tests keep their "matrix authoritative for mt AND mc" semantics.
+    # New tests pass mt_enabled=/mc_enabled= explicitly to exercise per-transport
+    # authority (a DISABLED transport falls through to the toggle path).
+    if mt_enabled is None:
+        mt_enabled = enabled
+    if mc_enabled is None:
+        mc_enabled = enabled
+    return RegionRouteMatrix(mt_enabled=mt_enabled, mc_enabled=mc_enabled, cells=cells)
 
 
 def _ev(fam="fire", region=None, regions=None, severity="immediate",
@@ -318,25 +327,30 @@ def test_authoritative_no_double_send():
 # ============================================================ Test 8
 # Empty chans (every cell below floor) → authoritative no-send, not toggle fallback
 
-def test_empty_chans_authoritative_no_send():
-    """When every matched cell is below its min_severity floor the matrix
-    still consumes the event (authoritative) and returns without sending.
-    The toggle default must NOT run as a fallback."""
-    cfg = _base_cfg(fam="fire", min_severity="routine")
-    cfg.notifications.region_routes = _rr(cells={
-        "fire": {
-            "SCI": {
-                "mt": 3, "mc": None,
-                "min_severity": "immediate",   # floor = immediate
-                "enabled": True,
-            },
-        }
-    })
-    # routine event — below the cell floor
+def test_below_floor_cell_suppresses_enabled_transport():
+    """Authoritative-suppress (restored): a matched cell BELOW its min_severity
+    floor appends no channel, but the ENABLED transport is still matrix-owned
+    for this matched event -> its toggle send is suppressed (authoritative
+    no-send), identical to the null-column case (row5). A DISABLED transport is
+    not owned and still emits via the toggle."""
+    cfg = _dual_cfg(fam="fire")            # toggle: MT ch0 + MC #aida
+    cfg.notifications.region_routes = _rr(
+        cells={"fire": {"SCI": {"mt": 3, "mc": None,
+                                "min_severity": "immediate",  # cell floor
+                                "enabled": True}}},
+        mt_enabled=True, mc_enabled=False,
+    )
+    # routine event: below the cell floor but at/above the toggle floor (routine)
     ev = _ev(fam="fire", region="SCI", severity="routine")
     _, rec = _dispatch(cfg, ev)
 
-    assert rec == [], "below floor → authoritative no-send, toggle default does NOT fire"
+    mesh = [r for r in rec if r["delivery_type"] == "mesh_broadcast"]
+    mc = [r for r in rec if r["delivery_type"] == "meshcore_broadcast"]
+    # MT owned by matrix + below floor -> NO mesh_broadcast anywhere (toggle muted)
+    assert mesh == [], "below-floor MT must be suppressed everywhere, got %r" % (mesh,)
+    # MC not owned (mc_enabled False) -> emits via toggle #aida
+    assert len(mc) == 1 and mc[0]["meshcore_channel"] == "#aida"
+    assert len(rec) == 1
 
 
 # ============================================================ Test 9
@@ -364,19 +378,47 @@ def test_dedup_suppresses_repeat_same_channel():
 # ============================================================ Test 10
 # cell enabled=False is skipped
 
-def test_cell_disabled_flag_skipped():
-    """A cell with enabled=False must be ignored even when its region matches."""
-    cfg = _base_cfg(fam="fire", min_severity="routine")
-    cfg.notifications.region_routes = _rr(cells={
-        "fire": {
-            "SCI": {"mt": 3, "mc": None, "min_severity": "routine", "enabled": False},
-        }
-    })
+def test_disabled_cell_suppresses_enabled_transport():
+    """Authoritative-suppress (restored): a matched cell with enabled=False
+    appends no channel, but the ENABLED transport stays matrix-owned -> its
+    toggle send is suppressed (authoritative no-send). A DISABLED transport is
+    not owned and still emits via the toggle."""
+    cfg = _dual_cfg(fam="fire")            # toggle: MT ch0 + MC #aida
+    cfg.notifications.region_routes = _rr(
+        cells={"fire": {"SCI": {"mt": 3, "mc": None,
+                                "min_severity": "routine",
+                                "enabled": False}}},
+        mt_enabled=True, mc_enabled=False,
+    )
     ev = _ev(fam="fire", region="SCI")
     _, rec = _dispatch(cfg, ev)
 
-    # Cell disabled → chans empty → authoritative no-send
-    assert rec == []
+    mesh = [r for r in rec if r["delivery_type"] == "mesh_broadcast"]
+    mc = [r for r in rec if r["delivery_type"] == "meshcore_broadcast"]
+    # MT owned by matrix + cell disabled -> NO mesh_broadcast anywhere
+    assert mesh == [], "disabled-cell MT must be suppressed everywhere, got %r" % (mesh,)
+    # MC not owned (mc_enabled False) -> emits via toggle #aida
+    assert len(mc) == 1 and mc[0]["meshcore_channel"] == "#aida"
+    assert len(rec) == 1
+
+
+def test_both_enabled_inactive_cell_full_no_send():
+    """Both transports enabled + matched cell inactive (below floor) -> both are
+    matrix-owned, so BOTH toggle sends are suppressed: full authoritative
+    no-send preserved (nothing emitted on either transport)."""
+    cfg = _dual_cfg(fam="fire")
+    cfg.notifications.region_routes = _rr(
+        cells={"fire": {"SCI": {"mt": 3, "mc": "#swi",
+                                "min_severity": "immediate",  # cell floor
+                                "enabled": True}}},
+        mt_enabled=True, mc_enabled=True,
+    )
+    # routine event: below the cell floor, at/above the toggle floor (routine)
+    ev = _ev(fam="fire", region="SCI", severity="routine")
+    _, rec = _dispatch(cfg, ev)
+
+    assert rec == [], \
+        "both transports matrix-owned + inactive -> nothing sends, got %r" % (rec,)
 
 
 # ============================================================ Bonus: existing tests
@@ -577,7 +619,7 @@ def test_matrix_cell_channel_reaches_connector_send():
     t.cooldown_seconds = 0
     t.broadcast_channel = 0   # toggle default — must NOT reach the radio
     cfg.notifications.region_routes = RegionRouteMatrix(
-        enabled=True,
+        mt_enabled=True, mc_enabled=True,
         cells={"roads": {"SW Idaho": {"mt": 3, "mc": None,
                                        "min_severity": "routine", "enabled": True}}},
     )
@@ -668,3 +710,193 @@ def test_get_channels_composite_transport():
     assert by_idx[3]["name"] == "SWI Alerts"
     assert by_idx[3]["role"] == "SECONDARY"
     assert by_idx[3]["enabled"] is True
+
+
+# ==================================================================
+# v0.16.x — per-transport region-route authority (mt_enabled / mc_enabled)
+# ------------------------------------------------------------------
+# The matrix is authoritative ONLY for the transport(s) whose master flag is on.
+# A DISABLED transport falls through to the toggle path so its alert still goes
+# out (this is how MeshCore reaches #aida while mc_enabled is False). These tests
+# cover all five rows of the design truth table plus a no-region-match case.
+
+
+def _dual_cfg(fam="fire", min_severity="routine"):
+    """Toggle configured to emit BOTH transports via the toggle path:
+    mesh_broadcast on channel 0 and meshcore_broadcast on '#aida'. Lets us prove
+    per-transport matrix authority: a matrix-owned transport is suppressed here
+    while a matrix-DISABLED transport still emits via this toggle."""
+    cfg = _base_cfg(fam=fam, min_severity=min_severity)
+    t = cfg.notifications.toggles[fam]
+    t.severity_channels = {
+        "routine": ["mesh_broadcast", "meshcore_broadcast"],
+        "priority": ["mesh_broadcast", "meshcore_broadcast"],
+        "immediate": ["mesh_broadcast", "meshcore_broadcast"],
+    }
+    t.broadcast_channel = 0          # toggle default MT channel
+    t.meshcore_channel = "#aida"     # toggle default MC channel
+    return cfg
+
+
+def test_ptx_row1_mt_only_matrix_mt_toggle_mc():
+    """Row 1 (PRODUCTION): mt_enabled=True, mc_enabled=False, cell mt=3, mc=null.
+    -> MT ch3 via matrix; MC via toggle #aida; NO toggle MT (suppressed)."""
+    cfg = _dual_cfg(fam="fire")
+    cfg.notifications.region_routes = _rr(
+        cells={"fire": {"SCI": {"mt": 3, "mc": None,
+                                "min_severity": "routine", "enabled": True}}},
+        mt_enabled=True, mc_enabled=False,
+    )
+    ev = _ev(fam="fire", region="SCI")
+    _, rec = _dispatch(cfg, ev)
+
+    mesh = [r for r in rec if r["delivery_type"] == "mesh_broadcast"]
+    mc = [r for r in rec if r["delivery_type"] == "meshcore_broadcast"]
+    # exactly one MT (matrix ch3) — NO double mesh_broadcast
+    assert len(mesh) == 1, "exactly one mesh_broadcast, got %r" % (mesh,)
+    assert mesh[0]["broadcast_channel"] == 3, "MT via matrix cell ch3, not toggle 0"
+    # MC via toggle #aida (mc_enabled False -> matrix did not own it)
+    assert len(mc) == 1, "meshcore must emit via toggle, got %r" % (mc,)
+    assert mc[0]["meshcore_channel"] == "#aida"
+    assert len(rec) == 2
+
+
+def test_ptx_row2_mc_only_matrix_mc_toggle_mt():
+    """Row 2: mt_enabled=False, mc_enabled=True, cell mc='#swi' (mt=9 ignored).
+    -> MC '#swi' via matrix; MT via toggle ch0; NO toggle MC (suppressed)."""
+    cfg = _dual_cfg(fam="fire")
+    cfg.notifications.region_routes = _rr(
+        cells={"fire": {"SCI": {"mt": 9, "mc": "#swi",
+                                "min_severity": "routine", "enabled": True}}},
+        mt_enabled=False, mc_enabled=True,
+    )
+    ev = _ev(fam="fire", region="SCI")
+    _, rec = _dispatch(cfg, ev)
+
+    mesh = [r for r in rec if r["delivery_type"] == "mesh_broadcast"]
+    mc = [r for r in rec if r["delivery_type"] == "meshcore_broadcast"]
+    # MC owned by matrix -> '#swi', exactly one, NO double meshcore_broadcast
+    assert len(mc) == 1, "exactly one meshcore_broadcast, got %r" % (mc,)
+    assert mc[0]["meshcore_channel"] == "#swi", "MC via matrix cell, not toggle #aida"
+    # MT falls through to the toggle default ch0 (mt_enabled False; cell mt=9 ignored)
+    assert len(mesh) == 1, "MT must emit via toggle, got %r" % (mesh,)
+    assert mesh[0]["broadcast_channel"] == 0
+    assert len(rec) == 2
+
+
+def test_ptx_row3_both_enabled_matrix_owns_both():
+    """Row 3: both flags True, cell mt=3 mc='#swi'. -> both via matrix; toggle
+    emits neither (both channel-types suppressed)."""
+    cfg = _dual_cfg(fam="fire")
+    cfg.notifications.region_routes = _rr(
+        cells={"fire": {"SCI": {"mt": 3, "mc": "#swi",
+                                "min_severity": "routine", "enabled": True}}},
+        mt_enabled=True, mc_enabled=True,
+    )
+    ev = _ev(fam="fire", region="SCI")
+    _, rec = _dispatch(cfg, ev)
+
+    mesh = [r for r in rec if r["delivery_type"] == "mesh_broadcast"]
+    mc = [r for r in rec if r["delivery_type"] == "meshcore_broadcast"]
+    assert len(mesh) == 1 and mesh[0]["broadcast_channel"] == 3
+    assert len(mc) == 1 and mc[0]["meshcore_channel"] == "#swi"
+    assert len(rec) == 2, "no toggle duplicates — both transports matrix-owned"
+
+
+def test_ptx_row4_both_disabled_toggle_owns_both():
+    """Row 4: both flags False -> matrix gate skipped; toggle emits BOTH
+    transports (ch0 + #aida) unchanged."""
+    cfg = _dual_cfg(fam="fire")
+    cfg.notifications.region_routes = _rr(
+        cells={"fire": {"SCI": {"mt": 3, "mc": "#swi",
+                                "min_severity": "routine", "enabled": True}}},
+        mt_enabled=False, mc_enabled=False,
+    )
+    ev = _ev(fam="fire", region="SCI")
+    _, rec = _dispatch(cfg, ev)
+
+    mesh = [r for r in rec if r["delivery_type"] == "mesh_broadcast"]
+    mc = [r for r in rec if r["delivery_type"] == "meshcore_broadcast"]
+    assert len(mesh) == 1 and mesh[0]["broadcast_channel"] == 0, "toggle MT default"
+    assert len(mc) == 1 and mc[0]["meshcore_channel"] == "#aida", "toggle MC default"
+    assert len(rec) == 2
+
+
+def test_ptx_row5_mt_enabled_null_column_suppresses_mt_entirely():
+    """Row 5: mt_enabled=True but cell mt=null -> matrix marks mesh_broadcast
+    handled (suppressing the toggle MT) yet sends nothing on MT => NO MT at all.
+    MC (mc_enabled=False) still emits via the toggle #aida."""
+    cfg = _dual_cfg(fam="fire")
+    cfg.notifications.region_routes = _rr(
+        cells={"fire": {"SCI": {"mt": None, "mc": None,
+                                "min_severity": "routine", "enabled": True}}},
+        mt_enabled=True, mc_enabled=False,
+    )
+    ev = _ev(fam="fire", region="SCI")
+    _, rec = _dispatch(cfg, ev)
+
+    mesh = [r for r in rec if r["delivery_type"] == "mesh_broadcast"]
+    mc = [r for r in rec if r["delivery_type"] == "meshcore_broadcast"]
+    assert mesh == [], "null mt under mt_enabled -> NO MT anywhere (toggle suppressed)"
+    assert len(mc) == 1 and mc[0]["meshcore_channel"] == "#aida", "MC via toggle"
+    assert len(rec) == 1
+
+
+def test_ptx_no_region_match_runs_full_toggle_path():
+    """No matching cell for the event region -> _matrix_handled stays empty ->
+    BOTH transports emit via the toggle path (no suppression)."""
+    cfg = _dual_cfg(fam="fire")
+    cfg.notifications.region_routes = _rr(
+        cells={"fire": {"SCI": {"mt": 3, "mc": "#swi",
+                                "min_severity": "routine", "enabled": True}}},
+        mt_enabled=True, mc_enabled=True,
+    )
+    # region SWI has no cell
+    ev = _ev(fam="fire", region="SWI")
+    _, rec = _dispatch(cfg, ev)
+
+    mesh = [r for r in rec if r["delivery_type"] == "mesh_broadcast"]
+    mc = [r for r in rec if r["delivery_type"] == "meshcore_broadcast"]
+    assert len(mesh) == 1 and mesh[0]["broadcast_channel"] == 0
+    assert len(mc) == 1 and mc[0]["meshcore_channel"] == "#aida"
+    assert len(rec) == 2
+
+
+def test_ptx_destination_mesh_broadcast_not_double_when_matrix_owns_mt():
+    """Regression (double-MT-broadcast): a family that is matrix-routed for MT
+    (mt_enabled=True, matched cell with `mt` set) AND whose toggle delivers via a
+    mesh_broadcast DESTINATION must NOT broadcast on MT twice.
+
+    The matrix owns mesh_broadcast for the matched event (it delivers in
+    Section 1.5 and marks the transport in `_matrix_handled`). The Section 2
+    destinations branch previously ignored `_matrix_handled`, so the same
+    mesh_broadcast transport was delivered a SECOND time via the destination.
+    A destination whose type is a matrix-owned transport must be filtered,
+    leaving EXACTLY ONE MT send on the matrix cell channel.
+    """
+    cfg = _base_cfg(fam="fire", min_severity="routine")
+    # Toggle delivers via a shared mesh_broadcast DESTINATION (ch7) rather than
+    # the inline severity_channels path.
+    cfg.notifications.destinations = {
+        "mesh_dest": NotificationDestination(
+            name="mesh_dest", type="mesh_broadcast", broadcast_channel=7),
+    }
+    cfg.notifications.toggles["fire"].destinations = ["mesh_dest"]
+    # Matrix owns MT for region SCI at channel 3 (mc not owned / not present).
+    cfg.notifications.region_routes = _rr(
+        cells={"fire": {"SCI": {"mt": 3, "mc": None,
+                                "min_severity": "routine", "enabled": True}}},
+        mt_enabled=True, mc_enabled=False,
+    )
+    ev = _ev(fam="fire", region="SCI")   # immediate severity -> above floor
+    _, rec = _dispatch(cfg, ev)
+
+    mesh = [r for r in rec if r["delivery_type"] == "mesh_broadcast"]
+    # EXACTLY ONE mesh_broadcast: the matrix cell (ch3), NOT also the
+    # destination (ch7). Two here is the double-MT-broadcast bug.
+    assert len(mesh) == 1, "exactly one mesh_broadcast (no double MT), got %r" % (mesh,)
+    assert mesh[0]["broadcast_channel"] == 3, \
+        "the single MT send must be the matrix cell (ch3), not the destination (ch7)"
+    assert all(r["broadcast_channel"] != 7 for r in rec), \
+        "the mesh_broadcast destination (ch7) must be filtered by _matrix_handled"
+    assert len(rec) == 1, "only the matrix MT send; no extra destination delivery"

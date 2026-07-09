@@ -342,7 +342,7 @@ class TestMatrixFloorObservability:
         cfg.notifications.toggles = {"fire": tog}
         # Matrix: enabled, one cell for fire/US-ID
         cfg.notifications.region_routes = RegionRouteMatrix(
-            enabled=True,
+            mt_enabled=True, mc_enabled=True,   # v0.16.x per-transport split
             cells={
                 "fire": {
                     "US-ID": {

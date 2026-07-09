@@ -69,9 +69,15 @@ export interface RegionCell {
 }
 
 // The full region_routes block stored under notifications config.
+// Region routing has an independent master switch per transport: mt_enabled
+// (Meshtastic) and mc_enabled (MeshCore). `enabled` is a legacy single-switch
+// field tolerated on READ only (older payloads) — never written back.
 export interface RegionRoutes {
-  enabled: boolean
+  mt_enabled: boolean
+  mc_enabled: boolean
   cells: Record<string, Record<string, RegionCell>>
+  // Legacy: pre-split single master switch. Read-only fallback; not serialized.
+  enabled?: boolean
 }
 
 export interface NotificationsConfig {
@@ -488,7 +494,10 @@ function mergeRegionRoutesForMt(
   fresh: RegionRoutes | undefined,
   mine: RegionRoutes | undefined,
 ): RegionRoutes {
-  const enabled = mine?.enabled ?? fresh?.enabled ?? false
+  // This page OWNS mt_enabled (from its own toggle); carry mc_enabled through
+  // UNCHANGED from the freshly-fetched server value so we never clobber it.
+  const mt_enabled = mine?.mt_enabled ?? mine?.enabled ?? false
+  const mc_enabled = fresh?.mc_enabled ?? false
   const freshCells = fresh?.cells || {}
   const mineCells = mine?.cells || {}
 
@@ -521,7 +530,7 @@ function mergeRegionRoutesForMt(
     }
   }
 
-  return { enabled, cells: newCells }
+  return { mt_enabled, mc_enabled, cells: newCells }
 }
 
 // ── MeshtasticDeliveryGrid ────────────────────────────────────────────────────
@@ -559,7 +568,11 @@ function MeshtasticDeliveryGrid({
         [region]: { ...existing, mt },
       },
     }
-    onRegionRoutesChange({ enabled: regionRoutes?.enabled ?? false, cells: newCells })
+    onRegionRoutesChange({
+      mt_enabled: regionRoutes?.mt_enabled ?? regionRoutes?.enabled ?? false,
+      mc_enabled: regionRoutes?.mc_enabled ?? false,
+      cells: newCells,
+    })
   }
 
   const clearMtForFamily = (family: string) => {
@@ -569,7 +582,11 @@ function MeshtasticDeliveryGrid({
       clearedFamily[r] = { ...c, mt: null }
     }
     const newCells = { ...(regionRoutes?.cells || {}), [family]: clearedFamily }
-    onRegionRoutesChange({ enabled: regionRoutes?.enabled ?? false, cells: newCells })
+    onRegionRoutesChange({
+      mt_enabled: regionRoutes?.mt_enabled ?? regionRoutes?.enabled ?? false,
+      mc_enabled: regionRoutes?.mc_enabled ?? false,
+      cells: newCells,
+    })
   }
 
   return (
@@ -577,6 +594,20 @@ function MeshtasticDeliveryGrid({
       <div className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
         Meshtastic Delivery
         <InfoButton info="Per-family Meshtastic delivery matrix. Choose which channels fire at each severity, the broadcast channel index, and DM node IDs. Family on/off and severity threshold are configured on the Data Feeds page." />
+      </div>
+      <div className="border border-[#1e2a3a] p-3">
+        <Toggle
+          label="Enable Meshtastic region routing"
+          checked={regionRoutes?.mt_enabled ?? regionRoutes?.enabled ?? false}
+          onChange={(on) =>
+            onRegionRoutesChange({
+              mt_enabled: on,
+              mc_enabled: regionRoutes?.mc_enabled ?? false,
+              cells: regionRoutes?.cells || {},
+            })
+          }
+          helper="Master switch for per-region Meshtastic channel routing. When off, families deliver only to their default Meshtastic channels."
+        />
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {families.map(({ key, label, Icon }) => {
