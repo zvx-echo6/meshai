@@ -595,6 +595,29 @@ export async function getMeshcoreChannels(): Promise<MeshcoreChannels> {
   return fetchJson<MeshcoreChannels>('/api/meshcore/channels')
 }
 
+// MeshCore channels with on-air hash (routes by channel NAME, no slot/index).
+export interface MeshcoreChannelDetail { name: string; hash: string | null }
+export interface MeshcoreChannelsDetail {
+  active: boolean
+  channels: MeshcoreChannelDetail[]
+}
+
+export async function getMeshcoreChannelsDetail(): Promise<MeshcoreChannelsDetail> {
+  return fetchJson<MeshcoreChannelsDetail>('/api/meshcore/channels/detail')
+}
+
+// Meshtastic radio channels (routes by channel index).
+export interface MeshtasticChannel {
+  index: number
+  name: string
+  role: string
+  enabled: boolean
+}
+
+export async function getChannels(): Promise<MeshtasticChannel[]> {
+  return fetchJson<MeshtasticChannel[]>('/api/channels')
+}
+
 export interface MeshcoreContact {
   name: string | null
   pubkey: string
