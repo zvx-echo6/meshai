@@ -53,7 +53,6 @@ const navGroups: NavGroup[] = [
       { path: '/activity', label: 'Activity Log', icon: Activity },
       { path: '/places', label: 'Places', icon: MapPin },
       { path: '/coverage', label: 'Coverage', icon: Map },
-      { path: '/channels', label: 'Channels', icon: Radio },
     ],
   },
   {

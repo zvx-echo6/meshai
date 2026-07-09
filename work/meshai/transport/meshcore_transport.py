@@ -793,8 +793,23 @@ class MeshCoreTransport(MeshTransport):
                 # null-truncated / utf-8-decoded — do NOT trim or lowercase).
                 self._chan_name_to_idx[name] = slot
                 # Additive read-only detail: preserve order, capture on-air hash.
+                # Additive read-only detail: preserve order, capture on-air
+                # hash + the channel KEY (PSK) as a hex string so operators
+                # can provision the channel on companion radios. The lib
+                # emits channel_secret as raw 16-byte PSK; hex-encode it.
+                _secret = payload.get("channel_secret")
+                if isinstance(_secret, (bytes, bytearray)):
+                    _key = _secret.hex()
+                elif isinstance(_secret, str) and _secret:
+                    _key = _secret
+                else:
+                    _key = None
                 self._chan_details.append(
-                    {"name": name, "hash": payload.get("channel_hash")}
+                    {
+                        "name": name,
+                        "hash": payload.get("channel_hash"),
+                        "key": _key,
+                    }
                 )
                 empty_run = 0
         except Exception as exc:
@@ -809,9 +824,10 @@ class MeshCoreTransport(MeshTransport):
         return list(self._chan_name_to_idx.keys())
 
     def channel_details(self) -> list[dict]:
-        """Ordered [{name, hash}] for each enumerated MeshCore channel (incl.
-        Public); ``hash`` is the on-air channel hash or None. Read-only view
-        for the dashboard; captured alongside _chan_name_to_idx at connect."""
+        """Ordered [{name, hash, key}] for each enumerated MeshCore channel
+        (incl. Public); ``hash`` is the on-air channel hash or None, ``key``
+        is the channel PSK as a hex string (or None). Read-only view for the
+        dashboard; captured alongside _chan_name_to_idx at connect."""
         return list(self._chan_details)
 
     def get_contacts(self) -> list[dict]:
