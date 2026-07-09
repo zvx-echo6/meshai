@@ -71,6 +71,11 @@ def _enable_wfigs_reminders():
 def mock_dispatcher():
     d = MagicMock()
     d.dispatch_scheduled_broadcast = AsyncMock(return_value=True)
+    # wfigs reminders route through the region-aware fire path (see
+    # dispatch_scheduled_fire_broadcast); make it awaitable too so the
+    # non-fire path tests (rf/511 via dispatch_scheduled_broadcast) and the
+    # fire path tests share one fixture.
+    d.dispatch_scheduled_fire_broadcast = AsyncMock(return_value=True)
     return d
 
 
@@ -89,10 +94,12 @@ def test_wfigs_reminder_fires_past_cadence(mock_dispatcher):
     sch = ReminderScheduler(mock_dispatcher, clock=lambda: now)
     fired = asyncio.run(sch.tick_once())
     assert fired == 1
-    mock_dispatcher.dispatch_scheduled_broadcast.assert_called_once()
-    args = mock_dispatcher.dispatch_scheduled_broadcast.call_args.kwargs
+    # wfigs now routes through the region-aware fire path, NOT the hardcoded
+    # rf_propagation dispatch_scheduled_broadcast.
+    mock_dispatcher.dispatch_scheduled_broadcast.assert_not_called()
+    mock_dispatcher.dispatch_scheduled_fire_broadcast.assert_called_once()
+    args = mock_dispatcher.dispatch_scheduled_fire_broadcast.call_args.kwargs
     assert "Active" in args["text"]
-    assert args["source_event_table"] == "fires"
     assert args["source_event_pk"] == "F1"
 
 
