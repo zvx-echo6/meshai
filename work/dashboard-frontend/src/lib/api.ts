@@ -606,18 +606,6 @@ export async function getMeshcoreChannelsDetail(): Promise<MeshcoreChannelsDetai
   return fetchJson<MeshcoreChannelsDetail>('/api/meshcore/channels/detail')
 }
 
-// Meshtastic radio channels (routes by channel index).
-export interface MeshtasticChannel {
-  index: number
-  name: string
-  role: string
-  enabled: boolean
-}
-
-export async function getChannels(): Promise<MeshtasticChannel[]> {
-  return fetchJson<MeshtasticChannel[]>('/api/channels')
-}
-
 export interface MeshcoreContact {
   name: string | null
   pubkey: string
