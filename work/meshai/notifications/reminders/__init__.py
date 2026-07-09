@@ -308,10 +308,29 @@ class ReminderScheduler:
         return ""
 
     async def _dispatch(self, adapter: str, row, wire: str) -> bool:
-        """Send via dispatcher.dispatch_scheduled_broadcast (cold-start
-        grace honored, no toggle-path freshness gating)."""
+        """Send via the dispatcher (cold-start grace honored, no toggle-path
+        freshness gating).
+
+        Fire (wfigs) reminders route through the REGION-AWARE fire path
+        (dispatch_scheduled_fire_broadcast) so an "Active:" reminder lands on
+        the SAME channels a live New/Update fire alert for that fire would —
+        the `fire` toggle + region_routes matrix, region derived from the
+        fire's lat/lon. Every OTHER adapter (rf_propagation band conditions,
+        511 work zones) keeps the existing dispatch_scheduled_broadcast path
+        (rf_propagation -> band-conditions channels), unchanged."""
         table, pk = self._row_pk(adapter, row)
         try:
+            if adapter == "wfigs":
+                return bool(
+                    await self._dispatcher.dispatch_scheduled_fire_broadcast(
+                        text=wire,
+                        source_event_pk=pk,
+                        lat=_safe_row(row, "lat"),
+                        lon=_safe_row(row, "lon"),
+                        county=_safe_row(row, "county"),
+                        state=_safe_row(row, "state"),
+                    )
+                )
             return bool(await self._dispatcher.dispatch_scheduled_broadcast(
                 text=wire, source_event_table=table, source_event_pk=pk,
             ))
@@ -392,4 +411,15 @@ def _safe_get(adapter_config, adapter: str, key: str) -> Any:
     except AttributeError:
         return None
     except Exception:
+        return None
+
+
+def _safe_row(row, key: str) -> Any:
+    """Read a column from a sqlite3.Row without raising when it's absent.
+
+    The wfigs reminder rows come from `SELECT * FROM fires`, so lat/lon/
+    county/state are present; this stays defensive against schema drift."""
+    try:
+        return row[key]
+    except (IndexError, KeyError, TypeError):
         return None
