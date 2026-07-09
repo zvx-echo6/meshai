@@ -49,7 +49,10 @@ function mergeRegionRoutesForMc(
   fresh: RegionRoutes | undefined,
   mine: RegionRoutes | undefined,
 ): RegionRoutes {
-  const enabled = mine?.enabled ?? fresh?.enabled ?? false
+  // This page OWNS mc_enabled (from its own toggle); carry mt_enabled through
+  // UNCHANGED from the freshly-fetched server value so we never clobber it.
+  const mc_enabled = mine?.mc_enabled ?? false
+  const mt_enabled = fresh?.mt_enabled ?? fresh?.enabled ?? false
   const freshCells = fresh?.cells || {}
   const mineCells = mine?.cells || {}
 
@@ -83,7 +86,7 @@ function mergeRegionRoutesForMc(
     }
   }
 
-  return { enabled, cells: newCells }
+  return { mt_enabled, mc_enabled, cells: newCells }
 }
 
 export default function MeshCoreRouting() {
@@ -163,7 +166,11 @@ export default function MeshCoreRouting() {
     }
     setConfig({
       ...config,
-      region_routes: { enabled: config.region_routes?.enabled ?? false, cells: newCells },
+      region_routes: {
+        mt_enabled: config.region_routes?.mt_enabled ?? config.region_routes?.enabled ?? false,
+        mc_enabled: config.region_routes?.mc_enabled ?? false,
+        cells: newCells,
+      },
     })
   }
 
@@ -177,7 +184,11 @@ export default function MeshCoreRouting() {
     const newCells = { ...(config.region_routes?.cells || {}), [family]: clearedFamily }
     setConfig({
       ...config,
-      region_routes: { enabled: config.region_routes?.enabled ?? false, cells: newCells },
+      region_routes: {
+        mt_enabled: config.region_routes?.mt_enabled ?? config.region_routes?.enabled ?? false,
+        mc_enabled: config.region_routes?.mc_enabled ?? false,
+        cells: newCells,
+      },
     })
   }
 
@@ -320,6 +331,23 @@ export default function MeshCoreRouting() {
         <div className="flex items-center text-xs text-slate-500 uppercase tracking-wide">
           MeshCore Delivery
           <InfoButton info="For each notification family, choose which MeshCore channels fire at each severity, the MeshCore channel name to broadcast on, and the DM contacts to unicast to. Enabling a family and its severity threshold are configured on the Data Feeds page." />
+        </div>
+        <div className="border border-[#1e2a3a] p-3">
+          <Toggle
+            label="Enable MeshCore region routing"
+            checked={config.region_routes?.mc_enabled ?? false}
+            onChange={(on) =>
+              setConfig({
+                ...config,
+                region_routes: {
+                  mt_enabled: config.region_routes?.mt_enabled ?? config.region_routes?.enabled ?? false,
+                  mc_enabled: on,
+                  cells: config.region_routes?.cells || {},
+                },
+              })
+            }
+            helper="Master switch for per-region MeshCore channel routing. When off, families deliver only to their default MeshCore channels."
+          />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {TOGGLE_FAMILY_META.map(({ key, label, Icon }) => {

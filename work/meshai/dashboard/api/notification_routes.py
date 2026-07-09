@@ -349,7 +349,9 @@ async def send_rule_live(request: Request, rule_index: int):
 
 class RegionRoutingBody(BaseModel):
     """Request body for POST /notifications/region-routing."""
-    enabled: bool = False
+    mt_enabled: bool = False
+    mc_enabled: bool = False
+    enabled: Optional[bool] = None   # legacy field: if sent and mt_enabled not, maps to mt_enabled
     cells: Dict[str, Any] = {}
 
 
@@ -399,18 +401,19 @@ async def get_regions(request: Request):
 async def get_region_routing(request: Request):
     """Return the current region×family routing matrix.
 
-    Shape: {"enabled": bool, "cells": {family: {region: {mt, mc, min_severity, enabled}}}}
-    Defaults to enabled=false, cells={} when not configured.
+    Shape: {"mt_enabled": bool, "mc_enabled": bool,
+            "cells": {family: {region: {mt, mc, min_severity, enabled}}}}
+    Defaults to mt_enabled=false, mc_enabled=false, cells={} when not configured.
     """
     config = getattr(request.app.state, "config", None)
     if config is None:
-        return {"enabled": False, "cells": {}}
+        return {"mt_enabled": False, "mc_enabled": False, "cells": {}}
 
     rr = getattr(getattr(config, "notifications", None), "region_routes", None)
     if rr is None:
-        return {"enabled": False, "cells": {}}
+        return {"mt_enabled": False, "mc_enabled": False, "cells": {}}
 
-    return {"enabled": bool(rr.enabled), "cells": rr.cells}
+    return {"mt_enabled": bool(rr.mt_enabled), "mc_enabled": bool(rr.mc_enabled), "cells": rr.cells}
 
 
 @router.post("/region-routing")
@@ -420,7 +423,7 @@ async def save_region_routing(request: Request, body: RegionRoutingBody):
     Only region_routes is updated; all other notification fields
     (toggles, rules, destinations, etc.) survive untouched.
 
-    Returns: {"ok": true, "saved": {"enabled": bool, "cells": {...}}}
+    Returns: {"ok": true, "saved": {"mt_enabled": bool, "mc_enabled": bool, "cells": {...}}}
     """
     config = getattr(request.app.state, "config", None)
     config_path = getattr(request.app.state, "config_path", None)
@@ -428,7 +431,11 @@ async def save_region_routing(request: Request, body: RegionRoutingBody):
         raise HTTPException(status_code=500, detail="Config not available")
 
     # Build the new RegionRouteMatrix from the request body.
-    new_rr = RegionRouteMatrix(enabled=body.enabled, cells=body.cells)
+    _mt = body.mt_enabled if body.mt_enabled is not None else False
+    # legacy single-switch clients: enabled -> mt_enabled
+    if getattr(body, "enabled", None) is not None and not body.mt_enabled:
+        _mt = bool(body.enabled)
+    new_rr = RegionRouteMatrix(mt_enabled=_mt, mc_enabled=bool(body.mc_enabled), cells=body.cells)
 
     # Explicit server-side read-modify-write:
     # 1. Serialize the CURRENT notifications object to dict (preserves toggles/rules/destinations).
@@ -455,5 +462,5 @@ async def save_region_routing(request: Request, body: RegionRoutingBody):
     except Exception:
         pass  # best-effort; disk is authoritative
 
-    saved = {"enabled": new_rr.enabled, "cells": new_rr.cells}
+    saved = {"mt_enabled": new_rr.mt_enabled, "mc_enabled": new_rr.mc_enabled, "cells": new_rr.cells}
     return {"ok": True, "saved": saved}

@@ -775,7 +775,10 @@ class NotificationDestination:
 class RegionRouteMatrix:
     """Compact region×family routing matrix (P3 primitive).
 
-    enabled: master switch; False = matrix never consulted (byte-identical to today).
+    mt_enabled: Meshtastic region routing master switch; gates the `mt` column.
+    mc_enabled: MeshCore region routing master switch; gates the `mc` column.
+                Each is independent; False = that transport is never consulted
+                (byte-identical to pre-split behavior for that transport).
     cells: nested dict family -> region -> cell_dict.
            Cell shape (plain dict, not a dataclass):
              cells[family][region] = {
@@ -787,7 +790,8 @@ class RegionRouteMatrix:
            Sparse: only filled cells are stored; omitted cells are no-ops.
     """
 
-    enabled: bool = False
+    mt_enabled: bool = False   # Meshtastic region routing master switch
+    mc_enabled: bool = False   # MeshCore region routing master switch
     cells: dict = field(default_factory=dict)
 
 
@@ -1202,8 +1206,10 @@ def _dict_to_dataclass(cls, data: dict):
             # P3: coerce region_routes dict -> RegionRouteMatrix (mirrors destinations above).
             if "region_routes" in value and isinstance(value["region_routes"], dict):
                 rr = value["region_routes"]
+                _legacy = bool(rr.get("enabled", False))  # pre-split single master switch
                 notifications.region_routes = RegionRouteMatrix(
-                    enabled=bool(rr.get("enabled", False)),
+                    mt_enabled=bool(rr.get("mt_enabled", _legacy)),
+                    mc_enabled=bool(rr.get("mc_enabled", False)),
                     cells=rr.get("cells", {}),
                 )
             if "channels" in value and isinstance(value["channels"], list) and value["channels"]:

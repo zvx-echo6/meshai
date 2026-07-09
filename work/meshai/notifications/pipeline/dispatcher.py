@@ -382,7 +382,14 @@ class Dispatcher:
         # behaviour for all existing config.
         rr = getattr(self._config.notifications, "region_routes", None)
         _matrix_matched = None
-        if rr is not None and getattr(rr, "enabled", False):
+        # Per-transport authority (v0.16.x): channel-TYPE strings the matrix
+        # authoritatively owns for THIS event. Initialized before the gate so it
+        # is always in scope at the toggle chokepoint below; stays empty when the
+        # matrix is skipped or matches nothing -> toggle path runs fully unchanged.
+        _matrix_handled: set = set()
+        if rr is not None and (
+            getattr(rr, "mt_enabled", False) or getattr(rr, "mc_enabled", False)
+        ):
             fam_cells = (getattr(rr, "cells", None) or {}).get(fam)
             if fam_cells:
                 ev_regions = [r for r in ([event.region, *(event.regions or [])]) if r]
@@ -405,6 +412,20 @@ class Dispatcher:
             event_rank = self.SEVERITY_RANK.get(event.severity, 0)
             _chans: dict = {}   # (ch_type, chan_val) -> [region, ...]
             for _mr, _cell in _matrix_matched:
+                # Per-transport authority (authoritative-suppress fix): this
+                # cell MATCHED the event's family+region, so each ENABLED
+                # transport is matrix-owned for THIS event REGARDLESS of whether
+                # the cell is active (passes its per-cell enabled + min_severity
+                # floor). Mark BEFORE the inactive-cell continues so a matched-
+                # but-inactive cell still suppresses the toggle for its enabled
+                # transports -- authoritative no-send preserved, identical to the
+                # null-column case. The floor / enabled checks below decide ONLY
+                # whether a concrete channel is APPENDED, never whether authority
+                # leaks back to the toggle.
+                if getattr(rr, "mt_enabled", False):
+                    _matrix_handled.add("mesh_broadcast")
+                if getattr(rr, "mc_enabled", False):
+                    _matrix_handled.add("meshcore_broadcast")
                 _enabled_cell = _cell.get("enabled", True) if isinstance(_cell, dict) \
                     else getattr(_cell, "enabled", True)
                 if not _enabled_cell:
@@ -425,15 +446,26 @@ class Dispatcher:
                     continue   # below per-cell floor for this region
                 _mt = _cell.get("mt") if isinstance(_cell, dict) else getattr(_cell, "mt", None)
                 _mc = _cell.get("mc") if isinstance(_cell, dict) else getattr(_cell, "mc", None)
-                if _mt is not None:
+                # Per-transport authority: a transport whose master flag is on is
+                # matrix-owned for this matched event even when the cell column is
+                # null (operator chose "no channel here" -> suppress the toggle for
+                # that transport too, do not leak it back). A transport whose flag
+                # is OFF is left unmarked -> it falls through to the toggle path
+                # (e.g. MeshCore reaching #aida while mc_enabled is False).
+                # Authority already marked at loop top; here we ONLY decide
+                # whether a concrete channel is appended (per-cell floor/enabled
+                # gating above has passed). A null column appends nothing but the
+                # transport stays matrix-owned (marked above) -> toggle suppressed.
+                if getattr(rr, "mt_enabled", False) and _mt is not None:
                     _chans.setdefault(("mesh_broadcast", _mt), []).append(_mr)
-                if _mc:   # truthy: non-empty string
+                if getattr(rr, "mc_enabled", False) and _mc:   # truthy: non-empty string
                     _chans.setdefault(("meshcore_broadcast", _mc), []).append(_mr)
 
-            if not _chans:
-                # Every matched region below its floor or cell disabled/empty.
-                # Authoritative no-send: do NOT fall through to toggle default.
-                return
+            # NOTE (v0.16.x per-transport authority): no blanket no-send return
+            # here. An empty _chans can still carry marks in _matrix_handled
+            # (e.g. mt_enabled with a null mt column) that must suppress the
+            # toggle. Dispatch whatever _chans holds (possibly nothing), then
+            # fall through so any UNhandled transport still reaches the toggle.
 
             # Compose once; reused across all channels (shadow render skipped).
             try:
@@ -550,8 +582,11 @@ class Dispatcher:
                             self._toggle_cooldown[_rk] = _commit_now
                             self._persist_cooldown(_rk, _commit_now, _cooldown_s)
 
-            # Authoritative: the matrix handled this event; skip toggle default.
-            return
+            # Per-transport fall-through (v0.16.x): the matrix has dispatched the
+            # transports it owns (tracked in _matrix_handled). Do NOT return --
+            # fall through to Sections 2-6 so transports the matrix did NOT own
+            # (disabled flag, or no matching cell) still deliver via the toggle.
+            # The chokepoint in Section 2 filters out _matrix_handled types.
 
         # ---------- Section 2 — region scope + severity floor + matrix ----
         # v0.6-4 (B13 fix): resolution before commitment. Region scope, the
@@ -596,10 +631,20 @@ class Dispatcher:
             # digest-typed destinations belong to the digest scheduler, not the
             # live broadcast path (mirrors the inline "digest" exclusion below).
             delivery_plan = [("dest", d) for d in dests
-                             if getattr(d, "type", "") != "digest"]
+                             if getattr(d, "type", "") != "digest"
+                             and getattr(d, "type", "") not in _matrix_handled]
         else:
             sev_channels = getattr(tog, "severity_channels", None) or {}
-            ch_types = [c for c in sev_channels.get(event.severity, []) if c != "digest"]
+            # Per-transport matrix authority (v0.16.x): drop any channel-TYPE the
+            # region_routes matrix already owns for this event (_matrix_handled),
+            # so a matrix-enabled transport is never double-broadcast here while a
+            # matrix-DISABLED transport still falls through and emits (this is how
+            # MeshCore reaches #aida while mc_enabled is False). _matrix_handled is
+            # empty whenever the matrix was skipped or matched nothing -> no-op.
+            ch_types = [
+                c for c in sev_channels.get(event.severity, [])
+                if c != "digest" and c not in _matrix_handled
+            ]
             delivery_plan = [("toggle", ct) for ct in ch_types]
         if not delivery_plan:
             return
