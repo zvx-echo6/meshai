@@ -110,14 +110,25 @@ def _raw_fire(*, name="MORA", irwin=_IRWIN, acres=2410, contained=10,
     }
 
 
-def _make_store():
+def _make_store(coverage_areas=None, coverage_excluded=None):
     bus = EventBus()
     captured: list = []
     bus.subscribe(lambda e: captured.append(e))
-    store = EnvironmentalStore(EnvironmentalConfig(), event_bus=bus)
+    store = EnvironmentalStore(
+        EnvironmentalConfig(), event_bus=bus,
+        coverage_areas=coverage_areas,
+        coverage_excluded=coverage_excluded,
+    )
     adapter = _FakeFires()
     store._adapters["nifc"] = adapter
     return store, adapter, captured
+
+
+# A coverage area covering SW Idaho (the default _raw_fire lat/lon 44.0,-115.0
+# sits inside this box; a fire near 0,0 or on the US east coast is outside).
+_SW_IDAHO_AREA = {
+    "name": "sw-id", "west": -117.0, "south": 42.0, "east": -114.0, "north": 45.0,
+}
 
 
 def _seed_row(conn, *, acres, contained, last_bcast_at):
@@ -309,3 +320,80 @@ def test_to_event_stamps_canonical_data(env):
     assert ev.data["contained_pct"] == 30
     assert ev.data["declared_at_epoch"] == _NOW
     assert ev.data["lat"] == 44.0 and ev.data["state"] == "US-ID"
+
+
+# ── 7. Coverage-scope ingest gate ────────────────────────────────────────────
+# Fires OUTSIDE every configured coverage area are NEVER stored (so they are
+# never tracked / alerted / reminded / re-ingested). The gate mirrors the
+# dispatch-level CoverageFilter's set-union membership and applies to BOTH the
+# cold-start seed and the live INSERT/UPDATE path. Fail-OPEN when coverage is
+# disabled or has no areas (unchanged current behaviour).
+
+
+def _fires_row(conn, irwin):
+    return conn.execute(
+        "SELECT irwin_id FROM fires WHERE irwin_id=?", (irwin,)).fetchone()
+
+
+def test_coverage_gate_inside_area_is_stored(env):
+    """A fire INSIDE a coverage box is stored (cold-start seed row present)."""
+    conn, _clk = env
+    store, adapter, captured = _make_store(coverage_areas=[_SW_IDAHO_AREA])
+    # Default coords 44.0,-115.0 are inside _SW_IDAHO_AREA.
+    adapter.set_batch([_raw_fire(irwin="IRWIN-IN-1", lat=44.0, lon=-115.0)])
+    store._ingest("nifc", adapter)
+
+    assert captured == [], "cold-start seed must broadcast nothing"
+    assert _fires_row(conn, "IRWIN-IN-1") is not None, \
+        "in-area fire must be stored"
+
+
+def test_coverage_gate_outside_area_is_not_stored(env):
+    """A fire OUTSIDE all coverage boxes is NOT stored (no row) with coverage
+    enabled + areas defined — neither the cold-start seed nor a live upsert."""
+    conn, _clk = env
+    store, adapter, captured = _make_store(coverage_areas=[_SW_IDAHO_AREA])
+    # 0,0 (Gulf of Guinea) is far outside the SW-Idaho box.
+    adapter.set_batch([_raw_fire(irwin="IRWIN-OUT-1", lat=0.0, lon=0.0)])
+    store._ingest("nifc", adapter)
+
+    assert captured == [], "out-of-area fire must broadcast nothing"
+    assert _fires_row(conn, "IRWIN-OUT-1") is None, \
+        "out-of-area fire must NOT be stored (cold-start seed dropped)"
+
+    # A later (already-seeded) poll must ALSO refuse to INSERT the out-of-area
+    # fire via the live path — it must never latch a row.
+    store._fires_seeded = True
+    store._ingest("nifc", adapter)
+    assert _fires_row(conn, "IRWIN-OUT-1") is None, \
+        "out-of-area fire must NOT be stored on the live upsert path either"
+
+
+def test_coverage_gate_fail_open_when_no_areas(env):
+    """Coverage DISABLED / no areas -> an out-of-box fire IS stored (fail-open,
+    unchanged behaviour)."""
+    conn, _clk = env
+    store, adapter, captured = _make_store()  # no coverage areas
+    assert store._fire_coverage_areas == [], \
+        "no coverage areas -> gate is a no-op list"
+    adapter.set_batch([_raw_fire(irwin="IRWIN-OPEN-1", lat=0.0, lon=0.0)])
+    store._ingest("nifc", adapter)
+
+    assert _fires_row(conn, "IRWIN-OPEN-1") is not None, \
+        "with no coverage areas, every fire is stored (fail-open)"
+
+
+def test_coverage_gate_excluded_adapter_fails_open(env):
+    """When 'fires' is on the coverage opt-out list, the gate is disabled even
+    with areas configured — mirrors the _coverage_for fetch-scope escape hatch;
+    an out-of-box fire IS stored."""
+    conn, _clk = env
+    store, adapter, captured = _make_store(
+        coverage_areas=[_SW_IDAHO_AREA], coverage_excluded=["fires"])
+    assert store._fire_coverage_areas == [], \
+        "excluded 'fires' adapter -> no gate built"
+    adapter.set_batch([_raw_fire(irwin="IRWIN-EXCL-1", lat=0.0, lon=0.0)])
+    store._ingest("nifc", adapter)
+
+    assert _fires_row(conn, "IRWIN-EXCL-1") is not None, \
+        "excluded adapter falls back to no coverage gating (fire stored)"

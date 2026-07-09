@@ -367,7 +367,7 @@ export default function Reference() {
             </ul>
           </TopicSection>
 
-          {/* Fire Tracker (v0.7 fusion: FIRMS + WFIGS + LLM digest) */}
+          {/* Fire Tracker (v0.7 fusion: FIRMS + WFIGS) */}
           <TopicSection id="fire-tracker" title="Fire Tracker (Fusion)">
             <p>
               FIRMS hotspots are fast but noisy; WFIGS incidents are accurate but slow.
@@ -401,16 +401,6 @@ export default function Reference() {
                   <span className="text-amber-300">🔥 Cache Peak Fire no growth in 14h</span>],
               ]}
             />
-
-            <SectionHeader>Daily LLM digest</SectionHeader>
-            <p>
-              Twice a day (default 06:00 and 18:00 Mountain Time) the bot runs an LLM
-              summary across every active fire and the last 24 h of growth + spotting
-              events, then broadcasts one terse line to the mesh. Shape:{' '}
-              <span className="text-amber-300">"Fires today: Cache Peak 1,847 ac +200 NE; Twin Peaks 320 ac stable; possible new fire 15 mi from Cache Peak."</span>{' '}
-              Configure the schedule and timezone under <Mono>fires.digest_*</Mono>{' '}
-              keys on the Adapter Config page.
-            </p>
 
             <SectionHeader>How attribution works</SectionHeader>
             <p>
@@ -465,10 +455,6 @@ export default function Reference() {
                 [<Mono>halt_minimum_seconds</Mono>, '43,200 (12 h)', 'Minimum elapsed seconds since the most recent attributed pixel before wildfire_halted can fire.'],
                 [<Mono>spotting_distance_threshold_mi</Mono>, '1.5 mi', 'Distance from prior-pass perimeter that fires wildfire_spotting.'],
                 [<Mono>spotting_cooldown_seconds</Mono>, '3,600 (1 h)', 'Minimum seconds between consecutive spotting broadcasts per fire.'],
-                [<Mono>digest_enabled</Mono>, 'true', 'Master toggle for the twice-daily digest.'],
-                [<Mono>digest_schedule</Mono>, '["06:00","18:00"]', 'Local-time slots for the digest.'],
-                [<Mono>digest_timezone</Mono>, 'America/Boise', 'IANA tz for digest_schedule.'],
-                [<Mono>digest_max_chars</Mono>, '200', 'Hard cap on the digest wire (the LLM is told to fit; the chunker enforces).'],
               ]}
             />
           </TopicSection>

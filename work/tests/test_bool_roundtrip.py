@@ -129,20 +129,20 @@ def test_wfigs_broadcast_on_acres_bool_roundtrip(client):
     assert type(val) is bool
 
 
-def test_fires_digest_enabled_bool_roundtrip(client):
-    """Third adapter (fires.digest_enabled) -- additional proof of generic handling."""
+def test_reminders_wfigs_enabled_bool_roundtrip(client):
+    """Third adapter (reminders_wfigs.enabled) -- additional proof of generic handling."""
     # Read default
-    default_val = adapter_config.fires.digest_enabled
+    default_val = adapter_config.reminders_wfigs.enabled
 
     # Flip
     new_val = not default_val
     r = client.put(
-        "/api/adapter-config/fires/digest_enabled",
+        "/api/adapter-config/reminders_wfigs/enabled",
         json={"value": new_val},
     )
     assert r.status_code == 200
     assert r.json()["value"] is new_val
 
     # Accessor returns the correct bool
-    assert adapter_config.fires.digest_enabled is new_val
-    assert type(adapter_config.fires.digest_enabled) is bool
+    assert adapter_config.reminders_wfigs.enabled is new_val
+    assert type(adapter_config.reminders_wfigs.enabled) is bool
