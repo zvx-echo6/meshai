@@ -240,45 +240,6 @@ export default function MeshCoreCompanion() {
             )}
           </div>
 
-          {/* Advertising settings */}
-          <div className="bg-bg-card border border-border">
-            <div className="px-4 py-3 border-b border-border">
-              <h3 className="text-sm font-medium text-slate-200">Advertising</h3>
-            </div>
-            <div className="px-4 py-4 space-y-4">
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-[#777] uppercase tracking-wide">
-                  Auto-advert interval
-                </label>
-                <div className="flex items-center gap-3">
-                  <select
-                    value={advertIntervalHours}
-                    onChange={(e) => setAdvertIntervalHours(Number(e.target.value))}
-                    className="bg-[#0a0e17] border border-[#1e2a3a] text-slate-200 text-sm rounded px-2 py-1.5 focus:outline-none focus:border-accent"
-                  >
-                    <option value={0}>Disabled</option>
-                    <option value={1}>Every 1 hour</option>
-                    <option value={3}>Every 3 hours (default)</option>
-                    <option value={6}>Every 6 hours</option>
-                    <option value={12}>Every 12 hours</option>
-                    <option value={24}>Every 24 hours</option>
-                  </select>
-                  <button
-                    onClick={handleSaveAdvertInterval}
-                    disabled={advertIntervalSaving}
-                    className="px-3 py-1.5 text-sm bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 rounded disabled:opacity-50 transition-colors"
-                  >
-                    {advertIntervalSaving ? 'Saving…' : advertIntervalSaved ? 'Saved' : 'Save'}
-                  </button>
-                </div>
-                <p className="text-xs text-[#555]">
-                  AIDA sends a flood advertisement at this interval so it stays discoverable.
-                  Stored in <code className="text-accent/80">connection.meshcore_advert_interval_seconds</code>.
-                </p>
-              </div>
-            </div>
-          </div>
-
           {/* Channel list — Name · Hash · Key (read-only) */}
           <div className="bg-bg-card border border-border">
             <div className="px-4 py-3 border-b border-border">
@@ -329,6 +290,46 @@ export default function MeshCoreCompanion() {
               <div className="px-4 py-3 text-sm text-[#777]">No channels</div>
             )}
           </div>
+
+          {/* Advertising settings */}
+          <div className="bg-bg-card border border-border">
+            <div className="px-4 py-3 border-b border-border">
+              <h3 className="text-sm font-medium text-slate-200">Advertising</h3>
+            </div>
+            <div className="px-4 py-4 space-y-4">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-[#777] uppercase tracking-wide">
+                  Auto-advert interval
+                </label>
+                <div className="flex items-center gap-3">
+                  <select
+                    value={advertIntervalHours}
+                    onChange={(e) => setAdvertIntervalHours(Number(e.target.value))}
+                    className="bg-[#0a0e17] border border-[#1e2a3a] text-slate-200 text-sm rounded px-2 py-1.5 focus:outline-none focus:border-accent"
+                  >
+                    <option value={0}>Disabled</option>
+                    <option value={1}>Every 1 hour</option>
+                    <option value={3}>Every 3 hours (default)</option>
+                    <option value={6}>Every 6 hours</option>
+                    <option value={12}>Every 12 hours</option>
+                    <option value={24}>Every 24 hours</option>
+                  </select>
+                  <button
+                    onClick={handleSaveAdvertInterval}
+                    disabled={advertIntervalSaving}
+                    className="px-3 py-1.5 text-sm bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 rounded disabled:opacity-50 transition-colors"
+                  >
+                    {advertIntervalSaving ? 'Saving…' : advertIntervalSaved ? 'Saved' : 'Save'}
+                  </button>
+                </div>
+                <p className="text-xs text-[#555]">
+                  AIDA sends a flood advertisement at this interval so it stays discoverable.
+                  Stored in <code className="text-accent/80">connection.meshcore_advert_interval_seconds</code>.
+                </p>
+              </div>
+            </div>
+          </div>
+
         </>
       )}
     </div>
