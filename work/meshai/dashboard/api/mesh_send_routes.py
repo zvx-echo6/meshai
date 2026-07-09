@@ -39,6 +39,24 @@ async def meshcore_channels(request: Request):
     return {"active": False, "channels": []}
 
 
+@router.get("/meshcore/channels/detail")
+async def meshcore_channels_detail(request: Request):
+    """Enumerated MeshCore channels with on-air hash, if connected.
+
+    Returns {"active": bool, "channels": [{"name": str, "hash": str|null}]}.
+    Routes by channel NAME (no slot/index), so no index is exposed here.
+    """
+    connector = getattr(request.app.state, "connector", None)
+    mc = _find_child(connector, "meshcore")
+    if mc is not None and getattr(mc, "connected", False):
+        try:
+            channels = list(mc.channel_details())
+        except Exception:
+            channels = []
+        return {"active": True, "channels": channels}
+    return {"active": False, "channels": []}
+
+
 @router.get("/meshcore/contacts")
 async def meshcore_contacts(request: Request):
     """Roster of known MeshCore contacts if a meshcore transport is connected."""

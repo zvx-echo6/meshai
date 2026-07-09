@@ -117,6 +117,10 @@ class MeshCoreTransport(MeshTransport):
         # Companion channel table: channel NAME -> slot index, built at
         # connect time by _enumerate_channels().  Empty until connected.
         self._chan_name_to_idx: dict[str, int] = {}
+        # Ordered [{name, hash}] detail for each enumerated channel (incl.
+        # Public), captured alongside _chan_name_to_idx at connect. Read-only
+        # view for the dashboard Channels page. Empty until connected.
+        self._chan_details: list[dict] = []
         # Self-advertisement tracking.
         self._last_advert_sent: Optional[float] = None   # epoch seconds or None
         # asyncio.Task handle for the periodic advert loop; None when inactive.
@@ -758,6 +762,7 @@ class MeshCoreTransport(MeshTransport):
             with a hard cap of 40 slots.
         """
         self._chan_name_to_idx = {}
+        self._chan_details = []
         try:
             empty_run = 0
             for idx in range(40):
@@ -787,6 +792,10 @@ class MeshCoreTransport(MeshTransport):
                 # Named slot: exact, case-sensitive (firmware name is already
                 # null-truncated / utf-8-decoded — do NOT trim or lowercase).
                 self._chan_name_to_idx[name] = slot
+                # Additive read-only detail: preserve order, capture on-air hash.
+                self._chan_details.append(
+                    {"name": name, "hash": payload.get("channel_hash")}
+                )
                 empty_run = 0
         except Exception as exc:
             logger.warning("MeshCore: channel enumeration error: %s", exc)
@@ -798,6 +807,12 @@ class MeshCoreTransport(MeshTransport):
     def known_channels(self) -> list[str]:
         """Enumerated MeshCore channel names (from _chan_name_to_idx, populated at connect)."""
         return list(self._chan_name_to_idx.keys())
+
+    def channel_details(self) -> list[dict]:
+        """Ordered [{name, hash}] for each enumerated MeshCore channel (incl.
+        Public); ``hash`` is the on-air channel hash or None. Read-only view
+        for the dashboard; captured alongside _chan_name_to_idx at connect."""
+        return list(self._chan_details)
 
     def get_contacts(self) -> list[dict]:
         """Roster of known MeshCore contacts. [] if not connected."""
