@@ -4,7 +4,7 @@ import { ConnectionSection, TextInput, NumberInput, Toggle, type ConnectionConfi
 import ChannelPicker from '@/components/ChannelPicker'
 import NodePicker from '@/components/NodePicker'
 import { notifyRestartRequired } from '@/components/RestartBanner'
-import { fetchConfig as apiFetchConfig, updateConfig as apiUpdateConfig, sendTestMessage } from '@/lib/api'
+import { fetchConfig as apiFetchConfig, updateConfig as apiUpdateConfig, sendTestMessage, getChannels, type MeshtasticChannel } from '@/lib/api'
 import { useDirty } from '@/context/DirtyContext'
 
 // Only the fields the "Bot behavior" section edits are typed explicitly; the
@@ -36,6 +36,9 @@ export default function MeshtasticConnection() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [hasChanges, setHasChanges] = useState(false)
+
+  // Read-only channel listing (index ↔ name ↔ role), fetched from the radio.
+  const [channels, setChannels] = useState<MeshtasticChannel[]>([])
 
   // Test send state
   const [testChannel, setTestChannel] = useState(0)
@@ -86,6 +89,9 @@ export default function MeshtasticConnection() {
   useEffect(() => {
     document.title = 'Meshtastic Connection - MeshAI'
     fetchConfig()
+    getChannels()
+      .then(setChannels)
+      .catch(() => setChannels([]))
   }, [fetchConfig])
 
   useEffect(() => {
@@ -289,6 +295,40 @@ export default function MeshtasticConnection() {
           />
         </div>
       )}
+
+      {/* Channels card — read-only Index · Name · Role */}
+      <div className="bg-bg-card border border-border">
+        <div className="px-4 py-3 border-b border-border">
+          <h3 className="text-sm font-medium text-slate-200">Channels</h3>
+          <p className="text-xs text-[#555] mt-1">
+            Channels configured on the radio. Meshtastic routes by channel index. Read-only.
+          </p>
+        </div>
+        {channels.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-slate-200">
+              <thead className="bg-[#161616] border-b border-border">
+                <tr>
+                  <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-left">Index</th>
+                  <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-left">Name</th>
+                  <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-left">Role</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {channels.map((ch) => (
+                  <tr key={ch.index} className="hover:bg-bg-hover">
+                    <td className="px-3 py-2 font-mono text-xs">{ch.index}</td>
+                    <td className="px-3 py-2">{ch.name}</td>
+                    <td className="px-3 py-2 text-xs text-[#999]">{ch.role}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="px-4 py-3 text-sm text-[#777]">Node offline — channels unavailable</div>
+        )}
+      </div>
 
       {/* Send test message card */}
       <div className="bg-bg-card border border-border p-6 space-y-4">

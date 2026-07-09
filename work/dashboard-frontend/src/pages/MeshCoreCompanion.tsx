@@ -2,11 +2,11 @@ import { useState, useEffect, useCallback } from 'react'
 import { Bot, Radio } from 'lucide-react'
 import {
   fetchMeshcoreSelf,
-  getMeshcoreChannels,
+  getMeshcoreChannelsDetail,
   sendMeshcoreAdvert,
   updateConfig,
   type MeshcoreSelf,
-  type MeshcoreChannels,
+  type MeshcoreChannelsDetail,
   type TestSendResult,
 } from '../lib/api'
 
@@ -24,9 +24,10 @@ function relativeTime(epochSec: number): string {
 
 export default function MeshCoreCompanion() {
   const [self, setSelf] = useState<MeshcoreSelf | null>(null)
-  const [channels, setChannels] = useState<MeshcoreChannels | null>(null)
+  const [channels, setChannels] = useState<MeshcoreChannelsDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
 
   // Send Advert state
   const [advertSending, setAdvertSending] = useState(false)
@@ -50,7 +51,7 @@ export default function MeshCoreCompanion() {
       try {
         const [selfData, channelData] = await Promise.all([
           fetchMeshcoreSelf(),
-          getMeshcoreChannels(),
+          getMeshcoreChannelsDetail(),
         ])
         if (cancelled) return
         setSelf(selfData)
@@ -125,8 +126,18 @@ export default function MeshCoreCompanion() {
     }
   }, [advertIntervalHours])
 
+  const handleCopyKey = useCallback(async (key: string) => {
+    try {
+      await navigator.clipboard.writeText(key)
+      setCopiedKey(key)
+      setTimeout(() => setCopiedKey((cur) => (cur === key ? null : cur)), 1500)
+    } catch {
+      // clipboard unavailable (e.g. non-secure context) — no-op
+    }
+  }, [])
+
   const connected = self?.connected === true
-  const channelNames = channels?.active ? channels.channels : []
+  const channelList = channels?.active ? channels.channels : []
 
   return (
     <div className="max-w-3xl mx-auto space-y-4">
@@ -268,19 +279,52 @@ export default function MeshCoreCompanion() {
             </div>
           </div>
 
-          {/* Channel list */}
+          {/* Channel list — Name · Hash · Key (read-only) */}
           <div className="bg-bg-card border border-border">
             <div className="px-4 py-3 border-b border-border">
               <h3 className="text-sm font-medium text-slate-200">Channels</h3>
+              <p className="text-xs text-[#555] mt-1">
+                Key = the channel PSK; enter it (or the # name) on a companion radio to join.
+              </p>
             </div>
-            {channelNames.length > 0 ? (
-              <ul className="divide-y divide-border">
-                {channelNames.map((name) => (
-                  <li key={name} className="px-4 py-2.5 text-sm text-slate-200 font-mono">
-                    {name}
-                  </li>
-                ))}
-              </ul>
+            {channelList.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-slate-200">
+                  <thead className="bg-[#161616] border-b border-border">
+                    <tr>
+                      <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-left">Name</th>
+                      <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-left">On-air hash</th>
+                      <th className="px-3 py-2 font-sans text-[9px] uppercase tracking-widest text-[#666] text-left">Key</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {channelList.map((ch) => (
+                      <tr key={ch.name} className="hover:bg-bg-hover">
+                        <td className="px-3 py-2 font-mono">{ch.name}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-[#999]">
+                          {ch.hash != null ? `0x${ch.hash}` : '—'}
+                        </td>
+                        <td className="px-3 py-2">
+                          {ch.key != null ? (
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs text-[#999] break-all">{ch.key}</span>
+                              <button
+                                onClick={() => handleCopyKey(ch.key as string)}
+                                className="flex-shrink-0 px-2 py-0.5 text-[10px] bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 rounded transition-colors"
+                                title="Copy key to clipboard"
+                              >
+                                {copiedKey === ch.key ? 'Copied' : 'Copy'}
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-[#777]">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             ) : (
               <div className="px-4 py-3 text-sm text-[#777]">No channels</div>
             )}

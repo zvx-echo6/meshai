@@ -595,8 +595,8 @@ export async function getMeshcoreChannels(): Promise<MeshcoreChannels> {
   return fetchJson<MeshcoreChannels>('/api/meshcore/channels')
 }
 
-// MeshCore channels with on-air hash (routes by channel NAME, no slot/index).
-export interface MeshcoreChannelDetail { name: string; hash: string | null }
+// MeshCore channels with on-air hash + PSK key (routes by channel NAME, no slot/index).
+export interface MeshcoreChannelDetail { name: string; hash: string | null; key: string | null }
 export interface MeshcoreChannelsDetail {
   active: boolean
   channels: MeshcoreChannelDetail[]

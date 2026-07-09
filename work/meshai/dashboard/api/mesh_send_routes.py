@@ -43,7 +43,7 @@ async def meshcore_channels(request: Request):
 async def meshcore_channels_detail(request: Request):
     """Enumerated MeshCore channels with on-air hash, if connected.
 
-    Returns {"active": bool, "channels": [{"name": str, "hash": str|null}]}.
+    Returns {"active": bool, "channels": [{"name": str, "hash": str|null, "key": str|null}]}.
     Routes by channel NAME (no slot/index), so no index is exposed here.
     """
     connector = getattr(request.app.state, "connector", None)

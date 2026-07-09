@@ -22,7 +22,6 @@ import ScheduledBroadcasts from './pages/ScheduledBroadcasts'
 import MeshtasticDangerZones from './pages/MeshtasticDangerZones'
 import MeshCoreDangerZones from './pages/MeshCoreDangerZones'
 import Coverage from './pages/Coverage'
-import Channels from './pages/Channels'
 import { ToastProvider } from './components/ToastProvider'
 import { DirtyProvider } from './context/DirtyContext'
 
@@ -47,7 +46,6 @@ function App() {
           {/* New aggregated pages */}
           <Route path="/places" element={<Places />} />
           <Route path="/coverage" element={<Coverage />} />
-          <Route path="/channels" element={<Channels />} />
           {/* Custom sources folded into Data Feeds; keep old bookmark working */}
           <Route path="/data-sources" element={<Navigate to="/environment" replace />} />
 
