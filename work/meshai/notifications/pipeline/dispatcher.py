@@ -1121,6 +1121,187 @@ class Dispatcher:
                     ch_type)
         return delivered_any
 
+    async def dispatch_scheduled_roads_broadcast(
+        self, text: str, *,
+        source_event_pk: str,
+        lat=None, lon=None, region=None,
+    ) -> bool:
+        """Region-aware scheduled broadcast for the wzdx per-region DAILY work-
+        zone count summary (Part 3).
+
+        Mirrors dispatch_scheduled_fire_broadcast byte-for-byte except it
+        routes through the `roads` toggle + the region_routes matrix's
+        "roads" family cells instead of "fire" / the `fire` toggle. One call
+        per region-with-zones; the caller (WZDxSummaryScheduler) passes a
+        representative (lat, lon) for that region so event_region_names
+        re-derives the SAME region here that the caller already computed.
+
+        Cold-start grace still applies (consistent with the other scheduled
+        broadcasts). Returns True on at least one successful mesh delivery.
+        """
+        # Cold-start grace (mirrors dispatch_scheduled_fire_broadcast).
+        grace_s = int(getattr(self._config.notifications,
+                              "cold_start_grace_seconds", 60) or 0)
+        if grace_s > 0:
+            now_anchor = time.time()
+            if self._first_event_at is None:
+                self._first_event_at = now_anchor
+                self._persist_state()
+            if (now_anchor - self._first_event_at) < grace_s:
+                self._cold_start_dropped += 1
+                self._persist_state()
+                self._logger.info(
+                    "cold-start grace: dropping scheduled roads broadcast "
+                    "(pk=%s)", source_event_pk)
+                return False
+
+        toggles = getattr(self._config.notifications, "toggles", None) or {}
+        roads_tog = toggles.get("roads") if isinstance(toggles, dict) else None
+        if roads_tog is None:
+            self._logger.info(
+                "scheduled-roads-broadcast: roads toggle not found; dropping "
+                "(pk=%s)", source_event_pk)
+            return False
+
+        # Build a synthetic roads Event purely to (a) run region derivation
+        # and (b) reuse make_payload_from_event. category work_zone maps to
+        # the `roads` family; severity priority mirrors the live fire path.
+        from meshai.notifications.events import make_event, make_payload_from_event
+        ev = make_event(
+            source="wzdx", category="work_zone",
+            severity="priority", title=text,
+            lat=(float(lat) if lat is not None else None),
+            lon=(float(lon) if lon is not None else None),
+        )
+        ev.data["_meshai_precomposed"] = True
+
+        # Derive regions from the representative location the SAME way
+        # CoverageFilter does for a live event (named coverage areas ->
+        # region names). Never raises: an unlocatable summary line simply
+        # yields no regions -> toggle default.
+        derived_regions: list = []
+        try:
+            from meshai.coverage_area import (
+                areas_from_config, event_region_names,
+            )
+            _areas = areas_from_config(getattr(self._config, "coverage", None))
+            if _areas and ev.lat is not None and ev.lon is not None:
+                derived_regions = event_region_names(ev, _areas) or []
+        except Exception:
+            self._logger.exception(
+                "scheduled-roads-broadcast: region derivation failed; "
+                "falling back to toggle default (pk=%s)", source_event_pk)
+        if derived_regions:
+            ev.regions = list(derived_regions)
+            ev.region = derived_regions[0]
+
+        # Resolve the channel plan. Each entry: (ch_type, chan_val).
+        #   ch_type in {"mesh_broadcast", "meshcore_broadcast"}
+        #   chan_val = Meshtastic channel index or MeshCore channel name.
+        # _mt_owned / _mc_owned track per-transport matrix authority so an
+        # owned transport does NOT also emit the toggle default.
+        plan: list = []
+        _mt_owned = False
+        _mc_owned = False
+        rr = getattr(self._config.notifications, "region_routes", None)
+        _mt_on = bool(getattr(rr, "mt_enabled", False)) if rr is not None else False
+        _mc_on = bool(getattr(rr, "mc_enabled", False)) if rr is not None else False
+        if rr is not None and (_mt_on or _mc_on) and derived_regions:
+            fam_cells = (getattr(rr, "cells", None) or {}).get("roads") or {}
+            _seen: set = set()
+            for _rg in derived_regions:
+                if _rg in _seen or _rg not in fam_cells:
+                    continue
+                _seen.add(_rg)
+                _cell = fam_cells[_rg]
+                # A matched region marks each ENABLED transport as matrix-owned
+                # (mirrors the event path's authoritative-suppress), so it does
+                # NOT fall back to the toggle default even if the column is null.
+                if _mt_on:
+                    _mt_owned = True
+                if _mc_on:
+                    _mc_owned = True
+                _cell_enabled = (_cell.get("enabled", True) if isinstance(_cell, dict)
+                                 else getattr(_cell, "enabled", True))
+                if not _cell_enabled:
+                    continue
+                _mt = (_cell.get("mt") if isinstance(_cell, dict)
+                       else getattr(_cell, "mt", None))
+                _mc = (_cell.get("mc") if isinstance(_cell, dict)
+                       else getattr(_cell, "mc", None))
+                if _mt_on and _mt is not None:
+                    plan.append(("mesh_broadcast", _mt))
+                if _mc_on and _mc:   # truthy: non-empty string
+                    plan.append(("meshcore_broadcast", _mc))
+
+        # Toggle-default fallback for any transport the matrix did NOT own.
+        # Uses the roads toggle's priority severity_channels (band-conditions
+        # is NOT consulted). A transport already owned by the matrix is skipped.
+        sev_channels = getattr(roads_tog, "severity_channels", {}) or {}
+        default_ch_types = [
+            c for c in sev_channels.get("priority", ["mesh_broadcast"])
+            if c in ("mesh_broadcast", "meshcore_broadcast")
+        ]
+        for ct in default_ch_types:
+            if ct == "mesh_broadcast" and not _mt_owned:
+                plan.append(("mesh_broadcast",
+                             getattr(roads_tog, "broadcast_channel", None) or 0))
+            elif ct == "meshcore_broadcast" and not _mc_owned:
+                _mcn = getattr(roads_tog, "meshcore_channel", None)
+                if _mcn:
+                    plan.append(("meshcore_broadcast", _mcn))
+
+        if not plan:
+            self._logger.info(
+                "scheduled-roads-broadcast: no channels resolved for pk=%s "
+                "(regions=%s); dropping", source_event_pk, derived_regions)
+            return False
+
+        delivered_any = False
+        for ch_type, chan_val in plan:
+            rule = self._toggle_to_rule(
+                roads_tog, ch_type, ev,
+                mt_override=(chan_val if ch_type == "mesh_broadcast" else None),
+                mc_override=(chan_val if ch_type == "meshcore_broadcast" else None),
+            )
+            try:
+                channel = self._channel_factory(rule, self._connector)
+                payload = make_payload_from_event(ev, message=text)
+                success = await channel.deliver(payload, rule)
+            except Exception:
+                self._logger.exception(
+                    "scheduled-roads-broadcast: delivery raised for %s", ch_type)
+                success = False
+
+            if success:
+                delivered_any = True
+                self._logger.info(
+                    "scheduled-roads-broadcast: dispatched pk=%s via %s ch=%s "
+                    "regions=%s", source_event_pk, ch_type, chan_val,
+                    derived_regions or "DEFAULT")
+
+            # v20 per-mesh audit row (one per channel; mirrors
+            # dispatch_scheduled_fire_broadcast).
+            try:
+                from meshai.persistence import get_db
+                conn = get_db()
+                bytes_sent = len(text.encode("utf-8")) if text else 0
+                transport, channel_id, recipient = self._audit_route(rule, ch_type)
+                conn.execute(
+                    "INSERT INTO mesh_broadcasts_out(sent_at, recipient, "
+                    "channel, text, source_event_table, source_event_pk, "
+                    "bytes_sent, ack_received, transport, success) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (int(time.time()), recipient, channel_id, text,
+                     "traffic_events", str(source_event_pk), bytes_sent, 0,
+                     transport, 1 if success else 0),
+                )
+            except Exception:
+                self._logger.exception(
+                    "scheduled-roads-broadcast: audit row insert failed for %s",
+                    ch_type)
+        return delivered_any
+
     @staticmethod
     def _audit_route(rule, ch_type: str):
         """Resolve (transport, channel_id, recipient) for a mesh delivery.

@@ -381,6 +381,35 @@ class FIRMSAdapter:
             return "MODIS"
         return self._source or "?"
 
+    def _firms_pixels_empty(self) -> bool:
+        """Is the PERSISTED ``firms_pixels`` baseline empty (first-ever run)?
+
+        Uses the SAME DB handle the fusion engine reaches ``firms_pixels``
+        through (``persistence.get_db`` -- exactly what
+        ``firms_handler.ingest_hotspot_pixel`` opens). Returns True only when the
+        table holds ZERO rows, which is the sole condition under which the
+        cold-start silent-seed should fire.
+
+        Fail-safe on a truly-fresh DB where the table may not exist yet: a
+        missing table (or any query error) is treated as empty -> True, so a
+        genuine first-ever run still seeds silently and we NEVER crash the fetch.
+        A NON-empty table (a restart with a real baseline) returns False, which
+        collapses ``cold_start`` and lets genuinely-new clusters broadcast.
+        """
+        try:
+            from meshai.persistence import get_db
+            conn = get_db()
+            # EXISTS(...) short-circuits at the first row -> cheap even on a
+            # large baseline; 0 -> empty, 1 -> at least one persisted pixel.
+            row = conn.execute(
+                "SELECT EXISTS(SELECT 1 FROM firms_pixels LIMIT 1)"
+            ).fetchone()
+            return not (row and row[0])
+        except Exception:
+            # Missing table / persistence unavailable -> treat as empty so the
+            # first-ever run seeds silently (and the fetch never crashes).
+            return True
+
     def _run_fusion(self, raw_events: list) -> list:
         """Feed each fetched hotspot pixel into the SHARED attribution/fusion
         engine and collect the fire-fusion broadcasts.
@@ -405,7 +434,18 @@ class FIRMSAdapter:
         # Cold-start silent-seed gate: captured once for the whole batch BEFORE
         # the flag is flipped, so every pixel in the first full-day sweep seeds
         # together (mirrors store._ingest_fires cold_start capture, F1).
-        cold_start = not self._firms_seeded
+        #
+        # RESTART-SAFE: the in-memory ``_firms_seeded`` flag resets to False on
+        # every process start, so on its own it would silent-seed the ENTIRE
+        # first post-restart batch -- absorbing genuinely-new clusters. Gate it
+        # additionally on the PERSISTED baseline (``firms_pixels``) being empty,
+        # mirroring WFIGS's ``first_sight = row is None``: cold-start seeding only
+        # applies on the FIRST-EVER run (no persisted pixels). Any restart with an
+        # existing baseline -> cold_start False -> pixels ingest with seed=False;
+        # pre-existing pixels are naturally suppressed (already attributed /
+        # cluster_broadcast_at-stamped / INSERT-OR-IGNORE no-ops) so NO burst,
+        # while a genuinely-new cluster still broadcasts.
+        cold_start = (not self._firms_seeded) and self._firms_pixels_empty()
         fusion: list = []
         for evt in raw_events:
             props = evt.get("properties", {}) or {}
