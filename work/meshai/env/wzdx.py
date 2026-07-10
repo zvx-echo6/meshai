@@ -30,8 +30,22 @@ the wire is identical to what the Central-side parser would have produced
 (road, direction, mile posts, folded sub_type, impact, ends_at). ``to_event``
 then converts ``ends_at`` → ``ends_at_epoch`` exactly as the Phase-2 bridge
 does (``calendar.timegm`` of the naive datetime) and augments with lat/lon +
-a stable ``external_id`` (WZDx ``data_source_id`` + feature id) so the
-incident gating decider dedups correctly.
+a stable ``external_id``.
+
+Coalescing
+----------
+FHWA WZDx feeds frequently publish MULTIPLE road_event features for what is
+physically the SAME work zone (e.g. one feature per direction / per
+schedule-day fan / per segment). To avoid one traffic_events row (and one
+gate decision) per feature, ``external_id`` is a COALESCING key derived from
+the feature's road + rounded lat/lon + folded sub_type:
+``wzdx_{road}|{lat:.3f}|{lon:.3f}|{sub_type}`` — NOT the raw
+``data_source_id:feature_id`` pair. Multiple features that resolve to the
+same key are merged in ``_fetch_all`` (earliest start_at, latest end_at)
+into a single stored event before being handed to ``to_event()``, so exactly
+one ``traffic_events`` row per physical zone reaches the incident gating
+decider (``event_id`` == ``external_id`` for wzdx, so ``_seen``/decider/
+restart-seed all dedup on the same coalesced value).
 """
 
 import calendar
@@ -256,6 +270,11 @@ class WZDxAdapter:
         if not any_success:
             return False  # all feeds down — keep the last known good set
 
+        # Coalesce features that resolve to the SAME physical work zone
+        # (same road + rounded lat/lon + sub_type) BEFORE the bbox filter, so
+        # exactly one merged event per key reaches everything downstream.
+        new_events = self._coalesce_events(new_events)
+
         # Optional bbox filter.
         if self._bbox and len(self._bbox) == 4:
             west, south, east, north = self._bbox
@@ -277,6 +296,54 @@ class WZDxAdapter:
         if changed:
             logger.info("WZDx work zones updated: %d active", len(new_events))
         return changed
+
+    @staticmethod
+    def _coalesce_events(events: list) -> list:
+        """Merge stored-event dicts that share the same coalescing key.
+
+        Multiple WZDx features (e.g. per-direction / per-schedule-day fans)
+        commonly describe the SAME physical work zone. ``event_id`` (==
+        ``external_id``) already encodes the coalescing key
+        (``wzdx_{road}|{lat}|{lon}|{sub_type}``), so merging is a plain
+        group-by on that key: keep the first-seen record's fields, but widen
+        the window to the EARLIEST ``start_at`` and LATEST ``end_at`` across
+        every merged feature (ignoring ``None`` on either side), and keep
+        "priority" severity if ANY merged feature is a full closure.
+        Preserves first-seen order of keys.
+        """
+        merged: dict = {}
+        order: list = []
+        for evt in events:
+            key = evt["event_id"]
+            if key not in merged:
+                merged[key] = dict(evt)
+                order.append(key)
+                continue
+            cur = merged[key]
+            # Earliest start_at (ignore None).
+            starts = [v for v in (cur.get("start_at"), evt.get("start_at")) if v is not None]
+            if starts:
+                cur["start_at"] = min(starts)
+            # Latest end_at (ignore None). If EITHER side is None, keep None
+            # (an open-ended / unknown end wins — never silently invent one).
+            if cur.get("end_at") is None or evt.get("end_at") is None:
+                cur["end_at"] = None
+            else:
+                cur["end_at"] = max(cur["end_at"], evt["end_at"])
+            # Priority severity wins if either merged feature is full_closure.
+            if evt.get("severity") == "priority":
+                cur["severity"] = "priority"
+                cur_n = cur.get("normalized") or {}
+                evt_n = evt.get("normalized") or {}
+                if evt_n.get("impact") == "full_closure":
+                    cur_n = dict(cur_n)
+                    cur_n["impact"] = "full_closure"
+                    cur["normalized"] = cur_n
+            # expires: keep the later of the two (matches the widened end_at
+            # window intent — never expire a still-open merged zone early).
+            if cur.get("expires") is not None and evt.get("expires") is not None:
+                cur["expires"] = max(cur["expires"], evt["expires"])
+        return [merged[k] for k in order]
 
     @staticmethod
     def _iter_features(fc) -> list:
@@ -316,6 +383,16 @@ class WZDxAdapter:
         ``central_normalizer._parse_wzdx_federal`` (which reads either the
         raw ``core_details.*`` nesting or a flattened envelope). Returns None
         for non-work-zone / malformed / id-less features (never raises).
+
+        ``external_id`` (== ``event_id``) is a COALESCING key —
+        ``wzdx_{road}|{lat:.3f}|{lon:.3f}|{sub_type}`` — derived from the
+        PARSED road/sub_type (``n``, from ``_parse_wzdx_federal``) and the
+        rounded coordinates, NOT the raw ``data_source_id:feature_id`` pair.
+        This lets multiple upstream features describing the same physical
+        zone (e.g. per-direction / per-schedule-day fans) collapse to one
+        ``traffic_events`` row (merged in ``_fetch_all``/``_coalesce_events``).
+        A feature with coords but no road/sub_type still gets a stable key
+        (``wzdx_|<lat>|<lon>|``) — acceptable, still coalesces consistently.
         """
         try:
             if not isinstance(feat, dict):
@@ -332,12 +409,13 @@ class WZDxAdapter:
             if event_type and event_type != "work-zone":
                 return None
 
-            # Stable external id: data_source_id + feature id.
+            # Stable identity check: data_source_id or feature id must exist
+            # (still required so an id-less feature is never stored), even
+            # though the coalescing key itself does not use these values.
             data_source_id = cd.get("data_source_id") or props.get("data_source_id")
             feat_id = feat.get("id") or cd.get("id") or props.get("id")
             if not feat_id and not data_source_id:
                 return None  # no stable identity → cannot dedup
-            external_id = ":".join(str(p) for p in (data_source_id, feat_id) if p)
 
             # Coordinates: prop lat/lon if present, else geometry centroid.
             lat = props.get("latitude")
@@ -354,13 +432,18 @@ class WZDxAdapter:
             geo = {"centroid": centroid} if centroid else {}
             n = _parse_wzdx_federal(inner_data, geo)
 
+            # Coalescing key: road + rounded lat/lon + folded sub_type.
+            road = n.get("road") or ""
+            sub_type = n.get("sub_type") or ""
+            external_id = f"wzdx_{road}|{round(float(lat), 3)}|{round(float(lon), 3)}|{sub_type}"
+
             # start/end epochs for the incident-gating keys.
             start_at = self._iso_to_epoch(props.get("start_date") or cd.get("start_date"))
             end_at = self._iso_to_epoch(props.get("end_date") or cd.get("end_date"))
 
             return {
                 "source": "wzdx",
-                "event_id": f"wzdx_{external_id}",
+                "event_id": external_id,
                 "event_type": "Work Zone",
                 "severity": "priority" if n.get("impact") == "full_closure" else "routine",
                 "lat": float(lat),

@@ -212,7 +212,8 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "description": "Which sub_types to broadcast. Empty list = all.",
     },
     # =================================================================
-    # WZDX -- 3 settings (broadcast gate, severity gate, sub-type filter)
+    # WZDX -- 6 settings (broadcast gate, severity gate, sub-type filter,
+    # per-region daily count summary enable/time/tz)
     # =================================================================
     ("wzdx", "broadcast"): {
         "default": False,
@@ -228,6 +229,21 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "default": ["road_works", "lane_closed", "road_closed"],
         "type": "json",
         "description": "Work zone sub-types to broadcast. Empty = all.",
+    },
+    ("wzdx", "summary_enabled"): {
+        "default": True,
+        "type": "bool",
+        "description": "Enable the once-a-day per-region active work-zone count summary broadcast.",
+    },
+    ("wzdx", "summary_time"): {
+        "default": "07:00",
+        "type": "str",
+        "description": "Local HH:MM time the daily work-zone count summary fires.",
+    },
+    ("wzdx", "summary_tz"): {
+        "default": "America/Boise",
+        "type": "str",
+        "description": "Timezone the daily work-zone count summary's summary_time is interpreted in.",
     },
 
     # =================================================================

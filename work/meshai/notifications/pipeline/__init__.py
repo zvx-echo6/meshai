@@ -34,6 +34,12 @@ try:
 except ImportError:
     BandConditionsScheduler = None
 try:
+    from meshai.notifications.scheduled.wzdx_summary import (
+        WZDxSummaryScheduler,
+    )
+except ImportError:
+    WZDxSummaryScheduler = None
+try:
     from meshai.notifications.reminders import ReminderScheduler
 except ImportError:
     ReminderScheduler = None
@@ -247,6 +253,25 @@ async def start_pipeline(bus: EventBus, config) -> DigestScheduler:
             import logging as _lg
             _lg.getLogger("meshai.pipeline").exception(
                 "band_conditions scheduler failed to start")
+
+    # Part 3: wzdx per-region daily work-zone count summary scheduler --
+    # spawn alongside band_conditions. Best-effort: failures must NOT break
+    # notifications pipeline startup. Respects adapter_config.wzdx.
+    # summary_enabled at fire time (the scheduler itself checks it every
+    # loop iteration); the try/except here only guards start()/construction.
+    if WZDxSummaryScheduler is not None:
+        try:
+            comps = getattr(bus, "_pipeline_components", {}) or {}
+            disp = comps.get("dispatcher")
+            if disp is not None:
+                wz_sched = WZDxSummaryScheduler(config, disp)
+                await wz_sched.start()
+                comps["wzdx_summary_scheduler"] = wz_sched
+                bus._pipeline_components = comps
+        except Exception:
+            import logging as _lg
+            _lg.getLogger("meshai.pipeline").exception(
+                "wzdx_summary scheduler failed to start")
 
     # v0.6-phase3 ReminderScheduler -- runs alongside band_conditions.
     if ReminderScheduler is not None:

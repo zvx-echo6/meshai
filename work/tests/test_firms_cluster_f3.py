@@ -202,6 +202,117 @@ def test_empty_first_fetch_does_not_consume_seed():
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# 2b. Restart-safe cold start: the silent-seed gate keys on the PERSISTED
+#     firms_pixels baseline, NOT just the in-memory _firms_seeded flag (which
+#     resets to False on every process start). A FIRST-EVER run (empty baseline)
+#     still seeds silently; a RESTART with an existing baseline must NOT re-seed
+#     the whole batch — a genuinely-new cluster still broadcasts, and pre-existing
+#     already-stamped pixels never re-burst.
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _raw_evt(lat, lon, acq_time, i, acq_date="2026-06-06"):
+    return {
+        "source": "firms", "event_id": f"e{i}", "lat": lat, "lon": lon,
+        "properties": {"frp": 20.0, "confidence": "high",
+                       "brightness": 320.0, "acq_date": acq_date,
+                       "acq_time": acq_time},
+    }
+
+
+def test_firms_pixels_empty_helper_reflects_baseline():
+    """The gate's emptiness probe: True on a fresh DB, False once any pixel is
+    persisted, and True (fail-safe) if the table is missing entirely."""
+    from meshai.config import FIRMSConfig
+    from meshai.env.firms import FIRMSAdapter
+    from meshai.persistence import get_db
+
+    adapter = FIRMSAdapter(FIRMSConfig(map_key="x"))
+    # Fresh isolated DB: table exists (init_db) but holds zero rows -> empty.
+    assert adapter._firms_pixels_empty() is True
+
+    # Persist one pixel via the real ingest path -> baseline no longer empty.
+    _feed(_pixel(lat=43.0, lon=-115.0, acq_time="1200"), now=1780728000,
+          seed=True)
+    assert _pixel_count() == 1
+    assert adapter._firms_pixels_empty() is False
+
+    # Missing table -> fail-safe treats as empty (never crashes the fetch).
+    get_db().execute("DROP TABLE firms_pixels")
+    assert adapter._firms_pixels_empty() is True
+
+
+def test_first_ever_run_empty_baseline_seeds_silently():
+    """FIRST-EVER run: empty firms_pixels + _firms_seeded False -> a ≥3-pixel
+    new cluster SEEDS silently (zero broadcasts) and the baseline is written."""
+    from meshai.config import FIRMSConfig
+    from meshai.env.firms import FIRMSAdapter
+
+    adapter = FIRMSAdapter(FIRMSConfig(map_key="x"))
+    assert adapter._firms_seeded is False
+    assert _pixel_count() == 0, "precondition: empty persisted baseline"
+
+    base_lat, base_lon = 43.700, -114.700
+    batch = [_raw_evt(base_lat + 0.001 * i, base_lon, f"12{i:02d}", i)
+             for i in range(4)]  # a tight ≥3-pixel cluster
+    out = adapter._run_fusion(batch)
+
+    assert out == [], "first-ever run must silent-seed (zero broadcasts)"
+    assert _pixel_count() == 4, "seeded pixels persisted to the baseline"
+    assert adapter._firms_seeded is True, "first non-empty fetch flips the flag"
+
+
+def test_restart_with_baseline_new_cluster_broadcasts_no_burst():
+    """RESTART with an existing baseline: _firms_seeded resets to False, but the
+    persisted firms_pixels is NON-empty, so cold_start collapses to False. A
+    genuinely-new ≥3-pixel cluster on the post-restart fetch DOES broadcast (not
+    absorbed), and pre-existing already-stamped pixels do NOT re-burst."""
+    from meshai.config import FIRMSConfig
+    from meshai.env.firms import FIRMSAdapter
+
+    # --- Process 1: cold-start seed a cluster (silent), building the baseline. ---
+    a1 = FIRMSAdapter(FIRMSConfig(map_key="x"))
+    old_lat, old_lon = 43.500, -114.500
+    seed_batch = [_raw_evt(old_lat + 0.001 * i, old_lon, f"12{i:02d}", i)
+                  for i in range(4)]
+    assert a1._run_fusion(seed_batch) == [], "seed fetch is silent"
+    assert a1._firms_seeded is True
+    seeded_pixels = _pixel_count()
+    assert seeded_pixels == 4
+    stamped_before = _stamped_count()
+    assert stamped_before >= 3, "seeded cluster members are stamped"
+
+    # --- Process 2 (RESTART): the SAME persisted DB, a FRESH adapter whose
+    # in-memory flag reset to False. Baseline is non-empty -> NOT a cold start. ---
+    a2 = FIRMSAdapter(FIRMSConfig(map_key="x"))
+    assert a2._firms_seeded is False, "restart resets the in-memory flag"
+    assert a2._firms_pixels_empty() is False, "but the baseline persists"
+
+    # Post-restart fetch: re-see the SAME pre-existing cluster (no re-burst) PLUS
+    # a genuinely-NEW ≥3-pixel cluster elsewhere (must broadcast).
+    new_lat, new_lon = 44.300, -115.300
+    post_batch = (
+        [_raw_evt(old_lat + 0.001 * i, old_lon, f"12{i:02d}", i)
+         for i in range(4)]  # pre-existing -> INSERT-OR-IGNORE no-ops / stamped
+        + [_raw_evt(new_lat + 0.001 * i, new_lon, f"14{i:02d}", 100 + i)
+           for i in range(3)]  # genuinely NEW cluster
+    )
+    out = a2._run_fusion(post_batch)
+
+    cats = [e["properties"].get("category") for e in out]
+    assert "unattributed_hotspot_cluster" in cats, (
+        f"a genuinely-new cluster after restart must broadcast, not be "
+        f"absorbed: {cats}")
+    # Exactly one cluster wire: only the NEW cluster fired; the pre-existing
+    # already-stamped cluster did not re-burst.
+    assert cats.count("unattributed_hotspot_cluster") == 1, (
+        f"pre-existing stamped pixels must not re-burst: {cats}")
+    # The new cluster is centered on the NEW location, not the old one.
+    wire = out[[e["properties"].get("category")
+                for e in out].index("unattributed_hotspot_cluster")]["headline"]
+    assert wire.startswith("🔥 Possible new fire:")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # 3. Attribution beats clustering (MORA hotspots grow the fire, never cluster)
 # ═════════════════════════════════════════════════════════════════════════════
 

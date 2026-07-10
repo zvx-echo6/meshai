@@ -372,6 +372,77 @@ class EnvReporter:
             lines.append(f"  - {road} {direction} ({county}): {sub}{impact}{delay}, seen {when}")
         return "\n".join(lines)[:_block_cap()]
 
+    def build_work_zones_detail(self, *, region: Optional[str] = None,
+                                  limit: int = 10,
+                                  now: Optional[int] = None) -> str:
+        """Active WZDx work zones (road, location, impact, end date).
+
+        build_traffic_detail() deliberately excludes these -- it only sources
+        tomtom_incidents/itd_511/state_511_atis AND filters ``state = 'ID'``,
+        but native wzdx rows carry ``source='wzdx'`` and ``state=NULL`` (see
+        env/wzdx.py::to_event canonical_data), so they never surfaced on the
+        DM path. This is the dedicated wzdx reader, region-scoped when a
+        region name is passed (matches a configured coverage area's .name via
+        event_region_names -- same derivation the wzdx_summary scheduler and
+        Dispatcher.dispatch_scheduled_roads_broadcast use).
+        """
+        if not self._adapter_included("wzdx"):
+            return ""
+        now = now if now is not None else int(time.time())
+        try: conn = self._conn_factory()
+        except Exception: return ""
+
+        try:
+            rows = conn.execute(
+                "SELECT road, direction, sub_type, impact, lat, lon, end_at "
+                "FROM traffic_events "
+                "WHERE source='wzdx' AND (end_at IS NULL OR end_at >= ?) "
+                "ORDER BY end_at ASC LIMIT ?",
+                (now, limit),
+            ).fetchall()
+        except Exception:
+            return ""
+        if not rows:
+            return ""
+
+        if region:
+            # Region scoping needs the live coverage areas + a synthetic event
+            # per row; guarded so a lookup failure degrades to unscoped output
+            # rather than dropping the whole block.
+            try:
+                from meshai.coverage_area import areas_from_config, event_region_names
+                from meshai.notifications.events import make_event
+                from meshai.config import load_config as _load_config
+                cfg = _load_config()
+                areas = areas_from_config(getattr(cfg, "coverage", None))
+                scoped = []
+                for r in rows:
+                    lat, lon = r["lat"], r["lon"]
+                    if lat is None or lon is None:
+                        continue
+                    ev = make_event(source="wzdx", category="work_zone",
+                                      lat=float(lat), lon=float(lon))
+                    if region in (event_region_names(ev, areas) or []):
+                        scoped.append(r)
+                rows = scoped
+            except Exception:
+                logger.exception(
+                    "env_reporter: work_zones region scoping failed for %r; "
+                    "returning unscoped block", region)
+            if not rows:
+                return ""
+
+        header = (f"ACTIVE WORK ZONES ({region}):" if region
+                  else "ACTIVE WORK ZONES (WZDx):")
+        lines = [header]
+        for r in rows:
+            road = r["road"] or "road?"
+            direction = f" {r['direction']}" if r["direction"] else ""
+            impact = r["impact"] or (r["sub_type"] or "work zone")
+            ends = _fmt_epoch(r["end_at"]) if r["end_at"] else "no end date"
+            lines.append(f"  - {road}{direction}: {impact}, ends {ends}")
+        return "\n".join(lines)[:_block_cap()]
+
     def build_gauges_detail(self, *, limit: int = 10,
                               now: Optional[int] = None) -> str:
         if not self._adapter_included("usgs_nwis"):
@@ -591,6 +662,7 @@ class EnvReporter:
             self.build_alerts_detail(now=now),
             self.build_quakes_detail(now=now),
             self.build_traffic_detail(now=now),
+            self.build_work_zones_detail(now=now),
             self.build_gauges_detail(now=now),
             self.build_swpc_detail(now=now),
             self.build_satpass_detail(now=now),

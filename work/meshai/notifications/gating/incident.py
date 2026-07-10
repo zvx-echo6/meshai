@@ -8,12 +8,22 @@ Mirrors incident_handler change-detection EXACTLY:
   * magnitude stepped up OR delay doubled OR icon changed → Update
   * otherwise → suppress
 
+Work-zone STORE-not-BROADCAST rule (Part 2, wzdx daily-summary feature):
+  A work zone (source=="wzdx" OR data["sub_type"]=="road_works") is ALWAYS
+  persisted into traffic_events exactly like any other incident/roads row —
+  the per-region daily count summary (notifications/scheduled/wzdx_summary.py)
+  reads that table — but is NEVER broadcast per-event. 511 crash/closure/
+  hazard rows (different sub_types) are completely unaffected and keep
+  broadcasting exactly as before. last_broadcast_at is left NULL (never
+  armed) for a work zone; there is no commit for it, so it can never look
+  "already broadcast" for cold-start purposes on a different code path.
+
 decide(data, *, source, now) -> GateResult:
 
     Canonical data schema consumed (same keys as the central bridge
     produces; subset used by gating):
         external_id   str | None   — None for native adapters (always broadcast)
-        source        str          — "tomtom_incidents" | "state_511_atis" | "itd_511" | …
+        source        str          — "tomtom_incidents" | "state_511_atis" | "itd_511" | "wzdx" | …
         sub_type      str | None
         road          str | None
         direction     str | None
@@ -41,8 +51,10 @@ decide(data, *, source, now) -> GateResult:
         Safe to call N times (all writes are conditional UPSERTs).
 
 Native adapters (external_id is None or empty):
-    No traffic_events lookup; always broadcast with lifecycle="native".
-    The event bus inhibitor + group_key handle dedup for native events.
+    No traffic_events lookup; always broadcast with lifecycle="native"
+    (unless it's a work zone — see the work-zone rule above, which is
+    checked here too for safety even though wzdx always carries an
+    external_id in practice).
 """
 from __future__ import annotations
 
@@ -74,8 +86,20 @@ def decide(data: dict, *, source: str, now: float) -> GateResult:
     external_id = data.get("external_id") or None
     source_val = data.get("source") or source
 
+    # Work-zone discriminator (Part 2): native wzdx rows OR any itd_511 row
+    # whose sub_type is the work-zone one. Computed once, used at every
+    # broadcast-return point below (row is always written; only the
+    # broadcast is suppressed for a work zone).
+    _is_work_zone = (source_val == "wzdx") or (str(data.get("sub_type") or "") == "road_works")
+
     # ── Native adapters: no external_id, no traffic_events dedup ─────────
     if not external_id:
+        if _is_work_zone:
+            return GateResult(
+                broadcast=False,
+                lifecycle="suppress",
+                reason="work_zone stored, summary-only (native, no external_id)",
+            )
         return GateResult(
             broadcast=True,
             lifecycle="native",
@@ -138,6 +162,14 @@ def decide(data: dict, *, source: str, now: float) -> GateResult:
             logger.exception("incident decide: INSERT failed for %s|%s",
                              source_val, external_id)
 
+        # Work zone: row is persisted (above); never broadcast per-event.
+        if _is_work_zone:
+            return GateResult(
+                broadcast=False,
+                lifecycle="suppress",
+                reason=f"work_zone stored, summary-only (new row {source_val}|{external_id})",
+            )
+
         patch = {"is_update": False, "_dedup_suffix": ""}
 
         def _commit_new(committed_at: float) -> None:
@@ -172,6 +204,14 @@ def decide(data: dict, *, source: str, now: float) -> GateResult:
         )
     except Exception:
         logger.exception("incident decide: UPDATE last_seen_at failed")
+
+    # Work zone: row refreshed (above); never broadcast per-event.
+    if _is_work_zone:
+        return GateResult(
+            broadcast=False,
+            lifecycle="suppress",
+            reason=f"work_zone stored, summary-only (existing row {source_val}|{external_id})",
+        )
 
     last_bcast_at = row["last_broadcast_at"]
 

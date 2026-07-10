@@ -146,7 +146,12 @@ def test_tick_survives_socrata_url_object(adapter, monkeypatch):
     monkeypatch.setattr(adapter, "_http_get_json", fake_get)
     # Must not raise; the unwrapped feed URL is discovered and fetched.
     assert adapter.tick() is True
-    assert {e["external_id"] for e in adapter.get_events()} == {"idot-1:A"}
+    # Coalescing key (Part 1): wzdx_{road}|{lat:.3f}|{lon:.3f}|{sub_type} --
+    # no longer the raw data_source_id:feat_id pair, so feat_id="A" doesn't
+    # appear in the key.
+    assert {e["external_id"] for e in adapter.get_events()} == {
+        "wzdx_US-95|43.63|-116.915|lanes reduced, surface work"
+    }
 
 
 # ============================================================
@@ -173,10 +178,13 @@ def test_canonical_data_core_fields(adapter):
 
 
 def test_canonical_external_id_is_stable(adapter):
-    """external_id combines data_source_id + feature id for gating dedup."""
+    """external_id is the Part-1 coalescing key: wzdx_{road}|{lat:.3f}|
+    {lon:.3f}|{sub_type} -- NOT the raw data_source_id:feature_id pair, so
+    multiple upstream features for the same physical zone collapse to one
+    traffic_events row / gating dedup key."""
     evt = adapter._parse_feature(make_wzdx_feature(), time.time())
     d = adapter.to_event(evt).data
-    assert d["external_id"] == "idot-1:WZ-0001"
+    assert d["external_id"] == "wzdx_US-95|43.63|-116.915|lanes reduced, surface work"
     assert d["source"] == "wzdx"
 
 
@@ -259,8 +267,13 @@ def test_tick_fetches_and_populates_events(adapter, monkeypatch):
     changed = adapter.tick()
     assert changed is True
     events = adapter.get_events()
+    # Two DIFFERENT roads (US-95, I-15) -> 2 distinct coalescing keys (not
+    # over-collapsed); same lat/lon centroid + sub_type on both, road differs.
     assert len(events) == 2
-    assert {e["external_id"] for e in events} == {"idot-1:A", "idot-1:B"}
+    assert {e["external_id"] for e in events} == {
+        "wzdx_US-95|43.63|-116.915|lanes reduced, surface work",
+        "wzdx_I-15|43.63|-116.915|lanes reduced, surface work",
+    }
     assert adapter.health_status["feed_count"] == 1
 
 
