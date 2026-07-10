@@ -114,6 +114,15 @@ export default function MeshCoreRouting() {
   // Local map: family key -> explicitly toggled on/off for region expand.
   const [regionExpandedMap, setRegionExpandedMap] = useState<Record<string, boolean | undefined>>({})
 
+  // Explicit per-cell destination mode ('channel' | 'room'), keyed by
+  // `<family>|<region>`. The Hash/Home toggle sets this DIRECTLY, independent of
+  // the current cell value — otherwise the room <select> (the only writer of a
+  // `room:` value) can never appear, since a freshly-cleared cell isn't a room
+  // value. When a cell has no explicit entry, we derive its mode from the value
+  // (a `room:`-prefixed value → 'room', else 'channel').
+  const [cellModeMap, setCellModeMap] = useState<Record<string, 'channel' | 'room'>>({})
+  const cellKey = (family: string, region: string) => `${family}|${region}`
+
   const fetchConfig = useCallback(async () => {
     try {
       const [configRes, regionsRes] = await Promise.all([
@@ -464,8 +473,13 @@ export default function MeshCoreRouting() {
                             mt: null, mc: null, min_severity: 'routine', enabled: true,
                           }
                           const mcVal = cell.mc ?? ''
-                          const targetsRoom = isRoomValue(mcVal)
-                          const room = targetsRoom ? roomByPubkey(roomPubkeyOf(mcVal)) : undefined
+                          const ck = cellKey(key, region)
+                          // Mode comes from explicit toggle state; when unset, derive
+                          // it from the current value so existing `room:` cells load
+                          // in room mode and everything else in channel mode.
+                          const mode = cellModeMap[ck] ?? (isRoomValue(mcVal) ? 'room' : 'channel')
+                          const targetsRoom = mode === 'room'
+                          const room = isRoomValue(mcVal) ? roomByPubkey(roomPubkeyOf(mcVal)) : undefined
                           return (
                             <div key={region} className="flex items-center gap-2">
                               <span className="text-xs text-slate-400 flex-1 min-w-0 truncate">{region}</span>
@@ -475,8 +489,10 @@ export default function MeshCoreRouting() {
                                   type="button"
                                   title="Target a channel"
                                   onClick={() => {
-                                    // Switching to channel: clear a room value, keep a channel value.
-                                    if (targetsRoom) setMcForRegion(key, region, null)
+                                    // Enter channel mode explicitly. Clear any room
+                                    // value so the channel input starts empty.
+                                    setCellModeMap(m => ({ ...m, [ck]: 'channel' }))
+                                    if (isRoomValue(mcVal)) setMcForRegion(key, region, null)
                                   }}
                                   className={`px-1.5 py-1 flex items-center ${
                                     !targetsRoom ? 'bg-accent text-white' : 'text-slate-500 hover:text-slate-300'
@@ -487,11 +503,13 @@ export default function MeshCoreRouting() {
                                 <button
                                   type="button"
                                   title={roomsActive ? 'Target a room server' : 'MeshCore not connected'}
-                                  disabled={!roomsActive && !targetsRoom}
+                                  disabled={!roomsActive && !isRoomValue(mcVal)}
                                   onClick={() => {
-                                    // Switching to room: clear a channel value so the room <select>
-                                    // starts from its placeholder.
-                                    if (!targetsRoom) setMcForRegion(key, region, null)
+                                    // Enter room mode explicitly so the room <select>
+                                    // renders even before a room is picked. Clear any
+                                    // bare-channel value so it starts from placeholder.
+                                    setCellModeMap(m => ({ ...m, [ck]: 'room' }))
+                                    if (!isRoomValue(mcVal)) setMcForRegion(key, region, null)
                                   }}
                                   className={`px-1.5 py-1 flex items-center ${
                                     targetsRoom ? 'bg-accent text-white' : 'text-slate-500 hover:text-slate-300'
@@ -513,7 +531,7 @@ export default function MeshCoreRouting() {
                                     >
                                       <option value="">room…</option>
                                       {/* Keep an unknown/offline room's pubkey selectable so its value isn't silently dropped. */}
-                                      {!room && targetsRoom && (
+                                      {!room && isRoomValue(mcVal) && (
                                         <option value={roomPubkeyOf(mcVal)}>{roomPubkeyOf(mcVal).slice(0, 10)}…</option>
                                       )}
                                       {rooms.map((r) => (
