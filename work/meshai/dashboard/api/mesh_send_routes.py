@@ -6,6 +6,7 @@ from typing import Optional, Union
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
+from meshai import secrets_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["mesh-send"])
@@ -72,6 +73,11 @@ async def meshcore_rooms(request: Request):
             rooms = list(mc.get_rooms())
         except Exception:
             rooms = []
+        for r in rooms:
+            try:
+                r["password_set"] = secrets_store.room_password_is_set(r.get("pubkey") or "")
+            except Exception:
+                r["password_set"] = False
         return {"active": True, "rooms": rooms}
     return {"active": False, "rooms": []}
 
