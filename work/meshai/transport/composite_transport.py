@@ -97,6 +97,12 @@ class CompositeTransport(MeshTransport):
         child = self.meshcore_child()
         return child.get_contacts() if child is not None else []
 
+    def get_rooms(self) -> List[dict]:
+        """Passthrough to the MeshCore child's room-server list; [] if no meshcore child."""
+        child = self.meshcore_child()
+        get_rooms = getattr(child, "get_rooms", None) if child is not None else None
+        return get_rooms() if get_rooms is not None else []
+
     def self_info(self) -> dict:
         """Passthrough to the MeshCore child's self/connection status; {connected: False} if no meshcore child."""
         child = self.meshcore_child()
@@ -254,13 +260,33 @@ class CompositeTransport(MeshTransport):
         channel: int = 0,
         transport: Optional[str] = None,
         meshcore_channel: Optional[str] = None,
+        meshcore_room: Optional[str] = None,
+        meshcore_room_password: Optional[str] = None,
     ) -> bool:
         """Async send through per-child queues, with the same routing logic as send_message().
 
         Each child's send_message_async() goes through that child's serialized queue,
         so Meshtastic and MeshCore sends are each independently paced.  For broadcasts
         the two are awaited sequentially (Meshtastic first, then MeshCore).
+
+        ``meshcore_room`` (a room-server pubkey) routes ONLY to the MeshCore
+        child's room send (login-if-password + addressed send). It never
+        touches Meshtastic and is mutually exclusive with a channel broadcast.
         """
+        if meshcore_room:
+            child = self.meshcore_child()
+            if child is None or not child.connected:
+                return False
+            try:
+                return await child.send_message_async(
+                    text,
+                    destination=None,
+                    meshcore_room=meshcore_room,
+                    meshcore_room_password=meshcore_room_password,
+                )
+            except Exception as exc:
+                logger.error("CompositeTransport: async room send raised: %s", exc)
+                return False
         if destination is None:
             return await self._broadcast_async(text, channel, meshcore_channel=meshcore_channel,
                                                transport=transport)

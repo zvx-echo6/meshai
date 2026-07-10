@@ -57,6 +57,25 @@ async def meshcore_channels_detail(request: Request):
     return {"active": False, "channels": []}
 
 
+@router.get("/meshcore/rooms")
+async def meshcore_rooms(request: Request):
+    """List MeshCore room servers if a meshcore transport is connected.
+
+    Returns {"active": bool, "rooms": [{"name", "pubkey", "prefix",
+    "path_established"}]}. Parallels /meshcore/channels — the frontend uses
+    this to offer room targets for the ``room:<pubkey>`` routing cell.
+    """
+    connector = getattr(request.app.state, "connector", None)
+    mc = _find_child(connector, "meshcore")
+    if mc is not None and getattr(mc, "connected", False):
+        try:
+            rooms = list(mc.get_rooms())
+        except Exception:
+            rooms = []
+        return {"active": True, "rooms": rooms}
+    return {"active": False, "rooms": []}
+
+
 @router.get("/meshcore/contacts")
 async def meshcore_contacts(request: Request):
     """Roster of known MeshCore contacts if a meshcore transport is connected."""

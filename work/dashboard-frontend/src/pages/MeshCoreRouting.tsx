@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useDirty } from '@/context/DirtyContext'
-import { Save, RotateCcw, RefreshCw, Check, MessageSquare, ExternalLink } from 'lucide-react'
+import { Save, RotateCcw, RefreshCw, Check, MessageSquare, ExternalLink, Home, Hash } from 'lucide-react'
 import {
   SeverityChannelMatrix,
   ListInput,
@@ -14,6 +14,7 @@ import {
   type RegionCell,
   type RegionRoutes,
 } from './Notifications'
+import { getMeshcoreRooms, type MeshcoreRoom } from '@/lib/api'
 
 // Merge only the MeshCore-owned fields of `mine` into `fresh`, preserving every
 // other (Meshtastic / Other-channels / general) field on the family. The
@@ -89,6 +90,12 @@ function mergeRegionRoutesForMc(
   return { mt_enabled, mc_enabled, cells: newCells }
 }
 
+// TODO: room password UI needs a backend secrets endpoint. secrets_store.py
+// has set/get/clear_room_password() keyed by room pubkey, but NO HTTP route
+// exposes them (the generic /api/secrets endpoint is gated to a fixed
+// SECRET_LABELS allowlist, so it cannot set a dynamic per-room password).
+// Open rooms route fine without a password; password-protected rooms need
+// that endpoint before a set/clear affordance can be added here.
 export default function MeshCoreRouting() {
   const { setDirty } = useDirty()
   const [config, setConfig] = useState<NotificationsConfig | null>(null)
@@ -99,6 +106,10 @@ export default function MeshCoreRouting() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [hasChanges, setHasChanges] = useState(false)
+  // MeshCore room servers, for the channel-vs-room cell picker. Rooms are
+  // targeted by writing the cell value as `room:<pubkey>`; channels stay bare.
+  const [rooms, setRooms] = useState<MeshcoreRoom[]>([])
+  const [roomsActive, setRoomsActive] = useState(false)
 
   // Local map: family key -> explicitly toggled on/off for region expand.
   const [regionExpandedMap, setRegionExpandedMap] = useState<Record<string, boolean | undefined>>({})
@@ -129,6 +140,22 @@ export default function MeshCoreRouting() {
     fetchConfig()
   }, [fetchConfig])
 
+  // Load MeshCore room servers once; degrade quietly if MeshCore is offline.
+  const fetchRooms = useCallback(async () => {
+    try {
+      const res = await getMeshcoreRooms()
+      setRooms(res.active ? res.rooms : [])
+      setRoomsActive(res.active)
+    } catch {
+      setRooms([])
+      setRoomsActive(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchRooms()
+  }, [fetchRooms])
+
   useEffect(() => {
     if (config && originalConfig) {
       setHasChanges(JSON.stringify(config) !== JSON.stringify(originalConfig))
@@ -151,6 +178,14 @@ export default function MeshCoreRouting() {
       },
     })
   }
+
+  // A cell value is either a bare channel NAME or `room:<pubkey>`.
+  const ROOM_PREFIX = 'room:'
+  const isRoomValue = (v: string | null | undefined): boolean =>
+    typeof v === 'string' && v.startsWith(ROOM_PREFIX)
+  const roomPubkeyOf = (v: string): string => v.slice(ROOM_PREFIX.length)
+  const roomByPubkey = (pubkey: string): MeshcoreRoom | undefined =>
+    rooms.find((r) => r.pubkey === pubkey)
 
   const setMcForRegion = (family: string, region: string, mc: string | null) => {
     if (!config) return
@@ -428,19 +463,89 @@ export default function MeshCoreRouting() {
                           const cell: RegionCell = familyCells[region] ?? {
                             mt: null, mc: null, min_severity: 'routine', enabled: true,
                           }
+                          const mcVal = cell.mc ?? ''
+                          const targetsRoom = isRoomValue(mcVal)
+                          const room = targetsRoom ? roomByPubkey(roomPubkeyOf(mcVal)) : undefined
                           return (
                             <div key={region} className="flex items-center gap-2">
                               <span className="text-xs text-slate-400 flex-1 min-w-0 truncate">{region}</span>
-                              <input
-                                type="text"
-                                value={cell.mc ?? ''}
-                                onChange={(e) => {
-                                  const v = e.target.value
-                                  setMcForRegion(key, region, v === '' ? null : v)
-                                }}
-                                placeholder="channel"
-                                className="w-28 px-2 py-1 bg-[#0a0e17] border border-[#1e2a3a] rounded text-xs text-slate-200 font-mono focus:outline-none focus:border-accent"
-                              />
+                              {/* Destination type: channel (bare name) vs room (room:<pubkey>) */}
+                              <div className="flex border border-[#1e2a3a] rounded overflow-hidden">
+                                <button
+                                  type="button"
+                                  title="Target a channel"
+                                  onClick={() => {
+                                    // Switching to channel: clear a room value, keep a channel value.
+                                    if (targetsRoom) setMcForRegion(key, region, null)
+                                  }}
+                                  className={`px-1.5 py-1 flex items-center ${
+                                    !targetsRoom ? 'bg-accent text-white' : 'text-slate-500 hover:text-slate-300'
+                                  }`}
+                                >
+                                  <Hash size={12} />
+                                </button>
+                                <button
+                                  type="button"
+                                  title={roomsActive ? 'Target a room server' : 'MeshCore not connected'}
+                                  disabled={!roomsActive && !targetsRoom}
+                                  onClick={() => {
+                                    // Switching to room: clear a channel value so the room <select>
+                                    // starts from its placeholder.
+                                    if (!targetsRoom) setMcForRegion(key, region, null)
+                                  }}
+                                  className={`px-1.5 py-1 flex items-center ${
+                                    targetsRoom ? 'bg-accent text-white' : 'text-slate-500 hover:text-slate-300'
+                                  } disabled:opacity-40 disabled:cursor-not-allowed`}
+                                >
+                                  <Home size={12} />
+                                </button>
+                              </div>
+                              {targetsRoom ? (
+                                roomsActive || room ? (
+                                  <div className="flex items-center gap-1 w-40">
+                                    <select
+                                      value={room ? room.pubkey : ''}
+                                      onChange={(e) => {
+                                        const pk = e.target.value
+                                        setMcForRegion(key, region, pk === '' ? null : ROOM_PREFIX + pk)
+                                      }}
+                                      className="flex-1 min-w-0 px-1.5 py-1 bg-[#0a0e17] border border-[#1e2a3a] rounded text-xs text-slate-200 focus:outline-none focus:border-accent"
+                                    >
+                                      <option value="">room…</option>
+                                      {/* Keep an unknown/offline room's pubkey selectable so its value isn't silently dropped. */}
+                                      {!room && targetsRoom && (
+                                        <option value={roomPubkeyOf(mcVal)}>{roomPubkeyOf(mcVal).slice(0, 10)}…</option>
+                                      )}
+                                      {rooms.map((r) => (
+                                        <option key={r.pubkey} value={r.pubkey}>
+                                          {r.name || r.pubkey.slice(0, 10) + '…'}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    {room && (
+                                      <span
+                                        title={room.path_established ? 'Path established' : 'No path yet — first send discovers it'}
+                                        className={`text-[10px] ${room.path_established ? 'text-green-500' : 'text-slate-600'}`}
+                                      >
+                                        ●
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="w-40 text-xs text-slate-600 italic truncate">MeshCore not connected</span>
+                                )
+                              ) : (
+                                <input
+                                  type="text"
+                                  value={mcVal}
+                                  onChange={(e) => {
+                                    const v = e.target.value
+                                    setMcForRegion(key, region, v === '' ? null : v)
+                                  }}
+                                  placeholder="channel"
+                                  className="w-40 px-2 py-1 bg-[#0a0e17] border border-[#1e2a3a] rounded text-xs text-slate-200 font-mono focus:outline-none focus:border-accent"
+                                />
+                              )}
                             </div>
                           )
                         })}
