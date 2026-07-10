@@ -614,6 +614,7 @@ export interface MeshcoreRoom {
   pubkey: string
   prefix: string
   path_established: boolean
+  password_set?: boolean
 }
 export interface MeshcoreRooms {
   active: boolean
@@ -622,6 +623,36 @@ export interface MeshcoreRooms {
 
 export async function getMeshcoreRooms(): Promise<MeshcoreRooms> {
   return fetchJson<MeshcoreRooms>('/api/meshcore/rooms')
+}
+
+// Set (or clear, if password is empty) a MeshCore room server's login password.
+// The value is never read back — only a boolean status is returned.
+export async function setRoomPassword(
+  pubkey: string,
+  password: string,
+): Promise<{ ok: boolean; password_set: boolean }> {
+  const response = await fetch(`/api/meshcore/room-password/${encodeURIComponent(pubkey)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value: password }),
+  })
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status} ${response.statusText}`)
+  }
+  return response.json()
+}
+
+// Clear a MeshCore room server's stored login password.
+export async function clearRoomPassword(
+  pubkey: string,
+): Promise<{ ok: boolean; password_set: boolean }> {
+  const response = await fetch(`/api/meshcore/room-password/${encodeURIComponent(pubkey)}`, {
+    method: 'DELETE',
+  })
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status} ${response.statusText}`)
+  }
+  return response.json()
 }
 
 export interface MeshcoreContact {

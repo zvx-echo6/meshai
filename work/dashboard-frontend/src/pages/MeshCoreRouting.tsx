@@ -14,7 +14,7 @@ import {
   type RegionCell,
   type RegionRoutes,
 } from './Notifications'
-import { getMeshcoreRooms, type MeshcoreRoom } from '@/lib/api'
+import { getMeshcoreRooms, setRoomPassword, clearRoomPassword, type MeshcoreRoom } from '@/lib/api'
 
 // Merge only the MeshCore-owned fields of `mine` into `fresh`, preserving every
 // other (Meshtastic / Other-channels / general) field on the family. The
@@ -90,12 +90,6 @@ function mergeRegionRoutesForMc(
   return { mt_enabled, mc_enabled, cells: newCells }
 }
 
-// TODO: room password UI needs a backend secrets endpoint. secrets_store.py
-// has set/get/clear_room_password() keyed by room pubkey, but NO HTTP route
-// exposes them (the generic /api/secrets endpoint is gated to a fixed
-// SECRET_LABELS allowlist, so it cannot set a dynamic per-room password).
-// Open rooms route fine without a password; password-protected rooms need
-// that endpoint before a set/clear affordance can be added here.
 export default function MeshCoreRouting() {
   const { setDirty } = useDirty()
   const [config, setConfig] = useState<NotificationsConfig | null>(null)
@@ -110,6 +104,10 @@ export default function MeshCoreRouting() {
   // targeted by writing the cell value as `room:<pubkey>`; channels stay bare.
   const [rooms, setRooms] = useState<MeshcoreRoom[]>([])
   const [roomsActive, setRoomsActive] = useState(false)
+  // Inline room-password editor: open for at most one room pubkey at a time.
+  const [pwdEditorPk, setPwdEditorPk] = useState<string | null>(null)
+  const [pwdInput, setPwdInput] = useState('')
+  const [pwdError, setPwdError] = useState<string | null>(null)
 
   // Local map: family key -> explicitly toggled on/off for region expand.
   const [regionExpandedMap, setRegionExpandedMap] = useState<Record<string, boolean | undefined>>({})
@@ -519,7 +517,8 @@ export default function MeshCoreRouting() {
                                 </button>
                               </div>
                               {targetsRoom ? (
-                                roomsActive || room ? (
+                                <>
+                                {roomsActive || room ? (
                                   <div className="flex items-center gap-1 w-40">
                                     <select
                                       value={room ? room.pubkey : ''}
@@ -551,7 +550,86 @@ export default function MeshCoreRouting() {
                                   </div>
                                 ) : (
                                   <span className="w-40 text-xs text-slate-600 italic truncate">MeshCore not connected</span>
-                                )
+                                )}
+                                {roomPubkeyOf(mcVal) && (() => {
+                                  const pk = roomPubkeyOf(mcVal)
+                                  const isSet = rooms.find((r) => r.pubkey === pk)?.password_set ?? false
+                                  const editing = pwdEditorPk === pk
+                                  return (
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        title={isSet ? 'Room password: set' : 'Room password: not set'}
+                                        aria-label={isSet ? 'Room password: set' : 'Room password: not set'}
+                                        onClick={() => {
+                                          setPwdError(null)
+                                          if (editing) { setPwdEditorPk(null) }
+                                          else { setPwdEditorPk(pk); setPwdInput('') }
+                                        }}
+                                        className={`px-1 py-1 text-xs ${isSet ? 'text-accent' : 'text-slate-600 hover:text-slate-400'}`}
+                                      >
+                                        {isSet ? '🔒' : '🔓'}
+                                      </button>
+                                      {editing && (
+                                        <div className="flex items-center gap-1">
+                                          <input
+                                            type="password"
+                                            value={pwdInput}
+                                            onChange={(e) => setPwdInput(e.target.value)}
+                                            placeholder="room password"
+                                            className="w-28 px-1.5 py-1 bg-[#0a0e17] border border-[#1e2a3a] rounded text-xs text-slate-200 focus:outline-none focus:border-accent"
+                                          />
+                                          <button
+                                            type="button"
+                                            title="Save room password"
+                                            onClick={async () => {
+                                              try {
+                                                setPwdError(null)
+                                                await setRoomPassword(pk, pwdInput)
+                                                await fetchRooms()
+                                                setPwdEditorPk(null)
+                                                setPwdInput('')
+                                              } catch {
+                                                setPwdError('save failed')
+                                              }
+                                            }}
+                                            className="px-1.5 py-1 bg-accent hover:bg-accent/80 rounded text-xs text-white"
+                                          >
+                                            Save
+                                          </button>
+                                          <button
+                                            type="button"
+                                            title="Clear room password"
+                                            onClick={async () => {
+                                              try {
+                                                setPwdError(null)
+                                                await clearRoomPassword(pk)
+                                                await fetchRooms()
+                                                setPwdEditorPk(null)
+                                                setPwdInput('')
+                                              } catch {
+                                                setPwdError('clear failed')
+                                              }
+                                            }}
+                                            className="px-1.5 py-1 border border-[#1e2a3a] rounded text-xs text-slate-400 hover:text-slate-200"
+                                          >
+                                            Clear
+                                          </button>
+                                          <button
+                                            type="button"
+                                            title="Cancel"
+                                            onClick={() => { setPwdEditorPk(null); setPwdError(null) }}
+                                            className="px-1.5 py-1 border border-[#1e2a3a] rounded text-xs text-slate-500 hover:text-slate-300"
+                                          >
+                                            Cancel
+                                          </button>
+                                          {pwdError && <span className="text-[10px] text-red-400">{pwdError}</span>}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )
+                                })()}
+                                </>
                               ) : (
                                 <input
                                   type="text"
