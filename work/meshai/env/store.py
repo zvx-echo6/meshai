@@ -362,6 +362,19 @@ class EnvironmentalStore:
             # Universal config-driven sources: custom ingest with COLD-START-
             # SILENT per source name + persist-every-item (see _ingest_generic).
             self._ingest_generic(adapter)
+        elif name == "wzdx":
+            # Native WZDx work zones DELIBERATELY bypass the generic
+            # `_delta_emit` path: that path silent-seeds every zone on the cold-
+            # start first poll and `return`s BEFORE the incident decider's
+            # `INSERT INTO traffic_events` ever runs, so the current active
+            # work-zone set (the ~127 coalesced zones) would never persist —
+            # only later-newly-appearing zones would trickle in, leaving the
+            # daily summary + DM query counting ~0. Instead `_ingest_wzdx`
+            # UPSERTS the CURRENT coalesced set into traffic_events every poll
+            # (persist-only, NEVER emit/decide/broadcast — mirrors the fires /
+            # generic persist-every-item pattern), and reconciles removals, so
+            # the table always equals the current active set the summary reads.
+            self._ingest_wzdx(adapter)
         elif name == "avalanche":
             # Avalanche: re-emit on danger_level rise (Update:) not just new
             # events. The rise is a legitimate CONTENT change, so it passes
@@ -550,6 +563,127 @@ class EnvironmentalStore:
         # ingests) — so this flip only ever happens on a real full-state sweep.
         if events:
             self._fires_seeded = True
+
+    def _ingest_wzdx(self, adapter) -> None:
+        """Native WZDx work-zone ingest — persist-only current-state mirror.
+
+        The daily summary (``wzdx_summary.fire_once``) and the DM detail
+        (``env_reporter.build_work_zones_detail``) both read the CURRENT active
+        work-zone set straight from ``traffic_events``:
+
+            SELECT ... FROM traffic_events
+            WHERE source='wzdx' AND (end_at IS NULL OR end_at >= now)
+
+        Left on the generic ``_delta_emit`` path, wzdx never populates that
+        table on a cold start: ``_delta_emit`` silent-seeds every zone into the
+        received-delta seen-set and ``return``s on the first poll, BEFORE the
+        incident decider's ``INSERT INTO traffic_events`` runs — so the current
+        coalesced set (the ~127 zones) is never persisted; only zones that
+        FIRST appear on a LATER poll would trickle in. Result: the summary/DM
+        count ~0 instead of the real active total.
+
+        This dedicated ingest fixes the gap the way ``_ingest_fires`` /
+        ``_persist_generic`` do — UPSERT EVERY current item on EVERY poll —
+        but scoped to persistence only:
+
+          * UPSERT each CURRENT coalesced work zone into ``traffic_events``
+            (INSERT on a new ``external_id`` with ``first_seen_at`` = now and
+            ``last_broadcast_at`` = NULL; UPDATE ``last_seen_at`` + the current
+            fields, preserving ``first_seen_at``), using the SAME column
+            set/types the incident decider writes so the summary/DM queries
+            work unchanged. ``last_broadcast_at`` is left NULL forever (never
+            armed) so nothing here ever looks "already broadcast".
+          * RECONCILE removals: after upserting this poll's set, DELETE any
+            ``source='wzdx'`` rows whose ``external_id`` is NOT in the current
+            set, so the table == the CURRENT active set (stale zones would
+            otherwise inflate the count). Reconciliation runs ONLY when the
+            poll actually returned ≥1 zone — an empty/failed fetch never wipes
+            the existing rows.
+
+        Persist ONLY: it does NOT emit to the pipeline, run the decider, or
+        broadcast. Per-event work-zone broadcast stays suppressed exactly as
+        before (the incident decider's ``work_zone`` ``broadcast=False`` gate
+        remains as defense-in-depth for any wzdx event that reaches it another
+        way). ``self._events`` is not touched here — the summary/DM read the
+        durable table, not the in-memory cache.
+        """
+        try:
+            from meshai.persistence import get_db
+            conn = get_db()
+        except Exception as e:
+            logger.warning("wzdx ingest skipped (DB unavailable): %s", e)
+            return
+
+        now = int(time.time())
+        events = adapter.get_events()
+        current_ext_ids: list = []
+
+        for evt in events:
+            try:
+                external_id = evt.get("external_id")
+                if not external_id:
+                    continue  # no stable identity → cannot dedup/persist
+                n = evt.get("normalized") or {}
+                road = n.get("road")
+                direction = n.get("direction")
+                mile_start = n.get("mile_start")
+                mile_end = n.get("mile_end")
+                sub_type = n.get("sub_type")
+                impact = n.get("impact")
+                lat = evt.get("lat")
+                lon = evt.get("lon")
+                start_at = evt.get("start_at")
+                end_at = evt.get("end_at")
+
+                current_ext_ids.append(external_id)
+
+                # UPSERT the current coalesced zone. Composite PK
+                # (source, external_id): INSERT on first sight (first_seen_at =
+                # now, last_broadcast_at = NULL → never armed), else UPDATE the
+                # current fields + last_seen_at while PRESERVING first_seen_at.
+                # end_at is refreshed from the feed on every poll so the
+                # summary's not-expired filter (end_at IS NULL OR end_at>=now)
+                # stays correct. Same columns/types the incident decider uses.
+                conn.execute(
+                    "INSERT INTO traffic_events("
+                    "source, external_id, road, direction, "
+                    "mile_start, mile_end, county, state, lat, lon, "
+                    "sub_type, impact, start_at, end_at, "
+                    "first_seen_at, last_seen_at, last_broadcast_at"
+                    ") VALUES ('wzdx',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(source, external_id) DO UPDATE SET "
+                    "road=excluded.road, direction=excluded.direction, "
+                    "mile_start=excluded.mile_start, mile_end=excluded.mile_end, "
+                    "lat=excluded.lat, lon=excluded.lon, "
+                    "sub_type=excluded.sub_type, impact=excluded.impact, "
+                    "start_at=excluded.start_at, end_at=excluded.end_at, "
+                    "last_seen_at=excluded.last_seen_at",
+                    (
+                        external_id, road, direction,
+                        mile_start, mile_end, None, None, lat, lon,
+                        sub_type, impact, start_at, end_at,
+                        now, now, None,
+                    ),
+                )
+            except Exception:
+                logger.exception(
+                    "wzdx ingest failed for %s", evt.get("external_id", "?"))
+
+        # RECONCILE removals — only when this poll actually returned a set.
+        # A zone that dropped out of the feed is deleted so the table equals
+        # the CURRENT active set; an empty/failed fetch (no current ext_ids)
+        # is left untouched so stale-but-only-momentarily-missing rows and a
+        # transient outage never wipe the summary's data.
+        if current_ext_ids:
+            try:
+                placeholders = ",".join("?" for _ in current_ext_ids)
+                conn.execute(
+                    "DELETE FROM traffic_events WHERE source='wzdx' "
+                    f"AND external_id NOT IN ({placeholders})",
+                    current_ext_ids,
+                )
+            except Exception:
+                logger.exception("wzdx ingest reconcile-delete failed")
 
     def _ingest_generic(self, adapter) -> None:
         """Native generic-source ingest — COLD-START-SILENT per source.

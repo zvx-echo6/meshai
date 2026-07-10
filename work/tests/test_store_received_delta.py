@@ -245,6 +245,25 @@ def _insert_quake(event_ids: list[str]) -> None:
         )
 
 
+# NOTE ON ADAPTER NAME vs EVENT SOURCE
+# ------------------------------------
+# These durable-pre-seed / received-delta-gate tests exercise the store's
+# GENERIC emit path (store._delta_emit + _seed_from_persistent), which keys the
+# seen-set and the "seeded" marker on the event's SOURCE ("wzdx"/"511"/
+# "usgs_quake"), NOT on the adapter's registration name. The name only selects
+# the _ingest routing branch. Native ``wzdx`` now has a DEDICATED persist-only
+# ingest (store._ingest_wzdx) that upserts traffic_events and NEVER emits, so a
+# ``_FakeWZDx`` injected under the literal name "wzdx" would take that path and
+# broadcast nothing. To keep testing the GENERIC gate with an external_id-keyed
+# source, these tests inject the ``source='wzdx'`` fake under the neutral
+# routing name ``_GENERIC_NAME`` (the else-branch → _delta_emit), while every
+# assertion still references the durable SOURCE "wzdx". Real wzdx persistence is
+# covered separately in test_store_wzdx_persist.py. The name is arbitrary as
+# long as it is NOT one of the _ingest special branches (swpc/ducting/nifc/
+# generic_http/wzdx/avalanche); anything else routes to the generic else path.
+_GENERIC_NAME = "wzdx_gate"
+
+
 def _build_store(adapter_name: str, adapter):
     """Construct a store (runs the durable pre-seed against the current DB),
     then inject a fake adapter. Insert persistent rows BEFORE calling this."""
@@ -264,7 +283,7 @@ def test_persistent_preseed_known_suppressed_new_emitted():
     _insert_traffic(known)
 
     adapter = _FakeWZDx()
-    store, captured = _build_store("wzdx", adapter)
+    store, captured = _build_store(_GENERIC_NAME, adapter)
 
     # wzdx was pre-seeded from the durable table AND marked seeded (baseline).
     assert "wzdx" in store._seeded
@@ -285,7 +304,7 @@ def test_persistent_preseed_cross_tick_staging_no_leak():
     # seen in-process. Without the durable record it would leak.
     _insert_traffic(["A", "B"])          # both already RECEIVED (durable)
     adapter = _FakeWZDx()
-    store, captured = _build_store("wzdx", adapter)
+    store, captured = _build_store(_GENERIC_NAME, adapter)
 
     adapter.set_batch(["A"])
     store.refresh()                       # tick 1: only A present
@@ -321,7 +340,7 @@ def test_incremental_empty_first_tick_then_only_new_broadcasts():
     # C — genuinely never received — broadcasts.
     _insert_traffic(["A", "B"])
     adapter = _FakeWZDx()
-    store, captured = _build_store("wzdx", adapter)
+    store, captured = _build_store(_GENERIC_NAME, adapter)
 
     adapter.set_batch([])                 # empty first tick
     store.refresh()
@@ -339,14 +358,14 @@ def test_restart_against_same_persistent_db_never_rebroadcasts():
     _insert_traffic(backlog)
 
     a1 = _FakeWZDx()
-    store1, cap1 = _build_store("wzdx", a1)
+    store1, cap1 = _build_store(_GENERIC_NAME, a1)
     a1.set_batch(backlog)
     store1.refresh()
     assert cap1 == [], "process 1: durable backlog is silent"
 
     # RESTART: brand-new store, same persistent DB → pre-seed reloads.
     a2 = _FakeWZDx()
-    store2, cap2 = _build_store("wzdx", a2)
+    store2, cap2 = _build_store(_GENERIC_NAME, a2)
     a2.set_batch(backlog)
     store2.refresh()
     assert cap2 == [], "restart must NEVER re-broadcast the durable backlog"
@@ -379,7 +398,7 @@ def test_no_durable_rows_falls_back_to_silent_first_poll():
     # the first real batch is silently seeded (never leaked) — the fresh-start
     # safety property.
     adapter = _FakeWZDx()
-    store, captured = _build_store("wzdx", adapter)
+    store, captured = _build_store(_GENERIC_NAME, adapter)
     assert "wzdx" not in store._seeded, "0 durable rows → not pre-marked seeded"
 
     adapter.set_batch(["A", "B"])
