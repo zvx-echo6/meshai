@@ -140,3 +140,105 @@ def list_secrets(config_dir: Path = Path("/data/config")) -> list[dict]:
         }
         for var in _managed_vars()
     ]
+
+
+# ---------------------------------------------------------------------------
+# MeshCore room-server passwords (dynamic, per-room secrets)
+# ---------------------------------------------------------------------------
+#
+# Unlike the fixed SECRET_LABELS allowlist above, room passwords are keyed by
+# the room server's public key, so the env var name is DERIVED from the pubkey
+# rather than drawn from a static vocabulary. Each password is stored in the
+# same secrets .env file under a per-room var name:
+#
+#     MESHCORE_ROOM_<PREFIX>_PWD
+#
+# where <PREFIX> is the first ROOM_PUBKEY_PREFIX_LEN hex chars of the room's
+# public key, uppercased. The transport resolves the password by pubkey at
+# send time (login-before-send); the GUI/API sets it via set_room_password().
+#
+# The routing cell NEVER holds the password — only ``room:<pubkey>``.
+
+ROOM_PUBKEY_PREFIX_LEN = 12
+_ROOM_PWD_PREFIX = "MESHCORE_ROOM_"
+_ROOM_PWD_SUFFIX = "_PWD"
+
+
+def room_pwd_env_var(pubkey: str) -> str:
+    """Derive the .env var name for a room server's password from its pubkey.
+
+    ``pubkey`` may be a full 32-byte hex key or a shorter prefix; the first
+    ROOM_PUBKEY_PREFIX_LEN hex chars are used (uppercased) so a cell holding a
+    prefix and a cell holding the full key resolve to the SAME secret.
+
+    Raises ValueError on an empty pubkey.
+    """
+    pk = (pubkey or "").strip()
+    if not pk:
+        raise ValueError("room pubkey must be non-empty")
+    prefix = pk[:ROOM_PUBKEY_PREFIX_LEN].upper()
+    return f"{_ROOM_PWD_PREFIX}{prefix}{_ROOM_PWD_SUFFIX}"
+
+
+def get_room_password(
+    pubkey: str, config_dir: Path = Path("/data/config")
+) -> str | None:
+    """Resolve a room server's password by pubkey, or None if none is set.
+
+    Resolution mirrors config_loader._interpolate_env_vars: os.environ takes
+    precedence over the .env file. Returns the raw value for internal use
+    (transport login-before-send) — do NOT expose this via a status API; the
+    GUI status path must use ``room_password_is_set`` (booleans only).
+    """
+    try:
+        var = room_pwd_env_var(pubkey)
+    except ValueError:
+        return None
+    val = os.environ.get(var)
+    if val:
+        return val
+    path = secret_env_path(config_dir)
+    try:
+        env_file = dotenv_values(path) if path.exists() else {}
+    except Exception:
+        env_file = {}
+    val = env_file.get(var)
+    return val or None
+
+
+def room_password_is_set(
+    pubkey: str, config_dir: Path = Path("/data/config")
+) -> bool:
+    """True if a password is configured for this room (never returns the value)."""
+    return get_room_password(pubkey, config_dir) is not None
+
+
+def set_room_password(
+    pubkey: str, value: str, config_dir: Path = Path("/data/config")
+) -> None:
+    """Store a room server's password (GUI/API write path).
+
+    Keyed by pubkey via room_pwd_env_var(). Raises ValueError on empty pubkey.
+    An empty value deletes the entry (mirrors "clear the password").
+    """
+    var = room_pwd_env_var(pubkey)
+    path = secret_env_path(config_dir)
+    if value:
+        set_key(str(path), var, value)
+    else:
+        try:
+            unset_key(str(path), var)
+        except (KeyError, FileNotFoundError):
+            pass
+
+
+def delete_room_password(
+    pubkey: str, config_dir: Path = Path("/data/config")
+) -> None:
+    """Remove a room server's password from the secrets .env (no-op if absent)."""
+    var = room_pwd_env_var(pubkey)
+    path = secret_env_path(config_dir)
+    try:
+        unset_key(str(path), var)
+    except (KeyError, FileNotFoundError):
+        pass

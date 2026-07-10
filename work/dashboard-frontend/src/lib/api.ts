@@ -606,6 +606,24 @@ export async function getMeshcoreChannelsDetail(): Promise<MeshcoreChannelsDetai
   return fetchJson<MeshcoreChannelsDetail>('/api/meshcore/channels/detail')
 }
 
+// MeshCore room servers (type-3 contacts). A routing cell targets a room with
+// the value ``room:<pubkey>`` (vs a bare channel name for channel targets).
+// ``active:false`` / [] when MeshCore is not connected.
+export interface MeshcoreRoom {
+  name: string | null
+  pubkey: string
+  prefix: string
+  path_established: boolean
+}
+export interface MeshcoreRooms {
+  active: boolean
+  rooms: MeshcoreRoom[]
+}
+
+export async function getMeshcoreRooms(): Promise<MeshcoreRooms> {
+  return fetchJson<MeshcoreRooms>('/api/meshcore/rooms')
+}
+
 export interface MeshcoreContact {
   name: string | null
   pubkey: string

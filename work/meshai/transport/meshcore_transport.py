@@ -135,6 +135,12 @@ class MeshCoreTransport(MeshTransport):
         # --- per-radio send queue (on the MC dedicated loop) ---
         self._mc_send_queue: Optional[asyncio.Queue] = None
         self._mc_drain_task: Optional[asyncio.Task] = None
+        # Room servers we currently hold a LOGIN_SUCCESS session for, keyed by
+        # the room's pubkey (as passed to login_to_room). A password-protected
+        # room must be logged into before an addressed send is accepted; we
+        # login once and remember it, clearing the entry on LOGIN_FAILED so the
+        # next send re-attempts the login. Populated only by login_to_room.
+        self._logged_in_rooms: set[str] = set()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -656,16 +662,27 @@ class MeshCoreTransport(MeshTransport):
         channel: int = 0,
         transport: Optional[str] = None,
         meshcore_channel: Optional[str] = None,
+        meshcore_room: Optional[str] = None,
+        meshcore_room_password: Optional[str] = None,
     ) -> bool:
         """Async send through the MC per-radio queue (called from the main loop).
 
         Enqueues the job on the MC loop's queue and awaits the actual send
         result via a concurrent.futures.Future bridge.
+
+        ``meshcore_room`` (a room-server pubkey) routes to send_to_room_async
+        (login-if-password + addressed send) INSTEAD of a channel broadcast;
+        it shares the same queue so room sends are paced like every other send.
         """
         if self._mc is None or not self._connected:
             return False
         if self._mc_send_queue is None or self._loop is None or not self._loop.is_running():
             # Queue not started yet (e.g. initial advert at connect) — fall back.
+            # Room sends are only issued post-connect (queue up), so the sync
+            # fallback covers only DM/broadcast; a room target degrades to no-op.
+            if meshcore_room:
+                logger.debug("MC: room send before queue start; skipping")
+                return False
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(
                 None,
@@ -674,7 +691,12 @@ class MeshCoreTransport(MeshTransport):
 
         cfut: concurrent.futures.Future = concurrent.futures.Future()
 
-        if destination:
+        if meshcore_room:
+            async def _job() -> bool:
+                return await self.send_to_room_async(
+                    meshcore_room, text, password=meshcore_room_password
+                )
+        elif destination:
             async def _job() -> bool:
                 return await self._do_mc_dm_send_async(text, destination)
         else:
@@ -855,6 +877,120 @@ class MeshCoreTransport(MeshTransport):
                 "out_path_len": c.get("out_path_len"),
             })
         return roster
+
+    # A MeshCore ROOM SERVER is a contact whose ``type`` is ROOM (3) in the
+    # firmware CONTACT_TYPENAMES table [NONE, CLI, REP, ROOM, SENS]. We route
+    # to a room via the DM primitive (send_msg to its pubkey), so a room is
+    # just an addressable contact of this type.
+    ROOM_CONTACT_TYPE = 3
+
+    def get_rooms(self) -> list[dict]:
+        """Room servers on the companion: [{name, pubkey, prefix, path_established}].
+
+        Filters ``get_contacts()`` (the same roster the DM path resolves
+        against) to contacts of type ROOM (3). ``prefix`` is the 12-hex-char
+        pubkey prefix used for routing cells / password keys;
+        ``path_established`` is True when the companion already holds a direct
+        route (out_path_len >= 0), False when the next send must flood/discover.
+        Returns [] if not connected. Mirrors ``known_channels()`` in intent
+        (enumerate routable destinations) but for rooms rather than channels.
+        """
+        rooms: list[dict] = []
+        for c in self.get_contacts():
+            if c.get("type") != self.ROOM_CONTACT_TYPE:
+                continue
+            pubkey = c.get("pubkey") or ""
+            try:
+                out_path_len = int(c.get("out_path_len", -1))
+            except (TypeError, ValueError):
+                out_path_len = -1
+            rooms.append({
+                "name": c.get("name"),
+                "pubkey": pubkey,
+                "prefix": pubkey[:12] if pubkey else "",
+                "path_established": out_path_len >= 0,
+            })
+        return rooms
+
+    async def get_rooms_async(self) -> list[dict]:
+        """Async variant of get_rooms() for callers already on an event loop.
+
+        get_contacts() reads the lib's cached ``contacts`` mirror; the only
+        blocking step is an optional ensure_contacts() refresh, run on the MC
+        loop here rather than via _run_coro so there is no cross-loop hop.
+        Returns [] if not connected.
+        """
+        if self._mc is None or not self._connected:
+            return []
+        try:
+            ensure = getattr(self._mc, "ensure_contacts", None)
+            if ensure is not None:
+                await ensure()
+        except Exception:
+            pass
+        return self.get_rooms()
+
+    async def login_to_room(self, pubkey: str, pwd: str) -> bool:
+        """Log in to a password-protected room server; track the session.
+
+        Wraps ``commands.send_login_sync(dst_pubkey, pwd)`` and awaits the
+        LOGIN_SUCCESS / LOGIN_FAILED outcome. On success the room pubkey is
+        added to ``self._logged_in_rooms`` so subsequent sends skip re-login;
+        on failure (or error) the tracked state is cleared so the next send
+        re-attempts the login. Never raises — returns False on any error.
+
+        Runs on the MC loop (call from within it, e.g. from send_to_room_async).
+        """
+        if self._mc is None:
+            return False
+        contact = await self._resolve_contact_async(pubkey)
+        if contact is None:
+            logger.warning("MC: cannot login to room %s — contact not resolved", pubkey)
+            self._logged_in_rooms.discard(pubkey)
+            return False
+        label = contact.get("adv_name") or pubkey
+        try:
+            event = await asyncio.wait_for(
+                self._mc.commands.send_login_sync(contact, pwd), timeout=15
+            )
+        except Exception as exc:
+            logger.warning("MC: room login to %s raised: %s", label, exc)
+            self._logged_in_rooms.discard(pubkey)
+            return False
+        # send_login_sync resolves to the LOGIN_SUCCESS / LOGIN_FAILED event.
+        is_err = getattr(event, "is_error", None)
+        if event is None or (callable(is_err) and event.is_error()):
+            logger.warning("MC: room login to %s FAILED", label)
+            self._logged_in_rooms.discard(pubkey)
+            return False
+        logger.info("MC: room login to %s succeeded", label)
+        self._logged_in_rooms.add(pubkey)
+        return True
+
+    async def send_to_room_async(
+        self, pubkey: str, text: str, password: Optional[str] = None
+    ) -> bool:
+        """Send *text* to a room server by pubkey (login first if password-protected).
+
+        A room send reuses the addressed-send machinery exactly: it delegates
+        to ``_do_mc_dm_send_async`` (resolve contact -> send_msg -> ACK / path
+        discovery / resend), so path establishment and ACK handling are shared
+        with normal DMs and channel broadcast is untouched.
+
+        If *password* is provided and we do not already hold a session for this
+        room, log in first; on a login failure surface it (return False) so the
+        caller does not silently send to a room that will reject the message.
+        A password-protected room whose session was cleared (prior LOGIN_FAILED)
+        re-attempts the login here. Runs on the MC loop.
+        """
+        if self._mc is None:
+            return False
+        if password:
+            if pubkey not in self._logged_in_rooms:
+                ok = await self.login_to_room(pubkey, password)
+                if not ok:
+                    return False
+        return await self._do_mc_dm_send_async(text, pubkey)
 
     def self_info(self) -> dict:
         """Companion self/connection status. {connected: False} if not connected."""

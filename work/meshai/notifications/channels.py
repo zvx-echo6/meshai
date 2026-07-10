@@ -21,6 +21,27 @@ from meshai.notifications.renderers import MeshRenderer, EmailRenderer, WebhookR
 
 logger = logging.getLogger(__name__)
 
+# A MeshCore routing cell value of ``room:<pubkey>`` means "route this send to
+# the room server with this pubkey" (an addressed send, login-if-password),
+# instead of a channel broadcast. A bare value stays a channel NAME. The parse
+# lives in ONE place: parse_meshcore_room() below, used by MeshCoreBroadcastChannel.
+MESHCORE_ROOM_PREFIX = "room:"
+
+
+def parse_meshcore_room(cell_value: Optional[str]) -> Optional[str]:
+    """Return the room pubkey if *cell_value* is a ``room:<pubkey>`` cell, else None.
+
+    A bare (non-prefixed) value is a channel NAME and yields None so callers
+    fall through to the channel-broadcast path unchanged. An empty pubkey
+    (``"room:"`` with nothing after) also yields None (nothing to route to).
+    """
+    if not cell_value or not isinstance(cell_value, str):
+        return None
+    if not cell_value.startswith(MESHCORE_ROOM_PREFIX):
+        return None
+    pubkey = cell_value[len(MESHCORE_ROOM_PREFIX):].strip()
+    return pubkey or None
+
 
 class NotificationChannel(ABC):
     """Base class for notification delivery channels."""
@@ -198,8 +219,49 @@ class MeshCoreBroadcastChannel(NotificationChannel):
         # Single-transport: check for an explicit transport_name tag.
         return getattr(self._connector, "transport_name", None) == "meshcore"
 
+    @staticmethod
+    def _room_password(pubkey: str) -> Optional[str]:
+        """Look up this room's configured password (or None) via secrets_store.
+
+        Kept as a thin wrapper so the lookup convention lives with the secrets
+        model and the import stays lazy (secrets_store touches the filesystem).
+        Never raises — a missing/unreadable secret degrades to "open room".
+        """
+        try:
+            from meshai.secrets_store import get_room_password
+            return get_room_password(pubkey)
+        except Exception:
+            logger.debug("meshcore_broadcast: room password lookup failed", exc_info=True)
+            return None
+
+    async def _deliver_to_room(self, pubkey: str, alert: "NotificationPayload") -> bool:
+        """Route this alert to a room server (addressed send, login-if-password)."""
+        password = self._room_password(pubkey)
+        # If payload already has chunk metadata (from digest), send as-is;
+        # otherwise render to chunks exactly like the channel-broadcast path.
+        if alert.chunk_index is not None:
+            chunks = [alert.message or ""]
+        else:
+            chunks = self._renderer.render(alert)
+        success = True
+        for chunk in chunks:
+            ok = await self._connector.send_message_async(
+                text=chunk,
+                destination=None,
+                meshcore_room=pubkey,
+                meshcore_room_password=password,
+                transport="meshcore",
+            )
+            if not ok:
+                success = False
+        logger.info(
+            "MeshCore room send %d chunk(s) to room %s (success=%s)",
+            len(chunks), pubkey[:12], success,
+        )
+        return success
+
     async def deliver(self, alert: "NotificationPayload", rule: "NotificationRuleConfig") -> bool:
-        """Send alert to MeshCore channel."""
+        """Send alert to MeshCore channel (or room server if cell is ``room:<pubkey>``)."""
         if not self._connector:
             logger.warning("No mesh connector available for meshcore_broadcast")
             return False
@@ -213,6 +275,17 @@ class MeshCoreBroadcastChannel(NotificationChannel):
                 "meshcore_broadcast: connector has no MeshCore transport; skipping"
             )
             return False
+
+        # Room-server routing: a ``room:<pubkey>`` cell delivers via addressed
+        # send (login-if-password) instead of a channel broadcast. A bare cell
+        # is a channel name -> None -> the unchanged broadcast path below.
+        room_pubkey = parse_meshcore_room(self._meshcore_channel)
+        if room_pubkey is not None:
+            try:
+                return await self._deliver_to_room(room_pubkey, alert)
+            except Exception as e:
+                logger.error("Failed to MeshCore room-send alert: %s", e)
+                return False
 
         try:
             # If payload already has chunk metadata (from digest), use message directly
@@ -267,11 +340,25 @@ class MeshCoreBroadcastChannel(NotificationChannel):
         }
 
     async def deliver_test(self, message: str) -> tuple[bool, str]:
-        """Deliver a specific test message to the MeshCore channel."""
+        """Deliver a specific test message to the MeshCore channel (or room)."""
         if not self._connector:
             return False, "Not connected"
         if not self._meshcore_channel:
             return False, "No MeshCore channel configured"
+        room_pubkey = parse_meshcore_room(self._meshcore_channel)
+        if room_pubkey is not None:
+            try:
+                ok = bool(await self._connector.send_message_async(
+                    text=message,
+                    destination=None,
+                    meshcore_room=room_pubkey,
+                    meshcore_room_password=self._room_password(room_pubkey),
+                    transport="meshcore",
+                ))
+                return ok, (f"Sent to MeshCore room {room_pubkey[:12]}" if ok
+                            else "MeshCore room send returned False")
+            except Exception as e:
+                return False, f"MeshCore room send failed: {e}"
         try:
             ok = bool(await self._connector.send_message_async(
                 text=message,
