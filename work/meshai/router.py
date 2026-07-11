@@ -256,6 +256,154 @@ def _build_region_abbreviations(region_names: list[str]) -> dict[str, str]:
     return abbrevs
 
 
+def _build_meshcore_channel_block(config, channel_details, position=None) -> str:
+    """Build the MeshCore channel-recommendation context block.
+
+    Single-shot context-stuffing for the LLM (no tools): lists ONLY the
+    channels the operator has opted to observe (``meshcore_context.observe_channels``),
+    each annotated with its PSK key (from ``channel_details``) and — where a
+    region routing cell maps to it — the covered region's human geography
+    (local name, cities, centroid) so the model can match a user's town/GPS
+    to the right channel.
+
+    Args:
+        config: the loaded Config object (reads meshcore_context.observe_channels,
+            notifications.region_routes, mesh_intelligence.regions).
+        channel_details: list of {name, hash, key} dicts from
+            CompositeTransport.channel_details() (key = PSK hex).
+        position: optional (lat, lon) tuple for the requesting user; when
+            present a "USER LOCATION" line is emitted so the LLM can auto-match.
+
+    Returns:
+        The block as a string, or "" if no observed channels are configured
+        (caller should skip injection in that case).
+    """
+    # 1. Observed set — the ONLY channels we may disclose/recommend.
+    observe = list(getattr(config.meshcore_context, "observe_channels", []) or [])
+    if not observe:
+        return ""
+    observe_set = set(observe)
+
+    # 2. key lookup: channel name -> PSK hex (from live channel_details()).
+    key_by_name = {}
+    for d in (channel_details or []):
+        name = d.get("name")
+        if name:
+            key_by_name[name] = d.get("key")
+
+    # 3. Reverse map: channel name -> set(route region names), scanning every
+    #    family/region in region_routes for a cell whose `mc` names the channel.
+    regions_by_channel = {}
+    try:
+        cells = getattr(config.notifications.region_routes, "cells", {}) or {}
+        for _family, region_map in cells.items():
+            if not isinstance(region_map, dict):
+                continue
+            for region_name, cell in region_map.items():
+                if not isinstance(cell, dict):
+                    continue
+                mc = cell.get("mc")
+                if mc:
+                    regions_by_channel.setdefault(mc, set()).add(region_name)
+    except Exception:
+        logger.exception("region_routes reverse-map build failed")
+
+    # 4. Human geography from mesh_intelligence regions (best-effort attach).
+    #    region_routes uses "SW/SC/East Idaho"; mesh_intelligence uses names
+    #    like "South Western ID" — we do a loose direction-word match rather
+    #    than a strict reconcile, and let the LLM reason over the raw metadata.
+    geo_regions = []
+    try:
+        geo_regions = list(getattr(config.mesh_intelligence, "regions", []) or [])
+    except Exception:
+        logger.exception("mesh_intelligence regions read failed")
+
+    _DIRECTION_TOKENS = {
+        "sw": "south west", "sc": "south central", "se": "south east",
+        "nw": "north west", "ne": "north east",
+        "n": "north", "s": "south", "e": "east", "w": "west", "c": "central",
+    }
+
+    def _direction_words(route_region: str) -> set:
+        """Expand the leading direction abbreviation of a route region name
+        (e.g. "SW Idaho" -> {south, west}; "East Idaho" -> {east})."""
+        words = set()
+        for tok in route_region.lower().replace("-", " ").split():
+            if tok in ("idaho", "id"):
+                continue
+            expanded = _DIRECTION_TOKENS.get(tok, tok)
+            words.update(expanded.split())
+        return words
+
+    def _match_geo(route_region: str):
+        """Fuzzy/substring match a route region name to a mesh_intelligence
+        region; returns the RegionAnchor or None."""
+        rr_words = _direction_words(route_region)
+        best = None
+        best_score = 0
+        for r in geo_regions:
+            name = (getattr(r, "name", "") or "").lower()
+            geo_words = set(name.replace("-", " ").split()) - {"idaho", "id"}
+            score = len(rr_words & geo_words)
+            if score > best_score:
+                best_score, best = score, r
+        return best if best_score > 0 else None
+
+    # 5. Emit one concise line per OBSERVED channel.
+    lines = ["", "MESHCORE CHANNELS YOU CAN RECOMMEND (name + join key):"]
+    for name in observe:
+        if name not in observe_set:
+            continue
+        key = key_by_name.get(name)
+        key_str = key if key else "(key unavailable)"
+        route_regions = sorted(regions_by_channel.get(name, set()))
+        region_str = ""
+        if route_regions:
+            details = []
+            for rr in route_regions:
+                geo = _match_geo(rr)
+                if geo is not None:
+                    local = getattr(geo, "local_name", "") or ""
+                    cities = getattr(geo, "cities", []) or []
+                    lat = getattr(geo, "lat", None)
+                    lon = getattr(geo, "lon", None)
+                    bits = [rr]
+                    inner = []
+                    if local:
+                        inner.append(local)
+                    if cities:
+                        inner.append(", ".join(cities[:4]))
+                    if inner:
+                        bits.append(f"({'; '.join(inner)}")
+                        if lat is not None and lon is not None:
+                            bits[-1] += f"; ~{lat:.2f},{lon:.2f}"
+                        bits[-1] += ")"
+                    elif lat is not None and lon is not None:
+                        bits.append(f"(~{lat:.2f},{lon:.2f})")
+                    details.append(" ".join(bits))
+                else:
+                    details.append(rr)
+            region_str = " — region: " + " / ".join(details)
+        lines.append(f"  {name}{region_str} — key: {key_str}")
+
+    # 6. Optional user location for auto-matching.
+    if position is not None:
+        try:
+            lat, lon = position
+            lines.append(f"USER LOCATION: {lat},{lon}")
+        except Exception:
+            pass
+
+    # 7. Instruction for the model.
+    lines.append(
+        "If the user asks which MeshCore channel to join: determine their area "
+        "from USER LOCATION if given, otherwise ask which Idaho town/area they're "
+        "in, then tell them the channel NAME and KEY to join. Only recommend "
+        "channels listed above; never invent a channel or key."
+    )
+    return "\n".join(lines)
+
+
 class MessageRouter:
     """Routes incoming messages to appropriate handlers."""
 
@@ -884,6 +1032,24 @@ class MessageRouter:
                         alias_str = f'\n    People may call this: {", ".join(aliases)}'
                     geo_lines.append(f"  - {region.name}{local_str}{desc_str}{alias_str}")
                 system_prompt += "\n".join(geo_lines)
+
+            # MeshCore channel-recommendation block: for "what channel
+            # should I join?" style questions. Fail-safe — never break
+            # the LLM path if transport/config access throws.
+            try:
+                channel_details = self.connector.channel_details()
+                position = None
+                try:
+                    position = self.connector.get_node_position(message.sender_id)
+                except Exception:
+                    position = None
+                mc_block = _build_meshcore_channel_block(
+                    self.config, channel_details, position
+                )
+                if mc_block:
+                    system_prompt += "\n\n" + mc_block
+            except Exception:
+                logger.exception("meshcore channel block injection failed")
 
             # Update mesh context tracking
             self._update_user_mesh_context(

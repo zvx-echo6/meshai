@@ -92,6 +92,11 @@ class CompositeTransport(MeshTransport):
         child = self.meshcore_child()
         return child.known_channels() if child is not None else []
 
+    def channel_details(self) -> List[dict]:
+        """Passthrough to the MeshCore child's [{name, hash, key}] channel view; [] if no meshcore child."""
+        child = self.meshcore_child()
+        return child.channel_details() if child is not None else []
+
     def get_contacts(self) -> List[dict]:
         """Passthrough to the MeshCore child's contact roster; [] if no meshcore child."""
         child = self.meshcore_child()
