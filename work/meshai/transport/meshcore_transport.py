@@ -852,6 +852,119 @@ class MeshCoreTransport(MeshTransport):
         dashboard; captured alongside _chan_name_to_idx at connect."""
         return list(self._chan_details)
 
+    # ------------------------------------------------------------------
+    # Channel provisioning (add / remove) — self-service from the dashboard.
+    #
+    # There is no dedicated "delete channel" opcode in the companion
+    # firmware/lib; ``set_channel`` (opcode 0x20) is the only channel write.
+    # A slot is considered EMPTY when ``get_channel(idx)`` reports a blank
+    # ``channel_name`` (see _enumerate_channels). Freeing a slot therefore
+    # means writing it back to that same empty state: name="" and a fixed
+    # all-zero 16-byte secret (passed explicitly so the lib's "derive from
+    # sha256(name)" fallback — which only triggers when secret is None or
+    # name starts with "#" — never fires for a blank name).
+    # ------------------------------------------------------------------
+
+    # Companion channel table has a hard cap of 40 slots (0-39); see
+    # _enumerate_channels. Firmware truncates names to 32 bytes.
+    _MAX_CHANNEL_SLOTS = 40
+    _MAX_CHANNEL_NAME_BYTES = 32
+    _EMPTY_SECRET = bytes(16)
+
+    def _find_free_slot(self) -> Optional[int]:
+        """Scan the full companion channel table for the first EMPTY slot.
+
+        Unlike ``_enumerate_channels`` (which stops early after 3 contiguous
+        empty slots as a fast-path heuristic for the common contiguous-
+        provisioning case), this scans every slot 0..39 without an early
+        empty-run cutoff, so a free slot past a gap is never missed. Stops
+        early only on a transport error/None result (treated as end of a
+        usable table). Returns None if no empty slot was found.
+        """
+        for idx in range(self._MAX_CHANNEL_SLOTS):
+            try:
+                event = self._run_coro(self._mc.commands.get_channel(idx))
+            except Exception as exc:
+                logger.debug(
+                    "MeshCore: get_channel(%d) failed while scanning for free slot: %s",
+                    idx, exc,
+                )
+                break
+            if not event:
+                break
+            is_err = getattr(event, "is_error", None)
+            if callable(is_err) and event.is_error():
+                break
+            payload = event.payload or {}
+            name = payload.get("channel_name", "")
+            if not name:
+                return idx
+        return None
+
+    def add_channel(self, name: str, secret: Optional[bytes]) -> dict:
+        """Provision a new channel (name + PSK) onto the companion.
+
+        ``secret`` is 16 raw bytes, or None for a public/derived channel
+        (name should start with "#" in that case — the lib derives the PSK
+        as sha256(name)[:16]). Picks the first free slot, writes it, then
+        re-enumerates so ``_chan_name_to_idx``/``_chan_details`` reflect the
+        change immediately. Raises ValueError on bad input, RuntimeError if
+        not connected or no free slot, and re-raises transport errors.
+        """
+        if self._mc is None or not self._connected:
+            raise RuntimeError("MeshCore not connected")
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("Channel name must not be empty")
+        if len(name.encode("utf-8")) > self._MAX_CHANNEL_NAME_BYTES:
+            raise ValueError(
+                f"Channel name exceeds {self._MAX_CHANNEL_NAME_BYTES}-byte companion limit"
+            )
+        if secret is not None and len(secret) != 16:
+            raise ValueError("Channel secret must be exactly 16 bytes")
+        if name in self._chan_name_to_idx:
+            raise ValueError(f"Channel '{name}' already exists")
+
+        free_idx = self._find_free_slot()
+        if free_idx is None:
+            raise RuntimeError("No free channel slot on companion")
+
+        event = self._run_coro(self._mc.commands.set_channel(free_idx, name, secret))
+        is_err = getattr(event, "is_error", None)
+        if callable(is_err) and event.is_error():
+            reason = (getattr(event, "payload", None) or {}).get("reason", "unknown")
+            raise RuntimeError(f"set_channel failed: {reason}")
+
+        self._enumerate_channels()
+        logger.info("MeshCore: added channel '%s' at slot %d", name, free_idx)
+        return {"name": name, "idx": free_idx}
+
+    def remove_channel(self, name: str) -> None:
+        """Clear a provisioned channel's slot on the companion.
+
+        Resolves *name* to its slot via ``_chan_name_to_idx`` and writes the
+        slot back to its empty state (blank name, all-zero secret) — the
+        companion firmware exposes no dedicated delete opcode, so this is
+        the only way to free a slot. Re-enumerates on success. Raises
+        RuntimeError if not connected or the name is unknown.
+        """
+        if self._mc is None or not self._connected:
+            raise RuntimeError("MeshCore not connected")
+        idx = self._chan_name_to_idx.get(name)
+        if idx is None:
+            raise RuntimeError(f"Channel '{name}' not found on companion")
+
+        event = self._run_coro(
+            self._mc.commands.set_channel(idx, "", self._EMPTY_SECRET)
+        )
+        is_err = getattr(event, "is_error", None)
+        if callable(is_err) and event.is_error():
+            reason = (getattr(event, "payload", None) or {}).get("reason", "unknown")
+            raise RuntimeError(f"set_channel (clear) failed: {reason}")
+
+        self._enumerate_channels()
+        logger.info("MeshCore: removed channel '%s' (was slot %d)", name, idx)
+
     def get_contacts(self) -> list[dict]:
         """Roster of known MeshCore contacts. [] if not connected."""
         if self._mc is None or not self._connected:
