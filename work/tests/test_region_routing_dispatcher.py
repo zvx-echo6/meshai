@@ -900,3 +900,73 @@ def test_ptx_destination_mesh_broadcast_not_double_when_matrix_owns_mt():
     assert all(r["broadcast_channel"] != 7 for r in rec), \
         "the mesh_broadcast destination (ch7) must be filtered by _matrix_handled"
     assert len(rec) == 1, "only the matrix MT send; no extra destination delivery"
+
+
+# ==================================================================
+# Regression: cooldown key must be transport-qualified (2026-07-11)
+# ------------------------------------------------------------------
+# The Section 1.5 per-region cooldown key was (toggle, category, region) with
+# NO channel-type component. _chans always inserts mesh_broadcast before
+# meshcore_broadcast (insertion order in the per-cell append loop), so for a
+# cell with BOTH mt and mc populated, the loop over _chans.items() processed
+# mesh_broadcast first, delivered it, and ARMED the shared cooldown key. The
+# very next iteration (meshcore_broadcast) checked that SAME key -- now fresh
+# -- and was dropped as "cooled down", every single time, for every event.
+# Net effect: meshcore_broadcast never succeeded via the matrix branch when
+# cooldown_seconds > 0, so it never armed its own dedup/cooldown state either
+# -- a permanent, silent MC blackout for every region-routed family (weather,
+# 511/roads; fire's live path too, masked because fire's MC delivery was
+# dominated by the cooldown-exempt scheduled reminder path).
+#
+# No prior test caught this because test_cell_match_routes_mt_and_mc uses the
+# _base_cfg default cooldown_s=0 (the `if _cooldown_s > 0:` gate is skipped
+# entirely), and test_per_region_cooldown_independence uses cooldown_s=300
+# but with mc=None on every cell (MT-only), so it never exercises a cell with
+# BOTH transports populated under a live cooldown window.
+
+
+def test_cooldown_does_not_cross_suppress_mt_and_mc():
+    """A cell with BOTH mt and mc populated, under cooldown_seconds > 0, must
+    deliver BOTH transports on the same event -- MT arming its cooldown must
+    NOT cause MC's cooldown check (same toggle/category/region) to see itself
+    as already-cooled-down within the same dispatch call."""
+    cfg = _base_cfg(fam="fire", cooldown_s=300, min_severity="routine")
+    cfg.notifications.region_routes = _rr(cells={
+        "fire": {
+            "SCI": {"mt": 3, "mc": "sci-fires", "min_severity": "routine", "enabled": True},
+        }
+    })
+    ev = _ev(fam="fire", region="SCI")
+    _, rec = _dispatch(cfg, ev)
+
+    types = {r["delivery_type"] for r in rec}
+    assert "mesh_broadcast" in types, "must deliver via mesh_broadcast"
+    assert "meshcore_broadcast" in types, (
+        "must ALSO deliver via meshcore_broadcast -- MT's cooldown arm must "
+        "not cross-suppress MC on the same event/region"
+    )
+    assert len(rec) == 2, "exactly two deliveries (mt + mc), got %r" % (rec,)
+
+
+def test_cooldown_independent_per_transport_across_events():
+    """After a successful MT+MC dispatch, a SECOND event in the SAME region
+    within the cooldown window must be dropped for BOTH transports (cooldown
+    still functions), and each transport's cooldown key must be independently
+    keyed -- not just accidentally passing because both are simply always-on
+    or always-off together."""
+    cfg = _base_cfg(fam="fire", cooldown_s=300, min_severity="routine")
+    cfg.notifications.region_routes = _rr(cells={
+        "fire": {
+            "SCI": {"mt": 3, "mc": "sci-fires", "min_severity": "routine", "enabled": True},
+        }
+    })
+    d, rec = _make_dispatcher(cfg)
+
+    ev1 = _ev(fam="fire", region="SCI", eid="ev-1")
+    asyncio.run(d.dispatch(ev1))
+    assert len(rec) == 2, "first event: both transports deliver"
+
+    ev2 = _ev(fam="fire", region="SCI", eid="ev-2")
+    asyncio.run(d.dispatch(ev2))
+    # Still within cooldown window for BOTH transports -> no new deliveries.
+    assert len(rec) == 2, "second event within cooldown: no new deliveries, got %r" % (rec,)

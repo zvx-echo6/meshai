@@ -501,13 +501,28 @@ class Dispatcher:
 
                 # Per-region cooldown check — skip channel only when EVERY
                 # region feeding it is still within its cooldown window.
+                # BUGFIX: _rk MUST be qualified by _ch_type. _chans iterates
+                # mesh_broadcast before meshcore_broadcast (insertion order,
+                # see the append loop above), so without the channel-type
+                # suffix the MT send for this SAME event armed this SAME key
+                # a few lines up -- MC's check then always sees a fresh
+                # last_fired_at and is dropped as "cooled down" on literally
+                # every event. That's why dispatcher_dedup had zero
+                # meshcore_broadcast rows despite mc_enabled+mc being
+                # correctly configured: MC never got far enough to succeed
+                # and arm its own dedup entry. Keeping _rk a 3-tuple (folding
+                # ch_type into the region string, mirroring the existing
+                # _cd_suffix convention) avoids a dispatcher_cooldowns schema
+                # migration -- _persist_cooldown()/the restore SELECT are
+                # both hard-coded to (toggle, category, region).
                 if _cooldown_s > 0:
                     _all_cooled = True
                     for _rg in _regions:
                         _rk = (
                             getattr(tog, "name", "") or fam,
                             event.category,
-                            _rg + ("|" + _cd_suffix if _cd_suffix else ""),
+                            _rg + ("|" + _cd_suffix if _cd_suffix else "")
+                            + "|" + _ch_type,
                         )
                         _last = self._toggle_cooldown.get(_rk)
                         if _last is None or (_now - _last) >= _cooldown_s:
@@ -577,7 +592,8 @@ class Dispatcher:
                             _rk = (
                                 getattr(tog, "name", "") or fam,
                                 event.category,
-                                _rg + ("|" + _cd_suffix if _cd_suffix else ""),
+                                _rg + ("|" + _cd_suffix if _cd_suffix else "")
+                                + "|" + _ch_type,
                             )
                             self._toggle_cooldown[_rk] = _commit_now
                             self._persist_cooldown(_rk, _commit_now, _cooldown_s)
