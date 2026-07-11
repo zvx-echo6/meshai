@@ -218,7 +218,7 @@ def test_three_unattributed_pixels_fire_cluster_once():
         if wires[-1] is not None:
             # The handler must have tagged data with the cluster category.
             assert data.get("category") == "unattributed_hotspot_cluster"
-            assert data.get("severity") == "priority"
+            assert data.get("_severity_override") == "priority"
 
     # F3: cluster detection is ENABLED. The 3rd pixel reaches cluster_min_pixels
     # (3) within 1 mi / 60 min, so exactly ONE cluster wire fires (on pixel 3);

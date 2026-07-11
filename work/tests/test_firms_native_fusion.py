@@ -169,7 +169,7 @@ class TestIngestSpotting:
         assert len(out) == 1
         wire, data = out[0]
         assert data["category"] == "wildfire_spotting"
-        assert data["severity"] == "immediate"
+        assert data["_severity_override"] == "immediate"
         assert wire.startswith("🔥 Possible spotting ")
         # Eager latch stamped during ingest (not-cutover legacy path).
         from meshai.persistence import get_db
@@ -197,7 +197,7 @@ class TestIngestHalt:
         assert len(out) == 1
         wire, data = out[0]
         assert data["category"] == "wildfire_halted"
-        assert data["severity"] == "routine"
+        assert data["_severity_override"] == "routine"
         assert wire == "🔥 Cold Fire no growth in 14h"
         latch = get_db().execute(
             "SELECT halt_broadcast_at FROM fires WHERE irwin_id=?",
@@ -230,7 +230,7 @@ class TestIngestNeverRaw:
         for wire, data in produced:
             assert wire.startswith("🔥 Possible new fire:")
             assert data["category"] == "unattributed_hotspot_cluster"
-            assert data["severity"] == "priority"
+            assert data["_severity_override"] == "priority"
 
 
 # ═════════════════════════════════════════════════════════════════════════════

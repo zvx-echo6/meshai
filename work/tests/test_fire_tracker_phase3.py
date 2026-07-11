@@ -172,7 +172,7 @@ def test_pixel_2mi_ne_of_perimeter_emits_spotting():
     # routing; verification REPORTS only quote the wire (per the
     # feedback-no-event-metadata-in-reports memory rule).
     assert data["category"] == "wildfire_spotting"
-    assert data["severity"] == "immediate"
+    assert data["_severity_override"] == "immediate"
 
     # Latch stamped.
     fire = get_db().execute(

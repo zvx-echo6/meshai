@@ -125,7 +125,7 @@ def test_cluster_broadcasts_after_seed_then_refire_silent():
     assert wire.startswith("🔥 Possible new fire:")
     assert "3 hotspots within 1 mi" in wire
     assert data["category"] == "unattributed_hotspot_cluster"
-    assert data["severity"] == "priority"
+    assert data["_severity_override"] == "priority"
 
     # A 4th pixel inside the just-broadcast cluster -> silent (members stamped).
     refire = _feed(_pixel(lat=n2_lat + 0.0005, lon=n2_lon - 0.0005,

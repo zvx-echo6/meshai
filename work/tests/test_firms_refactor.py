@@ -402,7 +402,7 @@ class TestNotCutoverLegacyVerbatim:
         wire, data = _drive_spotting("ID-SN", 43.0, -115.0, now=1780768800)
         assert wire is not None and "spotting" in wire
         assert data["category"] == "wildfire_spotting"
-        assert data["severity"] == "immediate"
+        assert data["_severity_override"] == "immediate"
         # Legacy path stamps the latch EAGERLY with the handler `now`.
         latch = get_db().execute(
             "SELECT last_spotting_broadcast_at FROM fires WHERE irwin_id=?",
@@ -419,7 +419,7 @@ class TestNotCutoverLegacyVerbatim:
         wire = _maybe_emit_halt(get_db(), data=data, now=now)
         assert wire == "🔥 Cold Fire no growth in 14h"
         assert data["category"] == "wildfire_halted"
-        assert data["severity"] == "routine"
+        assert data["_severity_override"] == "routine"
         latch = get_db().execute(
             "SELECT halt_broadcast_at FROM fires WHERE irwin_id=?",
             ("ID-HN",)).fetchone()[0]
