@@ -202,7 +202,7 @@ def test_halt_detector_fires_once_after_12h_idle():
     assert "Cold Fire" in wire
     assert "no growth in 14h" in wire
     assert data.get("category") == "wildfire_halted"
-    assert data.get("severity") == "routine"
+    assert data.get("_severity_override") == "routine"
 
     # halt_broadcast_at stamped.
     halt_at = conn.execute(

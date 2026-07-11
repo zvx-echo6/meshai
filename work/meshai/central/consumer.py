@@ -21,7 +21,7 @@ from typing import Optional
 from meshai.adapter_config import adapter_config
 
 from meshai.notifications.events import Event, make_event
-from meshai.notifications.categories import get_category
+from meshai.notifications.categories import get_category, ALERT_CATEGORIES
 
 logger = logging.getLogger("meshai.central.consumer")
 
@@ -645,7 +645,30 @@ class CentralConsumer:
         source = CENTRAL_ADAPTER_TO_SOURCE.get(raw_adapter, raw_adapter)
         if source != raw_adapter:
             logger.debug("Central adapter %r -> meshai source %r", raw_adapter, source)
-        # v0.6-3c: use handler severity override if present
+
+        # v0.7-fire-fusion (issue #117): a per-adapter handler (e.g.
+        # firms_handler's growth / cluster / halt / spotting fusion) may stamp
+        # a fully-resolved category onto data["category"] AFTER `category` was
+        # computed above from the raw Central category string. Re-read it
+        # here, now that the handler has run, so the override actually reaches
+        # make_event() -- previously this local `category` was captured before
+        # dispatch and the handler's stamp was a silent no-op. An unrecognized
+        # override is logged and the original mapped category is kept, rather
+        # than trusting an arbitrary string into the category taxonomy.
+        cat_override = data.get("category") if isinstance(data, dict) else None
+        if cat_override and cat_override != category:
+            if cat_override in ALERT_CATEGORIES:
+                category = cat_override
+            else:
+                logger.warning(
+                    "consumer: handler set unrecognized category override %r "
+                    "for adapter=%s; keeping %r",
+                    cat_override, raw_adapter, category)
+
+        # v0.6-3c / issue #118: use handler severity override if present.
+        # `_severity_override` is the ONLY key honored here -- handlers must
+        # stamp `_severity_override`, not the plain `severity` key, or their
+        # severity choice silently never reaches the Event.
         sev_override = data.get("_severity_override") if isinstance(data, dict) else None
         return make_event(
             source=source,
@@ -690,10 +713,16 @@ class CentralConsumer:
             if irwin_id and event.source in ("fires", "wfigs"):
                 self._drain_irwin_ids.add(irwin_id)
         elif self._bus is not None:
-            # Normal mode: route fire events through pacer, others direct
+            # Normal mode: route fire events through pacer, others direct.
+            # Issue #119: FIRMS-synthesized broadcasts (growth/spotting/halt/
+            # cluster) carry source="firms" and growth+spotting use severity
+            # "immediate" -- neither was covered by the old "fires"/"wfigs" +
+            # "priority"-only gate, so FIRMS fusion events skipped the pacer
+            # entirely. Broaden to every fire-family source at priority OR
+            # immediate severity so nothing bypasses the <=1/min throttle.
             if (self._pacer is not None
-                    and event.source in ("fires", "wfigs")
-                    and (event.data or {}).get("_severity_override") == "priority"):
+                    and event.source in ("fires", "wfigs", "firms")
+                    and event.severity in ("priority", "immediate")):
                 self._pacer.enqueue(event)
             else:
                 self._bus.emit(event)

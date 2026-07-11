@@ -676,8 +676,10 @@ def _maybe_emit_cluster(conn, *, lat, lon, acq_epoch, frp, data, now,
     # broadcast under unattributed_hotspot_cluster (priority, fire toggle).
     if isinstance(data, dict):
         data["category"] = "unattributed_hotspot_cluster"
-        # Set severity to priority so downstream rules see the right tier.
-        data["severity"] = "priority"
+        # issue #118: `_severity_override` is the ONLY key consumer.py honors
+        # when building the Event -- the plain "severity" key here was a
+        # silent no-op (the Event fell back to map_severity() instead).
+        data["_severity_override"] = "priority"
 
     return _render_cluster_wire(
         n=len(members), radius_mi=radius_mi,
@@ -1039,7 +1041,9 @@ def _maybe_emit_halt(conn, *, data, now, seed=False):
                 (float(now), irwin_id),
             )
             data["category"] = "wildfire_halted"
-            data["severity"] = "routine"
+            # issue #118: `_severity_override` is the ONLY key consumer.py
+            # honors -- the plain "severity" key here was a silent no-op.
+            data["_severity_override"] = "routine"
     return wire
 
 
@@ -1227,7 +1231,9 @@ def _check_spotting(conn, *, irwin_id, pixel_lat, pixel_lon,
                 (float(now), irwin_id),
             )
             data["category"] = "wildfire_spotting"
-            data["severity"] = "immediate"
+            # issue #118: `_severity_override` is the ONLY key consumer.py
+            # honors -- the plain "severity" key here was a silent no-op.
+            data["_severity_override"] = "immediate"
 
     return wire
 
