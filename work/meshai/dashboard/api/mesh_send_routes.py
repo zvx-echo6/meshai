@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from typing import Optional, Union
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from meshai import secrets_store
 
@@ -56,6 +56,85 @@ async def meshcore_channels_detail(request: Request):
             channels = []
         return {"active": True, "channels": channels}
     return {"active": False, "channels": []}
+
+
+class AddChannelRequest(BaseModel):
+    name: str
+    key: Optional[str] = None
+
+
+@router.post("/meshcore/channels")
+async def meshcore_add_channel(request: Request, body: AddChannelRequest):
+    """Provision a new MeshCore channel (name + PSK) onto the companion.
+
+    Body: {"name": str, "key"?: str}. ``key`` is a 32-char hex string (16
+    bytes) — omit it (or leave empty) for a public channel, which requires
+    ``name`` to start with "#" so the companion derives the PSK from the
+    name. Returns the refreshed channel list on success.
+    """
+    connector = getattr(request.app.state, "connector", None)
+    mc = _find_child(connector, "meshcore")
+    if mc is None or not getattr(mc, "connected", False):
+        raise HTTPException(status_code=409, detail="MeshCore not connected")
+
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Channel name must not be empty")
+
+    key = (body.key or "").strip()
+    secret: Optional[bytes] = None
+    if key:
+        try:
+            secret = bytes.fromhex(key)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Channel key must be valid hex")
+        if len(secret) != 16:
+            raise HTTPException(
+                status_code=400,
+                detail="Channel key must be exactly 32 hex characters (16 bytes)",
+            )
+    elif not name.startswith("#"):
+        raise HTTPException(
+            status_code=400,
+            detail="A channel key is required unless the name starts with '#' (public)",
+        )
+
+    try:
+        mc.add_channel(name, secret)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:
+        logger.error("dashboard: meshcore add_channel error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    logger.info("dashboard: meshcore channel '%s' added", name)
+    return {"active": True, "channels": list(mc.known_channels())}
+
+
+@router.delete("/meshcore/channels/{name}")
+async def meshcore_remove_channel(request: Request, name: str):
+    """Remove a provisioned MeshCore channel from the companion by name.
+
+    Returns the refreshed channel list on success; 404 if the name is not
+    on the companion's channel table.
+    """
+    connector = getattr(request.app.state, "connector", None)
+    mc = _find_child(connector, "meshcore")
+    if mc is None or not getattr(mc, "connected", False):
+        raise HTTPException(status_code=409, detail="MeshCore not connected")
+
+    try:
+        mc.remove_channel(name)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        logger.error("dashboard: meshcore remove_channel error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    logger.info("dashboard: meshcore channel '%s' removed", name)
+    return {"active": True, "channels": list(mc.known_channels())}
 
 
 @router.get("/meshcore/rooms")

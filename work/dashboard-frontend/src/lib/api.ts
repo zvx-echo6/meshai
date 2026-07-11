@@ -606,6 +606,38 @@ export async function getMeshcoreChannelsDetail(): Promise<MeshcoreChannelsDetai
   return fetchJson<MeshcoreChannelsDetail>('/api/meshcore/channels/detail')
 }
 
+// Provision a new MeshCore channel on the companion. `key` is a 32-char hex
+// PSK (16 bytes); omit it for a public channel (name must start with "#").
+// Throws (with the backend's `detail` message) on failure — e.g. duplicate
+// name, no free slot, bad key, or MeshCore not connected.
+export async function addMeshcoreChannel(
+  name: string,
+  key?: string,
+): Promise<MeshcoreChannels> {
+  const response = await fetch('/api/meshcore/channels', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, key: key || undefined }),
+  })
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    throw new Error(body?.detail || `API error: ${response.status} ${response.statusText}`)
+  }
+  return response.json()
+}
+
+// Remove a provisioned MeshCore channel from the companion by name.
+export async function removeMeshcoreChannel(name: string): Promise<MeshcoreChannels> {
+  const response = await fetch(`/api/meshcore/channels/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  })
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    throw new Error(body?.detail || `API error: ${response.status} ${response.statusText}`)
+  }
+  return response.json()
+}
+
 // MeshCore room servers (type-3 contacts). A routing cell targets a room with
 // the value ``room:<pubkey>`` (vs a bare channel name for channel targets).
 // ``active:false`` / [] when MeshCore is not connected.
