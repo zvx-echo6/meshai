@@ -32,6 +32,14 @@ class MeshContext:
     Passively observes all mesh messages (channels, DMs, BBS notifications)
     and makes them available as context when generating LLM responses.
     Observations older than max_age are pruned periodically.
+
+    Durability: every observe() writes through to the mesh_observations
+    SQLite table (meshai.sqlite) in addition to the in-memory deque, and
+    __init__ loads recent rows back from SQLite so recap context survives
+    a container restart. The SQLite path is entirely fail-safe -- any DB
+    error is logged and swallowed so it never blocks or drops the
+    in-memory observation path (which is what response generation reads
+    from on the hot path).
     """
 
     def __init__(
@@ -51,6 +59,37 @@ class MeshContext:
         self._observe_channels = set(observe_channels) if observe_channels else None
         self._ignore_nodes = set(ignore_nodes) if ignore_nodes else set()
         self._max_age = max_age
+
+        self._load_from_db()
+
+    def _load_from_db(self) -> None:
+        """Load recent observations from SQLite into the deque on startup.
+
+        Fail-safe: any DB error is logged and swallowed -- an empty deque
+        (today's pre-fix behavior) is an acceptable fallback, never a
+        startup failure.
+        """
+        try:
+            from .persistence.mesh_observations import load_recent, prune_older_than
+
+            prune_older_than(self._max_age)
+            rows = load_recent(self._max_age, _HARD_CAP)
+            for row in rows:
+                self._buffer.append(
+                    MeshObservation(
+                        timestamp=row["ts"],
+                        sender_name=row["sender_name"] or "",
+                        sender_id=row["sender_id"] or "",
+                        channel=row["channel"] if row["channel"] is not None else 0,
+                        is_dm=bool(row["is_dm"]),
+                        text=row["text"] or "",
+                        transport=row["transport"] or "meshtastic",
+                    )
+                )
+            if rows:
+                logger.info(f"Loaded {len(rows)} mesh observations from durable store")
+        except Exception:
+            logger.exception("Failed to load mesh observations from durable store")
 
     def observe(
         self,
@@ -95,6 +134,24 @@ class MeshContext:
         self._buffer.append(obs)
         logger.debug(f"Observed: ch{channel} {sender_name} [{transport}]: {text[:40]}...")
 
+        # Write-through to durable store. Fail-safe: never let a DB error
+        # break ingestion -- the in-memory buffer above already has the
+        # observation regardless of what happens here.
+        try:
+            from .persistence.mesh_observations import insert_observation
+
+            insert_observation(
+                ts=obs.timestamp,
+                transport=obs.transport,
+                channel=obs.channel,
+                is_dm=obs.is_dm,
+                sender_name=obs.sender_name,
+                sender_id=obs.sender_id,
+                text=obs.text,
+            )
+        except Exception:
+            logger.exception("Failed to write mesh observation to durable store")
+
     def prune(self) -> int:
         """Remove observations older than max_age.
 
@@ -113,6 +170,16 @@ class MeshContext:
         pruned = before - len(self._buffer)
         if pruned > 0:
             logger.info(f"Pruned {pruned} expired mesh observations ({len(self._buffer)} remaining)")
+
+        # Durable-store prune rides the same cadence as the in-memory prune
+        # (called hourly from main.py's periodic cleanup). Fail-safe.
+        try:
+            from .persistence.mesh_observations import prune_older_than
+
+            prune_older_than(self._max_age)
+        except Exception:
+            logger.exception("Failed to prune durable mesh observations store")
+
         return pruned
 
     def get_context_block(self, max_items: int = 20, transport: Optional[str] = None) -> str:
