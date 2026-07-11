@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { Save, RotateCcw, RefreshCw, Check, ChevronRight, Trash2 } from 'lucide-react'
+import { Save, RotateCcw, RefreshCw, Check, ChevronRight, Trash2, Eye, EyeOff, Copy } from 'lucide-react'
 import { TextInput, NumberInput, Toggle, ListInput, SelectInput } from './Config'
 import SerialPortPicker from '@/components/SerialPortPicker'
 import { notifyRestartRequired } from '@/components/RestartBanner'
@@ -8,6 +8,7 @@ import {
   fetchConfig as apiFetchConfig,
   updateConfig as apiUpdateConfig,
   getMeshcoreChannels,
+  getMeshcoreChannelsDetail,
   addMeshcoreChannel,
   removeMeshcoreChannel,
   sendTestMessage,
@@ -61,6 +62,11 @@ export default function MeshCoreConnection() {
   // Test send state
   const [channelsActive, setChannelsActive] = useState(false)
   const [channels, setChannels] = useState<string[]>([])
+  // Per-channel PSK hex (name -> key), captured from the companion so operators
+  // can share the key with people who want to join. Masked by default.
+  const [channelKeys, setChannelKeys] = useState<Record<string, string | null>>({})
+  const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set())
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [selectedChannel, setSelectedChannel] = useState('')
   const [testText, setTestText] = useState('')
   const [testSending, setTestSending] = useState(false)
@@ -100,18 +106,53 @@ export default function MeshCoreConnection() {
 
   const refreshChannels = useCallback(async () => {
     try {
-      const res = await getMeshcoreChannels()
-      setChannelsActive(res.active)
-      setChannels(res.channels)
-      setSelectedChannel((prev) => (prev && res.channels.includes(prev) ? prev : res.channels[0] ?? ''))
+      // Prefer the detail endpoint (name + PSK key); it carries everything the
+      // names-only list does. Fall back to names-only if detail is unavailable.
+      const detail = await getMeshcoreChannelsDetail()
+      const names = detail.channels.map((c) => c.name)
+      const keyMap: Record<string, string | null> = {}
+      for (const c of detail.channels) keyMap[c.name] = c.key
+      setChannelsActive(detail.active)
+      setChannels(names)
+      setChannelKeys(keyMap)
+      setSelectedChannel((prev) => (prev && names.includes(prev) ? prev : names[0] ?? ''))
     } catch {
-      setChannelsActive(false)
+      try {
+        const res = await getMeshcoreChannels()
+        setChannelsActive(res.active)
+        setChannels(res.channels)
+        setChannelKeys({})
+        setSelectedChannel((prev) => (prev && res.channels.includes(prev) ? prev : res.channels[0] ?? ''))
+      } catch {
+        setChannelsActive(false)
+      }
     }
   }, [])
 
   useEffect(() => {
     refreshChannels()
   }, [refreshChannels])
+
+  const toggleRevealKey = (name: string) => {
+    setRevealedKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
+  const handleCopyKey = async (name: string, key: string) => {
+    try {
+      await navigator.clipboard.writeText(key)
+      setCopiedKey(name)
+      setTimeout(() => setCopiedKey((prev) => (prev === name ? null : prev)), 1500)
+    } catch {
+      // Clipboard API can be blocked (non-secure context); reveal the key so
+      // the operator can copy it manually instead of failing silently.
+      setRevealedKeys((prev) => new Set(prev).add(name))
+    }
+  }
 
   const handleAddChannel = async () => {
     const name = newChannelName.trim()
@@ -409,6 +450,8 @@ export default function MeshCoreConnection() {
             <div className="border border-[#1e2a3a] p-2 space-y-1">
               {channels.map((ch) => {
                 const selected = (mcContext.observe_channels ?? []).includes(ch)
+                const key = channelKeys[ch] ?? null
+                const revealed = revealedKeys.has(ch)
                 return (
                   <div
                     key={ch}
@@ -416,7 +459,7 @@ export default function MeshCoreConnection() {
                   >
                     <label
                       onClick={() => toggleObserveChannel(ch)}
-                      className="flex items-center gap-2 flex-1 cursor-pointer"
+                      className="flex items-center gap-2 cursor-pointer shrink-0"
                     >
                       <div className={`w-4 h-4 rounded border flex items-center justify-center ${
                         selected ? 'bg-accent border-accent' : 'border-slate-600'
@@ -425,13 +468,47 @@ export default function MeshCoreConnection() {
                       </div>
                       <span className="text-sm text-slate-200">{ch}</span>
                     </label>
+                    {/* Channel key (PSK hex) — share this to let others join. Masked by
+                        default; reveal per-row with the eye, copy with the copy button. */}
+                    <div className="flex items-center gap-1 flex-1 min-w-0 justify-end">
+                      {key ? (
+                        <>
+                          <code
+                            title={revealed ? key : 'Key hidden — click the eye to reveal'}
+                            className="text-xs font-mono text-slate-400 truncate max-w-[16rem]"
+                          >
+                            {revealed ? key : '••••••••••••••••'}
+                          </code>
+                          <button
+                            type="button"
+                            title={revealed ? 'Hide key' : 'Reveal key'}
+                            aria-label={revealed ? `Hide key for ${ch}` : `Reveal key for ${ch}`}
+                            onClick={() => toggleRevealKey(ch)}
+                            className="p-1 text-slate-600 hover:text-slate-300"
+                          >
+                            {revealed ? <EyeOff size={14} /> : <Eye size={14} />}
+                          </button>
+                          <button
+                            type="button"
+                            title="Copy key to clipboard"
+                            aria-label={`Copy key for ${ch}`}
+                            onClick={() => handleCopyKey(ch, key)}
+                            className="p-1 text-slate-600 hover:text-accent"
+                          >
+                            {copiedKey === ch ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
+                          </button>
+                        </>
+                      ) : (
+                        <span className="text-xs font-mono text-slate-600" title="No retrievable key for this channel">—</span>
+                      )}
+                    </div>
                     <button
                       type="button"
                       title={`Remove channel '${ch}' from the companion`}
                       aria-label={`Remove channel ${ch}`}
                       disabled={channelRemoving === ch}
                       onClick={() => handleRemoveChannel(ch)}
-                      className="p-1 text-slate-600 hover:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="p-1 text-slate-600 hover:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                     >
                       <Trash2 size={14} />
                     </button>
@@ -444,7 +521,7 @@ export default function MeshCoreConnection() {
                 </div>
               )}
             </div>
-            <p className="text-xs text-slate-600">Choose which MeshCore channels feed MeshAI's context. Empty = none are watched — pick channels to include their chatter in what the bot knows about the mesh. Leave busy/public channels out to keep them out of context.</p>
+            <p className="text-xs text-slate-600">Choose which MeshCore channels feed MeshAI's context. Empty = none are watched — pick channels to include their chatter in what the bot knows about the mesh. Leave busy/public channels out to keep them out of context. Each channel's key (PSK) is shown on the right — reveal and copy it to share with people who want to join.</p>
 
             {/* Add a new channel (name + PSK) to the companion's channel table */}
             <div className="flex items-end gap-2 pt-2">
