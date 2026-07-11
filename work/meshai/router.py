@@ -256,6 +256,107 @@ def _build_region_abbreviations(region_names: list[str]) -> dict[str, str]:
     return abbrevs
 
 
+def _build_alert_channels_line(config, transport: str) -> str:
+    """Build a short identity-block line describing regional alert channels
+    for the given transport, sourced from notifications.region_routes.
+
+    Reads config.notifications.region_routes.cells (family -> region ->
+    cell_dict). Only includes cells that are enabled (matrix-level
+    mt_enabled/mc_enabled AND the cell's own "enabled" flag) and that have
+    a non-empty value in this transport's column ("mt" channel index for
+    meshtastic, "mc" channel name for meshcore).
+
+    Region names are used verbatim from region_routes — they are NOT
+    reconciled with mesh_intelligence region names.
+
+    Fail-safe: returns "" on any error so a broken/missing config never
+    breaks prompt assembly.
+
+    Returns:
+        A 1-3 line string (no leading/trailing blank lines), or "" if no
+        routed regions are configured/enabled for this transport.
+    """
+    try:
+        region_routes = getattr(config.notifications, "region_routes", None)
+        if region_routes is None:
+            return ""
+
+        transport_enabled = (
+            region_routes.mt_enabled if transport == "meshtastic" else region_routes.mc_enabled
+        )
+        if not transport_enabled:
+            return ""
+
+        cells = getattr(region_routes, "cells", {}) or {}
+        col = "mt" if transport == "meshtastic" else "mc"
+
+        # region -> set(family) for families/regions routed on this transport.
+        families_by_region: dict = {}
+        for family, region_map in cells.items():
+            if not isinstance(region_map, dict):
+                continue
+            for region_name, cell in region_map.items():
+                if not isinstance(cell, dict) or not cell.get("enabled", False):
+                    continue
+                dest = cell.get(col)
+                if not dest:
+                    continue
+                families_by_region.setdefault(region_name, set()).add(family)
+
+        if not families_by_region:
+            return ""
+
+        # Distinct hazard families across all routed regions, for the intro line.
+        all_families = sorted({f for fams in families_by_region.values() for f in fams})
+        _FAMILY_LABELS = {
+            "weather": "weather",
+            "fire": "fire",
+            "roads": "roads",
+            "avalanche": "avalanche",
+            "seismic": "seismic",
+            "power_outage": "power outages",
+            "satpass": "satellite passes",
+        }
+        hazard_words = ", ".join(_FAMILY_LABELS.get(f, f) for f in all_families)
+
+        # region -> destination value (mt index or mc name), for the mapping line.
+        # A region may route different families to different destinations in
+        # theory; in practice the matrix is uniform per-region, so just take
+        # the first cell's destination for the mapping display.
+        dest_by_region = {}
+        for family, region_map in cells.items():
+            if not isinstance(region_map, dict):
+                continue
+            for region_name, cell in region_map.items():
+                if region_name not in families_by_region:
+                    continue
+                if region_name in dest_by_region:
+                    continue
+                dest = cell.get(col)
+                if dest:
+                    dest_by_region[region_name] = dest
+
+        if transport == "meshtastic":
+            mapping = ", ".join(
+                f"channel {dest_by_region[r]} = {r}" for r in dest_by_region
+            )
+        else:
+            mapping = ", ".join(
+                f"{dest_by_region[r]} = {r}" for r in dest_by_region
+            )
+
+        if not mapping:
+            return ""
+
+        return (
+            f"You broadcast regional hazard alerts ({hazard_words}). "
+            f"People can join a channel to receive that region's alerts: {mapping}."
+        )
+    except Exception:
+        logger.exception("alert channels line build failed")
+        return ""
+
+
 def _build_meshcore_channel_block(config, channel_details, position=None) -> str:
     """Build the MeshCore channel-recommendation context block.
 
@@ -823,20 +924,56 @@ class MessageRouter:
 
         # Build system prompt in order: identity -> static -> meshmonitor -> context -> knowledge -> mesh
 
-        # 1. Dynamic identity from bot config
+        # Transport of the originating message -- drives identity framing and
+        # gating of transport-specific prompt blocks below.
+        transport = getattr(message, "transport", "meshtastic")
+
+        # 1. Dynamic identity from bot config, branched by transport.
         bot_name = self.config.bot.name or "MeshAI"
         bot_owner = self.config.bot.owner or "Unknown"
 
-        identity = (
-            f"You are {bot_name}, an LLM-powered assistant on the freq51 Meshtastic mesh network. "
-            f"Your managing operator is {bot_owner}. "
-            f"You are open source at github.com/zvx-echo6/meshai.\n\n"
-            f"IDENTITY: Your name is {bot_name}. You ARE a physical node on the mesh — "
-            f"node !27780c47 (AIDA-N2). You have a real location, real GPS coordinates, "
-            f"and real radio connections. When someone asks how far something is from you, "
-            f"check the mesh data for your node's position and calculate. "
-            f"You are NOT just software — you are a node that other nodes can see, hear, and route through.\n\n"
-        )
+        if transport == "meshcore":
+            mc_mesh_name = self.config.bot.mc_mesh_name or "the MeshCore mesh"
+            identity = (
+                f"You are {bot_name}, an LLM-powered assistant on {mc_mesh_name}, "
+                f"connected via a MeshCore companion radio. "
+                f"Your managing operator is {bot_owner}. "
+                f"You are open source at github.com/zvx-echo6/meshai.\n\n"
+                f"IDENTITY: Your name is {bot_name}. You have a real MeshCore radio "
+                f"presence — you send and receive over an actual MeshCore companion "
+                f"radio, not just software. You do NOT have a Meshtastic node identity "
+                f"and you are NOT part of MeshMonitor.\n\n"
+            )
+        else:
+            mt_mesh_name = self.config.bot.mt_mesh_name
+            mt_node = self.config.bot.mt_node
+            if mt_mesh_name or mt_node:
+                mesh_label = mt_mesh_name or "the mesh"
+                identity = (
+                    f"You are {bot_name}, an LLM-powered assistant on {mesh_label}. "
+                    f"Your managing operator is {bot_owner}. "
+                    f"You are open source at github.com/zvx-echo6/meshai.\n\n"
+                )
+                if mt_node:
+                    identity += (
+                        f"IDENTITY: Your name is {bot_name}. You ARE a physical node on "
+                        f"the mesh — node {mt_node}. You have a real location, real GPS "
+                        f"coordinates, and real radio connections. When someone asks how "
+                        f"far something is from you, check the mesh data for your node's "
+                        f"position and calculate. You are NOT just software — you are a "
+                        f"node that other nodes can see, hear, and route through.\n\n"
+                    )
+            else:
+                # No transport identity configured -- generic non-MT-specific fallback.
+                identity = (
+                    f"You are {bot_name}, an LLM-powered assistant on a mesh network. "
+                    f"Your managing operator is {bot_owner}. "
+                    f"You are open source at github.com/zvx-echo6/meshai.\n\n"
+                )
+
+        alert_channels_line = _build_alert_channels_line(self.config, transport)
+        if alert_channels_line:
+            identity += alert_channels_line + "\n\n"
 
         # 2. Static system prompt from config
         static_prompt = ""
@@ -872,9 +1009,11 @@ class MessageRouter:
                 )
                 system_prompt += "\n".join(cmd_lines)
 
-        # 3. MeshMonitor info (only when enabled)
+        # 3. MeshMonitor info (only when enabled -- Meshtastic-only, MeshMonitor
+        # has no MeshCore concept)
         if (
-            self.meshmonitor_sync
+            transport == "meshtastic"
+            and self.meshmonitor_sync
             and self.config.meshmonitor.enabled
             and self.config.meshmonitor.inject_into_prompt
         ):
@@ -985,57 +1124,64 @@ class MessageRouter:
             # v0.7-fire-tracker-4: scope already detected above; no
             # second call needed.
 
-            # Always include Tier 1 summary for mesh questions
-            tier1 = self.mesh_reporter.build_tier1_summary()
-            system_prompt += "\n\n" + tier1
+            # Meshtastic-only: node-health/gateway/packet reporting. This whole
+            # sub-block is built from meshtasticd/MeshMonitor-derived node data
+            # (mesh_reporter tracks Meshtastic node IDs, infra/gateway scoring,
+            # packet cadence, etc.) and has no MeshCore equivalent.
+            if transport == "meshtastic":
+                # Always include Tier 1 summary for mesh questions
+                tier1 = self.mesh_reporter.build_tier1_summary()
+                system_prompt += "\n\n" + tier1
 
-            # Add Tier 2 detail if scoped
-            if scope_type == "region" and scope_value:
-                region_detail = self.mesh_reporter.build_region_detail(scope_value)
-                system_prompt += "\n\n" + region_detail
-            elif scope_type == "node" and scope_value:
-                node_detail = self.mesh_reporter.build_node_detail(scope_value)
-                system_prompt += "\n\n" + node_detail
+                # Add Tier 2 detail if scoped
+                if scope_type == "region" and scope_value:
+                    region_detail = self.mesh_reporter.build_region_detail(scope_value)
+                    system_prompt += "\n\n" + region_detail
+                elif scope_type == "node" and scope_value:
+                    node_detail = self.mesh_reporter.build_node_detail(scope_value)
+                    system_prompt += "\n\n" + node_detail
 
-            # Always include relevant recommendations
-            recommendations = self.mesh_reporter.build_recommendations(scope_type, scope_value)
-            if recommendations:
-                system_prompt += "\n\n" + recommendations
+                # Always include relevant recommendations
+                recommendations = self.mesh_reporter.build_recommendations(scope_type, scope_value)
+                if recommendations:
+                    system_prompt += "\n\n" + recommendations
 
-            # Add mesh awareness instructions with dynamic region name mappings
-            region_name_instructions = ""
-            if self.config.mesh_intelligence and self.config.mesh_intelligence.regions:
-                # Build region name mappings for the prompt
-                mappings = []
-                for region in self.config.mesh_intelligence.regions:
-                    local = getattr(region, "local_name", "") or ""
-                    if local and local != region.name:
-                        mappings.append(f'say "{local}" not "{region.name}"')
-                if mappings:
-                    region_name_instructions = f"- ALWAYS use local region names: {', '.join(mappings)}. The code names mean nothing to users."
+                # Add mesh awareness instructions with dynamic region name mappings
+                region_name_instructions = ""
+                if self.config.mesh_intelligence and self.config.mesh_intelligence.regions:
+                    # Build region name mappings for the prompt
+                    mappings = []
+                    for region in self.config.mesh_intelligence.regions:
+                        local = getattr(region, "local_name", "") or ""
+                        if local and local != region.name:
+                            mappings.append(f'say "{local}" not "{region.name}"')
+                    if mappings:
+                        region_name_instructions = f"- ALWAYS use local region names: {', '.join(mappings)}. The code names mean nothing to users."
 
-            system_prompt += _MESH_AWARENESS_PROMPT.format(
-                region_name_instructions=region_name_instructions
-            )
+                system_prompt += _MESH_AWARENESS_PROMPT.format(
+                    region_name_instructions=region_name_instructions
+                )
 
-            # Build region geography from config dynamically
-            if self.config.mesh_intelligence and self.config.mesh_intelligence.regions:
-                geo_lines = ["", "REGION GEOGRAPHY (use local names when discussing these regions):"]
-                for region in self.config.mesh_intelligence.regions:
-                    local = getattr(region, "local_name", "") or ""
-                    local_str = f' "{local}"' if local else ""
-                    desc = getattr(region, "description", "") or ""
-                    desc_str = f" — {desc}" if desc else ""
-                    aliases = getattr(region, "aliases", []) or []
-                    alias_str = ""
-                    if aliases:
-                        alias_str = f'\n    People may call this: {", ".join(aliases)}'
-                    geo_lines.append(f"  - {region.name}{local_str}{desc_str}{alias_str}")
-                system_prompt += "\n".join(geo_lines)
+                # Build region geography from config dynamically
+                if self.config.mesh_intelligence and self.config.mesh_intelligence.regions:
+                    geo_lines = ["", "REGION GEOGRAPHY (use local names when discussing these regions):"]
+                    for region in self.config.mesh_intelligence.regions:
+                        local = getattr(region, "local_name", "") or ""
+                        local_str = f' "{local}"' if local else ""
+                        desc = getattr(region, "description", "") or ""
+                        desc_str = f" — {desc}" if desc else ""
+                        aliases = getattr(region, "aliases", []) or []
+                        alias_str = ""
+                        if aliases:
+                            alias_str = f'\n    People may call this: {", ".join(aliases)}'
+                        geo_lines.append(f"  - {region.name}{local_str}{desc_str}{alias_str}")
+                    system_prompt += "\n".join(geo_lines)
 
             # MeshCore channel-recommendation block: for "what channel
-            # should I join?" style questions. Fail-safe — never break
-            # the LLM path if transport/config access throws.
+            # should I join?" style questions. Transport-neutral (works for
+            # both meshes -- the block itself is scoped to MeshCore channel
+            # data). Fail-safe — never break the LLM path if transport/config
+            # access throws.
             try:
                 channel_details = self.connector.channel_details()
                 position = None

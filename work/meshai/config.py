@@ -13,13 +13,22 @@ _config_logger = logging.getLogger(__name__)
 
 @dataclass
 class BotConfig:
-    """Bot identity and trigger settings."""
+    """Bot identity and trigger settings.
 
-    name: str = "ai"
-    owner: str = ""
+    mt_mesh_name/mt_node/mc_mesh_name: transport-specific identity used ONLY
+    when generating the LLM system prompt for that transport (see
+    router.generate_llm_response). Generic OSS defaults are intentionally
+    empty/mesh-agnostic -- deployments fill these in via config.
+    """
+
+    name: str = "MeshAI"
+    owner: str = "Unknown"
     contact_email: str = ""
     respond_to_dms: bool = True
     filter_bbs_protocols: bool = True
+    mt_mesh_name: str = ""   # e.g. "freq51 Meshtastic mesh" -- Meshtastic-only identity framing
+    mt_node: str = ""        # e.g. "!27780c47 (AIDA-N2)" -- Meshtastic-only physical node id
+    mc_mesh_name: str = ""   # e.g. "the MeshCore mesh" -- MeshCore-only identity framing
 
 
 @dataclass
@@ -167,9 +176,7 @@ class LLMConfig:
         "observed any yet.\n"
         "- When asked about yourself or commands, answer conversationally based on "
         "the command list provided below. Don't dump lists unless asked.\n"
-        "- You are part of the freq51 mesh.\n"
         "- When asked about yourself or commands, answer conversationally. Don't dump lists.\n"
-        "- You are part of the freq51 mesh in the Twin Falls, Idaho area.\n"
         "- NEVER use markdown formatting (no bold, no asterisks, no bullet points, no numbered lists). Plain text only.\n"
         "- NEVER say 'Want me to keep going?' -- the system handles continuation prompts automatically."
     )
