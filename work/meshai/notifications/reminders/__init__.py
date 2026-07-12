@@ -29,6 +29,27 @@ When a reminder fires:
     touched here (only the handler sets it on first sight).
 
 Quiet hours are NOT respected (Phase-2 deleted that concept).
+
+Output spacing
+--------------
+A reminder tick is a ROLL-CALL: every eligible row for an adapter is a
+separate broadcast. Without spacing, N eligible fires produce N back-to-back
+``_dispatch()`` calls in one tick -- the reminder path does NOT go through the
+EventBus, so ``FirePacer`` (which paces the Central and native fire-event
+exits to <=1/60s) never sees it. The only downstream protection is
+``RadioSendQueue``'s per-transport inter-packet jitter (~2.2-2.6 s), which
+stops packets colliding but does not stop a roll-call from monopolising the
+mesh for N x ~2.4 s.
+
+``spacing_seconds`` (adapter_config, default 60 -- matching FirePacer's
+cadence) enforces a minimum gap between consecutive *successful* reminder
+deliveries, so a roll-call of N fires is spread over N intervals. It is a
+pure spacing change: WHAT gets broadcast, and the ``ok``-gated
+``last_broadcast_at`` stamp, are untouched.
+
+Spacing is measured from the last actual delivery, so a lone eligible fire
+(nothing to pace against) goes out with ZERO added latency. The wait is
+interruptible by ``stop()`` -- a long roll-call must not stall shutdown.
 """
 from __future__ import annotations
 
@@ -45,6 +66,13 @@ logger = logging.getLogger(__name__)
 # fire. 60s is fine: interval reminders are 8h-scale; clock reminders
 # tolerate up to a minute of lag.
 _TICK_SECONDS = 60.0
+
+
+# Fallback minimum gap between consecutive reminder broadcasts, used when
+# adapter_config has no `spacing_seconds` for the adapter. Mirrors the
+# FirePacer interval (notifications/pipeline/pacer.py) so the reminder exit
+# and the event exits pace at the same rate.
+_DEFAULT_SPACING_SECONDS = 60.0
 
 
 # ============================================================================
@@ -64,6 +92,11 @@ class ReminderScheduler:
         self._tick = tick_seconds
         self._task: Optional[asyncio.Task] = None
         self._stop: Optional[asyncio.Event] = None
+        # Timestamp of the last SUCCESSFUL reminder delivery, used to space
+        # consecutive broadcasts. Deliberately shared across adapters (the
+        # mesh is one shared medium) and across ticks. None => nothing to
+        # pace against yet, so the next send goes out immediately.
+        self._last_dispatch_at: Optional[float] = None
 
     async def start(self) -> None:
         if self._task is not None and not self._task.done():
@@ -140,6 +173,38 @@ class ReminderScheduler:
         logger.debug("reminder %s: unknown cadence_kind=%r", adapter, cfg.cadence_kind)
         return 0
 
+    async def _space(self, cfg: "_ReminderConfig") -> bool:
+        """Wait out the inter-broadcast gap before the next dispatch.
+
+        Returns True to proceed with the send, False if `stop()` was signalled
+        while waiting (caller must abandon the rest of the roll-call).
+
+        No wait happens when nothing has been sent yet (`_last_dispatch_at is
+        None`) or when the gap has already elapsed on its own -- so a lone
+        eligible row is never delayed. This is what turns a burst of N
+        back-to-back sends into N sends spaced `spacing_seconds` apart.
+        """
+        spacing = cfg.spacing_seconds
+        if spacing <= 0 or self._last_dispatch_at is None:
+            return True
+        remaining = spacing - (self._clock() - self._last_dispatch_at)
+        if remaining <= 0:
+            return True
+        # Interruptible wait: a roll-call of N rows holds tick_once() for
+        # N * spacing seconds, and stop() awaits the tick task -- so a plain
+        # sleep here would stall shutdown for minutes. Race the sleep against
+        # the stop event when we have one (production). Tests construct the
+        # scheduler without start(), leaving _stop None, and get the injected
+        # self._sleep so they can fake time with zero suite slowdown.
+        if self._stop is not None:
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=remaining)
+                return False        # stop signalled -- abandon the roll-call
+            except asyncio.TimeoutError:
+                return True         # gap elapsed normally
+        await self._sleep(remaining)
+        return True
+
     async def _tick_interval(self, adapter: str, cfg: "_ReminderConfig", now: float) -> int:
         cadence = int(cfg.cadence_value) if cfg.cadence_value else 0
         if cadence <= 0:
@@ -153,10 +218,15 @@ class ReminderScheduler:
             wire = self._render(adapter, r, prefix="Active")
             if not wire:
                 continue
+            # Space AFTER the terminate/render filters: a row that is skipped
+            # never transmits, so it must not consume a spacing slot.
+            if not await self._space(cfg):
+                break
             ok = await self._dispatch(adapter, r, wire)
             if ok:
                 self._stamp_broadcast(adapter, r, now)
                 fired += 1
+                self._last_dispatch_at = self._clock()
         return fired
 
     async def _tick_clock(self, adapter: str, cfg: "_ReminderConfig", now: float) -> int:
@@ -200,10 +270,13 @@ class ReminderScheduler:
                 continue
             wire = self._render(adapter, r, prefix="Active")
             if not wire: continue
+            if not await self._space(cfg):
+                break
             ok = await self._dispatch(adapter, r, wire)
             if ok:
                 self._stamp_broadcast(adapter, r, now)
                 fired += 1
+                self._last_dispatch_at = self._clock()
         return fired
 
     # ---- table-specific helpers --------------------------------------
@@ -377,7 +450,7 @@ class ReminderScheduler:
 class _ReminderConfig:
     """Snapshot of the reminders_<adapter> config rows."""
     __slots__ = ("cadence_kind", "cadence_value", "channels", "terminate_when",
-                  "dow_mask", "timezone")
+                  "dow_mask", "timezone", "spacing_seconds")
 
     def __init__(self, **kw):
         for k in self.__slots__:
@@ -392,6 +465,20 @@ class _ReminderConfig:
             ck = _safe_get(adapter_config, ac_adapter, "cadence_kind")
             if ck is None:
                 return None
+            # spacing_seconds: minimum gap between consecutive reminder
+            # broadcasts. Absent/garbage config must never mean "unpaced" --
+            # fall back to the FirePacer-matching default. An explicit 0 (or
+            # negative) is honored as "spacing disabled".
+            _sp = _safe_get(adapter_config, ac_adapter, "spacing_seconds")
+            try:
+                spacing = (_DEFAULT_SPACING_SECONDS if _sp is None
+                           else float(_sp))
+            except (TypeError, ValueError):
+                logger.warning(
+                    "reminders %s: bad spacing_seconds=%r; using default %.0fs",
+                    adapter, _sp, _DEFAULT_SPACING_SECONDS)
+                spacing = _DEFAULT_SPACING_SECONDS
+
             return cls(
                 cadence_kind=ck,
                 cadence_value=_safe_get(adapter_config, ac_adapter, "cadence_value"),
@@ -399,6 +486,7 @@ class _ReminderConfig:
                 terminate_when=_safe_get(adapter_config, ac_adapter, "terminate_when") or [],
                 dow_mask=_safe_get(adapter_config, ac_adapter, "dow_mask"),
                 timezone=_safe_get(adapter_config, ac_adapter, "timezone"),
+                spacing_seconds=spacing,
             )
         except Exception:
             logger.exception("reminders: config load failed for %s", adapter)
