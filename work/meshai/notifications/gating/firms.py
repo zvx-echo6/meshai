@@ -14,10 +14,11 @@ Three broadcast categories are handled, discriminated by an internal
     firms_spotting  -> wildfire_spotting (pixel outside prior perimeter, cooldown)
     firms_halt      -> wildfire_halted   (fire idle >= halt_minimum_seconds)
 
-The unattributed-hotspot cluster path is DEAD (an unconditional ``return None``
-at the top of ``_maybe_emit_cluster``) and is NOT represented here.  Native
-``env/fires.py`` hotspot broadcasts (new_ignition / wildfire_hotspot) are a
-deferred follow-up and are not migrated.
+The unattributed-hotspot cluster path is LIVE (shipped in ``d479ca53`` / #73)
+and is NOT represented here -- it is not one of the three broadcast
+categories this decider covers. Native ``env/fires.py`` hotspot broadcasts
+(new_ignition / wildfire_hotspot) are a deferred follow-up and are not
+migrated.
 
 Tier-b deferral (intended behavior change, validated by gate-sequence, NOT
 golden byte-parity):
@@ -123,10 +124,12 @@ def decide(data: dict, *, source: str, now: float) -> GateResult:
                 return GateResult(broadcast=False, lifecycle="cooldown",
                                   reason="inside spotting cooldown")
         patch = {
-            # Legacy stamps (verbatim on the not-cutover path): plain severity,
-            # NOT _severity_override.
+            # Legacy stamps (verbatim on the not-cutover path). issue #121:
+            # must be _severity_override -- consumer.py only ever honors that
+            # key; a plain "severity" key here is a silent no-op (same class
+            # of bug as #118, fixed for firms_handler.py in PR #120).
             "category": "wildfire_spotting",
-            "severity": "immediate",
+            "_severity_override": "immediate",
             # Render hints for the firms formatter (cutover path).
             "dist_mi": data.get("dist_mi"),
             "direction": data.get("direction"),
@@ -165,9 +168,12 @@ def decide(data: dict, *, source: str, now: float) -> GateResult:
         name = row["incident_name"] or "(unnamed fire)"
         hours = max(0, int((float(now) - float(row["last_pass_at"])) / 3600.0))
         patch = {
-            # Legacy stamps (verbatim on the not-cutover path).
+            # Legacy stamps (verbatim on the not-cutover path). issue #121:
+            # must be _severity_override -- consumer.py only ever honors that
+            # key; a plain "severity" key here is a silent no-op (same class
+            # of bug as #118, fixed for firms_handler.py in PR #120).
             "category": "wildfire_halted",
-            "severity": "routine",
+            "_severity_override": "routine",
             # Render hints + the identity the handler needs for the wire/latch.
             "incident_name": name,
             "hours": hours,
