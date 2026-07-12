@@ -43,8 +43,14 @@ def test_router_scope_type_defined_before_env_check():
     """The env_reporter check at the top of generate_llm_response reads
     scope_type. Pre-fix it was UnboundLocalError on every env query."""
     import re
+    import importlib.util
     from pathlib import Path
-    src = Path("/opt/meshai/meshai/router.py").read_text()
+    # Resolve the module's file path without importing it -- router.py
+    # transitively imports optional LLM backend deps (openai/anthropic)
+    # that may not be installed in every test environment, and this test
+    # only needs the source text, not a working import.
+    spec = importlib.util.find_spec("meshai.router")
+    src = Path(spec.origin).read_text()
     # Find the "if should_inject_mesh and scope_type" line + the
     # nearest preceding `scope_type, scope_value = ` assignment.
     env_use_line = None
@@ -115,8 +121,13 @@ def test_status_helpers_removed_from_router():
     """Hard guard against ?status helpers sneaking back in. If anyone
     adds a structured-command path to router.py for fires, this test
     fails and the author has to talk to Matt first."""
+    import importlib.util
     from pathlib import Path
-    src = Path("/opt/meshai/meshai/router.py").read_text()
+    # See test_router_scope_type_defined_before_env_check above for why
+    # this resolves the path via find_spec rather than importing router.py
+    # or hardcoding a deployment-container path.
+    spec = importlib.util.find_spec("meshai.router")
+    src = Path(spec.origin).read_text()
     assert "_maybe_rewrite_status_query" not in src
     assert "_lookup_fire_fuzzy" not in src
     assert "?status" not in src
