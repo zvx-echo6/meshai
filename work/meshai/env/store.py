@@ -30,6 +30,21 @@ def _key_eid(source: str, event_id) -> str:
     return f"{source}{_SEP}eid:{event_id}"
 
 
+# ── FirePacer routing (native path) ──────────────────────────────────────────
+# The exact Event.source strings the NATIVE fire adapters mint (verified
+# against the adapter code, not assumed): env/fires.py's WFIGS incident
+# adapter stamps source="nifc" (NOT "fires"/"wfigs" -- those are the Central
+# NATS subject/handler names); env/firms.py's fusion broadcasts always stamp
+# source="firms" regardless of fusion kind (growth/spotting/halt/cluster) --
+# "firms_fusion" only ever appears as the raw internal event dict's bookkeeping
+# key, never as the emitted Event.source. Mirrors the gate
+# central/consumer.py:_handle applies to the Central path (issue #119) so a
+# native and a Central deployment throttle identically; "routine" fire events
+# (e.g. firms halt) are intentionally excluded, exactly as on the Central path.
+_FIRE_PACER_SOURCES = frozenset({"nifc", "firms"})
+_FIRE_PACER_SEVERITIES = frozenset({"priority", "immediate"})
+
+
 class EnvironmentalStore:
     """Cache and tick-driver for all environmental feed adapters."""
 
@@ -50,6 +65,12 @@ class EnvironmentalStore:
         self._failed_adapters = {}  # name -> last_error string
         self._events = {}  # (source, event_id) -> event dict
         self._event_bus = event_bus  # Pipeline EventBus for emission
+        # FirePacer, injected post-construction from main.py (mirrors
+        # central/consumer.py's self._pacer) once the pacer exists -- the
+        # store is built earlier in _init_components(), before start()
+        # creates the pacer. None until attached; _emit_event() falls back
+        # to emitting straight to the bus when unset (pre-existing behavior).
+        self._fire_pacer = None
         self._swpc_status = {}  # Kp/SFI/scales snapshot
         self._ducting_status = {}  # tropo ducting assessment
         self._mesh_zones = config.nws_zones or []
@@ -960,6 +981,26 @@ class EnvironmentalStore:
                 )
                 return  # default-deny on decider error
 
+            # Native fire-family events get the same <=1/60s pacing (with
+            # head-of-line for "immediate" severity) that the Central path
+            # applies via CentralConsumer._handle (issue #119) -- see the
+            # _FIRE_PACER_SOURCES/_FIRE_PACER_SEVERITIES gate above. Only ONE
+            # of {pacer, direct bus.emit} ever runs for a given event: this
+            # gate only executes on the NATIVE ingest path (an adapter whose
+            # feed_source=="native"), and the pacer's own drain loop calls
+            # bus.emit() directly -- never back through this method or
+            # through CentralConsumer._handle -- so a paced event cannot
+            # re-enter this gate and be paced twice.
+            fire_pacer = getattr(self, "_fire_pacer", None)
+            if (fire_pacer is not None
+                    and event.source in _FIRE_PACER_SOURCES
+                    and event.severity in _FIRE_PACER_SEVERITIES):
+                fire_pacer.enqueue(event)
+                logger.info(
+                    "Queued %s event %s (%s) on FirePacer",
+                    event.source, event.id, event.category,
+                )
+                return
             self._event_bus.emit(event)
             logger.info(
                 "Emitted %s event %s (%s) to pipeline bus",

@@ -131,6 +131,17 @@ class MeshAI:
             self._fire_pacer = FirePacer(bus=self.event_bus, interval_seconds=60.0)
             await self._fire_pacer.start()
 
+            # Native fire adapters (env/fires.py "nifc", env/firms.py "firms")
+            # emit straight to the EventBus from EnvironmentalStore._emit_event
+            # with no rate limiting of their own -- attach the SAME pacer so a
+            # burst of distinct fires/clusters in one poll (e.g. a lightning
+            # outbreak, or several tracked fires crossing a satellite-pass
+            # boundary together) gets the identical <=1/60s throttle the
+            # Central path gets, instead of flooding the mesh essentially
+            # back-to-back. See env/store.py's _FIRE_PACER_SOURCES gate.
+            if self.env_store is not None:
+                self.env_store._fire_pacer = self._fire_pacer
+
             from .central.consumer import CentralConsumer
             self._central_consumer = CentralConsumer(self.config.environmental, self.event_bus)
             self._central_consumer._pacer = self._fire_pacer
