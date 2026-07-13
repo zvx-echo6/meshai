@@ -94,3 +94,88 @@ def test_priority_is_also_coalesced_not_bypassed():
     g.handle(_ev("priority"))
     assert rec.received == []
     assert g.held_count() == 1
+
+
+def test_wildfire_spotting_bypasses_the_grouper_even_with_group_key():
+    """wildfire_spotting is a CATEGORY-scoped bypass (owner-approved): it
+    skips the coalescing window entirely, even though it carries a
+    group_key that would otherwise hold it. This is the one narrow
+    exemption -- see _NEVER_COALESCE_CATEGORIES in grouper.py for why
+    it's safe (source-side 1h per-fire cooldown) and why it must stay
+    category-scoped, not severity-scoped."""
+    rec = Recorder()
+    g = Grouper(next_handler=rec.handle, window_seconds=60.0)
+    ev = make_event(
+        source="firms",
+        category="wildfire_spotting",
+        severity="immediate",
+        title="test spotting",
+        lat=42.6,
+        lon=-114.5,
+        group_key="fire-irwin-123",
+    )
+    g.handle(ev)
+    # Passed straight through -- NOT held for the coalescing window.
+    assert len(rec.received) == 1
+    assert rec.received[0].category == "wildfire_spotting"
+    assert g.held_count() == 0
+
+
+def test_wildfire_growth_immediate_is_still_held_no_severity_bypass_crept_in():
+    """A same-severity, same-fire-family event of a DIFFERENT category
+    (wildfire_growth, not wildfire_spotting) must still be coalesced.
+    This proves the new bypass is scoped to category and did not
+    accidentally reintroduce a severity-based bypass (the exact bug
+    commit 85d48ce3 removed)."""
+    rec = Recorder()
+    g = Grouper(next_handler=rec.handle, window_seconds=60.0)
+    ev = make_event(
+        source="wfigs",
+        category="wildfire_growth",
+        severity="immediate",
+        title="test growth",
+        lat=42.6,
+        lon=-114.5,
+        group_key="fire-irwin-123",
+    )
+    g.handle(ev)
+    assert rec.received == []
+    assert g.held_count() == 1
+
+
+def test_wildfire_incident_immediate_is_still_held_no_severity_bypass_crept_in():
+    """Same as above for wildfire_incident: only wildfire_spotting bypasses,
+    every other fire category (even at immediate severity) is coalesced."""
+    rec = Recorder()
+    g = Grouper(next_handler=rec.handle, window_seconds=60.0)
+    ev = make_event(
+        source="wfigs",
+        category="wildfire_incident",
+        severity="immediate",
+        title="test incident",
+        lat=42.6,
+        lon=-114.5,
+        group_key="fire-irwin-123",
+    )
+    g.handle(ev)
+    assert rec.received == []
+    assert g.held_count() == 1
+
+
+def test_wildfire_spotting_with_no_group_key_still_passes_through():
+    """Existing no-group_key behavior is preserved for spotting too --
+    the bypass condition is an `or`, not a replacement."""
+    rec = Recorder()
+    g = Grouper(next_handler=rec.handle, window_seconds=60.0)
+    ev = make_event(
+        source="firms",
+        category="wildfire_spotting",
+        severity="immediate",
+        title="test spotting no key",
+        lat=42.6,
+        lon=-114.5,
+        group_key=None,
+    )
+    g.handle(ev)
+    assert len(rec.received) == 1
+    assert g.held_count() == 0
