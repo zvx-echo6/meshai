@@ -17,6 +17,39 @@ from typing import Callable
 from meshai.notifications.events import Event
 
 
+# Categories that skip the coalescing window entirely, regardless of
+# group_key. This is a CATEGORY allowlist, not a severity one -- keep
+# it that way.
+#
+# wildfire_spotting is exempt because it is a life-safety signal (a
+# fire throwing embers past its own containment line) where the
+# grouper's hold window (adapter_config.pipeline.grouper_window_seconds,
+# 60s live) plus FirePacer queuing would add a ~60-120s latency floor
+# on the single most urgent alert in the system. It is safe to bypass
+# because spotting is ALREADY rate-limited at the source: a per-fire
+# 1-hour cooldown gates spotting *detection* itself
+# (adapter_config.fires.spotting_cooldown_seconds, default 3600s,
+# latched on fires.last_spotting_broadcast_at per irwin_id in
+# gating/firms.py). N active fires therefore yield at most N spotting
+# alerts per hour, independent of this bypass. The FirePacer (60s
+# interval, head-of-line ordering for "immediate" severity) and the
+# dispatcher's per-(toggle, CATEGORY, region) cooldown still apply
+# downstream, so nothing here is unbounded.
+#
+# DO NOT add a severity-based bypass here (e.g. "if event.severity ==
+# 'immediate'"). Commit 85d48ce3 ("fix(fire): remove immediate-severity
+# exemption from grouper + cooldown") deliberately deleted exactly that
+# check: EVERY fire event carries _severity_override="immediate", so a
+# severity bypass exempts the entire fire family (growth, containment,
+# declared, halted -- not just spotting) from both the grouper window
+# AND effectively defeats rate control, reopening the fire-broadcast-
+# spam hole on a public radio mesh. This has already been misdiagnosed
+# and "fixed" that wrong way twice. Any future urgency-driven bypass
+# MUST be scoped by event.category (added to this frozenset), never by
+# event.severity.
+_NEVER_COALESCE_CATEGORIES = frozenset({"wildfire_spotting"})
+
+
 class Grouper:
     """Coalesce same-group_key events inside a window."""
 
@@ -96,11 +129,14 @@ class Grouper:
         """Process an event.
 
         Events without group_key pass through immediately.
+        Events whose category is in _NEVER_COALESCE_CATEGORIES also pass
+        through immediately, group_key or not (see module docstring for
+        why -- category-scoped only, never severity-scoped).
         Events with group_key are held, replacing any prior held
         event with the same group_key. The held event is emitted
         later via tick().
         """
-        if not event.group_key:
+        if not event.group_key or event.category in _NEVER_COALESCE_CATEGORIES:
             self._next(event)
             return
 
