@@ -1224,10 +1224,16 @@ class MeshCoreTransport(MeshTransport):
     # Telemetry (MeshCore sensor auto-poll)
     # ------------------------------------------------------------------
 
-    def _resolve_contact(self, contact_id: str):
+    def _resolve_contact_for_telemetry(self, contact_id: str):
         """Resolve *contact_id* (a pubkey/prefix OR a name) to a contact dict.
 
-        Mirrors DM / get_node_name resolution: try key-prefix first, then name.
+        Telemetry-only resolver: try key-prefix first, then name. Unlike
+        ``_resolve_contact`` (the DM/path-establishment resolver), this does
+        NOT force a full ``get_contacts(lastmod=0)`` refetch on a cache miss —
+        telemetry only ever targets contacts the operator has explicitly
+        selected in ``meshcore_telemetry_contacts``, which are expected to
+        already be in the roster (added via a prior DM/advert), so the extra
+        firmware round-trip isn't worth paying on every poll cycle.
         Returns the raw contact dict, or None if not resolvable / not connected.
         """
         if self._mc is None or not self._connected:
@@ -1315,7 +1321,7 @@ class MeshCoreTransport(MeshTransport):
 
         Returns the decoded dict, or None on unresolved/timeout/no-response/error.
         """
-        contact = self._resolve_contact(contact_id)
+        contact = self._resolve_contact_for_telemetry(contact_id)
         if contact is None:
             return None
         try:
