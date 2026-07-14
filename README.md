@@ -54,9 +54,9 @@ Everything is driven from the web UI, organized into **General**, **Meshtastic**
 
 ```bash
 git clone https://github.com/zvx-echo6/meshai.git
-cd meshai
+cd meshai/work
 pip install -e .
-meshai --config     # interactive setup TUI
+cp config.example.yaml config.yaml   # then edit config.yaml (or use the dashboard)
 meshai
 ```
 
@@ -64,8 +64,8 @@ Or with Docker:
 
 ```bash
 mkdir -p meshai/data && cd meshai
-curl -O https://raw.githubusercontent.com/zvx-echo6/meshai/main/docker-compose.yml
-curl -o data/config.yaml https://raw.githubusercontent.com/zvx-echo6/meshai/main/config.example.yaml
+curl -O https://raw.githubusercontent.com/zvx-echo6/meshai/main/work/docker-compose.yml
+curl -o data/config.yaml https://raw.githubusercontent.com/zvx-echo6/meshai/main/work/config.example.yaml
 # edit data/config.yaml, then:
 docker compose up -d
 ```

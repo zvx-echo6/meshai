@@ -1,1 +1,0 @@
-# MeshAI scripts package
