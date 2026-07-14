@@ -510,6 +510,11 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "type": "json",
         "description": "Stop reminding when any of these conditions is true.",
     },
+    ("reminders_wfigs", "spacing_seconds"): {
+        "default": 60,                     # matches FirePacer's <=1/60s cadence
+        "type": "int",
+        "description": "Minimum seconds between consecutive reminder broadcasts. A roll-call of N eligible fires is spread over N intervals instead of firing back-to-back. 0 disables spacing.",
+    },
 
     ("reminders_swpc", "cadence_kind"): {
         "default": "interval",
@@ -530,6 +535,11 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "default": ["tombstone", "end_date_passed"],
         "type": "json",
         "description": "Stop reminding when any of these conditions is true.",
+    },
+    ("reminders_swpc", "spacing_seconds"): {
+        "default": 60,
+        "type": "int",
+        "description": "Minimum seconds between consecutive reminder broadcasts. 0 disables spacing.",
     },
 
     ("reminders_itd_511_work_zone", "cadence_kind"): {
@@ -561,6 +571,11 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "default": ["tombstone", "end_date_passed"],
         "type": "json",
         "description": "Stop reminding when any of these conditions is true.",
+    },
+    ("reminders_itd_511_work_zone", "spacing_seconds"): {
+        "default": 60,
+        "type": "int",
+        "description": "Minimum seconds between consecutive reminder broadcasts. 0 disables spacing.",
     },
 
     # NWS dedup-window relaxation (separate from reminders by design).
