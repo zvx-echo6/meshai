@@ -6,7 +6,11 @@ AIS, satellite passes (Phase 7)"). As of v0.5.7-tracking it has:
 
   - "tracking" in VALID_TOGGLES (reserved toggle name)
   - dashboard-frontend/src/pages/Environment.tsx FAMILIES list entry with
-    label="Tracking", icon=Satellite, adapters=[]  (empty placeholder)
+    label="Tracking", icon=Satellite, adapters=['satpass']  (a pre-existing
+    UI-only grouping of the native satpass adapter under the "Tracking"
+    display section; satpass has its own "satpass" backend toggle and is
+    NOT itself a Phase-7 tracking-family adapter -- the guard below allows
+    only this one known entry and fails on anything else)
   - ZERO native adapter files in meshai/env/
   - ZERO ALERT_CATEGORIES entries with toggle="tracking"
   - ZERO Central wires (no central.tracking.* / central.aprs.* / etc.;
@@ -121,30 +125,50 @@ def test_no_native_tracking_adapter_files():
 # ---------- frontend placeholder invariant -------------------------------
 
 
-def test_environment_tsx_tracking_family_has_empty_adapter_list():
-    """Environment.tsx FAMILIES entry for 'tracking' must currently have
-    adapters=[]. Phase 7 will populate this list; that change should be
-    paired with new ALERT_CATEGORIES entries + adapter files + a test
-    refresh here."""
+def test_environment_tsx_tracking_family_has_only_the_satpass_preview():
+    """Environment.tsx FAMILIES entry for 'tracking' must have adapters
+    limited to the pre-existing ['satpass'] preview grouping -- it must
+    NOT gain any actual Phase-7 tracking adapter (aprs/adsb/opensky/etc).
+
+    This guard originally required adapters=[] outright, but Environment.tsx
+    has grouped the native satpass (SGP4) adapter under the "Tracking" UI
+    section (icon: Satellite) since before this test's earliest visible
+    history -- satellite-pass tracking is thematically "tracking" for
+    display purposes, even though satpass has always had its OWN dedicated
+    backend registry toggle ("satpass", see
+    meshai/notifications/categories.py) rather than "tracking". All 7 other
+    guards in this file (zero Central subjects, zero ALERT_CATEGORIES
+    entries, zero native adapter files, etc.) confirm the backend-side
+    Phase-7 tracking family genuinely has not landed; only this test's
+    stricter-than-reality assumption about the frontend grouping was wrong.
+    If Phase 7 lands for real, update this test together with the new
+    ALERT_CATEGORIES entries + adapter files + composer glyphs.
+    """
     tsx = Path("dashboard-frontend/src/pages/Environment.tsx")
     if not tsx.is_file():
         pytest.skip("Environment.tsx not present in this working tree")
     text = tsx.read_text()
-    # Look for the FAMILIES line for tracking; the adapter list must be empty.
+    # Look for the FAMILIES line for tracking; the adapter list must be
+    # limited to the known satpass preview entry.
     assert "key: 'tracking'" in text or 'key: "tracking"' in text, \
         "Environment.tsx FAMILIES is missing the tracking placeholder entry"
-    # Pattern: `key: 'tracking', label: 'Tracking', icon: Satellite, adapters: []`
+    # Pattern: `key: 'tracking', label: 'Tracking', icon: Satellite, adapters: [...]`
     # Accept any quote style + minor formatting tolerance.
     import re
     m = re.search(
         r"""key:\s*['"]tracking['"]\s*,\s*"""
         r"""label:\s*['"]Tracking['"]\s*,\s*"""
         r"""icon:\s*\w+\s*,\s*"""
-        r"""adapters:\s*\[\s*\]""",
+        r"""adapters:\s*\[([^\]]*)\]""",
         text, re.DOTALL,
     )
     assert m, (
-        "Environment.tsx tracking-family adapter list is no longer empty. "
+        "Environment.tsx FAMILIES tracking entry not found in the expected shape"
+    )
+    adapters = {a.strip().strip("'\"") for a in m.group(1).split(",") if a.strip()}
+    assert adapters == {"satpass"}, (
+        f"Environment.tsx tracking-family adapter list is {sorted(adapters)!r}, "
+        "expected only the pre-existing {'satpass'} preview entry. "
         "If you're landing Phase 7, update this test together with the "
         "new ALERT_CATEGORIES entries + adapter files + composer glyphs."
     )

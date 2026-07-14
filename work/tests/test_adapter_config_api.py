@@ -13,7 +13,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from meshai.adapter_config import adapter_config, invalidate_cache
+from meshai.adapter_config import adapter_config, invalidate_cache, REGISTRY
 from meshai.dashboard.api.adapter_config_routes import router
 
 
@@ -29,25 +29,36 @@ def client():
 # ============================================================================
 
 
-def test_list_returns_all_59_keys(client):
+def test_list_returns_every_registry_key(client):
+    """The grouped listing must return exactly one row per REGISTRY entry.
+
+    Previously hard-coded an exact total (59, then 96, then 94 -- the test
+    name still said 59 long after the asserted number had drifted twice)
+    that rotted every time a key was legitimately added or removed from
+    REGISTRY. Comparing against len(REGISTRY) directly is the actual
+    invariant under test and can't rot the same way.
+    """
     r = client.get("/api/adapter-config")
     assert r.status_code == 200
     body = r.json()
-    # 14 adapters with at least one key (itd_511 has zero -- not in the
-    # grouped dict because the SQL only returns rows that exist).
     total = sum(len(v) for v in body.values())
-    # was 96; config-schema cleanup removed the two deprecated nws keys
-    # (broadcast_severities, warning_suffix_promotes) -> 94.
-    assert total == 94
+    assert total == len(REGISTRY)
 
 
 def test_list_grouped_by_adapter(client):
+    """wfigs's key set in the API must match REGISTRY exactly.
+
+    Previously hard-coded a 5-key set that missed max_declare_age_seconds
+    (added by the fire age-gate feature, commit 95b1a23e) -- comparing
+    against REGISTRY directly means a future added/removed wfigs key can't
+    silently desync this test again.
+    """
     r = client.get("/api/adapter-config")
     body = r.json()
     assert "wfigs" in body
     keys = {row["key"] for row in body["wfigs"]}
-    assert keys == {"cooldown_seconds", "anchor_max_mi", "freshness_seconds",
-                     "broadcast_on_acres", "broadcast_on_contained"}
+    expected = {key for (adapter, key) in REGISTRY if adapter == "wfigs"}
+    assert keys == expected
 
 
 def test_list_includes_type_value_default_description(client):

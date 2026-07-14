@@ -207,10 +207,20 @@ def test_renderer_produces_friendly_string():
 def test_renderer_byte_budget_drops_optional_segments():
     """Spec §4: when over budget, optional segments drop FIRST (context, then
     distance, then quant, then region). Required segments (head + primary +
-    severity) always survive."""
+    severity) always survive.
+
+    Uses wildfire_hotspot (not wildfire_incident): the phase3b fire
+    migration (commit 8bc9b14d) gave wildfire_incident/_declared/_closed a
+    dedicated formatter+decider that is now forced live unconditionally via
+    NATIVE_ALWAYS_DECIDE (meshai/notifications/cutover.py), independent of
+    this generic composer under test. wildfire_hotspot keeps the same 🔥
+    FIRE emoji/label (composer.py's EMOJI/LABEL maps) but isn't in
+    NATIVE_ALWAYS_DECIDE, so it still exercises the generic byte-budget
+    logic this test is actually about.
+    """
     big_title = "A" * 200
     e = make_event(
-        source="nws", category="wildfire_incident", severity="immediate",
+        source="nws", category="wildfire_hotspot", severity="immediate",
         title=big_title, region="Wood River Valley",
         timestamp=time.time(),
         data={
@@ -236,9 +246,14 @@ def test_renderer_omits_none_context_fields():
     """Regression — native road adapters set optional context keys present but
     None (``cause``/``expires_at``/``containment_pct``). The composer must
     guard on value, not key presence, so the literal string 'None' never leaks
-    onto the wire."""
+    onto the wire.
+
+    Uses wildfire_hotspot, not wildfire_incident -- see
+    test_renderer_byte_budget_drops_optional_segments above for why
+    wildfire_incident no longer exercises this generic composer path.
+    """
     e = make_event(
-        source="wzdx", category="wildfire_incident", severity="immediate",
+        source="wzdx", category="wildfire_hotspot", severity="immediate",
         title="Test Fire", region="Boise", timestamp=time.time(),
         data={"cause": None, "expires_at": None, "containment_pct": None},
     )
@@ -246,7 +261,7 @@ def test_renderer_omits_none_context_fields():
     assert "None" not in s
     # A real value on the same field still renders (guard doesn't over-suppress).
     e2 = make_event(
-        source="wzdx", category="wildfire_incident", severity="immediate",
+        source="wzdx", category="wildfire_hotspot", severity="immediate",
         title="Test Fire", region="Boise", timestamp=time.time(),
         data={"cause": "lightning", "expires_at": None, "containment_pct": None},
     )

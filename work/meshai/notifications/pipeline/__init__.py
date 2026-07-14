@@ -289,9 +289,19 @@ async def start_pipeline(bus: EventBus, config) -> DigestScheduler:
                 "reminder scheduler failed to start")
 
 
-    # Phase 2.16.1: periodically flush the grouper so coalesced (routine/
-    # priority) events are delivered within the window even when poll cadence
-    # is sparse. Immediate events bypass the grouper and don't need this.
+    # Phase 2.16.1: periodically flush the grouper so coalesced events are
+    # delivered within the window even when poll cadence is sparse.
+    #
+    # NOTE: this used to say "Immediate events bypass the grouper and don't
+    # need this." That is FALSE as of commit 85d48ce3 ("fix(fire): remove
+    # immediate-severity exemption from grouper + cooldown"), which deleted
+    # the severity check from Grouper.handle() (and the matching cooldown
+    # exemption in Dispatcher) on purpose: fire events carry
+    # _severity_override="immediate", which was zeroing the dispatcher
+    # cooldown and skipping the coalescer, leaving fire with NO rate control
+    # in normal live operation. EVERY severity -- immediate included -- is now
+    # held by the grouper when it has a group_key, so this periodic flush is
+    # what delivers them. Do not re-add an immediate-severity bypass.
     grouper = components["grouper"]
     flush_interval = getattr(config.notifications, "grouper_flush_seconds", 5.0) or 5.0
     flush_stop = asyncio.Event()

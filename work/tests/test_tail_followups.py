@@ -305,6 +305,13 @@ def test_reminder_fires_when_fire_not_tombstoned():
     )
     dispatcher = MagicMock()
     dispatcher.dispatch_scheduled_broadcast = AsyncMock(return_value=True)
+    # wfigs reminders go out via dispatch_scheduled_fire_broadcast, a
+    # distinct method from the generic dispatch_scheduled_broadcast (see
+    # meshai/notifications/reminders/__init__.py); both must be mocked as
+    # AsyncMock or the un-mocked plain-MagicMock attribute raises
+    # "object MagicMock can't be used in 'await' expression" (test_reminders.py
+    # mocks both for the same reason).
+    dispatcher.dispatch_scheduled_fire_broadcast = AsyncMock(return_value=True)
     sch = ReminderScheduler(dispatcher, clock=lambda: now)
     import asyncio
     fired = asyncio.run(sch.tick_once())

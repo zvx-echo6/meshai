@@ -54,11 +54,32 @@ def test_v6_tables_exist(fresh_db):
     assert "adapter_meta" in tables
 
 
-def test_schema_meta_at_v12(fresh_db):
+def _highest_migration_version() -> int:
+    """The highest vNN.sql migration file present on disk.
+
+    Derived rather than hard-coded: a hard-coded literal here has rotted
+    repeatedly in the past (this guard has said v12, then v17, while the
+    schema moved on) because nobody remembers to bump a magic number when
+    a migration is added. Deriving it from the migrations directory means
+    this test can never rot the same way again.
+    """
+    from meshai.persistence.db import MIGRATIONS_DIR
+    versions = []
+    for p in MIGRATIONS_DIR.glob("v*.sql"):
+        n_str = p.stem[1:].split("_", 1)[0]
+        try:
+            versions.append(int(n_str))
+        except ValueError:
+            continue
+    assert versions, f"no migration files found in {MIGRATIONS_DIR}"
+    return max(versions)
+
+
+def test_schema_meta_at_current_migration(fresh_db):
     v = fresh_db.execute(
         "SELECT value FROM schema_meta WHERE key='version'"
     ).fetchone()["value"]
-    assert int(v) == 17
+    assert int(v) == _highest_migration_version()
 
 
 def test_adapter_config_type_check_constrains_vocabulary(fresh_db):
@@ -73,13 +94,61 @@ def test_adapter_config_type_check_constrains_vocabulary(fresh_db):
 # ---------- registry shape -----------------------------------------------
 
 
-def test_registry_at_59_entries():
-    """v0.6-3a.1 trim: 43 CONFIG-only keys (was 77 in v0.6-3a draft)."""
-    # was 96; config-schema cleanup removed the two deprecated nws keys
-    # (broadcast_severities, warning_suffix_promotes) -> 94.
-    assert len(REGISTRY) == 94, (
-        f"REGISTRY drift guard; got {len(REGISTRY)}. "
-        f"If a sentence template / emoji / heuristic snuck in, it belongs in CODE not config."
+def test_registry_has_no_duplicate_keys():
+    """REGISTRY drift guard.
+
+    This used to hard-code an exact entry count (59, then 96, then 94 --
+    the test name still said 59 long after the number in the assert had
+    drifted twice) that had to be bumped by hand every time a key was
+    legitimately added or removed, and repeatedly rotted because nobody
+    remembered to bump it. A magic count can't be derived (REGISTRY's size
+    IS the thing under test), so instead this guards a related invariant
+    that CAN be derived and can never legitimately change: the dict
+    literal in defaults.py must not contain the same (adapter, key) tuple
+    twice. A duplicate key would silently shadow one entry at runtime
+    (last one wins) with no error -- exactly the kind of silent config
+    drift this file's other guards (no emoji/template/map keys) exist to
+    catch.
+    """
+    import ast
+    from pathlib import Path
+    import meshai.adapter_config.defaults as defaults_mod
+
+    src = Path(defaults_mod.__file__).read_text()
+    tree = ast.parse(src)
+    registry_assign = None
+    for node in ast.walk(tree):
+        # REGISTRY carries a type annotation (`REGISTRY: dict[...] = {...}`),
+        # so it's an AnnAssign, not a plain Assign.
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) \
+                and node.target.id == "REGISTRY":
+            registry_assign = node
+            break
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "REGISTRY" for t in node.targets
+        ):
+            registry_assign = node
+            break
+    assert registry_assign is not None, "could not find REGISTRY assignment in defaults.py"
+    dict_literal = registry_assign.value
+    assert isinstance(dict_literal, ast.Dict)
+
+    def _key_tuple(key_node):
+        # Each REGISTRY key is a literal ("adapter", "key") tuple.
+        return ast.literal_eval(key_node)
+
+    literal_keys = [_key_tuple(k) for k in dict_literal.keys]
+    assert len(literal_keys) == len(set(literal_keys)), (
+        "duplicate (adapter, key) tuple in REGISTRY's dict literal -- one "
+        "entry is silently shadowing another"
+    )
+    # And the executed REGISTRY must have exactly as many entries as the
+    # source literal wrote -- if these two counts ever diverge outside of
+    # a duplicate key, something stranger (dynamic mutation at import
+    # time) is going on and deserves a look.
+    assert len(REGISTRY) == len(literal_keys), (
+        f"REGISTRY has {len(REGISTRY)} entries but the source literal in "
+        f"defaults.py wrote {len(literal_keys)}"
     )
 
 

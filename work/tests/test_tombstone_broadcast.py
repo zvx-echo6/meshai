@@ -1,9 +1,21 @@
 """Tests for tombstone broadcast path fix.
 
 Validates:
-  T1: tombstone yields _severity_override="immediate" + commit handles
+  T1: tombstone yields _severity_override="priority" + commit handles
   T2: closure wire dispatches when New was broadcast >=10min earlier
   T3: build_env_summary excludes tombstoned and 100%-contained fires
+
+Severity note: fire broadcasts (new/update/tombstone-closure alike) were
+downgraded from "immediate" to "priority" by commit 2f677e85
+("fix(fire): drain-mode pacer to prevent post-reconnect broadcast spam").
+After a NATS consumer outage, LAST_PER_SUBJECT delivery could flood
+thousands of backlogged events at once; "immediate" severity bypassed the
+Grouper and zeroed dispatcher cooldowns, so a backlog replay produced
+duplicate "New" broadcasts for the same fire. "priority" routes fire
+broadcasts back through the normal pipeline guards (Grouper, cooldown).
+This file's expectations were written before that downgrade and never
+updated -- "immediate" here would be reverting a deliberate, documented
+incident fix.
 """
 from __future__ import annotations
 
@@ -37,9 +49,9 @@ def _seed_fire(conn, *, irwin_id, name, acres, contained=None,
 
 
 class TestTombstoneSeverityAndCommitHandles:
-    """T1: tombstone branch sets immediate severity and attaches commit handles."""
+    """T1: tombstone branch sets priority severity and attaches commit handles."""
 
-    def test_severity_is_immediate(self):
+    def test_severity_is_priority(self):
         conn = get_db()
         now = int(time.time())
         _seed_fire(conn, irwin_id="FIRE-001", name="Test Fire",
@@ -55,8 +67,11 @@ class TestTombstoneSeverityAndCommitHandles:
             now=now,
         )
         assert wire is not None, "tombstone should produce wire for previously-broadcast fire"
-        assert data.get("_severity_override") == "immediate", (
-            f"expected immediate, got {data.get('_severity_override')}")
+        # See module docstring: fire severity was deliberately downgraded
+        # from "immediate" to "priority" (commit 2f677e85) so fire
+        # broadcasts flow through the normal Grouper/cooldown guards.
+        assert data.get("_severity_override") == "priority", (
+            f"expected priority, got {data.get('_severity_override')}")
 
     def test_commit_handles_attached(self):
         conn = get_db()
@@ -160,7 +175,9 @@ class TestTombstoneAfterNewBroadcast:
         assert "✅" in wire, "closure wire should contain checkmark"
         assert "IA 1" in wire, "closure wire should name the fire"
         assert data["category"] == "wildfire_closed"
-        assert data["_severity_override"] == "immediate"
+        # See module docstring: downgraded from "immediate" to "priority"
+        # by commit 2f677e85 to prevent Grouper/cooldown bypass.
+        assert data["_severity_override"] == "priority"
         assert callable(data.get("_on_broadcast_committed"))
 
     def test_no_wire_when_never_broadcast(self):
