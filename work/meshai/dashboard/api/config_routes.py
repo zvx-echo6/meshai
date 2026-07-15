@@ -18,23 +18,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["config"])
 
 # Sections that require restart when changed.
-# v0.6-tail-3: environmental added. Per Central v0.10.2 OR-not-AND
-# verification (Spokane fix), env_store rebuild and CentralConsumer
-# subscribe both happen only at boot. A live PUT to
-# environmental.<adapter>.feed_source / enabled writes to disk but the
-# running process keeps polling the existing native adapters AND newly
-# subscribing to Central until the container restarts -- a transient
-# AND-mode that violates the architecture for as long as the user
-# delays the restart.
+# v0.16-env-hot-reload: "environmental" and "generic_sources" REMOVED.
+# Central is retired (all-native deployments, central.enabled=false,
+# CentralConsumer inert), so the transient AND-mode this rule originally
+# guarded against (env_store rebuild + CentralConsumer subscribe both
+# boot-only, per Central v0.10.2's OR-not-AND / Spokane fix) can no longer
+# happen in practice -- there is no live Central subscription to race. A PUT
+# to environmental/generic_sources is now hot-applied via
+# EnvironmentalStore.apply_config() (see _refresh_environmental below):
+# unchanged per-adapter configs are left alone, changed native adapters are
+# rebuilt in place, and store-level dedup/seen state survives because it is
+# keyed by event source, not by adapter object. The ONE case that still
+# needs a restart is a single adapter's feed_source flipping to/from
+# "central" -- CentralConsumer's (un)subscribe is still boot-only -- and
+# that is now reported per-adapter (see apply_config()'s "restart_required"
+# result), not by blanket section membership here.
 RESTART_REQUIRED_SECTIONS = {
     "connection",
     "llm",
     "mesh_sources",
     "meshmonitor",
     "dashboard",
-    "environmental",
     "coverage",
-    "generic_sources",
 }
 
 # Valid config section names
@@ -172,6 +177,7 @@ async def update_config_section(section: str, request: Request):
         # actually restarts -- otherwise the runtime would silently
         # switch into the transient AND-mode this commit exists to
         # prevent.
+        adapter_results = None
         if not restart_required and getattr(request.app.state, "config", None) is not None:
             try:
                 setattr(request.app.state.config, section, new_value)
@@ -179,17 +185,35 @@ async def update_config_section(section: str, request: Request):
                 pass
             if section == "context":
                 _refresh_mesh_context(request.app, new_value)
+            elif section == "environmental":
+                adapter_results = _refresh_environmental(request.app, new_value)
+            elif section == "generic_sources":
+                current_env_cfg = getattr(request.app.state.config, "environmental", None)
+                adapter_results = _refresh_environmental(
+                    request.app, current_env_cfg, generic_sources=new_value)
+
+            # A specific adapter's feed_source flip to/from "central" still
+            # needs a restart (CentralConsumer (un)subscribe is boot-only) --
+            # apply_config() reports it per-adapter rather than by blanket
+            # section membership, so surface it here.
+            if adapter_results and any(
+                    v == "restart_required" for v in adapter_results.values()):
+                restart_required = True
 
         logger.info(
-            "Config section %r updated, restart_required=%s changed_keys=%s",
+            "Config section %r updated, restart_required=%s changed_keys=%s%s",
             section, restart_required, changed_keys,
+            f" adapter_results={adapter_results}" if adapter_results is not None else "",
         )
 
-        return {
+        response = {
             "saved": True,
             "restart_required": restart_required,
             "changed_keys": changed_keys,
         }
+        if adapter_results is not None:
+            response["adapter_results"] = adapter_results
+        return response
 
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -259,6 +283,34 @@ def _refresh_toggle_filter(app) -> bool:
     except Exception:
         logger.exception("toggle_filter refresh failed")
         return False
+
+
+def _refresh_environmental(app, new_env_cfg, generic_sources=None):
+    """Best-effort live hot-reload of the running EnvironmentalStore after an
+    "environmental" or "generic_sources" config PUT. Delegates the actual
+    diff-and-swap to ``EnvironmentalStore.apply_config()`` (env/store.py):
+    only adapters whose OWN config changed are rebuilt in place; everything
+    else -- including store-level dedup/seen state -- is left untouched.
+
+    ``generic_sources``, when omitted, defaults to the live config's current
+    list (an "environmental" PUT doesn't touch generic_sources); a
+    "generic_sources" PUT passes its own new value explicitly.
+
+    Returns the ``{adapter_name: "reloaded"|"unchanged"|"restart_required"}``
+    map from ``apply_config()``, or ``None`` when the store isn't up yet
+    (environmental feeds disabled, or early startup/tests). Never raises.
+    """
+    try:
+        store = getattr(app.state, "env_store", None)
+        if store is None or new_env_cfg is None:
+            return None
+        if generic_sources is None:
+            config = getattr(app.state, "config", None)
+            generic_sources = getattr(config, "generic_sources", None) if config else None
+        return store.apply_config(new_env_cfg, generic_sources=generic_sources)
+    except Exception:
+        logger.exception("environmental store refresh failed")
+        return None
 
 
 def _refresh_mesh_context(app, new_ctx_cfg) -> bool:

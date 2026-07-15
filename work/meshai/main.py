@@ -706,6 +706,16 @@ class MeshAI:
         else:
             self.env_store = None
 
+        # v0.16-env-hot-reload: expose the store to the dashboard API so a
+        # config PUT to /api/config/environmental (or /generic_sources) can
+        # hot-reload it live -- mirrors the .state.bus/.state.config stash
+        # above.
+        try:
+            from meshai.dashboard.server import app as _dash_app
+            _dash_app.state.env_store = self.env_store
+        except Exception:
+            logger.debug('dashboard app.state env_store stash skipped')
+
         # Knowledge base (optional - Qdrant with SQLite fallback)
         kb_cfg = self.config.knowledge
         self.knowledge = None

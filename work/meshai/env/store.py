@@ -155,64 +155,33 @@ class EnvironmentalStore:
         # on a LATER poll broadcast. Keyed by the bare configured source name.
         self._generic_seeded: set[str] = set()
 
-        # Create adapter instances with error isolation
-        self._register_adapter("nws", config.nws, ".nws", "NWSAlertsAdapter",
-            lambda cfg: (cfg, self._coverage_for("nws")))
-        self._register_adapter("swpc", config.swpc, ".swpc", "SWPCAdapter",
-            lambda cfg: (cfg,))
-        self._register_adapter("ducting", config.ducting, ".ducting", "DuctingAdapter",
-            lambda cfg: (cfg, self._coverage_for("ducting")))
-        self._register_adapter("nifc", config.fires, ".fires", "NICFFiresAdapter",
-            lambda cfg: (cfg, self._region_anchors, self._coverage_for("fires")))
-        self._register_adapter("avalanche", config.avalanche, ".avalanche", "AvalancheAdapter",
-            lambda cfg: (cfg, self._coverage_for("avalanche")))
-        self._register_adapter("usgs", config.usgs, ".usgs", "USGSStreamsAdapter",
-            lambda cfg: (cfg, self._coverage_for("usgs")))
-        self._register_adapter("usgs_quake", config.usgs_quake, ".usgs_quake", "USGSQuakeAdapter",
-            lambda cfg: (cfg, self._coverage_for("usgs_quake")))
-        self._register_adapter("traffic", config.traffic, ".traffic", "TomTomTrafficAdapter",
-            lambda cfg: (cfg, self._coverage_for("traffic")))
-        self._register_adapter("roads511", config.roads511, ".roads511", "Roads511Adapter",
-            lambda cfg: (cfg, self._coverage_for("roads511")))
-        self._register_adapter("wzdx", config.wzdx, ".wzdx", "WZDxAdapter",
-            lambda cfg: (cfg, self._coverage_for("wzdx")))
-        # Native satpass TLE fetcher (storage-only: populates sat_tles, emits
-        # no events). Gated on satpass.feed_source=="native" like the rest.
-        self._register_adapter("satpass_tle", config.satpass, ".tle_fetch", "TLEFetchAdapter",
-            lambda cfg: (cfg,))
-        # Native SGP4 pass predictor (broadcasts consolidated passes locally,
-        # no Central dependency). SEPARATE from the satpass_tle fetcher above;
-        # both are gated on satpass.enabled and feed_source=="native".
-        self._register_adapter("satpass", config.satpass, ".satpass", "SatpassAdapter",
-            lambda cfg: (cfg,))
+        # Per-adapter config snapshot, keyed by the EnvironmentalConfig field
+        # name (e.g. "nws", "fires", "satpass" -- NOT the adapter registration
+        # name; "satpass" backs BOTH the satpass_tle and satpass adapters).
+        # Captured for every registry entry regardless of enabled/feed_source
+        # so a later apply_config() call can detect what changed, including
+        # an adapter that starts out disabled/central and is later flipped
+        # on. Read by apply_config()'s diff-and-swap hot-reload path.
+        self._configs: dict = {}
+
+        # Create adapter instances with error isolation. The registry table
+        # (name, config field, module, class, arg-builder) is shared with
+        # apply_config()'s hot-reload path so both go through the exact same
+        # construction logic.
+        for _name, _field, _mod, _cls, _args_fn in self._adapter_registry():
+            _cfg = getattr(config, _field)
+            self._configs[_field] = _cfg
+            self._register_adapter(_name, _cfg, _mod, _cls, _args_fn)
 
         # FIRMS needs reference to NIFC adapter for cross-referencing
-        if config.firms.enabled and config.firms.feed_source == "native":
-            try:
-                from .firms import FIRMSAdapter
-                fires_adapter = self._adapters.get("nifc")
-                self._firms = FIRMSAdapter(config.firms, self._region_anchors, fires_adapter, coverage=self._coverage_for("firms"))
-                self._adapters["firms"] = self._firms
-            except Exception as e:
-                err_msg = f"{type(e).__name__}: {e}"
-                logger.warning("Failed to initialize firms adapter: %s", err_msg)
-                self._failed_adapters["firms"] = err_msg
+        self._configs["firms"] = config.firms
+        self._construct_firms(config.firms)
 
         # Universal config-driven REST/GeoJSON sources. ONE adapter instance
         # handles every source in config.generic_sources; construct it only
         # when at least one source is configured. Guarded like firms so a bad
         # import/config never takes the whole store down.
-        if self._generic_sources:
-            try:
-                from .generic_http import GenericHttpAdapter
-                self._generic = GenericHttpAdapter(
-                    self._generic_sources,
-                    self._coverage_for("generic_http"))
-                self._adapters["generic_http"] = self._generic
-            except Exception as e:
-                err_msg = f"{type(e).__name__}: {e}"
-                logger.warning("Failed to initialize generic_http adapter: %s", err_msg)
-                self._failed_adapters["generic_http"] = err_msg
+        self._construct_generic(self._generic_sources)
 
         _central = [n for n in ("nws", "swpc", "ducting", "fires", "avalanche", "usgs", "usgs_quake", "traffic", "roads511", "wzdx", "firms", "satpass")
                     if getattr(getattr(config, n, None), "feed_source", "native") == "central"]
@@ -228,6 +197,56 @@ class EnvironmentalStore:
         self._seed_from_persistent()
 
 
+    def _adapter_registry(self):
+        """(name, config field, module path, class name, arg-builder) table
+        driving BOTH __init__'s adapter construction and apply_config()'s
+        diff-and-swap hot-reload -- the single source of truth for how each
+        named adapter is built from its config. Not a module-level constant:
+        several arg-builders close over ``self`` (``self._coverage_for``,
+        ``self._region_anchors``), which must reflect the store's OWN
+        coverage/region state (not a stale copy) on every call, including a
+        rebuild long after __init__.
+
+        ``config field`` is the ``EnvironmentalConfig`` attribute name the
+        adapter is built from -- e.g. adapter "nifc" is built from
+        ``config.fires``, and BOTH the "satpass_tle" and "satpass" adapters
+        are built from the single ``config.satpass`` field (a change there
+        must rebuild both).
+        """
+        return [
+            ("nws", "nws", ".nws", "NWSAlertsAdapter",
+                lambda cfg: (cfg, self._coverage_for("nws"))),
+            ("swpc", "swpc", ".swpc", "SWPCAdapter",
+                lambda cfg: (cfg,)),
+            ("ducting", "ducting", ".ducting", "DuctingAdapter",
+                lambda cfg: (cfg, self._coverage_for("ducting"))),
+            ("nifc", "fires", ".fires", "NICFFiresAdapter",
+                lambda cfg: (cfg, self._region_anchors, self._coverage_for("fires"))),
+            ("avalanche", "avalanche", ".avalanche", "AvalancheAdapter",
+                lambda cfg: (cfg, self._coverage_for("avalanche"))),
+            ("usgs", "usgs", ".usgs", "USGSStreamsAdapter",
+                lambda cfg: (cfg, self._coverage_for("usgs"))),
+            ("usgs_quake", "usgs_quake", ".usgs_quake", "USGSQuakeAdapter",
+                lambda cfg: (cfg, self._coverage_for("usgs_quake"))),
+            ("traffic", "traffic", ".traffic", "TomTomTrafficAdapter",
+                lambda cfg: (cfg, self._coverage_for("traffic"))),
+            ("roads511", "roads511", ".roads511", "Roads511Adapter",
+                lambda cfg: (cfg, self._coverage_for("roads511"))),
+            ("wzdx", "wzdx", ".wzdx", "WZDxAdapter",
+                lambda cfg: (cfg, self._coverage_for("wzdx"))),
+            # Native satpass TLE fetcher (storage-only: populates sat_tles,
+            # emits no events). Gated on satpass.feed_source=="native" like
+            # the rest.
+            ("satpass_tle", "satpass", ".tle_fetch", "TLEFetchAdapter",
+                lambda cfg: (cfg,)),
+            # Native SGP4 pass predictor (broadcasts consolidated passes
+            # locally, no Central dependency). SEPARATE from the satpass_tle
+            # fetcher above; both are gated on satpass.enabled and
+            # feed_source=="native".
+            ("satpass", "satpass", ".satpass", "SatpassAdapter",
+                lambda cfg: (cfg,)),
+        ]
+
     def _register_adapter(self, name: str, cfg, module_path: str, class_name: str, args_fn):
         """Register a single adapter with error isolation."""
         if not cfg.enabled or cfg.feed_source != "native":
@@ -240,6 +259,170 @@ class EnvironmentalStore:
             err_msg = f"{type(e).__name__}: {e}"
             logger.warning("Failed to initialize %s adapter: %s", name, err_msg)
             self._failed_adapters[name] = err_msg
+
+    def _construct_firms(self, cfg) -> None:
+        """(Re)build the "firms" adapter from ``cfg`` (a FIRMSConfig), wiring
+        the CURRENT "nifc" adapter instance in as its cross-reference. Shared
+        by __init__ and apply_config()'s firms cascade so both paths build it
+        identically. No-ops (leaves ``self._adapters``/``self._failed_adapters``
+        untouched for "firms") when disabled or not native -- callers that
+        need a clean slot for a rebuild must pop it first.
+        """
+        if not (cfg.enabled and cfg.feed_source == "native"):
+            return
+        try:
+            from .firms import FIRMSAdapter
+            fires_adapter = self._adapters.get("nifc")
+            self._firms = FIRMSAdapter(
+                cfg, self._region_anchors, fires_adapter,
+                coverage=self._coverage_for("firms"))
+            self._adapters["firms"] = self._firms
+        except Exception as e:
+            err_msg = f"{type(e).__name__}: {e}"
+            logger.warning("Failed to initialize firms adapter: %s", err_msg)
+            self._failed_adapters["firms"] = err_msg
+
+    def _construct_generic(self, sources: list) -> None:
+        """(Re)build the single "generic_http" adapter from ``sources`` (the
+        full ``config.generic_sources`` list) -- one instance handles every
+        configured source. Shared by __init__ and apply_config(). No-ops
+        (leaves any existing "generic_http" slot untouched) when ``sources``
+        is empty -- callers that need a clean slot for a rebuild must pop it
+        first.
+        """
+        if not sources:
+            return
+        try:
+            from .generic_http import GenericHttpAdapter
+            self._generic = GenericHttpAdapter(
+                sources, self._coverage_for("generic_http"))
+            self._adapters["generic_http"] = self._generic
+        except Exception as e:
+            err_msg = f"{type(e).__name__}: {e}"
+            logger.warning("Failed to initialize generic_http adapter: %s", err_msg)
+            self._failed_adapters["generic_http"] = err_msg
+
+    def apply_config(self, new_cfg: "EnvironmentalConfig", *, generic_sources: list = None) -> dict:
+        """Hot-reload the environmental config: rebuild only what CHANGED.
+
+        Called from the dashboard's config PUT handler in place of the old
+        restart-required rule. For each named adapter (per
+        ``_adapter_registry()``):
+
+          * unchanged config  -> the adapter object is left completely alone
+            (identity preserved); result ``"unchanged"``.
+          * changed config, still (or newly) ``feed_source == "native"`` ->
+            rebuilt in place via the SAME construction path __init__ uses;
+            result ``"reloaded"``. This covers both a field edit (e.g.
+            ``feed_url``) on an already-native adapter AND flipping
+            ``enabled`` off (the adapter is simply dropped) or on.
+          * ``feed_source`` toggled to/from ``"central"`` -> NOT hot-swapped
+            (Central (un)subscribe only happens at boot -- see
+            config_routes.RESTART_REQUIRED_SECTIONS' historical comment);
+            result ``"restart_required"``.
+
+        Store-level dedup/seen state (``self._seen``, ``self._seeded``,
+        ``self._events``, ``self._fires_seeded``, ...) is keyed by event
+        SOURCE, not by adapter object, and is never touched here -- swapping
+        an adapter instance preserves it automatically.
+
+        The "firms" adapter holds a hard reference to the "nifc" adapter
+        instance, so whenever "nifc" is rebuilt, "firms" is ALSO rebuilt
+        (even if firms' own config is unchanged) to re-fetch a fresh
+        reference -- otherwise it would orphan a stale nifc object.
+
+        ``generic_sources``, when given and different from the store's
+        current list, rebuilds the single GenericHttpAdapter wholesale (it
+        holds all generic sources as one instance).
+
+        Returns a ``{name: "reloaded"|"unchanged"|"restart_required"}`` map
+        covering every named adapter plus "firms" and "generic_http".
+        """
+        old_configs = dict(self._configs)  # snapshot BEFORE any mutation
+        result: dict = {}
+        nifc_reloaded = False
+
+        for name, field, mod, cls, args_fn in self._adapter_registry():
+            cfg_new = getattr(new_cfg, field)
+            cfg_old = old_configs.get(field)
+            outcome = self._apply_named_adapter(
+                name, field, mod, cls, args_fn, cfg_new, cfg_old)
+            result[name] = outcome
+            if name == "nifc" and outcome == "reloaded":
+                nifc_reloaded = True
+
+        result["firms"] = self._apply_firms(
+            new_cfg.firms, old_configs.get("firms"), force=nifc_reloaded)
+
+        if generic_sources is not None and list(generic_sources) != self._generic_sources:
+            self._adapters.pop("generic_http", None)
+            self._failed_adapters.pop("generic_http", None)
+            self._generic_sources = list(generic_sources)
+            self._construct_generic(self._generic_sources)
+            result["generic_http"] = "reloaded"
+        else:
+            result["generic_http"] = "unchanged"
+
+        return result
+
+    @staticmethod
+    def _feed_source_of(cfg) -> str:
+        return getattr(cfg, "feed_source", "native") if cfg is not None else "native"
+
+    def _apply_named_adapter(self, name, field, mod, cls, args_fn, cfg_new, cfg_old) -> str:
+        """Diff one registry entry's config and rebuild in place iff needed."""
+        if cfg_new == cfg_old:
+            return "unchanged"
+
+        old_source = self._feed_source_of(cfg_old)
+        new_source = self._feed_source_of(cfg_new)
+        if old_source != new_source and "central" in (old_source, new_source):
+            # Crossing the Central boundary either direction: CentralConsumer
+            # (un)subscribe only happens at boot. Leave both the adapter AND
+            # self._configs[field] untouched so this keeps reporting
+            # restart_required on every subsequent PUT until an actual
+            # restart resolves it.
+            return "restart_required"
+
+        self._configs[field] = cfg_new
+        if new_source != "native":
+            # Stayed central (or some other non-native source) both before
+            # and after -- no native adapter exists for this name and none
+            # should; nothing to hot-reload.
+            return "unchanged"
+
+        # Drop any existing instance first: a disable (enabled=False) or a
+        # config that otherwise no longer qualifies must not leave a stale
+        # adapter object running, and _register_adapter() itself is a no-op
+        # (doesn't touch self._adapters) when the new config isn't
+        # enabled+native.
+        self._adapters.pop(name, None)
+        self._failed_adapters.pop(name, None)
+        self._register_adapter(name, cfg_new, mod, cls, args_fn)
+        return "reloaded"
+
+    def _apply_firms(self, cfg_new, cfg_old, *, force: bool) -> str:
+        """Diff+rebuild the "firms" adapter; ``force=True`` (nifc was just
+        rebuilt) always rebuilds so firms re-fetches a fresh nifc reference,
+        even when firms' own config is byte-identical."""
+        own_changed = cfg_new != cfg_old
+        if not (own_changed or force):
+            return "unchanged"
+
+        # Only a genuine change to firms' OWN config can cross the Central
+        # boundary -- a pure nifc-cascade rebuild (own_changed=False) must
+        # never spuriously demand a restart for an untouched firms config.
+        if own_changed:
+            old_source = self._feed_source_of(cfg_old)
+            new_source = self._feed_source_of(cfg_new)
+            if old_source != new_source and "central" in (old_source, new_source):
+                return "restart_required"
+            self._configs["firms"] = cfg_new
+
+        self._adapters.pop("firms", None)
+        self._failed_adapters.pop("firms", None)
+        self._construct_firms(cfg_new)
+        return "reloaded"
 
     def _coverage_for(self, adapter: str):
         """Derived coverage scope for a NATIVE adapter, or None to use its own config (override/fallback).
