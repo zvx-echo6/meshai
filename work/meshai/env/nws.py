@@ -15,6 +15,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_BASE_URL = "https://api.weather.gov/alerts/active"
+
+
+def _cfg_str(config, attr: str, default: str) -> str:
+    """Read a string config field, falling back to `default` if absent,
+    empty, or not a real string (e.g. an unconfigured test mock)."""
+    value = getattr(config, attr, None)
+    return value if isinstance(value, str) and value else default
+
 
 class NWSAlertsAdapter:
     """NWS Active Alerts -- polls api.weather.gov"""
@@ -35,6 +44,7 @@ class NWSAlertsAdapter:
                 self._areas = derived_areas
         else:
             self._areas = config.areas or ["ID"]
+        self._base_url = _cfg_str(config, "base_url", DEFAULT_BASE_URL)
         self._user_agent = config.user_agent or "(meshai, ops@example.com)"
         self._severity_min = config.severity_min or "moderate"
         self._tick_interval = config.tick_seconds or 60
@@ -181,7 +191,7 @@ class NWSAlertsAdapter:
             True if data changed
         """
         areas = ",".join(self._areas)
-        url = f"https://api.weather.gov/alerts/active?area={areas}"
+        url = f"{self._base_url}?area={areas}"
 
         headers = {
             "User-Agent": self._user_agent,

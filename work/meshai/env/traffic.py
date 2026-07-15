@@ -17,12 +17,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _cfg_str(config, attr: str, default: str) -> str:
+    """Read a string config field, falling back to `default` if absent,
+    empty, or not a real string (e.g. an unconfigured test mock)."""
+    value = getattr(config, attr, None)
+    return value if isinstance(value, str) and value else default
+
+
 class TomTomTrafficAdapter:
     """TomTom Traffic Flow Segment Data polling."""
 
     BASE_URL = "https://api.tomtom.com/traffic/services/4/flowSegmentData/relative0/10/json"
 
     def __init__(self, config: "TomTomConfig", coverage: dict = None):
+        self._base_url = _cfg_str(config, "base_url", self.BASE_URL)
         self._api_key = self._resolve_env(config.api_key or "")
         if coverage is not None:
             self._corridors = [
@@ -144,7 +152,7 @@ class TomTomTrafficAdapter:
             "unit": "MPH",
         }
 
-        url = f"{self.BASE_URL}?{urlencode(params)}"
+        url = f"{self._base_url}?{urlencode(params)}"
 
         headers = {
             "User-Agent": "MeshAI/1.0",

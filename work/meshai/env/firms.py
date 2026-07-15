@@ -15,6 +15,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _cfg_str(config, attr: str, default: str) -> str:
+    """Read a string config field, falling back to `default` if absent,
+    empty, or not a real string (e.g. an unconfigured test mock)."""
+    value = getattr(config, attr, None)
+    return value if isinstance(value, str) and value else default
+
+
 class FIRMSAdapter:
     """NASA FIRMS satellite fire hotspot polling.
 
@@ -27,6 +34,7 @@ class FIRMSAdapter:
     BASE_URL = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
 
     def __init__(self, config: "FIRMSConfig", region_anchors: list = None, fires_adapter=None, coverage: dict = None):
+        self._base_url = _cfg_str(config, "base_url", self.BASE_URL)
         self._map_key = config.map_key
         self._source = config.source or "VIIRS_SNPP_NRT"
         self._bbox = coverage["bbox"] if coverage is not None else config.bbox  # [west, south, east, north]
@@ -92,7 +100,7 @@ class FIRMSAdapter:
         # Format bbox as west,south,east,north
         bbox_str = ",".join(str(c) for c in self._bbox)
 
-        url = f"{self.BASE_URL}/{self._map_key}/{self._source}/{bbox_str}/{self._day_range}"
+        url = f"{self._base_url}/{self._map_key}/{self._source}/{bbox_str}/{self._day_range}"
 
         headers = {
             "User-Agent": "MeshAI/1.0",

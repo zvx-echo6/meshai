@@ -39,6 +39,13 @@ logger = logging.getLogger(__name__)
 GP_BASE_URL = "https://celestrak.org/NORAD/elements/gp.php"
 
 
+def _cfg_str(config, attr: str, default: str) -> str:
+    """Read a string config field, falling back to `default` if absent,
+    empty, or not a real string (e.g. an unconfigured test mock)."""
+    value = getattr(config, attr, None)
+    return value if isinstance(value, str) and value else default
+
+
 def parse_tle_epoch(line1: str) -> str:
     """Parse the epoch from TLE line 1 into an ISO-8601 UTC string.
 
@@ -113,6 +120,7 @@ class TLEFetchAdapter:
 
     def __init__(self, config: "SatpassConfig"):
         self._config = config
+        self._tle_base_url = _cfg_str(config, "tle_base_url", GP_BASE_URL)
         self._last_tick = 0.0
         self._last_error: Optional[str] = None
         self._consecutive_errors = 0
@@ -127,10 +135,10 @@ class TLEFetchAdapter:
         targets: list[tuple[str, str]] = []
         for group in (getattr(self._config, "tle_groups", None) or []):
             targets.append(
-                (f"GROUP={group}", f"{GP_BASE_URL}?GROUP={group}&FORMAT=tle"))
+                (f"GROUP={group}", f"{self._tle_base_url}?GROUP={group}&FORMAT=tle"))
         for norad in (getattr(self._config, "norad_ids", None) or []):
             targets.append(
-                (f"CATNR={norad}", f"{GP_BASE_URL}?CATNR={norad}&FORMAT=tle"))
+                (f"CATNR={norad}", f"{self._tle_base_url}?CATNR={norad}&FORMAT=tle"))
         return targets
 
     # -- polling --------------------------------------------------------------

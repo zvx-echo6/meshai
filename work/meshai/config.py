@@ -357,6 +357,7 @@ class NWSConfig(_SourcedFeed):
     areas: list = field(default_factory=lambda: ["ID"])
     severity_min: str = "moderate"
     user_agent: str = ""
+    base_url: str = "https://api.weather.gov/alerts/active"
 
 
 @dataclass
@@ -364,6 +365,16 @@ class SWPCConfig(_SourcedFeed):
     """NOAA Space Weather settings."""
 
     enabled: bool = True
+    # Per-endpoint URLs (poll intervals are fixed in the adapter, not
+    # config-driven). Defaults are the historical hardcoded endpoints.
+    endpoints: dict = field(
+        default_factory=lambda: {
+            "scales": "https://services.swpc.noaa.gov/products/noaa-scales.json",
+            "kp": "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
+            "alerts": "https://services.swpc.noaa.gov/products/alerts.json",
+            "f107": "https://services.swpc.noaa.gov/json/f107_cm_flux.json",
+        }
+    )
 
 
 @dataclass
@@ -375,6 +386,7 @@ class DuctingConfig(_SourcedFeed):
     tick_seconds: int = 10800  # 3 hours
     latitude: float = 42.56  # Twin Falls area default
     longitude: float = -114.47
+    base_url: str = "https://api.open-meteo.com/v1/gfs"
 
 
 @dataclass
@@ -384,6 +396,14 @@ class NICFFiresConfig(_SourcedFeed):
     enabled: bool = False
     tick_seconds: int = 600
     state: str = "US-ID"
+    feed_url: str = (
+        "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/"
+        "WFIGS_Interagency_Perimeters_Current/FeatureServer/0/query"
+    )
+    points_url: str = (
+        "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/"
+        "WFIGS_Incident_Locations_Current/FeatureServer/0/query"
+    )
 
 
 @dataclass
@@ -394,6 +414,7 @@ class AvalancheConfig(_SourcedFeed):
     tick_seconds: int = 1800
     center_ids: list = field(default_factory=lambda: ["SNFAC"])
     season_months: list = field(default_factory=lambda: [12, 1, 2, 3, 4])
+    base_url: str = "https://api.avalanche.org/v2/public/products/map-layer"
 
 
 @dataclass
@@ -404,6 +425,9 @@ class USGSConfig(_SourcedFeed):
     tick_seconds: int = 900  # Minimum 15 min per USGS guidelines
     sites: list = field(default_factory=list)  # Site IDs, e.g. ["13090500"]
     flood_thresholds: dict = field(default_factory=dict)  # {site_id: {flow: X, height: Y}}
+    base_url: str = "https://waterservices.usgs.gov/nwis/iv/"
+    nwps_base_url: str = "https://api.water.noaa.gov/nwps/v1/gauges"
+    site_info_url: str = "https://waterservices.usgs.gov/nwis/site/"
 
 
 @dataclass
@@ -432,6 +456,7 @@ class TomTomConfig(_SourcedFeed):
     tick_seconds: int = 300
     api_key: str = ""  # Supports ${ENV_VAR}
     corridors: list = field(default_factory=list)  # [{name, lat, lon}, ...]
+    base_url: str = "https://api.tomtom.com/traffic/services/4/flowSegmentData/relative0/10/json"
 
 
 @dataclass
@@ -486,6 +511,7 @@ class FIRMSConfig(_SourcedFeed):
     day_range: int = 1  # 1-10 days of data
     confidence_min: str = "nominal"  # low, nominal, high
     proximity_km: float = 10.0  # km to match known fire
+    base_url: str = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
 
 
 
@@ -511,6 +537,7 @@ class SatpassConfig(_SourcedFeed):
     # Celestrak GP selectors the fetcher pulls (env.tle_fetch):
     tle_groups: list = field(default_factory=lambda: ["weather", "stations"])
     norad_ids: list = field(default_factory=list)
+    tle_base_url: str = "https://celestrak.org/NORAD/elements/gp.php"
     # TLE refresh cadence — TLEs update ~daily, so poll every 6h.
     tle_refresh_seconds: int = 21600
     # Predictor pass filters (used by the next task):
