@@ -1,7 +1,7 @@
 """Tests for FIRMS adapter Phase 2.6 — to_event() method."""
 
 import time
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -152,3 +152,98 @@ def test_to_event_does_not_raise_on_corrupted_dict(adapter):
     # Should not raise
     event = adapter.to_event(evt)
     assert event is None
+
+
+# ============================================================
+# OPTIONAL MAP_KEY — Conduit keyless-request support
+#
+# The FIRMS MAP_KEY moves to Conduit's keystore; meshai sends a keyless
+# request and Conduit injects the key into the URL path downstream. The
+# key gate must not idle the adapter, and a blank key must build a URL
+# with NO map_key path segment. A configured key must produce a
+# byte-identical URL to before (backward compat).
+# ============================================================
+
+class _FakeCM:
+    """Minimal context manager mimicking urlopen()'s return value."""
+
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self._body
+
+
+# Empty-body CSV (header only, no data rows) short-circuits _parse_csv
+# before any fusion/persistence path is touched.
+_EMPTY_CSV = b"latitude,longitude,confidence,frp,acq_date,acq_time\n"
+
+
+def test_fetch_url_with_map_key_is_byte_identical(mock_config):
+    """With MAP_KEY configured, the built URL is unchanged (backward compat)."""
+    adapter = FIRMSAdapter(mock_config, region_anchors=[], fires_adapter=None)
+    captured = {}
+
+    def fake_urlopen(req, timeout=30):
+        captured["url"] = req.full_url
+        return _FakeCM(_EMPTY_CSV)
+
+    with patch("meshai.env.firms.urlopen", side_effect=fake_urlopen):
+        adapter._fetch()
+
+    assert captured["url"] == (
+        "https://firms.modaps.eosdis.nasa.gov/api/area/csv/"
+        "test-key/VIIRS_SNPP_NRT/-117,42,-114,44/1"
+    )
+
+
+def test_fetch_url_blank_map_key_omits_path_segment(mock_config):
+    """With a blank MAP_KEY, the URL is built keyless (no map_key path
+    segment) for a key-injecting proxy (Conduit) to complete downstream."""
+    mock_config.map_key = ""
+    adapter = FIRMSAdapter(mock_config, region_anchors=[], fires_adapter=None)
+    captured = {}
+
+    def fake_urlopen(req, timeout=30):
+        captured["url"] = req.full_url
+        return _FakeCM(_EMPTY_CSV)
+
+    with patch("meshai.env.firms.urlopen", side_effect=fake_urlopen):
+        adapter._fetch()
+
+    assert captured["url"] == (
+        "https://firms.modaps.eosdis.nasa.gov/api/area/csv/"
+        "VIIRS_SNPP_NRT/-117,42,-114,44/1"
+    )
+    assert "test-key" not in captured["url"]
+
+
+def test_tick_does_not_idle_when_map_key_blank(mock_config):
+    """A blank MAP_KEY must not gate tick(); bbox is the real prerequisite."""
+    mock_config.map_key = ""
+    adapter = FIRMSAdapter(mock_config, region_anchors=[], fires_adapter=None)
+
+    with patch.object(adapter, "_fetch", return_value=False) as fetch:
+        result = adapter.tick()
+
+    fetch.assert_called_once()
+    assert result is False
+
+
+def test_tick_still_gates_on_no_bbox(mock_config):
+    """bbox remains a real prerequisite — tick() still idles without it,
+    even with MAP_KEY configured."""
+    mock_config.bbox = []
+    adapter = FIRMSAdapter(mock_config, region_anchors=[], fires_adapter=None)
+
+    with patch.object(adapter, "_fetch") as fetch:
+        result = adapter.tick()
+
+    fetch.assert_not_called()
+    assert result is False

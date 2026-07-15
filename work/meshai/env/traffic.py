@@ -74,8 +74,9 @@ class TomTomTrafficAdapter:
             self._daily_requests = 0
             self._daily_reset = now
 
-        # No API key or corridors
-        if not self._api_key or not self._corridors:
+        # No corridors configured (the key is optional — a blank key builds
+        # a keyless request for a key-injecting proxy, e.g. Conduit)
+        if not self._corridors:
             return False
 
         # Check tick interval
@@ -146,11 +147,10 @@ class TomTomTrafficAdapter:
         Returns:
             Event dict or None on error
         """
-        params = {
-            "point": f"{lat},{lon}",
-            "key": self._api_key,
-            "unit": "MPH",
-        }
+        params = {"point": f"{lat},{lon}"}
+        if self._api_key:
+            params["key"] = self._api_key
+        params["unit"] = "MPH"
 
         url = f"{self._base_url}?{urlencode(params)}"
 
