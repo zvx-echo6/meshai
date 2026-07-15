@@ -77,12 +77,8 @@ class FIRMSAdapter:
 
         self._last_tick = now
 
-        if not self._map_key:
-            if not self._last_error:
-                logger.warning("FIRMS: No MAP_KEY configured, skipping")
-                self._last_error = "No MAP_KEY configured"
-            return False
-
+        # MAP_KEY is optional — a blank key builds a keyless request path for
+        # a key-injecting proxy (e.g. Conduit); bbox is the real prerequisite.
         if not self._bbox or len(self._bbox) != 4:
             if not self._last_error:
                 logger.warning("FIRMS: No valid bbox configured, skipping")
@@ -100,7 +96,10 @@ class FIRMSAdapter:
         # Format bbox as west,south,east,north
         bbox_str = ",".join(str(c) for c in self._bbox)
 
-        url = f"{self._base_url}/{self._map_key}/{self._source}/{bbox_str}/{self._day_range}"
+        if self._map_key:
+            url = f"{self._base_url}/{self._map_key}/{self._source}/{bbox_str}/{self._day_range}"
+        else:
+            url = f"{self._base_url}/{self._source}/{bbox_str}/{self._day_range}"
 
         headers = {
             "User-Agent": "MeshAI/1.0",

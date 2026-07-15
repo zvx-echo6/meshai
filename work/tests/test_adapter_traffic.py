@@ -249,3 +249,93 @@ def test_fetch_point_non400_http_error_sets_last_error(mock_config):
     assert result is None
     assert adapter._last_error == "HTTP 503"
     assert adapter._consecutive_errors == 1
+
+
+# ============================================================
+# OPTIONAL API KEY — Conduit keyless-request support
+#
+# TomTom key moves to Conduit's keystore; meshai sends a keyless request
+# and Conduit injects the key downstream. Key gate must not idle the
+# adapter, and a blank key must build a keyless URL. A configured key
+# must produce a byte-identical URL to before (backward compat).
+# ============================================================
+
+class _FakeCM:
+    """Minimal context manager mimicking urlopen()'s return value."""
+
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self._body
+
+
+def test_fetch_point_url_with_key_is_byte_identical(mock_config):
+    """With a key configured, the built URL is unchanged (backward compat)."""
+    adapter = TomTomTrafficAdapter(mock_config)
+    captured = {}
+
+    def fake_urlopen(req, timeout=15):
+        captured["url"] = req.full_url
+        return _FakeCM(b'{"flowSegmentData": {}}')
+
+    with patch("meshai.env.traffic.urlopen", side_effect=fake_urlopen):
+        adapter._fetch_point("Cole Rd", 43.6, -116.3, 0.0)
+
+    assert captured["url"] == (
+        "https://api.tomtom.com/traffic/services/4/flowSegmentData/relative0/10/json"
+        "?point=43.6%2C-116.3&key=test-key&unit=MPH"
+    )
+
+
+def test_fetch_point_url_blank_key_omits_key_param(mock_config):
+    """With a blank key, the URL is built keyless (no key= param) for a
+    key-injecting proxy (Conduit) to complete downstream."""
+    mock_config.api_key = ""
+    adapter = TomTomTrafficAdapter(mock_config)
+    captured = {}
+
+    def fake_urlopen(req, timeout=15):
+        captured["url"] = req.full_url
+        return _FakeCM(b'{"flowSegmentData": {}}')
+
+    with patch("meshai.env.traffic.urlopen", side_effect=fake_urlopen):
+        adapter._fetch_point("Cole Rd", 43.6, -116.3, 0.0)
+
+    assert captured["url"] == (
+        "https://api.tomtom.com/traffic/services/4/flowSegmentData/relative0/10/json"
+        "?point=43.6%2C-116.3&unit=MPH"
+    )
+    assert "key=" not in captured["url"]
+
+
+def test_tick_does_not_idle_when_key_blank(mock_config):
+    """A blank key must not gate tick(); corridors is the real prerequisite."""
+    mock_config.api_key = ""
+    mock_config.corridors = [{"name": "Cole Rd", "lat": 43.6, "lon": -116.3}]
+    adapter = TomTomTrafficAdapter(mock_config)
+
+    with patch.object(adapter, "_fetch_all", return_value=True) as fetch_all:
+        result = adapter.tick()
+
+    fetch_all.assert_called_once()
+    assert result is True
+
+
+def test_tick_still_gates_on_no_corridors(mock_config):
+    """Corridors remain a real prerequisite — tick() still idles without them,
+    even with a key configured."""
+    mock_config.corridors = []
+    adapter = TomTomTrafficAdapter(mock_config)
+
+    with patch.object(adapter, "_fetch_all") as fetch_all:
+        result = adapter.tick()
+
+    fetch_all.assert_not_called()
+    assert result is False
