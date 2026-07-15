@@ -98,17 +98,42 @@ def config_app(tmp_path, monkeypatch):
     return app
 
 
-def test_environmental_in_restart_required_sections():
+def _config_app_with_store(tmp_path):
+    """config_routes app with a REAL EnvironmentalStore on app.state so the
+    hot-reload path (apply_config) actually runs on a PUT. Mirrors config_app
+    but adds the store main.py stashes at boot."""
+    from meshai.dashboard.api.config_routes import router as config_router
+    from meshai.env.store import EnvironmentalStore
+    from meshai.config import EnvironmentalConfig
+
+    cfg_dir = tmp_path / "cfg"
+    cfg_dir.mkdir()
+    (cfg_dir / "config.yaml").write_text("# stub\n")
+
+    app = FastAPI()
+    app.state.config = Config()
+    app.state.config_path = str(cfg_dir / "config.yaml")
+    app.state.env_store = EnvironmentalStore(EnvironmentalConfig(), event_bus=None)
+    app.include_router(config_router, prefix="/api")
+    return app
+
+
+def test_environmental_not_in_restart_required_sections():
+    # v0.16-env-hot-reload: environmental (and generic_sources) are now
+    # hot-applied via EnvironmentalStore.apply_config() rather than demanding a
+    # restart. Only a per-adapter feed_source->central flip still needs one, and
+    # that is reported per-adapter (see below), not by section membership.
     from meshai.dashboard.api.config_routes import RESTART_REQUIRED_SECTIONS
-    assert "environmental" in RESTART_REQUIRED_SECTIONS
+    assert "environmental" not in RESTART_REQUIRED_SECTIONS
+    assert "generic_sources" not in RESTART_REQUIRED_SECTIONS
 
 
-def test_put_environmental_returns_restart_required_with_changed_keys(config_app):
-    """A PUT to environmental that changes feed_source returns
-    restart_required=true + the dotted changed_keys list."""
-    client = TestClient(config_app)
+def test_put_environmental_feed_source_to_central_still_requires_restart(tmp_path):
+    """The one surviving restart case: flipping an adapter's feed_source to
+    "central" is boot-only (CentralConsumer subscribe). apply_config reports it
+    per-adapter as "restart_required", which the PUT handler surfaces."""
+    client = TestClient(_config_app_with_store(tmp_path))
 
-    # Fetch current environmental.
     cur = client.get("/api/config/environmental")
     assert cur.status_code == 200
     body = cur.json()
@@ -120,10 +145,29 @@ def test_put_environmental_returns_restart_required_with_changed_keys(config_app
     result = r.json()
     assert result["saved"] is True
     assert result["restart_required"] is True
-    # The dotted key must be present.
+    assert result["adapter_results"]["firms"] == "restart_required"
     assert any(k.endswith("firms.feed_source") for k in result["changed_keys"]), (
         f"changed_keys missing firms.feed_source: {result['changed_keys']}"
     )
+
+
+def test_put_environmental_native_field_change_hot_reloads_no_restart(tmp_path):
+    """A normal native-adapter field edit (nws.tick_seconds) hot-reloads that
+    adapter in place: restart_required=false, adapter reported "reloaded"."""
+    client = TestClient(_config_app_with_store(tmp_path))
+
+    cur = client.get("/api/config/environmental")
+    assert cur.status_code == 200
+    body = cur.json()
+    # nws is enabled+native by default; bump its poll cadence.
+    body["nws"]["tick_seconds"] = int(body["nws"].get("tick_seconds", 60)) + 60
+
+    r = client.put("/api/config/environmental", json=body)
+    assert r.status_code == 200
+    result = r.json()
+    assert result["restart_required"] is False
+    assert result["adapter_results"]["nws"] == "reloaded"
+    assert any(k.endswith("nws.tick_seconds") for k in result["changed_keys"])
 
 
 def test_put_non_restart_section_returns_restart_required_false(config_app):
