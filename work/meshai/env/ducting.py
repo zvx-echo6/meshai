@@ -16,6 +16,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_BASE_URL = "https://api.open-meteo.com/v1/gfs"
+
+
+def _cfg_str(config, attr: str, default: str) -> str:
+    """Read a string config field, falling back to `default` if absent,
+    empty, or not a real string (e.g. an unconfigured test mock)."""
+    value = getattr(config, attr, None)
+    return value if isinstance(value, str) and value else default
+
 
 # Pressure levels and approximate heights (meters)
 PRESSURE_LEVELS = {
@@ -35,6 +44,7 @@ class DuctingAdapter:
         else:
             self._lat = config.latitude
             self._lon = config.longitude
+        self._base_url = _cfg_str(config, "base_url", DEFAULT_BASE_URL)
         self._tick_interval = config.tick_seconds or 10800  # 3 hours
         self._last_tick = 0.0
         self._status = {}
@@ -75,7 +85,7 @@ class DuctingAdapter:
         ]
 
         url = (
-            f"https://api.open-meteo.com/v1/gfs"
+            f"{self._base_url}"
             f"?latitude={self._lat}&longitude={self._lon}"
             f"&hourly={','.join(hourly_vars)}"
             f"&forecast_days=1&timezone=auto"

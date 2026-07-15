@@ -26,6 +26,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _cfg_str(config, attr: str, default: str) -> str:
+    """Read a string config field, falling back to `default` if absent,
+    empty, or not a real string (e.g. an unconfigured test mock)."""
+    value = getattr(config, attr, None)
+    return value if isinstance(value, str) and value else default
+
+
 class NICFFiresAdapter:
     """WFIGS ArcGIS fire perimeter + incident-point polling (merged by IrwinID)."""
 
@@ -34,6 +41,8 @@ class NICFFiresAdapter:
 
     def __init__(self, config: "NICFFiresConfig", region_anchors: list = None, coverage: dict = None):
         self._state = config.state
+        self._feed_url = _cfg_str(config, "feed_url", self.BASE_URL)
+        self._points_url = _cfg_str(config, "points_url", self.POINTS_URL)
         self._tick_interval = config.tick_seconds or 600
         self._last_tick = 0.0
         self._events = []
@@ -145,7 +154,7 @@ class NICFFiresAdapter:
         perim_ok = False
         try:
             params = self._build_query_params()
-            url = f"{self.BASE_URL}?{urlencode(params)}"
+            url = f"{self._feed_url}?{urlencode(params)}"
             req = Request(url, headers=headers)
             with urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
@@ -197,7 +206,7 @@ class NICFFiresAdapter:
         points_ok = False
         try:
             params = self._build_points_query_params()
-            url = f"{self.POINTS_URL}?{urlencode(params)}"
+            url = f"{self._points_url}?{urlencode(params)}"
             req = Request(url, headers=headers)
             with urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode("utf-8"))

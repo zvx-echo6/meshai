@@ -15,18 +15,44 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _cfg_dict(config, attr: str, default: dict) -> dict:
+    """Read a dict config field, falling back to `default` if absent,
+    empty, or not a real dict (e.g. an unconfigured test mock)."""
+    value = getattr(config, attr, None)
+    return dict(value) if isinstance(value, dict) and value else dict(default)
+
+
 class SWPCAdapter:
     """NOAA Space Weather -- multi-endpoint with staggered ticks."""
 
-    # Endpoint definitions: (url, interval_seconds)
+    # Poll intervals (seconds) per endpoint -- fixed, not config-driven.
+    INTERVALS = {
+        "scales": 300,
+        "kp": 600,
+        "alerts": 120,
+        "f107": 86400,
+    }
+
+    # Default endpoint URLs (overridable via SWPCConfig.endpoints).
+    DEFAULT_ENDPOINTS = {
+        "scales": "https://services.swpc.noaa.gov/products/noaa-scales.json",
+        "kp": "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
+        "alerts": "https://services.swpc.noaa.gov/products/alerts.json",
+        "f107": "https://services.swpc.noaa.gov/json/f107_cm_flux.json",
+    }
+
+    # Backward-compat: (url, interval) tuples. No longer used internally
+    # (see _endpoint_urls / INTERVALS) but kept in case external code still
+    # references SWPCAdapter.ENDPOINTS.
     ENDPOINTS = {
-        "scales": ("https://services.swpc.noaa.gov/products/noaa-scales.json", 300),
-        "kp": ("https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json", 600),
-        "alerts": ("https://services.swpc.noaa.gov/products/alerts.json", 120),
-        "f107": ("https://services.swpc.noaa.gov/json/f107_cm_flux.json", 86400),
+        "scales": (DEFAULT_ENDPOINTS["scales"], INTERVALS["scales"]),
+        "kp": (DEFAULT_ENDPOINTS["kp"], INTERVALS["kp"]),
+        "alerts": (DEFAULT_ENDPOINTS["alerts"], INTERVALS["alerts"]),
+        "f107": (DEFAULT_ENDPOINTS["f107"], INTERVALS["f107"]),
     }
 
     def __init__(self, config: "SWPCConfig"):
+        self._endpoint_urls = _cfg_dict(config, "endpoints", self.DEFAULT_ENDPOINTS)
         self._last_tick = {}  # endpoint -> last_tick timestamp
         self._status = {}
         self._events = []
@@ -35,7 +61,7 @@ class SWPCAdapter:
         self._is_loaded = False
 
         # Initialize tick times to 0
-        for endpoint in self.ENDPOINTS:
+        for endpoint in self._endpoint_urls:
             self._last_tick[endpoint] = 0.0
 
     def tick(self) -> bool:
@@ -47,8 +73,9 @@ class SWPCAdapter:
         changed = False
         now = time.time()
 
-        for endpoint, (url, interval) in self.ENDPOINTS.items():
-            if now - self._last_tick[endpoint] >= interval:
+        for endpoint, url in self._endpoint_urls.items():
+            interval = self.INTERVALS.get(endpoint, 300)
+            if now - self._last_tick.get(endpoint, 0.0) >= interval:
                 self._last_tick[endpoint] = now
                 if self._fetch_endpoint(endpoint, url):
                     changed = True

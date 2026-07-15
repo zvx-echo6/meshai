@@ -16,6 +16,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _cfg_str(config, attr: str, default: str) -> str:
+    """Read a string config field, falling back to `default` if absent,
+    empty, or not a real string (e.g. an unconfigured test mock)."""
+    value = getattr(config, attr, None)
+    return value if isinstance(value, str) and value else default
+
+
 class AvalancheAdapter:
     """Avalanche.org map layer polling."""
 
@@ -33,6 +40,7 @@ class AvalancheAdapter:
     }
 
     def __init__(self, config: "AvalancheConfig", coverage: dict = None):
+        self._base_url = _cfg_str(config, "base_url", self.BASE_URL)
         self._center_ids = coverage["center_ids"] if coverage is not None else config.center_ids
         self._tick_interval = config.tick_seconds or 1800
         self._season_months = config.season_months or [12, 1, 2, 3, 4]
@@ -77,7 +85,7 @@ class AvalancheAdapter:
         any_error = False
 
         for center_id in self._center_ids:
-            url = f"{self.BASE_URL}/{center_id}"
+            url = f"{self._base_url}/{center_id}"
 
             headers = {
                 "User-Agent": "MeshAI/1.0",

@@ -29,13 +29,24 @@ _nwps_cache_time: dict[str, float] = {}
 NWPS_CACHE_TTL = 86400 * 7  # 7 days
 
 
+def _cfg_str(config, attr: str, default: str) -> str:
+    """Read a string config field, falling back to `default` if absent,
+    empty, or not a real string (e.g. an unconfigured test mock)."""
+    value = getattr(config, attr, None)
+    return value if isinstance(value, str) and value else default
+
+
 class USGSStreamsAdapter:
     """USGS instantaneous values for stream gauge readings with NWS flood stages."""
 
     BASE_URL = "https://waterservices.usgs.gov/nwis/iv/"
     NWPS_BASE_URL = "https://api.water.noaa.gov/nwps/v1/gauges"
+    SITE_INFO_URL = "https://waterservices.usgs.gov/nwis/site/"
 
     def __init__(self, config: "USGSConfig", coverage: dict = None):
+        self._base_url = _cfg_str(config, "base_url", self.BASE_URL)
+        self._nwps_base_url = _cfg_str(config, "nwps_base_url", self.NWPS_BASE_URL)
+        self._site_info_url = _cfg_str(config, "site_info_url", self.SITE_INFO_URL)
         self._sites = config.sites or []
         self._coverage_bbox = coverage["bbox"] if coverage is not None else None
         self._tick_interval = max(config.tick_seconds or 900, MIN_TICK_SECONDS)
@@ -111,7 +122,7 @@ class USGSStreamsAdapter:
             nws_gauge_id = usgs_site_id
 
         # Query NWPS for flood stages
-        url = f"{self.NWPS_BASE_URL}/{nws_gauge_id}"
+        url = f"{self._nwps_base_url}/{nws_gauge_id}"
         headers = {
             "User-Agent": "MeshAI/1.0 (stream gauge monitoring)",
             "Accept": "application/json",
@@ -167,7 +178,7 @@ class USGSStreamsAdapter:
         always populated. This is a best-effort lookup.
         """
         # Try USGS site service for metadata including NWS ID
-        url = f"https://waterservices.usgs.gov/nwis/site/?format=rdb&sites={usgs_site_id}&siteOutput=expanded"
+        url = f"{self._site_info_url}?format=rdb&sites={usgs_site_id}&siteOutput=expanded"
 
         try:
             req = Request(url, headers={"User-Agent": "MeshAI/1.0"})
@@ -212,7 +223,7 @@ class USGSStreamsAdapter:
             "sites": site_id,
             "siteOutput": "expanded",
         }
-        url = f"https://waterservices.usgs.gov/nwis/site/?{urlencode(params)}"
+        url = f"{self._site_info_url}?{urlencode(params)}"
 
         try:
             req = Request(url, headers={"User-Agent": "MeshAI/1.0", "Accept": "application/json"})
@@ -288,7 +299,7 @@ class USGSStreamsAdapter:
 
         params = self._build_iv_params(site_ids)
 
-        url = f"{self.BASE_URL}?{urlencode(params)}"
+        url = f"{self._base_url}?{urlencode(params)}"
 
         headers = {
             "User-Agent": "MeshAI/1.0 (stream gauge monitoring)",
