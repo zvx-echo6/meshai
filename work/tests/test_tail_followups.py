@@ -213,6 +213,42 @@ def test_ahps_detail_extracts_thresholds():
 
 
 # ============================================================================
+# Item 3b -- gauge_sites import route is registered on the real app
+#
+# The endpoint logic above is fully covered, but until server.create_app()
+# calls app.include_router(gauge_sites_import_router, ...) the route is
+# unreachable in production -- the raw-router `client` fixture above can't
+# catch that because it builds its own bare FastAPI app. This test drives
+# the actual dashboard app the server process serves.
+# ============================================================================
+
+
+def test_gauge_sites_import_reachable_through_real_app():
+    from meshai.dashboard.server import create_app
+
+    app = create_app()
+    real_client = TestClient(app)
+
+    res = real_client.post(
+        "/api/gauge-sites/import",
+        json={
+            "format": "csv",
+            "data": "site_id,gauge_name,lat,lon\nUSGS-REAL1,Real App Creek,43.5,-114.5\n",
+        },
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["inserted"] == 1
+    assert body["updated"] == 0
+
+    # And it actually landed -- round-trip through the sibling curation
+    # router (also mounted on the real app) to prove the 200 reflects a
+    # real DB write through the real app, not a false positive.
+    listed = real_client.get("/api/gauge-sites").json()
+    assert any(r["site_id"] == "USGS-REAL1" for r in listed)
+
+
+# ============================================================================
 # Item 4 -- WFIGS tombstone column + reminder behavior
 # ============================================================================
 
