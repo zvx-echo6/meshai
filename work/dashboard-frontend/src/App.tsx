@@ -1,19 +1,14 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
-import Mesh from './pages/Mesh'
 import Environment from './pages/Environment'
 import Config from './pages/Config'
 import ActivityLog from './pages/ActivityLog'
 import Notifications from './pages/Notifications'
 import Reference from './pages/Reference'
-import GaugeSites from './pages/GaugeSites'
-import TownAnchors from './pages/TownAnchors'
 import MeshCoreRouting from './pages/MeshCoreRouting'
 import MeshCoreConnection from './pages/MeshCoreConnection'
-import MeshCoreCompanion from './pages/MeshCoreCompanion'
 import MeshtasticConnection from './pages/MeshtasticConnection'
-import MeshtasticSources from './pages/MeshtasticSources'
 import Places from './pages/Places'
 import MeshtasticNodes from './pages/MeshtasticNodes'
 import MeshCoreContactsCompanion from './pages/MeshCoreContactsCompanion'
@@ -47,14 +42,17 @@ function App() {
           {/* Custom sources folded into Data Feeds; keep old bookmark working */}
           <Route path="/data-sources" element={<Navigate to="/environment" replace />} />
 
-          {/* De-navved routes still work */}
-          <Route path="/gauge-sites" element={<GaugeSites />} />
-          <Route path="/town-anchors" element={<TownAnchors />} />
-          <Route path="/mesh" element={<Mesh />} />
+          {/* Legacy /gauge-sites -> Places (Gauge Sites tab) */}
+          <Route path="/gauge-sites" element={<Navigate to="/places" replace />} />
+          {/* Legacy /town-anchors -> Places (lands on first tab, no ?tab= deep-link) */}
+          <Route path="/town-anchors" element={<Navigate to="/places" replace />} />
+          {/* Legacy /mesh -> Meshtastic Nodes & Health (Nodes tab) */}
+          <Route path="/mesh" element={<Navigate to="/meshtastic/nodes" replace />} />
 
           {/* Meshtastic routes */}
           <Route path="/meshtastic/connection" element={<MeshtasticConnection />} />
-          <Route path="/meshtastic/sources" element={<MeshtasticSources />} />
+          {/* Legacy /meshtastic/sources -> Nodes & Health (lands on first tab, no ?tab= deep-link) */}
+          <Route path="/meshtastic/sources" element={<Navigate to="/meshtastic/nodes" replace />} />
           <Route path="/meshtastic/scheduled" element={<ScheduledBroadcasts family="meshtastic" />} />
           <Route path="/meshtastic/nodes" element={<MeshtasticNodes />} />
           <Route path="/meshtastic/danger-zones" element={<MeshtasticDangerZones />} />
@@ -64,7 +62,8 @@ function App() {
           <Route path="/meshcore/routing" element={<MeshCoreRouting />} />
           <Route path="/meshcore/scheduled" element={<ScheduledBroadcasts family="meshcore" />} />
           <Route path="/meshcore/contacts" element={<MeshCoreContactsCompanion />} />
-          <Route path="/meshcore/companion" element={<MeshCoreCompanion />} />
+          {/* Legacy /meshcore/companion -> Contacts & Companion (lands on first tab, no ?tab= deep-link) */}
+          <Route path="/meshcore/companion" element={<Navigate to="/meshcore/contacts" replace />} />
           <Route path="/meshcore/danger-zones" element={<MeshCoreDangerZones />} />
         </Routes>
       </Layout>
