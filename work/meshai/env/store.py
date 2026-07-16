@@ -234,6 +234,8 @@ class EnvironmentalStore:
                 lambda cfg: (cfg, self._coverage_for("roads511"))),
             ("wzdx", "wzdx", ".wzdx", "WZDxAdapter",
                 lambda cfg: (cfg, self._coverage_for("wzdx"))),
+            ("ipaws", "ipaws", ".ipaws", "IPAWSAlertsAdapter",
+                lambda cfg: (cfg, self._coverage_for("ipaws"))),
             # Native satpass TLE fetcher (storage-only: populates sat_tles,
             # emits no events). Gated on satpass.feed_source=="native" like
             # the rest.

@@ -119,3 +119,13 @@ from meshai.notifications.gating import firms as _firms_gate_mod  # noqa: E402,F
 register("wildfire_growth",   _firms_gate_mod.decide)
 register("wildfire_spotting", _firms_gate_mod.decide)
 register("wildfire_halted",   _firms_gate_mod.decide)
+
+# IPAWS civil alerts (env/ipaws.py). Own dedup table (ipaws_alerts) — mirrors
+# the NWS decider's first-sighting / Update / dedup-window / tombstone logic.
+from meshai.notifications.gating import ipaws as _ipaws_gate_mod  # noqa: E402,F401
+register("emergency_evacuation", _ipaws_gate_mod.decide)
+register("emergency_civil",      _ipaws_gate_mod.decide)
+register("emergency_amber",      _ipaws_gate_mod.decide)
+register("emergency_law",        _ipaws_gate_mod.decide)
+register("emergency_911_outage", _ipaws_gate_mod.decide)
+register("emergency_hazmat",     _ipaws_gate_mod.decide)

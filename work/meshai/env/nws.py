@@ -25,6 +25,24 @@ def _cfg_str(config, attr: str, default: str) -> str:
     return value if isinstance(value, str) and value else default
 
 
+def map_cap_severity(cap_severity: str) -> str:
+    """Map a CAP severity string to meshai's 3-level system.
+
+    Extreme -> immediate; Severe/Warning -> priority; everything else
+    (Moderate, Minor, Unknown) -> routine. Case-insensitive.
+
+    Shared by the NWS adapter (``NWSAlertsAdapter._map_nws_severity``) and the
+    IPAWS civil-alert adapter (``env/ipaws.py``) so both map CAP severity
+    identically — do NOT reimplement this mapping elsewhere.
+    """
+    sev = (cap_severity or "").lower()
+    if sev == "extreme":
+        return "immediate"
+    if sev in ("severe", "warning"):
+        return "priority"
+    return "routine"
+
+
 class NWSAlertsAdapter:
     """NWS Active Alerts -- polls api.weather.gov"""
 
@@ -57,13 +75,13 @@ class NWSAlertsAdapter:
 
 
     def _map_nws_severity(self, nws_severity: str) -> str:
-        """Map NWS severity to 3-level system."""
-        if nws_severity == "extreme":
-            return "immediate"
-        elif nws_severity in ("severe", "warning"):
-            return "priority"
-        else:  # moderate, minor, unknown
-            return "routine"
+        """Map NWS severity to 3-level system.
+
+        Thin wrapper over the shared module-level ``map_cap_severity`` (kept as
+        a method for the existing call sites/tests; behaviour unchanged). The
+        NWS adapter already lower-cases severity before calling this.
+        """
+        return map_cap_severity(nws_severity)
 
     def _derive_category(self, event_type: str) -> str:
         """Derive notification category from NWS event type suffix.

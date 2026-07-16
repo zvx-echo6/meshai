@@ -551,6 +551,48 @@ class SatpassConfig(_SourcedFeed):
 
 
 @dataclass
+class IPAWSConfig(_SourcedFeed):
+    """FEMA IPAWS-OPEN EAS civil-alert feed settings.
+
+    Ingests the public IPAWS-OPEN Atom index + per-entry CAP 1.2 documents and
+    broadcasts NON-weather civil emergency alerts (evacuation orders, Civil
+    Emergency Messages, AMBER alerts, 911 outages, law-enforcement warnings,
+    HazMat, shelter-in-place). NWS/NOAA-originated CAP entries are DROPPED so
+    meshai never double-broadcasts weather the `nws` adapter already carries.
+
+    Keyless: the FEMA IPAWS-OPEN EAS REST service needs no auth/API key.
+
+    Two-stage fetch (both honour `base_url`):
+      1. GET {base_url}/feed        -> Atom index (~13 rolling national entries)
+      2. GET {base_url}/eas/<id>    -> full CAP 1.2 alert, per in-scope entry
+    The Atom <link href> values are ABSOLUTE FEMA URLs; the adapter extracts the
+    trailing ``eas/<id>`` and rebuilds ``{base_url}/eas/<id>`` so stage-2 routes
+    through whatever base_url points at (in prod: the Conduit proxy).
+    """
+
+    enabled: bool = False
+    tick_seconds: int = 60
+    base_url: str = "https://apps.fema.gov/IPAWSOPEN_EAS_SERVICE/rest"
+    user_agent: str = ""
+    # Coarse region gate, applied BEFORE the stage-2 CAP fetch (the "reduce
+    # load / don't fetch every linked CAP" gate): keep only index entries whose
+    # statefips category term is in this list. Default = Idaho + neighbours
+    # (ID=16, WA=53, OR=41, NV=32, UT=49, WY=56, MT=30).
+    state_fips: list = field(
+        default_factory=lambda: ["16", "53", "41", "32", "49", "56", "30"])
+    # Fine region gate (optional): SAME county codes (6-digit, e.g. "016021").
+    # Empty = accept every alert within the state_fips states.
+    same_codes: list = field(default_factory=list)
+    # Drop NWS/NOAA-originated CAP so we never double-broadcast weather.
+    exclude_weather: bool = True
+    # Sender substrings (case-insensitive) that mark a CAP as weather-sourced.
+    drop_senders: list = field(
+        default_factory=lambda: ["noaa.gov", "nws", "weather.gov"])
+    # Only broadcast status=Actual (skip Test/Exercise/System) when True.
+    status_actual_only: bool = True
+
+
+@dataclass
 class CentralConsumerConfig:
     """Connection settings for the Central NATS JetStream consumer (v0.4).
 
@@ -596,6 +638,7 @@ class EnvironmentalConfig:
     wzdx: WZDxConfig = field(default_factory=WZDxConfig)
     firms: FIRMSConfig = field(default_factory=FIRMSConfig)
     satpass: SatpassConfig = field(default_factory=SatpassConfig)
+    ipaws: IPAWSConfig = field(default_factory=IPAWSConfig)
     central: CentralConsumerConfig = field(default_factory=CentralConsumerConfig)
     geocoder: GeocoderConfig = field(default_factory=GeocoderConfig)
 
@@ -1294,6 +1337,8 @@ def _dict_to_dataclass(cls, data: dict):
             kwargs[key] = _dict_to_dataclass(FIRMSConfig, value)
         elif key == "satpass" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(SatpassConfig, value)
+        elif key == "ipaws" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(IPAWSConfig, value)
         elif key == "environmental" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(EnvironmentalConfig, value)
         elif key == "dashboard" and isinstance(value, dict):

@@ -601,6 +601,22 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     },
 
     # =================================================================
+    # IPAWS -- FEMA IPAWS-OPEN EAS civil-alert dedup/tombstone tunables
+    # (mirror of the NWS gating knobs; the ipaws decider owns its own
+    # ipaws_alerts table so these are independent of the nws.* values)
+    # =================================================================
+    ("ipaws", "tombstone_msgtypes"): {
+        "default": ["Cancel", "Expire"],
+        "type": "json",
+        "description": "CAP msgType values that mark an IPAWS civil alert as gone (suppressed).",
+    },
+    ("ipaws", "duplicate_allowed_after_seconds"): {
+        "default": 10800,                  # 3h, mirrors nws
+        "type": "int",
+        "description": "Allow re-broadcast of the same IPAWS CAP id after this many seconds (dedup-window relaxation; uses an 'Active' prefix past this point).",
+    },
+
+    # =================================================================
     # AVALANCHE -- 1 setting (min danger level broadcast floor)
     # =================================================================
     ("avalanche", "min_danger_level"): {
@@ -699,6 +715,11 @@ ADAPTER_META: dict[str, dict[str, Any]] = {
         "display_name": "NWS weather alerts",
         "include_in_llm_context": True,
         "description": "CAP-formatted severe-weather warnings/watches/advisories.",
+    },
+    "ipaws": {
+        "display_name": "FEMA IPAWS civil alerts",
+        "include_in_llm_context": True,
+        "description": "IPAWS-OPEN EAS non-weather civil alerts: evacuation, Civil Emergency Message, AMBER, 911 outage, law-enforcement, HazMat. Ships DISABLED.",
     },
     "usgs_quake": {
         "display_name": "USGS earthquakes",
