@@ -72,6 +72,10 @@ COPY --chown=meshai:meshai meshai/ ./meshai/
 COPY --from=frontend --chown=meshai:meshai /build/meshai/dashboard/static/ ./meshai/dashboard/static/
 COPY --chown=meshai:meshai pyproject.toml .
 COPY --chown=meshai:meshai README.md .
+# Reference only: docker-entrypoint.sh writes its own minimal default to
+# /data/config.yaml on first boot and does NOT read this file. It's shipped
+# for local/pip installs and anyone who wants the legacy single-file schema
+# on hand inside the container (e.g. via `docker compose exec`).
 COPY --chown=meshai:meshai config.example.yaml .
 COPY --chown=meshai:meshai docker-entrypoint.sh .
 

@@ -6,10 +6,17 @@
 #
 # Dashboard: http://localhost:8080
 #
-# Config is stored in the meshai_data volume at /data/config.yaml
+# Config lives in the meshai_data volume. On first boot MeshAI writes a
+# starter single file at /data/config.yaml (that's the legacy fallback
+# layout, not the primary one) plus an empty /data/secrets/.env; configure
+# everything from the dashboard from there. MeshAI also supports a fully
+# split /data/config/ directory (config.yaml + one file per domain) and
+# prefers it automatically when present -- see README's "Advanced" section
+# for the migration path. Secrets always live in /data/secrets/.env, never
+# in the YAML.
 #
 # For serial connection (USB), uncomment the devices section below
-# For TCP connection, edit config.yaml or use the dashboard
+# For TCP connection, use the dashboard (or edit the YAML directly)
 
 services:
   meshai:

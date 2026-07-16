@@ -52,25 +52,43 @@ Everything is driven from the web UI, organized into **General**, **Meshtastic**
 
 ## Quick start
 
-```bash
-git clone https://github.com/zvx-echo6/meshai.git
-cd meshai
-pip install -e .
-cp config.example.yaml config.yaml   # then edit config.yaml (or use the dashboard)
-meshai
-```
+The dashboard is the primary way to configure MeshAI — connection, LLM backend, both transports, feeds, and routing. You shouldn't need to hand-edit YAML for a normal setup.
 
-Or with Docker:
+### Docker (recommended)
 
 ```bash
 mkdir -p meshai/data && cd meshai
 curl -O https://raw.githubusercontent.com/zvx-echo6/meshai/main/docker-compose.yml
-curl -o data/config.yaml https://raw.githubusercontent.com/zvx-echo6/meshai/main/config.example.yaml
-# edit data/config.yaml, then:
 docker compose up -d
 ```
 
-The dashboard comes up on `http://localhost:8080`.
+On first boot MeshAI writes a minimal starter config into the `meshai_data` volume (`/data/config.yaml`, plus an empty `/data/secrets/.env`) and starts the dashboard — nothing to pre-seed. Open **`http://localhost:8080`** and configure everything from there.
+
+As you save settings, MeshAI persists them back into `/data` as focused per-domain YAML files (`llm.yaml`, `meshtastic.yaml`, `notifications.yaml`, `env_feeds.yaml`, …) alongside `config.yaml` — the same multi-file config system MeshAI uses in production; the dashboard is the intended way to drive it. API keys and other secrets you enter in the dashboard are written only to `/data/secrets/.env`, never into the YAML.
+
+### From source (pip)
+
+```bash
+git clone https://github.com/zvx-echo6/meshai.git
+cd meshai
+pip install -e .
+cp config.example.yaml config.yaml   # minimal starting point, not exhaustive — see note below
+meshai
+```
+
+Unlike Docker, `meshai` won't create a config file for you — it needs one to exist before it will start. `config.example.yaml` bootstraps the basics (connection, LLM backend, bot behavior); once it's running, open `http://localhost:8080` and use the dashboard for everything else.
+
+> **Note on `config.example.yaml`:** it documents the legacy single-file schema and is no longer complete — it predates `coverage`, `danger_zones`, `generic_sources`, `meshcore_context`, `commands`, and the current 8-family notification-routing model (`notifications.toggles` / `destinations` / `region_routes`). The legacy single-file loader still works and is fully supported, but the dashboard — backed by the full config schema — is the authoritative way to reach every setting. Don't treat this file as a complete reference.
+
+### Advanced: the split `/data/config/` layout
+
+Production and multi-operator deployments typically move to a fully split config directory — `/data/config/config.yaml` plus one file per domain, `local.yaml` for operator-identifying values, and `!include` orchestration — instead of the single flat file above. MeshAI loads this layout automatically whenever it's present. To convert an existing single-file install:
+
+```bash
+docker compose exec meshai python -m meshai.scripts.migrate_config_v03
+```
+
+This backs up the original `config.yaml`, splits it into `/data/config/`, extracts secrets to `/data/secrets/.env`, and verifies the new layout loads identically before finishing — restart the container afterward to pick it up. It's optional: the dashboard is fully functional against either layout. (Templates for building a split layout from scratch also ship in the repo's `config/` directory: `local.yaml.example`, `.env.example`.)
 
 ---
 
