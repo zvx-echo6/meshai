@@ -7,7 +7,6 @@ import {
   Cloud,
   BellRing,
   BookOpen,
-  Sliders,
   Droplets,
   MapPin,
   Map,
@@ -86,7 +85,6 @@ const navGroups: NavGroup[] = [
 // Flattened view of every nav item for title lookup.
 // Also include de-navved routes so they still resolve a title.
 const extraTitleItems: NavItem[] = [
-  { path: '/adapter-config', label: 'Adapter Config', icon: Sliders },
   { path: '/gauge-sites', label: 'Gauge Sites', icon: Droplets },
   { path: '/town-anchors', label: 'Town Anchors', icon: MapPin },
   { path: '/mesh', label: 'Mesh', icon: Radio },

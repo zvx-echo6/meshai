@@ -7,7 +7,6 @@ import Config from './pages/Config'
 import ActivityLog from './pages/ActivityLog'
 import Notifications from './pages/Notifications'
 import Reference from './pages/Reference'
-import AdapterConfig from './pages/AdapterConfig'
 import GaugeSites from './pages/GaugeSites'
 import TownAnchors from './pages/TownAnchors'
 import MeshCoreRouting from './pages/MeshCoreRouting'
@@ -41,7 +40,6 @@ function App() {
           {/* Legacy /notifications -> Meshtastic Routing */}
           <Route path="/notifications" element={<Navigate to="/meshtastic/routing" replace />} />
           <Route path="/reference" element={<Reference />} />
-          <Route path="/adapter-config" element={<AdapterConfig />} />
 
           {/* New aggregated pages */}
           <Route path="/places" element={<Places />} />
