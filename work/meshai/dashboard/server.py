@@ -60,11 +60,13 @@ def create_app() -> FastAPI:
     from .api.notification_routes import router as notification_router
     from .api.debug_routes import router as debug_router
     from .api.serial_ports_routes import router as serial_ports_router
+    from .api.gauge_sites_import import router as gauge_sites_import_router
 
     app.include_router(system_router, prefix="/api")
     app.include_router(serial_ports_router, prefix="/api")
     app.include_router(adapter_config_router, prefix="/api")
     app.include_router(curation_router, prefix="/api")
+    app.include_router(gauge_sites_import_router, prefix="/api")
     app.include_router(config_router, prefix="/api")
     app.include_router(generic_sources_router, prefix="/api")
     app.include_router(mesh_router, prefix="/api")
