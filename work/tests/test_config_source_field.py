@@ -1,10 +1,10 @@
-"""v0.4 C.1: per-adapter `source` field + CentralConsumerConfig."""
+"""v0.4 C.1: per-adapter `source` field."""
 
 import pytest
 
 from meshai.config import (
     NWSConfig, FIRMSConfig, USGSQuakeConfig,
-    EnvironmentalConfig, CentralConsumerConfig,
+    EnvironmentalConfig,
 )
 
 _ADAPTERS = ("nws", "swpc", "ducting", "fires", "avalanche",
@@ -33,13 +33,6 @@ def test_source_garbage_rejects():
         NWSConfig(feed_source="garbage")
     with pytest.raises(ValueError):
         FIRMSConfig(feed_source="")
-
-
-def test_environmental_has_central_default():
-    env = EnvironmentalConfig()
-    assert isinstance(env.central, CentralConsumerConfig)
-    assert env.central.enabled is False
-    assert env.central.url.startswith("nats://")
 
 
 def test_source_field_survives_dict_coercion():

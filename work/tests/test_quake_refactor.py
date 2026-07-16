@@ -1,18 +1,24 @@
 """Phase-1 quake refactor tests — reference implementation verification.
 
-Four test groups:
+The Central `quake_handler` module (`_render()`, `handle_quake()`) has been
+deleted — the native path is the only production path now. Pure old-vs-new
+parity assertions and tests that only replayed decisions through the
+deleted `handle_quake` have been removed; original diffs are preserved in
+git history. What remains exercises native code directly (hand-written
+expected strings are kept as regression pins on the current wire format).
+
+Three test groups:
 
 1. Parity (tier-b): fixture 0002 → canonical data → formatter.
-   Expected string is hand-written (the new correct format).
-   The OLD _render() output for the same fixture is captured in a comment so
-   the intended tier-b diff is explicit and reviewable.
-   Two synthetic cases show the PAGER + update-prefix diffs explicitly.
+   Expected string is hand-written (the current correct format).
+   Two synthetic cases show the PAGER + update-prefix rendering explicitly.
 
-2. Cross-source identity: native adapter builds the same canonical data as
-   the Central path for fixture 0002.  Both render byte-identically.
+2. Cross-source identity: native adapter builds the same canonical data
+   shape the formatter reads.
 
-3. Gate-sequence: replay four synthetic events through the OLD handle_quake
-   gating and the NEW gating.quake.decide(); assert broadcast/suppress match.
+3. Gate-sequence: exercise gating.quake.decide() directly across a
+   synthetic event sequence; assert broadcast/suppress thresholds and the
+   commit → suppress-on-replay lifecycle.
 
 4. Schema-conformance: env/usgs_quake.py to_event() emits all canonical keys.
 """
@@ -26,7 +32,6 @@ from tests.harness.goldens import (
     assert_byte_identical,
     load_fixtures,
     pinned_time,
-    run_gate_sequence,
 )
 
 # ── Shared clock epoch for deterministic renders ─────────────────────────────
@@ -62,26 +67,13 @@ def _make_fake_event(data: dict):
 class TestFormatterParity:
     """formatter/quake.format() renders correct output from canonical data."""
 
-    def _render_old(self, *, mag, place, depth_km, lat, lon, tsunami, is_update=False):
-        """Capture OLD _render() output for diff comments."""
-        from meshai.central.quake_handler import _render
-        from meshai.central.budget import budget_for
-        return _render(mag=mag, place=place, depth_km=depth_km, lat=lat,
-                       lon=lon, tsunami=tsunami, is_update=is_update)
-
     def test_fixture_0002_new_format(self):
-        """Fixture 0002 (M3.3 Lima Montana) → NEW formatter output matches hand-written expected.
+        """Fixture 0002 (M3.3 Lima Montana) → formatter output matches hand-written expected.
 
         Fixture 0002 has alert=null and no tsunami so the tier-b additions
-        (PAGER line, update-prefix) are not visible.  The old and new outputs
-        are IDENTICAL for this fixture — which is correct.  The hand-written
+        (PAGER line, update-prefix) are not visible.  The hand-written
         expected below documents the canonical format; synthetic tests below
         show the tier-b additions.
-
-        OLD _render() output (captured for diff transparency):
-            "🌐 New: M3.3 — 19 km S of Lima, Montana\\nDepth: 11 km · @ 44.460, -112.611"
-        NEW formatter output (same — no tier-b changes triggered):
-            "🌐 New: M3.3 — 19 km S of Lima, Montana\\nDepth: 11 km · @ 44.460, -112.611"
         """
         from meshai.notifications.formatters.quake import format as qfmt
 
@@ -119,27 +111,8 @@ class TestFormatterParity:
 
         assert_byte_identical(result, expected)
 
-        # Verify old _render matches new for this fixture (no tier-b diff)
-        old_wire = self._render_old(
-            mag=canonical["magnitude"], place=canonical["place"],
-            depth_km=canonical["depth_km"], lat=canonical["lat"],
-            lon=canonical["lon"], tsunami=canonical["tsunami"],
-            is_update=False,
-        )
-        assert_byte_identical(result, old_wire), (
-            "For fixture 0002 (null PAGER, is_update=False) old and new "
-            "outputs must be identical — the tier-b diff only appears when "
-            "PAGER or is_update are set."
-        )
-
     def test_tier_b_pager_orange_rendered(self):
-        """Tier-b ①: PAGER=orange is NOW rendered on a 4th line.
-
-        OLD _render() output (captured):
-            "🌐 New: M2.0 — Off the coast of Oregon\\nDepth: 10 km · @ 44.000, -125.000"
-        NEW formatter output (tier-b change — PAGER line added):
-            "🌐 New: M2.0 — Off the coast of Oregon\\nDepth: 10 km · @ 44.000, -125.000\\n⚠️ PAGER: orange"
-        """
+        """Tier-b ①: PAGER=orange is rendered on a 4th line."""
         from meshai.notifications.formatters.quake import format as qfmt
 
         canonical = {
@@ -158,12 +131,6 @@ class TestFormatterParity:
             "distance_km": 500.0,
         }
 
-        # OLD _render() output (PAGER not rendered)
-        old_wire = self._render_old(
-            mag=2.0, place="Off the coast of Oregon", depth_km=10.0,
-            lat=44.0, lon=-125.0, tsunami=False, is_update=False,
-        )
-        # NEW formatter output (PAGER rendered as 4th line)
         expected_new = (
             "\U0001f310 New: M2.0 — Off the coast of Oregon"
             "\nDepth: 10 km · @ 44.000, -125.000"
@@ -174,19 +141,9 @@ class TestFormatterParity:
             result = qfmt(_make_fake_event(canonical), now=_AT, budget=140)
 
         assert_byte_identical(result, expected_new)
-        # Confirm the old wire does NOT have the PAGER line
-        assert "PAGER" not in old_wire, (
-            f"OLD _render() must not contain PAGER line; got: {old_wire!r}"
-        )
 
     def test_tier_b_update_prefix_rendered(self):
-        """Tier-b ②: is_update=True produces 'Update:' prefix (was hard-coded 'New:').
-
-        OLD _render() output (is_update always False):
-            "🌐 New: M3.0 — 5 km NE of Stanley, Idaho\\nDepth: 8 km · @ 44.200, -114.900"
-        NEW formatter output (is_update=True):
-            "🌐 Update: M3.0 — 5 km NE of Stanley, Idaho\\nDepth: 8 km · @ 44.200, -114.900"
-        """
+        """Tier-b ②: is_update=True produces 'Update:' prefix."""
         from meshai.notifications.formatters.quake import format as qfmt
 
         canonical = {
@@ -205,17 +162,8 @@ class TestFormatterParity:
             "distance_km": 10.0,
         }
 
-        # OLD _render() always uses is_update=False
-        old_wire = self._render_old(
-            mag=3.0, place="5 km NE of Stanley, Idaho", depth_km=8.0,
-            lat=44.2, lon=-114.9, tsunami=False, is_update=False,
-        )
         expected_new = (
             "\U0001f310 Update: M3.0 — 5 km NE of Stanley, Idaho"
-            "\nDepth: 8 km · @ 44.200, -114.900"
-        )
-        expected_old = (
-            "\U0001f310 New: M3.0 — 5 km NE of Stanley, Idaho"
             "\nDepth: 8 km · @ 44.200, -114.900"
         )
 
@@ -223,12 +171,11 @@ class TestFormatterParity:
             result = qfmt(_make_fake_event(canonical), now=_AT, budget=140)
 
         assert_byte_identical(result, expected_new)
-        assert_byte_identical(old_wire, expected_old)
         assert "Update:" in result
         assert "New:" not in result
 
     def test_tsunami_escalation_preserved(self):
-        """Tsunami escalation (🚨 emoji + TSUNAMI WARNING line) unchanged from _render."""
+        """Tsunami escalation renders the 🚨 emoji + TSUNAMI WARNING line."""
         from meshai.notifications.formatters.quake import format as qfmt
 
         canonical = {
@@ -247,16 +194,18 @@ class TestFormatterParity:
             "distance_km": 8000.0,
         }
 
+        expected = (
+            "\U0001f6a8 New: M4.5 — off the coast of Japan"
+            "\nDepth: 5 km · @ 35.000, 141.000"
+            "\n\U0001f6a8 TSUNAMI WARNING"
+        )
+
         with pinned_time(_AT):
             result = qfmt(_make_fake_event(canonical), now=_AT, budget=140)
 
-        old_wire = self._render_old(
-            mag=4.5, place="off the coast of Japan", depth_km=5.0,
-            lat=35.0, lon=141.0, tsunami=True,
-        )
         assert result.startswith("\U0001f6a8"), "Tsunami emoji must be 🚨"
         assert "\U0001f6a8 TSUNAMI WARNING" in result
-        assert_byte_identical(result, old_wire)
+        assert_byte_identical(result, expected)
 
     def test_m5_escalation_emoji_preserved(self):
         """M5+ uses ⚠️ emoji — unchanged from _render."""
@@ -433,22 +382,15 @@ def _make_envelope(*, event_id, mag, lat, lon, depth_km=10.0, place=None,
 
 
 class TestGateSequence:
-    """Gate parity: old handle_quake decisions match new gating.quake.decide()."""
+    """gating.quake.decide() gate thresholds + commit/suppress lifecycle."""
 
     @pytest.fixture(autouse=True)
     def _db(self, mem_db):
         """All tests in this class share the same mem_db."""
         self.db = mem_db
 
-    def _old_gate(self, fixture, *, now):
-        """Old path: handle_quake returning non-None = broadcast."""
-        from meshai.central.quake_handler import handle_quake
-        env = fixture["envelope"]
-        wire = handle_quake(env, fixture["subject"], data={}, now=int(now))
-        return wire is not None
-
-    def _new_gate(self, fixture, *, now):
-        """New path: gating.quake.decide()."""
+    def _decide(self, fixture, *, now):
+        """Build canonical data from a Central-style fixture and call decide()."""
         from meshai.notifications.gating.quake import decide
         env = fixture["envelope"]
         inner = env.get("data") or {}
@@ -475,18 +417,12 @@ class TestGateSequence:
         return decide(canonical, source="usgs_quake", now=float(now))
 
     def test_gate_sequence_matches(self):
-        """Four-event sequence: old and new gates make identical broadcast/suppress decisions.
+        """Four-event sequence exercises all of decide()'s broadcast thresholds.
 
-        Sequence (each event has a DISTINCT event_id — the commit/suppress
-        cycle is tested separately in test_suppress_after_commit):
           [0] M2.0, far (below all thresholds)             → suppress
           [1] M2.7, within Idaho (regional gate)            → broadcast
           [2] M3.5, anywhere (global floor)                 → broadcast
           [3] M6.0 + tsunami (any-magnitude tsunami gate)   → broadcast
-
-        Gate decisions (broadcast True/False) must match between old and new.
-        NOTE: PAGER/update-prefix are formatter-only tier-b changes; they do
-        NOT affect gate decisions — any divergence here is a regression.
         """
         t_base = 1_780_000_000.0
 
@@ -503,84 +439,35 @@ class TestGateSequence:
         fx3 = _make_envelope(event_id="gs_seq_3", mag=6.0, lat=35.0, lon=141.0,
                               tsunami=1, time_ms=int((t_base + 300) * 1000))
 
-        ordered = [fx0, fx1, fx2, fx3]
-        timeline = [t_base, t_base + 100, t_base + 200, t_base + 300]
+        r0 = self._decide(fx0, now=t_base)
+        r1 = self._decide(fx1, now=t_base + 100)
+        r2 = self._decide(fx2, now=t_base + 200)
+        r3 = self._decide(fx3, now=t_base + 300)
 
-        results = run_gate_sequence(
-            self._old_gate,
-            self._new_gate,
-            ordered,
-            timeline=timeline,
-        )
-
-        mismatches = [r for r in results if not r["match"]]
-        assert not mismatches, (
-            "Gate sequence mismatch between old handle_quake and new decide():\n"
-            + "\n".join(
-                f"  step {r['fixture_n']}: old={r['old_broadcast']} "
-                f"new={r['new_broadcast']} diffs={r['diffs']}"
-                for r in mismatches
-            )
-        )
-
-        # Verify expected pattern
-        assert results[0]["old_broadcast"] is False, "M2.0 far must be suppressed"
-        assert results[1]["old_broadcast"] is True,  "M2.7 Idaho must broadcast"
-        assert results[2]["old_broadcast"] is True,  "M3.5 global must broadcast"
-        assert results[3]["old_broadcast"] is True,  "M6.0+tsunami must broadcast"
+        assert r0.broadcast is False, "M2.0 far must be suppressed"
+        assert r1.broadcast is True,  "M2.7 Idaho must broadcast"
+        assert r2.broadcast is True,  "M3.5 global must broadcast"
+        assert r3.broadcast is True,  "M6.0+tsunami must broadcast"
 
     def test_suppress_after_commit(self):
-        """After commit, the same event_id is suppressed by both old and new gates.
-
-        The run_gate_sequence harness does not call commits between steps, so
-        the commit+suppress lifecycle is tested here separately by manual
-        sequencing.
-        """
-        from meshai.central.quake_handler import handle_quake
-        from meshai.notifications.gating.quake import decide
-
+        """After commit, a replay of the same event_id is suppressed by decide()."""
         t0 = 1_780_000_000.0
         event_id = "suppress_after_commit_test"
 
         fx = _make_envelope(event_id=event_id, mag=3.5, lat=44.09, lon=-115.96,
                              time_ms=int(t0 * 1000))
-        env = fx["envelope"]
 
-        # First arrival: both old and new broadcast
-        data1 = {}
-        old_wire1 = handle_quake(env, fx["subject"], data=data1, now=int(t0))
-        assert old_wire1 is not None, "First arrival must broadcast (old)"
+        # First arrival: broadcast.
+        result1 = self._decide(fx, now=t0)
+        assert result1.broadcast is True, "First arrival must broadcast"
+        assert result1.commit is not None, "commit callback must be attached"
 
-        # Build canonical from fixture for new gate
-        inner = env["data"]
-        d = inner["data"]
-        geo = inner["geo"]
-        cent = geo["centroid"]
-        canonical = {
-            "magnitude": d["magnitude"],
-            "depth_km": d.get("depth_km") or d.get("depth"),
-            "lat": cent[1], "lon": cent[0],
-            "place": d.get("place"),
-            "tsunami": bool(d.get("tsunami")),
-            "pager": d.get("alert"),
-            "occurred_at": int(d["time_ms"] / 1000),
-            "event_id": event_id,
-        }
-        # Since old gate already wrote the row (INSERT), new gate sees the
-        # same DB state.  Both should broadcast on first arrival.
-        # (We test new gate's second call AFTER commit below)
+        # Commit (simulates confirmed delivery).
+        result1.commit(t0 + 1.0)
 
-        # Call commit (simulates confirmed delivery)
-        assert "_on_broadcast_committed" in data1, "commit callback must be attached"
-        data1["_on_broadcast_committed"](t0 + 1.0)
-
-        # Second arrival with same event_id — old gate must suppress
-        old_wire2 = handle_quake(env, fx["subject"], data={}, now=int(t0 + 60))
-        assert old_wire2 is None, "Old gate must suppress after commit"
-
-        # New gate must also suppress
-        new_result2 = decide(canonical, source="usgs_quake", now=t0 + 60)
-        assert new_result2.broadcast is False, "New gate must suppress after commit"
+        # Second arrival with same event_id — must suppress.
+        result2 = self._decide(fx, now=t0 + 60)
+        assert result2.broadcast is False, "Gate must suppress after commit"
 
     def test_severity_override_from_decide(self):
         """decide() sets _severity_override=immediate for tsunami/PAGER."""

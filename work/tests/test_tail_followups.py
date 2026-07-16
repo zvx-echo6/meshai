@@ -316,14 +316,3 @@ def test_reminder_fires_when_fire_not_tombstoned():
     import asyncio
     fired = asyncio.run(sch.tick_once())
     assert fired == 1
-
-
-# ============================================================================
-# Item 5 -- dead-code removal
-# ============================================================================
-
-
-def test_incident_broadcast_heartbeat_constant_gone():
-    """The dead constant is not importable anymore."""
-    from meshai.central import incident_handler
-    assert not hasattr(incident_handler, "INCIDENT_BROADCAST_HEARTBEAT_S")

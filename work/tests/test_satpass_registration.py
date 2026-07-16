@@ -43,28 +43,6 @@ def test_environmental_satpass_default_central():
     assert env.satpass.feed_source == "central"
 
 
-# -- _subject_owned() integration ---------------------------------------------
-
-def test_subject_owned_includes_satpass_subjects():
-    """When EnvironmentalConfig has satpass with feed_source='central',
-    _subject_owned() must return subjects containing 'central.sat.'."""
-    from meshai.config import EnvironmentalConfig
-    from meshai.central.consumer import _SUBJECTS_BARE
-
-    env = EnvironmentalConfig()
-
-    # Simulate what _subject_owned does for the satpass attr
-    cfg = getattr(env, "satpass", None)
-    assert cfg is not None, "satpass attr missing from EnvironmentalConfig"
-    assert getattr(cfg, "feed_source", "native") == "central"
-
-    # Verify _SUBJECTS_BARE has satpass entry
-    assert "satpass" in _SUBJECTS_BARE, "satpass missing from _SUBJECTS_BARE"
-    subjects = _SUBJECTS_BARE["satpass"]
-    assert any("central.sat.pass" in s for s in subjects)
-    assert any("central.sat.tle" in s for s in subjects)
-
-
 # -- adapter_config REGISTRY --------------------------------------------------
 
 def test_registry_has_satpass_enabled():
@@ -116,32 +94,3 @@ def test_yaml_parsing_satpass():
     assert env.satpass.enabled is True
     assert env.satpass.feed_source == "central"
 
-
-
-# -- _subjects_for() region rewrite table ------------------------------------
-
-def test_subjects_for_satpass_with_region():
-    """_subjects_for('satpass', 'us.id') must return region-scoped pass
-    subjects and global TLE subject."""
-    from meshai.central.consumer import _subjects_for
-    result = _subjects_for('satpass', 'us.id')
-    assert len(result) == 2, f'Expected 2 subjects, got {len(result)}: {result}'
-    assert result[0] == 'central.sat.pass.us.id.>'
-    assert result[1] == 'central.sat.tle.>'
-
-
-def test_subjects_for_satpass_no_region_falls_back():
-    """_subjects_for('satpass', None) must return bare-wildcard forms
-    from _SUBJECTS_BARE."""
-    from meshai.central.consumer import _subjects_for
-    result = _subjects_for('satpass', None)
-    assert len(result) == 2, f'Expected 2 subjects, got {len(result)}: {result}'
-    assert result[0] == 'central.sat.pass.>'
-    assert result[1] == 'central.sat.tle.>'
-
-
-def test_subjects_for_satpass_empty_region_falls_back():
-    """_subjects_for('satpass', '') must behave like None — bare wildcards."""
-    from meshai.central.consumer import _subjects_for
-    result = _subjects_for('satpass', '')
-    assert result == _subjects_for('satpass', None)

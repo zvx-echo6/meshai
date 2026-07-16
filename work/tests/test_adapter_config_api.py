@@ -208,11 +208,16 @@ def test_put_json_accepts_list(client):
 
 
 def test_put_json_accepts_dict(client):
+    # central/severity_thresholds was removed with the Central handler path;
+    # any surviving "json"-type key accepts dict values equally (the API
+    # only checks JSON-serializability, not shape) -- use reminders_wfigs/
+    # terminate_when (default is a list) to exercise the dict-value path.
     r = client.put(
-        "/api/adapter-config/central/severity_thresholds",
+        "/api/adapter-config/reminders_wfigs/terminate_when",
         json={"value": {"routine_max": 0, "priority_max": 1, "immediate_min": 2}},
     )
     assert r.status_code == 200
+    assert r.json()["value"] == {"routine_max": 0, "priority_max": 1, "immediate_min": 2}
 
 
 def test_put_json_accepts_none(client):
@@ -291,8 +296,8 @@ def test_list_meta(client):
     body = r.json()
     assert "wfigs" in body
     assert body["wfigs"]["include_in_llm_context"] is True
-    # central / geocoder default to False
-    assert body["central"]["include_in_llm_context"] is False
+    # geocoder defaults to False (central adapter meta was removed with the
+    # Central handler path)
     assert body["geocoder"]["include_in_llm_context"] is False
 
 

@@ -1,19 +1,34 @@
 """Phase-3 hydro (USGS NWIS) refactor tests.
 
-Verifies the source-agnostic formatter+decider migration for the stream-gauge
-hazard, mirroring test_quake_refactor.py:
+Verifies the formatter+decider for the stream-gauge hazard (gating/hydro.py,
+formatters/hydro.py), mirroring test_quake_refactor.py:
 
-1. Golden byte-identical: formatters.hydro.format() reproduces the old
-   nwis_handler._render() wire exactly, for a stage-only crossing, a paired
-   flow(00060)+stage(00065) reading, and every threshold label.
+1. Golden: formatters.hydro.format() renders the expected wire, for a
+   stage-only crossing, a paired flow(00060)+stage(00065) reading, and every
+   threshold label.
 
-2. Gate-sequence parity: an explicit `now`-timeline of readings driven through
-   the NEW gating.hydro.decide() matches the OLD handle_nwis broadcast/suppress
-   behavior (upward crossing broadcasts; same-rank + receding suppress unless
-   broadcast_on_recede).
+2. Gate-sequence: an explicit `now`-timeline of readings driven through
+   gating.hydro.decide() (upward crossing broadcasts; same-rank + receding
+   suppress unless broadcast_on_recede).
+
+The Central `nwis_handler` module (`_render()`, `handle_nwis()`) has been
+deleted along with the rest of the Central NATS consumer path. Pure
+old-vs-new parity assertions have been removed (original diffs are
+preserved in git history); what remains asserts against hand-written
+expected strings / broadcast outcomes.
+
+decide() is READ-ONLY over gauge_readings by design (the append-only INSERT
+was always caller-owned -- previously the Central handler, inline,
+immediately after calling decide()). With the handler gone there is no
+current producer for the "stream_flow" category in production (no native
+env/ adapter emits it -- meshai.env.usgs.USGSStreamsAdapter is a separate,
+older stream-gauge pipeline with different categories/schema). Tests below
+that need prior-reading state seed gauge_readings directly via a local SQL
+helper that mirrors the deleted handler's INSERT shape, so the gate logic
+itself stays under direct, native-only test coverage.
 
 The real registry / cutover key is "stream_flow" — the flat category the
-Central nwis path produces for every central.hydro.* envelope.
+Central nwis path used to produce for every central.hydro.* envelope.
 """
 from __future__ import annotations
 
@@ -21,7 +36,7 @@ import pytest
 
 from meshai.persistence import close_thread_connection, init_db
 from meshai.persistence import db as persistence_db
-from tests.harness.goldens import assert_byte_identical, run_gate_sequence
+from tests.harness.goldens import assert_byte_identical
 
 _AT = 1_783_200_000.0  # pinned epoch (unused by hydro render/gate, kept for parity)
 
@@ -53,11 +68,7 @@ def _make_fake_event(data: dict):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestFormatterGolden:
-    """formatters.hydro.format() == nwis_handler._render() for the same inputs."""
-
-    def _render_old(self, **kw):
-        from meshai.central.nwis_handler import _render
-        return _render(**kw)
+    """formatters.hydro.format() renders the expected wire for canonical data."""
 
     def _fmt_new(self, canonical: dict) -> str:
         from meshai.notifications.formatters.hydro import format as hfmt
@@ -74,13 +85,10 @@ class TestFormatterGolden:
             "lat": 43.612,
             "lon": -111.654,
         }
-        old = self._render_old(
-            gauge_name="Snake River at Heise", threshold_state="action",
-            stage_ft=12.5, flow_cfs=None, unit="ft", lat=43.612, lon=-111.654,
-        )
         new = self._fmt_new(canonical)
-        assert_byte_identical(new, old)
-        assert new == "🌊 New: Snake River at Heise: action stage 12.5 ft, @ 43.612,-111.654"
+        assert_byte_identical(
+            new, "🌊 New: Snake River at Heise: action stage 12.5 ft, @ 43.612,-111.654"
+        )
 
     def test_paired_flow_and_stage(self):
         """00060 discharge back-looked onto a 00065 stage: flow segment present."""
@@ -93,14 +101,11 @@ class TestFormatterGolden:
             "lat": 43.600,
             "lon": -116.200,
         }
-        old = self._render_old(
-            gauge_name="Boise River", threshold_state="flood_minor",
-            stage_ft=14.5, flow_cfs=8400, unit="ft", lat=43.600, lon=-116.200,
-        )
         new = self._fmt_new(canonical)
-        assert_byte_identical(new, old)
-        assert "flow 8,400 cfs" in new
-        assert "minor flooding 14.5 ft" in new
+        assert_byte_identical(
+            new,
+            "🌊 New: Boise River: minor flooding 14.5 ft, flow 8,400 cfs, @ 43.600,-116.200",
+        )
 
     @pytest.mark.parametrize(
         "state,label",
@@ -112,7 +117,7 @@ class TestFormatterGolden:
         ],
     )
     def test_every_threshold_label(self, state, label):
-        """Each threshold_state maps to the correct label — byte-identical to _render."""
+        """Each threshold_state maps to the correct label."""
         canonical = {
             "gauge_name": "Test Gauge",
             "threshold_state": state,
@@ -122,16 +127,13 @@ class TestFormatterGolden:
             "lat": 44.0,
             "lon": -114.0,
         }
-        old = self._render_old(
-            gauge_name="Test Gauge", threshold_state=state, stage_ft=20.0,
-            flow_cfs=None, unit="ft", lat=44.0, lon=-114.0,
-        )
         new = self._fmt_new(canonical)
-        assert_byte_identical(new, old)
-        assert f"{label} 20.0 ft" in new
+        assert_byte_identical(
+            new, f"🌊 New: Test Gauge: {label} 20.0 ft, @ 44.000,-114.000"
+        )
 
     def test_missing_coords_drops_at_tail(self):
-        """No coords → no @ segment (byte-identical to _render)."""
+        """No coords → no @ segment."""
         canonical = {
             "gauge_name": "No Coords Gauge",
             "threshold_state": "action",
@@ -141,13 +143,8 @@ class TestFormatterGolden:
             "lat": None,
             "lon": None,
         }
-        old = self._render_old(
-            gauge_name="No Coords Gauge", threshold_state="action",
-            stage_ft=10.0, flow_cfs=None, unit="ft", lat=None, lon=None,
-        )
         new = self._fmt_new(canonical)
-        assert_byte_identical(new, old)
-        assert "@" not in new
+        assert_byte_identical(new, "🌊 New: No Coords Gauge: action stage 10.0 ft")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -183,33 +180,35 @@ def _parse_iso_epoch(s):
     return int(datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp())
 
 
+def _insert_reading(conn, *, site_id, gauge_name, value, unit,
+                    threshold_state, flow_cfs, reading_time, lat, lon):
+    """Directly seed a gauge_readings row.
+
+    Mirrors the schema the deleted Central nwis_handler used to INSERT
+    inline, immediately after calling decide(). decide() is read-only over
+    this table by design (see gating/hydro.py docstring) -- the INSERT was
+    always caller-owned, so tests seed state directly instead of reaching
+    into the deleted handler.
+    """
+    conn.execute(
+        "INSERT INTO gauge_readings(site_id, gauge_name, reading_value, "
+        "reading_unit, threshold_state, flow_cfs, reading_time, lat, lon) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (site_id, gauge_name, value, unit, threshold_state, flow_cfs,
+         reading_time, lat, lon),
+    )
+
+
 class TestGateSequenceParity:
-    """New decide() decisions match old handle_nwis broadcast/suppress."""
+    """gating.hydro.decide() broadcast/suppress across a reading timeline."""
 
     @pytest.fixture(autouse=True)
     def _db(self, mem_db):
         self.db = mem_db
 
-    def _old_gate(self, fixture, *, now):
-        """OLD path: handle_nwis returning non-None = broadcast.
-
-        handle_nwis owns the append-only gauge_readings INSERT, so replaying
-        through it advances the persisted time-series exactly as production
-        would — the decider (below) then reads that same state.
-        """
-        from meshai.central.nwis_handler import handle_nwis
-        env = fixture["envelope"]
-        wire = handle_nwis(env, env["subject"], data={}, now=int(now))
-        return wire is not None
-
-    def _new_gate(self, fixture, *, now):
-        """NEW path: build canonical (as the handler does) then decide().
-
-        We do NOT insert here — the old-gate replay already advances
-        gauge_readings; the decider only READS prior state.  This mirrors the
-        production ordering where decide() runs before the inline INSERT.
-        """
-        from meshai.notifications.gating.hydro import decide
+    def _canonical(self, fixture):
+        """Build canonical data from a Central-style fixture (as the deleted
+        handler used to) via the still-live idaho_gauge_sites helpers."""
         from meshai.central.idaho_gauge_sites import (
             compute_threshold_state, lookup_site, normalize_site_id,
         )
@@ -238,10 +237,34 @@ class TestGateSequenceParity:
             "lon": d.get("longitude"),
             "parameter_code": pc,
         }
+        return canonical, value
+
+    def _decide(self, fixture, *, now):
+        """decide() only (no persist) — for assertions on a single reading."""
+        from meshai.notifications.gating.hydro import decide
+        canonical, _value = self._canonical(fixture)
         return decide(canonical, source="nwis", now=float(now))
 
+    def _decide_and_persist(self, fixture, *, now):
+        """decide() then INSERT the resolved reading — mirrors the deleted
+        handler's decide-then-insert ordering, so later steps in a sequence
+        see accumulated prior state exactly as production would."""
+        from meshai.notifications.gating.hydro import decide
+        canonical, value = self._canonical(fixture)
+        gate = decide(canonical, source="nwis", now=float(now))
+        threshold_state = gate.data_patch.get("threshold_state", canonical["threshold_state"])
+        stage_ft = gate.data_patch.get("stage_ft", canonical["stage_ft"])
+        _insert_reading(
+            self.db,
+            site_id=canonical["site_id"], gauge_name=canonical["gauge_name"],
+            value=value, unit=canonical["unit"], threshold_state=threshold_state,
+            flow_cfs=canonical["flow_cfs"], reading_time=canonical["reading_time"],
+            lat=canonical["lat"], lon=canonical["lon"],
+        )
+        return gate
+
     def test_gate_sequence_matches(self):
-        """Timeline of Heise readings: old and new gates agree on every step.
+        """Timeline of Heise readings: decide() agrees with expectations at every step.
 
         Heise (USGS-13186000): action=12.0ft.
           [0] 8.0 ft  normal  (first reading, no prior)        → suppress
@@ -264,22 +287,16 @@ class TestGateSequenceParity:
         ]
         timeline = [float(base + i * 900) for i in range(len(specs))]
 
-        results = run_gate_sequence(self._old_gate, self._new_gate, ordered,
-                                    timeline=timeline)
-        mismatches = [r for r in results if not r["match"]]
-        assert not mismatches, (
-            "Gate sequence mismatch old handle_nwis vs new decide():\n"
-            + "\n".join(
-                f"  step {r['fixture_n']}: old={r['old_broadcast']} "
-                f"new={r['new_broadcast']} diffs={r['diffs']}"
-                for r in mismatches
-            )
-        )
-        assert results[0]["old_broadcast"] is False, "normal first reading suppressed"
-        assert results[1]["old_broadcast"] is True,  "normal→action broadcasts"
-        assert results[2]["old_broadcast"] is False, "action→action suppressed"
-        assert results[3]["old_broadcast"] is True,  "action→flood_minor broadcasts"
-        assert results[4]["old_broadcast"] is False, "receding suppressed (no toggle)"
+        results = [
+            self._decide_and_persist(fx, now=t)
+            for fx, t in zip(ordered, timeline)
+        ]
+
+        assert results[0].broadcast is False, "normal first reading suppressed"
+        assert results[1].broadcast is True,  "normal→action broadcasts"
+        assert results[2].broadcast is False, "action→action suppressed"
+        assert results[3].broadcast is True,  "action→flood_minor broadcasts"
+        assert results[4].broadcast is False, "receding suppressed (no toggle)"
 
     def test_00060_backlook_inherits_stage_band(self, mem_db):
         """A 00060 discharge reading inherits the last 00065 stage band.
@@ -288,16 +305,14 @@ class TestGateSequenceParity:
         decider's back-look must resolve threshold_state=action + the prior
         stage_ft, and (same rank as the seeded action) suppress the discharge.
         """
-        from meshai.notifications.gating.hydro import decide
-        # Seed a 00065 stage reading at action via the old handler (writes row).
         env_stage = _nwis_env(parameter_code="00065", value=12.5,
                               time_iso="2026-06-05T10:00:00Z", envelope_id="seed")
-        self._old_gate({"envelope": env_stage}, now=1_000_000)
+        self._decide_and_persist({"envelope": env_stage}, now=1_000_000)
 
         # Now decide on a 00060 discharge — should back-look the action band.
         env_flow = _nwis_env(parameter_code="00060", value=8400, unit="ft^3/s",
                              time_iso="2026-06-05T10:05:00Z", envelope_id="q")
-        gate = self._new_gate({"envelope": env_flow}, now=1_000_300)
+        gate = self._decide({"envelope": env_flow}, now=1_000_300)
         assert gate.data_patch["threshold_state"] == "action"
         assert gate.data_patch["stage_ft"] == 12.5
         # action → action (same rank) → suppress
@@ -306,11 +321,10 @@ class TestGateSequenceParity:
     def test_recede_toggle_enables_broadcast(self, mem_db):
         """With broadcast_on_recede set, a receding crossing broadcasts."""
         from meshai.adapter_config._accessor import set_runtime_override, _overrides
-        from meshai.notifications.gating.hydro import decide
         # Seed an action reading.
         env_high = _nwis_env(parameter_code="00065", value=12.5,
                             time_iso="2026-06-05T10:00:00Z", envelope_id="hi")
-        self._old_gate({"envelope": env_high}, now=1_000_000)
+        self._decide_and_persist({"envelope": env_high}, now=1_000_000)
 
         # Force the recede toggle on for the decision only (runtime override,
         # since adapter_config accessors are read-only).
@@ -318,7 +332,7 @@ class TestGateSequenceParity:
         try:
             env_low = _nwis_env(parameter_code="00065", value=8.0,
                                time_iso="2026-06-05T11:00:00Z", envelope_id="lo")
-            gate = self._new_gate({"envelope": env_low}, now=1_003_600)
+            gate = self._decide({"envelope": env_low}, now=1_003_600)
         finally:
             _overrides.pop(("usgs_nwis", "broadcast_on_recede"), None)
         assert gate.broadcast is True, "receding must broadcast when toggle is on"
