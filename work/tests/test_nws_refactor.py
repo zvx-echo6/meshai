@@ -9,14 +9,26 @@ against and were deleted (git history preserves the original handler and
 the parity tests that proved the rewrite matched it). What remains exercises
 the LIVE native path only:
 
-1. Gate-sequence: replay a synthetic 4-step lifecycle (first→dup<3h→
+1. Formatter golden: formatters.nws.format() renders the expected wire text
+   for real fixtures and pathological synthetic cases (SVR path-sampling,
+   dangling-separator regression, TOR/FFW branches). These goldens are
+   hardcoded literals, NOT computed by importing the deleted handler.  They
+   were derived by temporarily restoring the pre-excision
+   meshai.central.nws_handler._render() from git history (ca751fb5^) in a
+   throwaway script, confirming it produced byte-identical output to the
+   current native format() for every case below, and pinning the resulting
+   string as the literal.  That verification script/module was never
+   committed; only the confirmed-matching literals live here.  See "golden
+   verified against pre-excision _render()" comments below.
+
+2. Gate-sequence: replay a synthetic 4-step lifecycle (first→dup<3h→
    dup>3h→Cancel) through gating.nws.decide(), and a reference-triggered
    "Update" prefix case — both against native code only.
 
-2. Schema-conformance: env/nws.py _fetch() emits all canonical schema keys;
+3. Schema-conformance: env/nws.py _fetch() emits all canonical schema keys;
    description is not truncated; to_event() produces a canonical event.data.
 
-3. Formatter/gater registration: formatters/__init__ and gating/__init__
+4. Formatter/gater registration: formatters/__init__ and gating/__init__
    register the NWS categories against the native format()/decide().
 """
 from __future__ import annotations
@@ -26,10 +38,12 @@ from datetime import datetime
 
 import pytest
 
+from meshai.central.budget import budget_for
 from meshai.notifications.formatters.nws import format as nws_format
 from meshai.notifications.gating.nws import decide as nws_decide
 from meshai.persistence import close_thread_connection, init_db
 from meshai.persistence import db as persistence_db
+from tests.harness.goldens import assert_byte_identical, load_fixtures, pinned_tz
 
 # ── DB fixture ────────────────────────────────────────────────────────────────
 
@@ -43,6 +57,329 @@ def mem_db(monkeypatch, tmp_path):
     yield conn
     close_thread_connection()
     persistence_db._initialised.discard(db_path)
+
+
+class _FakeEvent:
+    """Minimal fake Event for calling the formatter without the full pipeline."""
+    def __init__(self, data: dict):
+        self.data = data
+
+
+def _canonical(event_type, *, same_code="", area_desc="Twin Falls County",
+               county="Twin Falls", state="ID", expires_epoch=1_751_400_000,
+               certainty="Observed", parameters=None, description="",
+               prefix="") -> dict:
+    """Build a canonical event.data dict as the native adapter's to_event()
+    (or the decider's data_patch) would produce it, for feeding directly to
+    nws_format()."""
+    return {
+        "cap_id": "test",
+        "event": event_type,
+        "same_code": same_code,
+        "cap_severity": None,
+        "certainty": certainty,
+        "expires_at": expires_epoch,
+        "area_desc": area_desc,
+        "geocoder": {"city": None, "county": county, "state": state},
+        "description": description,
+        "parameters": parameters or {},
+        "msgType": "Alert",
+        "references": [],
+        "category": "",
+        "headline": None,
+        "_nws_prefix": prefix,
+    }
+
+
+# =============================================================================
+# 1. Formatter golden — native format() wire text
+# =============================================================================
+
+class TestFormatterGolden:
+    """formatters.nws.format() renders the expected wire text.
+
+    Fixture-driven cases (golden verified against pre-excision _render(),
+    see module docstring) plus hand-built pathological cases that pin
+    known-tricky behavior: SVR path-sampling, the "no dangling separator"
+    regression, and the TOR/FFW hazard branches.
+    """
+
+    def _canonical_from_fixture(self, fix: dict) -> dict:
+        """Extract canonical event.data from a Central-style NWS fixture.
+
+        Standalone re-implementation of the field extraction that used to
+        live in the deleted meshai.central.nws_handler (event-type fallback
+        via category, ISO-to-epoch parsing) — kept here only as test
+        scaffolding to turn a raw fixture into a canonical dict.
+        """
+        envelope = fix["envelope"]
+        inner = envelope.get("data") or {}
+        d = inner.get("data") or {}
+        ge = (d.get("_enriched") or {}).get("geocoder") or {}
+        category_raw = inner.get("category") or ""
+
+        event_type = d.get("event") or "Weather Alert"
+        area_desc = d.get("areaDesc")
+        county = d.get("areaDesc") or ge.get("county")
+        state = ge.get("state") or d.get("state")
+        expires_epoch = _parse_iso(d.get("expires"))
+        same_code = ((d.get("eventCode") or {}).get("SAME") or [""])[0]
+
+        return {
+            "cap_id": d.get("id") or inner.get("id"),
+            "event": event_type,
+            "same_code": same_code,
+            "cap_severity": d.get("severity"),
+            "certainty": d.get("certainty") or "",
+            "expires_at": expires_epoch,
+            "area_desc": area_desc,
+            "geocoder": {"city": ge.get("city"), "county": county, "state": state},
+            "description": d.get("description"),
+            "parameters": d.get("parameters") or {},
+            "msgType": d.get("msgType"),
+            "references": d.get("references") or [],
+            "category": category_raw,
+            "headline": d.get("headline"),
+            "_nws_prefix": "",
+        }
+
+    @pytest.mark.parametrize("n,expected", [
+        (0, "🌬️ Special Weather Statement\nUntil 5:45 PM MDT — Northern Elko County"
+            "\nLandspouts, 40mph gusts, and half inch hail · observed"
+            "\nMoving W 23 mph"),
+        (8, "⛈️ Severe Thunderstorm Warning\nUntil 4:30 PM MDT — Cassia, ID"
+            "\nup to 50mph winds, 1\" hail · radar"
+            "\nMoving SW 20 mph"),
+        (9, "🌩️ Severe Thunderstorm Warning\nUntil 4:30 PM MDT — Cassia, ID"
+            "\n1\" hail · observed"
+            "\nMoving SW 20 mph — Oakley Reservoir and Oakley"),
+    ])
+    def test_fixture_golden(self, n, expected):
+        """Real nws/ fixtures render to the pinned wire text.
+
+        golden verified against pre-excision _render() (see module docstring).
+        """
+        fixes = load_fixtures("nws")
+        fix = fixes[n]
+        epoch = float(fix.get("captured_epoch", 1_783_206_513.0))
+        canonical = self._canonical_from_fixture(fix)
+        budget = budget_for("nws")
+
+        with pinned_tz("America/Boise"):
+            result = nws_format(_FakeEvent(canonical), now=epoch, budget=budget)
+
+        assert_byte_identical(result, expected)
+
+    def test_svr_long_locations_path_sampled(self):
+        """SVR with a long town list renders a PATH SAMPLE (first → last),
+        never a tail-drop that silently loses the final town.
+
+        golden verified against pre-excision _render() (see module docstring).
+        """
+        long_locations = (
+            "Buhl, Eden, Hazelton, Murtaugh, Richfield, Dietrich, "
+            "Gooding, Hagerman, Wendell, and Shoshone"
+        )
+        description = (
+            "HAZARD...Damaging winds to 60 mph and quarter-size hail.\n\n"
+            f"Locations impacted include...{long_locations}"
+        )
+        canonical = _canonical(
+            "Severe Thunderstorm Warning", same_code="SVR",
+            certainty="Observed", description=description,
+            parameters={
+                "maxWindGust": ["60 MPH"], "maxHailSize": ["1.00"],
+                "eventMotionDescription": ["2200000T254DEG...35KT 42.5,-114.5"],
+            },
+        )
+        expected = (
+            "⛈️ Severe Thunderstorm Warning\nUntil 2:00 PM MDT — Twin Falls County"
+            "\n60mph winds, 1\" hail · radar"
+            "\nMoving W 40 mph — Buhl → Shoshone"
+        )
+
+        with pinned_tz("America/Boise"):
+            result = nws_format(_FakeEvent(canonical), now=1_751_400_000,
+                                 budget=budget_for("nws"))
+
+        assert len(result) <= 140
+        assert "→" in result, "long town list must be path-sampled"
+        assert "Buhl" in result and "Shoshone" in result
+        assert_byte_identical(result, expected)
+
+    def test_svr_short_locations_shown_in_full(self):
+        """SVR with a short town list shows the FULL comma-joined list —
+        never the path-sample arrow.
+
+        golden verified against pre-excision _render() (see module docstring).
+        """
+        description = (
+            "HAZARD...Damaging winds to 60 mph and quarter-size hail.\n\n"
+            "Locations impacted include...Buhl, Eden, and Hazelton"
+        )
+        canonical = _canonical(
+            "Severe Thunderstorm Warning", same_code="SVR",
+            certainty="Observed", description=description,
+            parameters={
+                "maxWindGust": ["60 MPH"], "maxHailSize": ["1.00"],
+                "eventMotionDescription": ["2200000T254DEG...35KT 42.5,-114.5"],
+            },
+        )
+        expected = (
+            "⛈️ Severe Thunderstorm Warning\nUntil 2:00 PM MDT — Twin Falls County"
+            "\n60mph winds, 1\" hail · radar"
+            "\nMoving W 40 mph — Buhl, Eden, Hazelton"
+        )
+
+        with pinned_tz("America/Boise"):
+            result = nws_format(_FakeEvent(canonical), now=1_751_400_000,
+                                 budget=budget_for("nws"))
+
+        assert "→" not in result, "short list must not be path-sampled"
+        assert_byte_identical(result, expected)
+
+    def test_sps_no_dangling_separator(self):
+        """Regression: an SPS with wind+motion+long town list must never
+        collapse to a trailing bare em-dash ('Moving SW 24 mph —…').
+
+        golden verified against pre-excision _render() (see module docstring).
+        """
+        long_locations = (
+            "Twin Falls, Kimberly, Filer, Buhl, Hansen, Murtaugh, Hollister, "
+            "Eden, Hazelton, and Rogerson"
+        )
+        description = (
+            "HAZARD...Wind gusts in excess of 45 mph and pea size hail.\n\n"
+            "SOURCE...Radar indicated.\n\n"
+            f"Locations impacted include...{long_locations}"
+        )
+        canonical = _canonical(
+            "Special Weather Statement", same_code="SPS",
+            certainty="Observed", description=description,
+            parameters={"eventMotionDescription": ["2200000T225DEG...21KT 42.5,-114.5"]},
+        )
+        expected = (
+            "🌬️ Special Weather Statement\nUntil 2:00 PM MDT — Twin Falls County"
+            "\n45mph gusts and 0.25\" hail · observed"
+            "\nMoving SW 24 mph — Twin Falls"
+        )
+
+        with pinned_tz("America/Boise"):
+            result = nws_format(_FakeEvent(canonical), now=1_751_400_000,
+                                 budget=budget_for("nws"))
+
+        assert len(result) <= 140
+        for line in result.splitlines():
+            stripped = line.rstrip()
+            assert not stripped.endswith("—"), f"bare trailing em-dash: {line!r}"
+            assert "—…" not in stripped and "— …" not in stripped
+        assert "45mph gusts" in result, "wind hazard not tightened"
+        assert '0.25" hail' in result, "hail not rendered numerically ('pea' -> 0.25\")"
+        assert "in excess of" not in result, "filler phrase survived tightening"
+        assert_byte_identical(result, expected)
+
+    def test_sps_pathological_towns_degrade_to_motion_only(self):
+        """When not even one sampled town fits the remaining budget, line 4
+        degrades to motion-only — never a dangling separator.
+
+        golden verified against pre-excision _render() (see module docstring).
+        """
+        long_town = "Averyverylongimpossibletownnamethatwillnotfitthebudgetatall" * 2
+        description = (
+            "HAZARD...Wind gusts in excess of 45 mph.\n\n"
+            f"Locations impacted include...{long_town}"
+        )
+        canonical = _canonical(
+            "Special Weather Statement", same_code="SPS",
+            certainty="Observed", description=description,
+            parameters={"eventMotionDescription": ["2200000T225DEG...21KT 42.5,-114.5"]},
+        )
+        expected = (
+            "🌬️ Special Weather Statement\nUntil 2:00 PM MDT — Twin Falls County"
+            "\n45mph gusts · observed"
+            "\nMoving SW 24 mph"
+        )
+
+        with pinned_tz("America/Boise"):
+            result = nws_format(_FakeEvent(canonical), now=1_751_400_000,
+                                 budget=budget_for("nws"))
+
+        assert len(result) <= 140
+        last = result.splitlines()[-1]
+        if last.startswith("Moving"):
+            assert " — " not in last, f"expected motion-only, got: {last!r}"
+        assert_byte_identical(result, expected)
+
+    def test_tor_observed_on_ground_with_damage_threat(self):
+        """TOR branch: OBSERVED detection -> 'on ground'; damage threat appended.
+
+        golden verified against pre-excision _render() (see module docstring).
+        """
+        canonical = _canonical(
+            "Tornado Warning", same_code="TOR", certainty="Observed",
+            description="TORNADO...OBSERVED\n\nLocations impacted include...Twin Falls.",
+            parameters={"tornadoDetection": ["OBSERVED"],
+                        "tornadoDamageThreat": ["Considerable"]},
+        )
+        expected = (
+            "🌪️ Tornado Warning\nUntil 2:00 PM MDT — Twin Falls County"
+            "\ntornado on ground · considerable damage"
+            "\nTwin Falls"
+        )
+
+        with pinned_tz("America/Boise"):
+            result = nws_format(_FakeEvent(canonical), now=1_751_400_000,
+                                 budget=budget_for("nws"))
+
+        assert_byte_identical(result, expected)
+
+    def test_tor_radar_indicated_no_threat(self):
+        """TOR branch: non-OBSERVED detection -> 'radar'; no threat segment
+        when tornadoDamageThreat is empty.
+
+        golden verified against pre-excision _render() (see module docstring).
+        """
+        canonical = _canonical(
+            "Tornado Warning", same_code="TOR", certainty="Possible",
+            description="TORNADO...RADAR INDICATED\n\nLocations impacted include...Buhl.",
+            parameters={"tornadoDetection": ["RADAR INDICATED"], "tornadoDamageThreat": []},
+        )
+        expected = (
+            "🌪️ Tornado Warning\nUntil 2:00 PM MDT — Twin Falls County"
+            "\ntornado radar"
+            "\nBuhl"
+        )
+
+        with pinned_tz("America/Boise"):
+            result = nws_format(_FakeEvent(canonical), now=1_751_400_000,
+                                 budget=budget_for("nws"))
+
+        assert_byte_identical(result, expected)
+
+    def test_ffw_thunderstorm_flood_cause(self):
+        """FFW/FLW branch: flood-cause keyword ('thunderstorm') is appended
+        as a ' · thunderstorms' segment.
+
+        golden verified against pre-excision _render() (see module docstring).
+        """
+        canonical = _canonical(
+            "Flash Flood Warning", same_code="FFW", certainty="Observed",
+            description=("HAZARD...Flash flooding caused by thunderstorms. Excessive "
+                          "runoff will result in flooding of small creeks.\n\n"
+                          "Locations impacted include...Twin Falls."),
+            parameters={},
+        )
+        expected = (
+            "🌊 Flash Flood Warning\nUntil 2:00 PM MDT — Twin Falls County"
+            "\nFlash flooding caused by thunderstorms · thunderstorms"
+            "\nTwin Falls"
+        )
+
+        with pinned_tz("America/Boise"):
+            result = nws_format(_FakeEvent(canonical), now=1_751_400_000,
+                                 budget=budget_for("nws"))
+
+        assert_byte_identical(result, expected)
 
 
 # =============================================================================
