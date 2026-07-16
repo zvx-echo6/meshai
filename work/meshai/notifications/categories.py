@@ -33,6 +33,11 @@ VALID_TOGGLES = frozenset({
     "seismic",
     "tracking",
     "satpass",
+    # Civil / public-safety alerts from FEMA IPAWS-OPEN (env/ipaws.py):
+    # evacuation orders, Civil Emergency Messages, AMBER, 911 outages,
+    # law-enforcement warnings, HazMat. NON-weather (weather stays on the
+    # `weather` toggle via the nws adapter).
+    "emergency",
 })
 
 
@@ -116,6 +121,8 @@ _TOGGLE_PREFIX_FALLBACK = [
     ("rf_", "rf_propagation"),
     ("avalanche", "avalanche"),
     ("sat", "satpass"),
+    # IPAWS civil-alert categories all share the emergency_ prefix.
+    ("emergency", "emergency"),
 ]
 
 
@@ -596,6 +603,52 @@ ALERT_CATEGORIES = {
         "default_severity": "routine",
         "example_message": "🛰️ ISS Pass — 75° max\nAOS 19:32 · LOS 19:38\nBoise · NW→SE",
         "toggle": "satpass",
+    },
+
+    # Civil / public-safety alerts (FEMA IPAWS-OPEN EAS, env/ipaws.py).
+    # NON-weather only: weather CAP is dropped by the adapter's weather-sender
+    # gate and stays on the `weather` toggle via the nws adapter.
+    "emergency_evacuation": {
+        "name": "Evacuation Order",
+        "description": "IPAWS evacuation order/warning (SAME EVI/EVA) — leave the area now or prepare to.",
+        "default_severity": "immediate",
+        "example_message": "🚨 Evacuation Immediate: Blaine County — leave now via ID-75 north. Wildfire threat to structures.",
+        "toggle": "emergency",
+    },
+    "emergency_civil": {
+        "name": "Civil Emergency",
+        "description": "IPAWS Civil Emergency Message / Civil Danger Warning (SAME CEM/CDW) — significant in-progress or imminent threat to safety.",
+        "default_severity": "priority",
+        "example_message": "⚠️ Civil Emergency: Ada County — boil-water order in effect for the city of Kuna until further notice.",
+        "toggle": "emergency",
+    },
+    "emergency_amber": {
+        "name": "AMBER Alert",
+        "description": "IPAWS Child Abduction Emergency / AMBER alert (SAME CAE/LAE).",
+        "default_severity": "immediate",
+        "example_message": "🚨 AMBER Alert: Canyon County — silver Honda Civic, plate 1A-23456. Call 911 with sightings.",
+        "toggle": "emergency",
+    },
+    "emergency_law": {
+        "name": "Law Enforcement / Shelter-in-Place",
+        "description": "IPAWS Law Enforcement Warning or Shelter in Place Warning (SAME LEW/SPW).",
+        "default_severity": "priority",
+        "example_message": "⚠️ Shelter in Place: Twin Falls — active police incident near Blue Lakes Blvd. Stay indoors, lock doors.",
+        "toggle": "emergency",
+    },
+    "emergency_911_outage": {
+        "name": "911 Outage",
+        "description": "IPAWS 911 Telephone Outage Emergency (SAME TOE) — 911 unreachable; use the published alternate number.",
+        "default_severity": "priority",
+        "example_message": "⚠️ 911 Outage: Jerome County — 911 down. For emergencies call (208) 555-0111 until restored.",
+        "toggle": "emergency",
+    },
+    "emergency_hazmat": {
+        "name": "Hazardous Materials",
+        "description": "IPAWS Hazardous Materials / Radiological / Nuclear / Fire Warning (SAME HMW/RHW/NUW/FRW).",
+        "default_severity": "immediate",
+        "example_message": "🚨 HazMat Warning: Nampa — chlorine leak near rail yard. Evacuate 1-mile radius, avoid downwind areas.",
+        "toggle": "emergency",
     },
 }
 

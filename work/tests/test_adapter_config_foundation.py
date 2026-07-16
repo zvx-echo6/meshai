@@ -153,7 +153,9 @@ def test_registry_has_no_duplicate_keys():
 
 
 def test_adapter_meta_at_19(fresh_db):
-    assert len(ADAPTER_META) == 23
+    # Count sentinel — bump when an adapter row is added. 23 -> 24 with the
+    # IPAWS civil-alert adapter (adapter_config/defaults.py ADAPTER_META["ipaws"]).
+    assert len(ADAPTER_META) == 24
 
 
 # ---------- seed ----------------------------------------------------------

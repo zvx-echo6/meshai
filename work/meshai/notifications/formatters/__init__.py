@@ -129,3 +129,13 @@ register("wildfire_growth", _fire_fmt_mod.format)
 from meshai.notifications.formatters import firms as _firms_fmt_mod  # noqa: E402,F401
 register("wildfire_spotting", _firms_fmt_mod.format)
 register("wildfire_halted",   _firms_fmt_mod.format)
+
+# IPAWS civil alerts (env/ipaws.py). One headline-forward formatter handles all
+# six emergency_* categories; event.category selects only the leading emoji.
+from meshai.notifications.formatters import ipaws as _ipaws_fmt_mod  # noqa: E402,F401
+register("emergency_evacuation", _ipaws_fmt_mod.format)
+register("emergency_civil",      _ipaws_fmt_mod.format)
+register("emergency_amber",      _ipaws_fmt_mod.format)
+register("emergency_law",        _ipaws_fmt_mod.format)
+register("emergency_911_outage", _ipaws_fmt_mod.format)
+register("emergency_hazmat",     _ipaws_fmt_mod.format)
