@@ -6,6 +6,8 @@ tolerance. HTTP is monkeypatched — no network.
 """
 from __future__ import annotations
 
+import datetime as _dt
+
 import pytest
 
 from meshai.env.tle_fetch import (
@@ -18,27 +20,68 @@ from meshai.config import SatpassConfig
 from meshai.persistence import get_db
 
 
-# A valid ISS 3-line set. Line-1 epoch field (cols 19-32) = 26182.50000000
-# -> 2026 day-of-year 182.5 -> 2026-07-01T12:00:00+00:00.
-ISS_TLE = (
-    "ISS (ZARYA)\n"
-    "1 25544U 98067A   26182.50000000  .00016717  00000-0  10270-3 0  9008\n"
-    "2 25544  51.6400 208.9163 0007417  17.6777  85.6621 15.54225995 12345\n"
-)
+# -- time-relative TLE fixture generation --------------------------------
+#
+# These used to be hardcoded 3-line sets with a fixed 2026-06-30..07-02
+# epoch. get_tle_by_norad() filters on `epoch >= now() - STALE_DAYS`
+# (STALE_DAYS=14, real wall-clock `now`), so a fixed-date fixture ages out
+# 14 days after it's written and silently starts failing
+# test_tick_upserts_into_sat_tles / test_latest_epoch_wins_on_refetch.
+# Deriving the epoch from the real current time at test-collection time
+# means these can never expire again.
 
-# Same satellite, a NEWER epoch (26183.50 -> 2026-07-02T12:00Z).
-ISS_TLE_NEWER = (
-    "ISS (ZARYA)\n"
-    "1 25544U 98067A   26183.50000000  .00016717  00000-0  10270-3 0  9010\n"
-    "2 25544  51.6400 208.9163 0007417  17.6777  85.6621 15.54225995 12347\n"
-)
 
-# Same satellite, an OLDER epoch (26181.50 -> 2026-06-30T12:00Z).
-ISS_TLE_OLDER = (
-    "ISS (ZARYA)\n"
-    "1 25544U 98067A   26181.50000000  .00016717  00000-0  10270-3 0  9006\n"
-    "2 25544  51.6400 208.9163 0007417  17.6777  85.6621 15.54225995 12343\n"
-)
+def _tle_epoch_field(dt: _dt.datetime) -> str:
+    """Build a TLE line-1 epoch field (cols 19-32): YYDDD.DDDDDDDD."""
+    yy = dt.year % 100
+    start_of_year = _dt.datetime(dt.year, 1, 1, tzinfo=_dt.timezone.utc)
+    doy_frac = (dt - start_of_year).total_seconds() / 86400.0 + 1.0
+    doy_int = int(doy_frac)
+    frac = doy_frac - doy_int
+    return f"{yy:02d}{doy_int:03d}.{round(frac * 1e8):08d}"
+
+
+def _tle_checksum(line_without_checksum_digit: str) -> int:
+    """Standard TLE mod-10 checksum: sum of digits, '-' counts as 1,
+    everything else 0."""
+    total = 0
+    for ch in line_without_checksum_digit:
+        if ch.isdigit():
+            total += int(ch)
+        elif ch == "-":
+            total += 1
+    return total % 10
+
+
+def _iss_tle_block(dt: _dt.datetime, element_set_num: str, revnum: str) -> str:
+    """Build a valid 3-line ISS (ZARYA) TLE with the given epoch. All
+    other orbital elements are fixed (arbitrary but internally
+    consistent) — only epoch/checksum/element-set/revnum vary, mirroring
+    the original hand-written fixtures."""
+    line1_body = (f"1 25544U 98067A   {_tle_epoch_field(dt)}  .00016717  "
+                  f"00000-0  10270-3 0  {element_set_num}")
+    line1 = f"{line1_body}{_tle_checksum(line1_body)}"
+    line2 = (f"2 25544  51.6400 208.9163 0007417  17.6777  85.6621 "
+             f"15.54225995 {revnum}")
+    return f"ISS (ZARYA)\n{line1}\n{line2}\n"
+
+
+# Base epoch: 2 days ago. Comfortably inside the 14-day STALE_DAYS window
+# no matter when the suite runs, and never in the future.
+_NOW = _dt.datetime.now(_dt.timezone.utc)
+_BASE_EPOCH = _NOW - _dt.timedelta(days=2)
+
+# A valid ISS 3-line set at the base epoch.
+ISS_TLE = _iss_tle_block(_BASE_EPOCH, "900", "12345")
+# Same satellite, a NEWER epoch (1 day after base).
+ISS_TLE_NEWER = _iss_tle_block(_BASE_EPOCH + _dt.timedelta(days=1), "901", "12347")
+# Same satellite, an OLDER epoch (1 day before base).
+ISS_TLE_OLDER = _iss_tle_block(_BASE_EPOCH - _dt.timedelta(days=1), "900", "12343")
+
+# ISO epoch string parse_tle_epoch() will produce for ISS_TLE's line 1 --
+# computed via the real parser (not re-derived independently) so
+# assertions can't drift from the actual parsing behavior under test.
+ISS_TLE_EPOCH_ISO = parse_tle_epoch(ISS_TLE.splitlines()[1])
 
 
 def _adapter(**overrides) -> TLEFetchAdapter:
@@ -72,7 +115,7 @@ def test_parse_tle_block_basic():
     assert r["name"] == "ISS (ZARYA)"
     assert r["line1"].startswith("1 25544")
     assert r["line2"].startswith("2 25544")
-    assert r["epoch"].startswith("2026-07-01T12:00:00")
+    assert r["epoch"] == ISS_TLE_EPOCH_ISO
 
 
 def test_parse_tle_block_skips_malformed():
@@ -104,7 +147,7 @@ def test_tick_upserts_into_sat_tles(monkeypatch):
     assert row["name"] == "ISS (ZARYA)"
     assert row["line1"].startswith("1 25544")
     assert row["line2"].startswith("2 25544")
-    assert row["epoch"].startswith("2026-07-01T12:00:00")
+    assert row["epoch"] == ISS_TLE_EPOCH_ISO
 
 
 def test_latest_epoch_wins_on_refetch(monkeypatch):
