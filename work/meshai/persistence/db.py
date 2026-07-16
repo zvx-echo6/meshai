@@ -30,9 +30,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = "/data/meshai.sqlite"
 MESHAI_DB_PATH_ENV = "MESHAI_DB_PATH"
-SCHEMA_VERSION = 26
 SCHEMA_META_TABLE = "schema_meta"
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+# SCHEMA_VERSION is derived below (after _read_migration_files is defined)
+# from the highest vN.sql present in MIGRATIONS_DIR, so it can never drift
+# from what a fresh DB actually lands at -- see _derive_schema_version().
 
 # Per-thread connection pool. Each thread that calls get_db() gets its
 # own sqlite3.Connection cached on threading.local. Tests can clear
@@ -161,6 +163,22 @@ def _read_migration_files() -> list[tuple[int, str, str]]:
         out.append((n, p.name, p.read_text()))
     out.sort(key=lambda x: x[0])   # v0.6-6: numeric sort, not alphabetical
     return out
+
+
+def _derive_schema_version() -> int:
+    """Highest migration version present in MIGRATIONS_DIR, i.e. the
+    version a fresh DB lands at once _apply_migrations() runs (it applies
+    every vN.sql it finds, independent of any hardcoded constant). Falls
+    back to 0 if the directory is missing/empty so import never fails;
+    that would only happen in a broken packaging layout, since
+    MIGRATIONS_DIR sits alongside this file and is copied/installed with
+    the rest of the meshai package (see Dockerfile: `COPY meshai/ ./meshai/`
+    then `pip install -e .`)."""
+    versions = [n for n, _, _ in _read_migration_files()]
+    return max(versions) if versions else 0
+
+
+SCHEMA_VERSION = _derive_schema_version()
 
 
 def _current_version(conn: sqlite3.Connection) -> int:

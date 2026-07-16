@@ -14,8 +14,11 @@ from meshai.persistence.observer_locations import (
 
 # -- schema / migration -------------------------------------------------------
 
-def test_schema_version_is_25():
-    assert SCHEMA_VERSION == 26
+def test_schema_version_is_current():
+    # SCHEMA_VERSION is derived from the highest vN.sql in migrations/, so
+    # this just guards against the derivation returning something bogus
+    # (e.g. 0, which would mean the migrations dir wasn't found).
+    assert SCHEMA_VERSION >= 23
 
 
 def test_observer_locations_table_exists():
@@ -30,7 +33,7 @@ def test_schema_meta_at_current():
     conn = get_db()
     row = conn.execute(
         "SELECT value FROM schema_meta WHERE key='version'").fetchone()
-    assert int(row["value"]) == 26
+    assert int(row["value"]) == SCHEMA_VERSION
 
 
 # -- accessors ----------------------------------------------------------------
