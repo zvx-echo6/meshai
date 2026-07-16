@@ -1,7 +1,7 @@
 """Tests for satpass adapter registration on EnvironmentalConfig.
 
 Verifies:
- - SatpassConfig exists and defaults to feed_source="central"
+ - SatpassConfig exists and defaults to feed_source="native"
  - EnvironmentalConfig.satpass field is present and correctly typed
  - _subject_owned() includes central.sat.* subjects when satpass is registered
  - adapter_config REGISTRY contains satpass keys with valid types
@@ -15,7 +15,7 @@ import pytest
 def test_satpass_config_exists():
     from meshai.config import SatpassConfig
     cfg = SatpassConfig()
-    assert cfg.feed_source == "central"
+    assert cfg.feed_source == "native"
     assert cfg.enabled is False
 
 
@@ -37,10 +37,10 @@ def test_environmental_config_has_satpass():
     assert isinstance(env.satpass, SatpassConfig)
 
 
-def test_environmental_satpass_default_central():
+def test_environmental_satpass_default_native():
     from meshai.config import EnvironmentalConfig
     env = EnvironmentalConfig()
-    assert env.satpass.feed_source == "central"
+    assert env.satpass.feed_source == "native"
 
 
 # -- adapter_config REGISTRY --------------------------------------------------
@@ -87,10 +87,10 @@ def test_yaml_parsing_satpass():
     from meshai.config import SatpassConfig, _dict_to_dataclass, EnvironmentalConfig
     import yaml
 
-    yaml_str = "environmental:\n  satpass:\n    enabled: true\n    feed_source: central\n"
+    yaml_str = "environmental:\n  satpass:\n    enabled: true\n    feed_source: native\n"
     data = yaml.safe_load(yaml_str)
     env = _dict_to_dataclass(EnvironmentalConfig, data["environmental"])
     assert isinstance(env.satpass, SatpassConfig)
     assert env.satpass.enabled is True
-    assert env.satpass.feed_source == "central"
+    assert env.satpass.feed_source == "native"
 

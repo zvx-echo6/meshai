@@ -66,7 +66,7 @@ const SATPASS_NATIVE_DEFAULT: EnvConfig['satpass'] = {
  window_hours: 24,
  tle_refresh_seconds: 21600,
  broadcast_lead_seconds: 3600,
- feed_source: 'central',
+ feed_source: 'native',
 }
 
 // Sane defaults for the ipaws block so a GET payload predating the IPAWS
@@ -304,7 +304,7 @@ const META: Record<AdapterKey, AdapterMeta> = {
  usgs_quake: { label: 'USGS Earthquakes', subtitle: 'Seismic events from the USGS feed', health: 'usgs_quake', hasCentral: true, nativeOnly: false, hasKey: true },
  usgs: { label: 'USGS Stream Gauges', subtitle: 'River and stream water levels', health: 'usgs', hasCentral: true, nativeOnly: false, hasKey: true },
  avalanche: { label: 'Avalanche Advisories', subtitle: 'Backcountry avalanche danger ratings', health: 'avalanche', hasCentral: true, nativeOnly: false, hasKey: true },
- satpass: { label: 'Satellite Passes', subtitle: 'Observer pass alerts via Central', health: 'satpass', hasCentral: true, nativeOnly: false, hasKey: true },
+ satpass: { label: 'Satellite Passes', subtitle: 'Observer pass alerts from native TLE tracking', health: 'satpass', hasCentral: true, nativeOnly: false, hasKey: true },
  ipaws: { label: 'FEMA IPAWS civil alerts', subtitle: 'Evacuations, AMBER, HazMat, 911 outages (non-weather)', health: 'ipaws', hasCentral: false, nativeOnly: true, hasKey: false },
 }
 

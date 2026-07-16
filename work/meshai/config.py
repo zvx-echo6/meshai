@@ -444,8 +444,10 @@ class USGSQuakeConfig(_SourcedFeed):
     # Native-path broadcast magnitude floor: the native adapter
     # (env/usgs_quake.py) gates on this. THIS is the GUI-editable quake
     # magnitude floor for the native feed_source. (The adapter_config
-    # REGISTRY keys usgs_quake.global_mag_floor / regional_mag_floor apply
-    # only to the Central-firehose path in central/quake_handler.py.)
+    # REGISTRY keys usgs_quake.global_mag_floor / regional_mag_floor are
+    # separate: they gate the shared gating decider,
+    # meshai.notifications.gating.quake.decide(), which both the native
+    # path and central/quake_handler.py delegate to.)
     min_magnitude: float = 2.5
     # [west, south, east, north] -- Magic Valley -> Borah Peak -> Yellowstone
     bbox: list = field(default_factory=lambda: [-115.5, 42.0, -110.0, 45.2])
@@ -522,15 +524,15 @@ class FIRMSConfig(_SourcedFeed):
 class SatpassConfig(_SourcedFeed):
     """Satellite pass prediction settings.
 
-    Historically a Central-only feed (`feed_source="central"`). The native
-    path (`feed_source="native"`) adds a Celestrak TLE fetcher
-    (`env.tle_fetch`) and a native SGP4 predictor; the fields below feed
-    those. `feed_source` default stays "central" — the flip to "native"
-    happens at cutover, not here.
+    Native (`feed_source="native"`) is the default and only supported path:
+    a Celestrak TLE fetcher (`env.tle_fetch`) plus a native SGP4 predictor;
+    the fields below feed those. Central is RETIRED — its NATS broker
+    (`nats://central.echo6.mesh:4222`) no longer exists — so this no longer
+    overrides the `_SourcedFeed` mixin default.
     """
 
     enabled: bool = False
-    feed_source: str = "central"
+    feed_source: str = "native"
 
     # -- native path (TLE fetch + SGP4 predictor) -----------------------------
     # Ground stations the predictor computes passes for; each entry is a
