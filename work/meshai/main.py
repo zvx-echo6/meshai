@@ -190,7 +190,6 @@ class MeshAI:
                                     "total_regions": mh.total_regions,
                                     "unlocated_count": getattr(mh, "unlocated_count", 0),
                                     "last_computed": mh.last_computed,
-                                    "recommendations": getattr(mh, "recommendations", []),
                                 }
                                 await self.broadcaster.broadcast("health_update", health_dict)
                         except Exception as e:

@@ -123,6 +123,7 @@ async def start_dashboard(meshai_instance: "MeshAI") -> DashboardBroadcaster:
     app.state.config_path = meshai_instance.config._config_path
     app.state.data_store = meshai_instance.data_store
     app.state.health_engine = meshai_instance.health_engine
+    app.state.mesh_reporter = getattr(meshai_instance, "mesh_reporter", None)
     app.state.alert_engine = getattr(meshai_instance, "alert_engine", None)
     app.state.env_store = getattr(meshai_instance, "env_store", None)
     app.state.notification_router = getattr(meshai_instance, "notification_router", None)
