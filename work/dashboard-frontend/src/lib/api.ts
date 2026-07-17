@@ -699,15 +699,25 @@ export interface MeshcoreContact {
 export interface MeshcoreContacts {
   active: boolean
   contacts: MeshcoreContact[]
+  last_synced_at?: number | null  // epoch seconds the roster was pulled from the companion
 }
 export interface MeshcoreSelf {
   name?: string | null
   pubkey?: string | null
   connected: boolean
-  host?: string
-  port?: number
+  // Connection reporting: only the fields for the live `conn_type` are set;
+  // the rest are null. A serial companion has no host/port — showing a config
+  // leftover there would name a device meshai is not actually talking to.
+  conn_type?: 'tcp' | 'serial' | 'ble' | string
+  target?: string           // human-readable: "serial:/dev/x@115200" | "host:port" | "ble:addr"
+  host?: string | null
+  port?: number | null
+  serial_port?: string | null
+  baud?: number | null
+  ble_address?: string | null
   channel_count?: number
   last_advert_sent?: number | null  // epoch seconds; null/absent = never advertised
+  contacts_synced_at?: number | null
 }
 
 export async function fetchMeshcoreContacts(): Promise<MeshcoreContacts> {
@@ -715,6 +725,109 @@ export async function fetchMeshcoreContacts(): Promise<MeshcoreContacts> {
 }
 export async function fetchMeshcoreSelf(): Promise<MeshcoreSelf> {
   return fetchJson<MeshcoreSelf>('/api/meshcore/self')
+}
+
+// Result of a full roster resync: what the reconcile actually changed.
+export interface MeshcoreRefreshStats {
+  before: number
+  after: number
+  added: number
+  removed: number
+  updated: number
+  added_keys: string[]
+  removed_keys: string[]
+}
+// Channels are also a connect-time snapshot, so a resync re-reads them too.
+export interface MeshcoreChannelStats {
+  before: number
+  after: number
+  added: string[]
+  removed: string[]
+}
+export interface MeshcoreRefreshResult {
+  active: boolean
+  stats: MeshcoreRefreshStats
+  channel_stats: MeshcoreChannelStats
+  contacts: MeshcoreContact[]
+  channels: string[]
+  last_synced_at: number | null
+}
+
+// Re-read the companion's device view: FULL contact refetch + reconcile (drops
+// contacts the companion no longer has) AND channel re-enumeration. Throws with
+// the backend's `detail` when MeshCore is not connected or the fetch fails.
+export async function refreshMeshcoreContacts(): Promise<MeshcoreRefreshResult> {
+  const response = await fetch('/api/meshcore/contacts/refresh', { method: 'POST' })
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    throw new Error(body?.detail || `API error: ${response.status} ${response.statusText}`)
+  }
+  return response.json()
+}
+
+// Write contact records onto the companion (upsert; nothing is removed, and no
+// mesh traffic is generated). Used both for a manual single add — e.g. after a
+// room server is rebuilt with a new keypair — and for restoring an exported
+// roster onto a replacement companion.
+export interface MeshcoreImportResult {
+  active: boolean
+  imported: number
+  failed: number
+  errors: { pubkey: string | null; detail: string }[]
+}
+export async function importMeshcoreContacts(
+  contacts: Record<string, unknown>[],
+): Promise<MeshcoreImportResult> {
+  const response = await fetch('/api/meshcore/contacts/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contacts }),
+  })
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    throw new Error(body?.detail || `API error: ${response.status} ${response.statusText}`)
+  }
+  return response.json()
+}
+
+// Remove a contact from the companion. Requires the FULL 64-hex pubkey.
+export async function removeMeshcoreContact(pubkey: string): Promise<MeshcoreContacts> {
+  const response = await fetch(`/api/meshcore/contacts/${encodeURIComponent(pubkey)}`, {
+    method: 'DELETE',
+  })
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    throw new Error(body?.detail || `API error: ${response.status} ${response.statusText}`)
+  }
+  return response.json()
+}
+
+// A routing cell whose MeshCore target does not resolve on the companion.
+export interface MeshcoreDanglingRoute {
+  family: string
+  region: string
+  target: string
+  kind: 'room' | 'channel' | string
+  reason: 'room_not_found' | 'channel_not_found' | 'not_a_room' | string
+  enabled: boolean
+}
+// Roster entries sharing a name but not a keypair — indistinguishable by name.
+export interface MeshcoreNameCollision {
+  name: string
+  count: number
+  contacts: { pubkey: string; type: number | null }[]
+}
+export interface MeshcoreRouteHealth {
+  active: boolean
+  dangling: MeshcoreDanglingRoute[]
+  dangling_enabled: number
+  collisions: MeshcoreNameCollision[]
+  checked: number
+  mc_enabled: boolean
+}
+
+export async function fetchMeshcoreRouteHealth(): Promise<MeshcoreRouteHealth> {
+  return fetchJson<MeshcoreRouteHealth>('/api/meshcore/route-health')
 }
 
 export async function sendMeshcoreAdvert(): Promise<TestSendResult> {

@@ -1,15 +1,22 @@
 """Dashboard 'send test message' API routes (meshtastic + meshcore)."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Union
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from meshai import secrets_store
+from meshai.meshcore_roster import check_route_health, find_name_collisions
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["mesh-send"])
+
+# Roster export envelope: identifies the file on the way back in so an import
+# can reject something that was never a meshai roster.
+_ROSTER_EXPORT_FORMAT = "meshai.meshcore.roster"
+_ROSTER_EXPORT_VERSION = 1
 
 
 def _find_child(connector, name: str):
@@ -163,7 +170,12 @@ async def meshcore_rooms(request: Request):
 
 @router.get("/meshcore/contacts")
 async def meshcore_contacts(request: Request):
-    """Roster of known MeshCore contacts if a meshcore transport is connected."""
+    """Roster of known MeshCore contacts if a meshcore transport is connected.
+
+    ``last_synced_at`` (epoch seconds, or null) is when the roster was last
+    pulled from the companion, so the UI can present it as a snapshot with a
+    known age rather than implying it is live.
+    """
     connector = getattr(request.app.state, "connector", None)
     mc = _find_child(connector, "meshcore")
     if mc is not None and getattr(mc, "connected", False):
@@ -171,8 +183,253 @@ async def meshcore_contacts(request: Request):
             contacts = list(mc.get_contacts())
         except Exception:
             contacts = []
-        return {"active": True, "contacts": contacts}
-    return {"active": False, "contacts": []}
+        try:
+            last_synced_at = mc.contacts_synced_at()
+        except Exception:
+            last_synced_at = None
+        return {"active": True, "contacts": contacts, "last_synced_at": last_synced_at}
+    return {"active": False, "contacts": [], "last_synced_at": None}
+
+
+@router.post("/meshcore/contacts/refresh")
+async def meshcore_refresh_contacts(request: Request):
+    """Re-read the companion's device view — contacts AND channels.
+
+    meshai builds its picture of the device at connect and never re-reads it,
+    so a contact removed (or a channel provisioned) on the radio afterwards is
+    invisible until a restart. This is the resync path.
+
+    Unlike the passive roster read, the contact reconcile DROPS entries the
+    companion no longer has (the lib's own fetch only ever merges). Returns the
+    reconcile stats, the channel delta, and the refreshed roster + channel list.
+    """
+    connector = getattr(request.app.state, "connector", None)
+    mc = _find_child(connector, "meshcore")
+    if mc is None or not getattr(mc, "connected", False):
+        raise HTTPException(status_code=409, detail="MeshCore not connected")
+
+    try:
+        result = mc.resync()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    except Exception as exc:
+        logger.error("dashboard: meshcore resync error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    stats = result.get("contacts", {})
+    channel_stats = result.get("channels", {})
+
+    try:
+        contacts = list(mc.get_contacts())
+    except Exception:
+        contacts = []
+    try:
+        channels = list(mc.known_channels())
+    except Exception:
+        channels = []
+    try:
+        last_synced_at = mc.contacts_synced_at()
+    except Exception:
+        last_synced_at = None
+
+    logger.info(
+        "dashboard: meshcore resync — contacts +%d/-%d (now %d), channels +%d/-%d",
+        stats.get("added", 0), stats.get("removed", 0), stats.get("after", 0),
+        len(channel_stats.get("added", [])), len(channel_stats.get("removed", [])),
+    )
+    return {
+        "active": True,
+        "stats": stats,
+        "channel_stats": channel_stats,
+        "contacts": contacts,
+        "channels": channels,
+        "last_synced_at": last_synced_at,
+    }
+
+
+@router.get("/meshcore/contacts/export")
+async def meshcore_export_contacts(request: Request):
+    """Download the roster as JSON.
+
+    Records carry the full lib field set (not the display projection), so an
+    export can be re-imported onto a replacement companion.
+    """
+    connector = getattr(request.app.state, "connector", None)
+    mc = _find_child(connector, "meshcore")
+    if mc is None or not getattr(mc, "connected", False):
+        raise HTTPException(status_code=409, detail="MeshCore not connected")
+
+    try:
+        records = mc.export_roster()
+    except Exception as exc:
+        logger.error("dashboard: meshcore export_roster error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    try:
+        info = mc.self_info()
+    except Exception:
+        info = {}
+    try:
+        last_synced_at = mc.contacts_synced_at()
+    except Exception:
+        last_synced_at = None
+
+    payload = {
+        "format": _ROSTER_EXPORT_FORMAT,
+        "version": _ROSTER_EXPORT_VERSION,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "last_synced_at": last_synced_at,
+        # Which device this roster came off — a roster is only meaningful
+        # paired with the companion it was read from.
+        "device": {
+            "name": info.get("name"),
+            "pubkey": info.get("pubkey"),
+            "conn_type": info.get("conn_type"),
+            "target": info.get("target"),
+        },
+        "count": len(records),
+        "contacts": records,
+    }
+    filename = f"meshcore-roster-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.json"
+    return JSONResponse(
+        content=payload,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+class ImportContactsRequest(BaseModel):
+    contacts: list[dict]
+
+
+@router.post("/meshcore/contacts/import")
+async def meshcore_import_contacts(request: Request, body: ImportContactsRequest):
+    """Write exported roster records onto the companion.
+
+    Intended for migrating a roster to a replacement companion rather than
+    waiting to rediscover every node by advert. Additive and idempotent: each
+    record is an upsert, nothing is removed, and no mesh traffic is generated.
+
+    Per-record failures are collected rather than aborting the batch, so one bad
+    record cannot strand a partial import with no report of what landed.
+    """
+    connector = getattr(request.app.state, "connector", None)
+    mc = _find_child(connector, "meshcore")
+    if mc is None or not getattr(mc, "connected", False):
+        raise HTTPException(status_code=409, detail="MeshCore not connected")
+
+    records = body.contacts or []
+    if not records:
+        raise HTTPException(status_code=400, detail="No contacts supplied")
+
+    imported = 0
+    errors: list[dict] = []
+    for record in records:
+        try:
+            mc.import_contact(record)
+            imported += 1
+        except (ValueError, RuntimeError) as exc:
+            errors.append({"pubkey": record.get("pubkey"), "detail": str(exc)})
+        except Exception as exc:
+            logger.error("dashboard: meshcore import_contact error: %s", exc)
+            errors.append({"pubkey": record.get("pubkey"), "detail": str(exc)})
+
+    logger.info(
+        "dashboard: meshcore roster import — %d/%d written, %d failed",
+        imported, len(records), len(errors),
+    )
+    return {"active": True, "imported": imported, "failed": len(errors), "errors": errors}
+
+
+@router.delete("/meshcore/contacts/{pubkey}")
+async def meshcore_remove_contact(request: Request, pubkey: str):
+    """Remove a contact from the companion by full pubkey.
+
+    Requires the FULL 64-hex key — a prefix could match the wrong node, and a
+    wrongly-deleted contact is unrecoverable without rediscovery.
+    """
+    connector = getattr(request.app.state, "connector", None)
+    mc = _find_child(connector, "meshcore")
+    if mc is None or not getattr(mc, "connected", False):
+        raise HTTPException(status_code=409, detail="MeshCore not connected")
+
+    try:
+        mc.remove_contact(pubkey)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    except Exception as exc:
+        logger.error("dashboard: meshcore remove_contact error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    try:
+        contacts = list(mc.get_contacts())
+    except Exception:
+        contacts = []
+    logger.info("dashboard: meshcore contact %s removed", pubkey)
+    return {"active": True, "contacts": contacts}
+
+
+@router.get("/meshcore/route-health")
+async def meshcore_route_health(request: Request):
+    """Flag region-routing cells whose MeshCore target no longer exists.
+
+    Preventive: a cell pointing at a room pubkey or channel the companion does
+    not have will fail silently at send time — the alert is simply never
+    delivered, with nothing surfaced to the operator. Resolving every cell
+    up-front turns that silence into a visible warning. Read-only; sends nothing.
+
+    Also reports same-name/different-pubkey roster collisions, which are what
+    make a name-based picker ambiguous in the first place.
+
+    Returns {active, dangling, dangling_enabled, collisions, checked, mc_enabled}.
+    ``active: false`` (with empty results) when MeshCore is not connected — an
+    unreachable companion is not evidence that a route is broken.
+    """
+    connector = getattr(request.app.state, "connector", None)
+    mc = _find_child(connector, "meshcore")
+    if mc is None or not getattr(mc, "connected", False):
+        return {
+            "active": False,
+            "dangling": [],
+            "dangling_enabled": 0,
+            "collisions": [],
+            "checked": 0,
+            "mc_enabled": False,
+        }
+
+    config = getattr(request.app.state, "config", None)
+    rr = getattr(getattr(config, "notifications", None), "region_routes", None)
+    cells = getattr(rr, "cells", None) or {}
+    mc_enabled = bool(getattr(rr, "mc_enabled", False))
+
+    try:
+        contacts = list(mc.get_contacts())
+    except Exception:
+        contacts = []
+    try:
+        channels = list(mc.known_channels())
+    except Exception:
+        channels = []
+
+    dangling = check_route_health(cells, channels, contacts)
+    collisions = find_name_collisions(contacts)
+    checked = sum(
+        1
+        for regions in cells.values()
+        if isinstance(regions, dict)
+        for cell in regions.values()
+        if isinstance(cell, dict) and cell.get("mc")
+    )
+
+    return {
+        "active": True,
+        "dangling": dangling,
+        "dangling_enabled": sum(1 for d in dangling if d.get("enabled")),
+        "collisions": collisions,
+        "checked": checked,
+        "mc_enabled": mc_enabled,
+    }
 
 
 @router.get("/meshcore/self")
