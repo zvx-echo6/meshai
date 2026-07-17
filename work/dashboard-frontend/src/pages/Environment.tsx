@@ -31,7 +31,7 @@ interface EnvConfig {
  usgs_quake: { enabled: boolean; tick_seconds: number; feed_url: string; min_magnitude?: number; bbox?: number[]; global_mag_floor: number; regional_mag_floor: number; regional_radius_mi: number; escalate_mag_floor: number; broadcast_pager_alerts: string[]; region: string; feed_source?: FeedSource }
  traffic: { enabled: boolean; tick_seconds: number; api_key: string; corridors: { name: string; lat: number; lon: number }[]; feed_source?: FeedSource }
  roads511: { enabled: boolean; tick_seconds: number; api_key: string; base_url: string; endpoints: string[]; bbox: number[]; feed_source?: FeedSource }
- wzdx: { enabled: boolean; tick_seconds: number; api_key: string; base_url: string; endpoints: string[]; bbox: number[]; states: string[]; registry_url: string; registry_ttl?: number; feed_source?: FeedSource }
+ wzdx: { enabled: boolean; tick_seconds: number; base_url: string; bbox: number[]; states: string[]; registry_url: string; registry_ttl?: number; feed_source?: FeedSource }
  firms: { enabled: boolean; tick_seconds: number; map_key: string; source: string; bbox: number[]; day_range: number; confidence_min: string; proximity_km: number; feed_source?: FeedSource }
  // Native satpass (SGP4) YAML layer — drives env/satpass.py + env/tle_fetch.py.
  // Distinct from the Central adapter_config/satpass layer (see SatpassConfig
@@ -1362,9 +1362,7 @@ const save = async () => {
     {env.wzdx?.feed_source !== 'central' && (
      <>
       <TextInput label="Base URL" value={env.wzdx?.base_url ?? ''} onChange={(v) => up({ wzdx: { ...env.wzdx!, base_url: v } })} placeholder="https://511.yourstate.gov/api/v2" />
-      <ManagedSecret envVar="WZDX_API_KEY" label="API Key" helper="Leave unset if not required" />
       <NumberInput label="Tick Seconds" value={env.wzdx?.tick_seconds ?? 300} onChange={(v) => up({ wzdx: { ...env.wzdx!, tick_seconds: v } })} min={60} />
-      <ListInput label="Endpoints" value={env.wzdx?.endpoints ?? ['/get/event']} onChange={(v) => up({ wzdx: { ...env.wzdx!, endpoints: v } })} helper="e.g., /get/event" />
       {scopedByCoverage('wzdx') ? (
        <div className="text-xs text-[#666] bg-bg-hover px-3 py-2 border border-border/50">
         Bounding box and states are set by the{' '}

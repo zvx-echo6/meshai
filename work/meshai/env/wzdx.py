@@ -51,7 +51,6 @@ restart-seed all dedup on the same coalesced value).
 import calendar
 import json
 import logging
-import os
 import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
@@ -110,7 +109,6 @@ class WZDxAdapter:
     """FHWA WZDx work-zone polling adapter (native ``work_zone`` source)."""
 
     def __init__(self, config: "WZDxConfig", coverage: dict = None):
-        self._api_key = self._resolve_env(config.api_key or "")  # unused (keyless)
         self._base_url = (config.base_url or "").strip().rstrip("/")
         self._registry_url = (config.registry_url or "").strip()
         self._registry_ttl = config.registry_ttl or 21600
@@ -134,12 +132,6 @@ class WZDxAdapter:
             logger.info("WZDx: no base_url and no registry_url configured, adapter idle")
 
     # ── helpers ────────────────────────────────────────────────────────────
-
-    def _resolve_env(self, value: str) -> str:
-        """Resolve ${ENV_VAR} references in value."""
-        if value and value.startswith("${") and value.endswith("}"):
-            return os.environ.get(value[2:-1], "")
-        return value
 
     def _wanted_states(self) -> set:
         """Lowercased set of accepted state tokens (abbrev + full name)."""

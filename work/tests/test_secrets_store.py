@@ -131,7 +131,7 @@ def test_env_to_fields_llm():
 def test_secret_labels_keys():
     expected = {
         "GOOGLE_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "LLM_API_KEY",
-        "TOMTOM_API_KEY", "FIRMS_MAP_KEY", "ROADS511_API_KEY", "WZDX_API_KEY",
+        "TOMTOM_API_KEY", "FIRMS_MAP_KEY", "ROADS511_API_KEY",
         "SMTP_PASSWORD", "MESHMONITOR_API_TOKEN", "MQTT_PASSWORD",
     }
     assert set(secrets_store.SECRET_LABELS.keys()) == expected

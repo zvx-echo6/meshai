@@ -84,7 +84,6 @@ SECRET_FIELDS: set[str] = {
     "environmental.traffic.api_key",
     "environmental.firms.map_key",
     "environmental.roads511.api_key",
-    "environmental.wzdx.api_key",
     "notifications.rules.*.smtp_password",
     "notifications.toggles.*.smtp_password",
     "danger_zones.webhook_url",
@@ -100,7 +99,6 @@ EXPECTED_SECRETS: list[str] = [
     "TOMTOM_API_KEY",
     "FIRMS_MAP_KEY",
     "ROADS511_API_KEY",
-    "WZDX_API_KEY",
     "SMTP_PASSWORD",
 ]
 

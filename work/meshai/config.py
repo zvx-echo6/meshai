@@ -478,14 +478,12 @@ class WZDxConfig(_SourcedFeed):
     Native adapter discovers state DOT WZDx v4 GeoJSON feeds via the FHWA
     WZDx Feed Registry (keyless), filters to `states`, then polls each
     matching feed and parses ``work-zone`` road_events into canonical
-    ``work_zone`` events. Keyless: ``api_key`` is retained but unused.
+    ``work_zone`` events.
     """
 
     enabled: bool = False
     tick_seconds: int = 300  # per-feed poll interval
-    api_key: str = ""  # unused (keyless); retained for parity / ${ENV_VAR}
     base_url: str = ""  # optional single-feed override (skips registry when set)
-    endpoints: list = field(default_factory=lambda: ["/get/event"])
     bbox: list = field(default_factory=list)  # [west, south, east, north] optional filter
     # FHWA WZDx Feed Registry (Socrata) — rows describe every state DOT feed.
     registry_url: str = (
