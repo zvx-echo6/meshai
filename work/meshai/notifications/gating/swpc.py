@@ -3,14 +3,18 @@
 decide(data, *, source, now) -> GateResult:
     Canonical data schema consumed:
         event_id    str              — stable SWPC event identifier
-        driver      str              — "kp" | "flare"
-        scalar      float|str|None  — Kp value (float) or flare class (str)
-        scale_code  str              — pre-computed NOAA scale code ("G3", "R3")
+        driver      str|None         — "kp" | "flare" | None (proton/S-scale;
+                                        see _floor_for_scale — dispatched by
+                                        scale_code prefix, not driver)
+        scalar      float|str|None  — Kp value (float), flare class (str), or
+                                       proton flux label (str, e.g. "10 pfu")
+        scale_code  str              — pre-computed NOAA scale code
+                                        ("G3", "R3", "S1")
         message     str              — SWPC alert message body (for format seam)
         issued_at   str|None         — ISO timestamp
 
     Emitted data_patch keys:
-        _severity_override  str    — "priority" (G3/R3), "immediate" (G4+/R4+)
+        _severity_override  str    — "priority" (level 3+), "immediate" (level 4+)
         _cooldown_suffix    str    — scale_code (collapses cross-sub-adapter
                                      events in the dispatcher cooldown window)
 
@@ -21,9 +25,14 @@ decide(data, *, source, now) -> GateResult:
         inline _geomag_recent[scale_code] = now stamp).
 
 Gate logic:
-    kp driver:    G3+ — scale_code numeric level >= 3
-    flare driver: R3+ — scale_code numeric level >= 3
-    solar_radiation_storm (proton) is NOT registered here; stays on legacy path.
+    kp driver:      G3+ — scale_code numeric level >= 3
+    flare driver:   R3+ — scale_code numeric level >= 3
+    S-scale (proton, scale_code prefix "S"): S1+ — scale_code numeric level >= 1.
+        Deliberately a LOWER floor than G/R. This matches the floor
+        central/swpc_handler.py originally used verbatim: "Solar proton event
+        >= 10 pfu @ >= 10 MeV (S1 minor radiation storm or higher)" (see that
+        module's docstring) — Central never required S3+ for protons. Recovered
+        here, not invented; see _floor_for_scale().
 
 Cross-adapter geomag 600s window:
     kp events within 600s of a COMMITTED broadcast for the same scale_code are
@@ -63,6 +72,21 @@ def _scale_level(scale_code: str) -> int:
         return int(scale_code[1:])
     except (ValueError, TypeError):
         return 0
+
+
+def _floor_for_scale(scale_code: str) -> int:
+    """Broadcast floor (minimum NOAA scale level) for *scale_code*'s family.
+
+    G/R: level >= 3 (G3/R3 "strong" or higher).
+    S (proton, scale_code prefix "S"): level >= 1 (S1 "minor" or higher) —
+    matches central/swpc_handler.py's original proton floor of >= 10 pfu
+    @ >= 10 MeV, which IS the S1 threshold. Central intentionally used a
+    lower floor for protons than for geomag/flare; this is not a new policy,
+    it is the recovered original one.
+    """
+    if scale_code.startswith("S"):
+        return 1
+    return 3
 
 
 def _severity_for_scale(scale_code: str) -> str:
@@ -117,10 +141,11 @@ def decide(data: dict, *, source: str, now: float) -> GateResult:
         )
 
     level = _scale_level(scale_code)
-    if level < 3:
+    floor = _floor_for_scale(scale_code)
+    if level < floor:
         return GateResult(
             broadcast=False, lifecycle="suppress",
-            reason=f"scale {scale_code} below G3/R3 floor (level={level})",
+            reason=f"scale {scale_code} below floor (level={level} < {floor})",
         )
 
     # ── Geomag cross-adapter 600s window (kp driver only) ───────────────────

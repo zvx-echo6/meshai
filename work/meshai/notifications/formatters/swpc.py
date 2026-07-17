@@ -1,9 +1,11 @@
 """SWPC space-weather event formatter — Phase-1 refactor.
 
 Reads canonical event.data schema:
-    driver      : "kp" | "flare"  — what drove the event
-    scalar      : float (Kp value) | str (flare class) | None
-    scale_code  : "G3" | "R3" | etc.  — NOAA scale code
+    driver      : "kp" | "flare" | None  — what drove the event (proton/S-scale
+                  events carry driver=None from env/swpc.py; dispatched below
+                  via scale_code prefix "S", not driver)
+    scalar      : float (Kp value) | str (flare class | proton "N pfu") | None
+    scale_code  : "G3" | "R3" | "S1" | etc.  — NOAA scale code
     message     : str  — raw SWPC alert message body (or "")
     issued_at   : str | None  — ISO timestamp for the time tag line
 
@@ -16,7 +18,12 @@ Wire format (multi-line, identical structure to swpc_handler._render()):
               HF radio fading, GPS may glitch
               SWPC · 2026-06-03 11:59
 
-    (when scalar is None the dash-separated tail is omitted)
+    Proton:   ☢️ New: S1 Radiation Storm — 10 pfu
+              Polar HF radio affected
+              SWPC · 2026-07-04 06:00
+
+    (when scalar is None the dash-separated tail is omitted; native env/swpc.py
+    never supplies a proton scalar, so live S-scale wires omit the tail)
 
 Tier-b fix note: `_severity_override` is set by the decider (gating/swpc.py)
 so geomag/flare events dispatch at priority/immediate severity instead of the
@@ -104,6 +111,22 @@ def format(event: "Event", *, now: float, budget: int) -> str:
             line1 = f"☀️ {prefix} {scale_code} Solar Flare"
 
         line2 = message if message else "HF radio fading, GPS may glitch"
+        line3 = f"SWPC · {time_tag}" if time_tag else "SWPC"
+
+    elif scale_code.startswith("S"):
+        # ── Solar radiation storm (proton) ──────────────────────────────────────
+        # Dispatched on scale_code, not driver: env/swpc.py's native adapter
+        # always sets driver=None for S-scale events (no per-reading pfu value
+        # available from noaa-scales.json), so there is no "proton" driver value
+        # to switch on. scalar (when present, e.g. from a future producer with a
+        # real pfu reading) is a pre-formatted string like "10 pfu", matching
+        # central/swpc_handler.py's scalar_str convention for this event kind.
+        if isinstance(scalar, str) and scalar:
+            line1 = f"☢️ {prefix} {scale_code} Radiation Storm — {scalar}"
+        else:
+            line1 = f"☢️ {prefix} {scale_code} Radiation Storm"
+
+        line2 = message if message else "Polar HF radio affected"
         line3 = f"SWPC · {time_tag}" if time_tag else "SWPC"
 
     else:
