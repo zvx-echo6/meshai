@@ -97,7 +97,6 @@ def test_roads511_fallback_to_config():
 
 def _wzdx_cfg(states=None, bbox=None):
     cfg = MagicMock()
-    cfg.api_key = ""
     cfg.base_url = ""
     cfg.registry_url = "https://example.test/registry.json"
     cfg.registry_ttl = 21600

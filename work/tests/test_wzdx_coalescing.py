@@ -25,7 +25,6 @@ def mock_config():
     return SimpleNamespace(
         enabled=True,
         feed_source="native",
-        api_key="",
         base_url="",
         registry_url="https://datahub.transportation.gov/resource/69qe-yiui.json?$limit=200",
         registry_ttl=21600,
