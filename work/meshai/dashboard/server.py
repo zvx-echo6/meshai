@@ -93,7 +93,7 @@ def create_app() -> FastAPI:
     static_dir = Path(__file__).parent / "static"
     index_html = static_dir / "index.html"
 
-    if static_dir.exists():
+    if static_dir.exists() and index_html.exists():
         # Mount /assets for JS, CSS, images
         assets_dir = static_dir / "assets"
         if assets_dir.exists():
@@ -114,6 +114,20 @@ def create_app() -> FastAPI:
         @app.get("/")
         async def root():
             return FileResponse(index_html)
+    else:
+        # meshai/dashboard/static/ is a build artifact, not committed to the
+        # repo (see .gitignore) -- it only exists if the frontend has been
+        # built. Without it there's no route for "/", so requests would
+        # otherwise 404 with no explanation. Log loudly so a fresh
+        # `pip install -e .` user knows the bot/API are fine and just the
+        # dashboard UI needs building.
+        logger.warning(
+            "Dashboard UI not found at %s -- the web dashboard will NOT be served "
+            "(the bot and API are unaffected). Build it with: "
+            "cd dashboard-frontend && npm ci && npm run build "
+            "(then restart meshai). Docker images build this automatically.",
+            index_html,
+        )
 
     return app
 
