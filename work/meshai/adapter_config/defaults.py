@@ -105,12 +105,12 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     ("usgs_quake", "global_mag_floor"): {
         "default": 3.0,                     # quake_handler.py:69
         "type": "float",
-        "description": "Global magnitude floor for unconditional broadcasts. CENTRAL-PATH ONLY (central/quake_handler.py); the native feed_source gates on environmental.usgs_quake.min_magnitude instead.",
+        "description": "Global magnitude floor for unconditional broadcasts. Gates the shared native gating decider (meshai.notifications.gating.quake.decide), read regardless of feed_source.",
     },
     ("usgs_quake", "regional_mag_floor"): {
         "default": 2.5,                     # quake_handler.py:70
         "type": "float",
-        "description": "Reduced magnitude floor for quakes within regional_radius_mi of centroid. CENTRAL-PATH ONLY (central/quake_handler.py); the native feed_source gates on environmental.usgs_quake.min_magnitude instead.",
+        "description": "Reduced magnitude floor for quakes within regional_radius_mi of centroid. Gates the shared native gating decider (meshai.notifications.gating.quake.decide), read regardless of feed_source.",
     },
     ("usgs_quake", "escalate_mag_floor"): {
         "default": 5.0,                     # quake_handler.py:76

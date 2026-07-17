@@ -114,9 +114,12 @@ def test_feed_source_flip_to_central_requires_restart_and_does_not_swap():
 
 
 def test_feed_source_flip_from_central_to_native_requires_restart():
-    # satpass defaults feed_source="central"; flip it to native.
-    store = EnvironmentalStore(_cfg())
-    assert "satpass" not in store._adapters  # central by default -> no native instance
+    # satpass now defaults to feed_source="native", so pin the starting state
+    # to "central" explicitly -- this exercises the flip, not the default.
+    base_cfg = _cfg()
+    base_cfg.satpass = dataclasses.replace(base_cfg.satpass, feed_source="central")
+    store = EnvironmentalStore(base_cfg)
+    assert "satpass" not in store._adapters  # central -> no native instance
 
     new_cfg = _cfg()
     new_cfg.satpass = dataclasses.replace(
