@@ -1,0 +1,110 @@
+"""TLE cache storage — sat_tles upsert/read helpers.
+
+Relocated from `meshai.central.tle_handler` (the retired Central
+NATS-consumer service) during the Central ripout. `upsert_tle` is shared by
+BOTH ingest paths that remain: the native Celestrak fetcher (`env.tle_fetch`)
+and reads feed the native pass predictor (`env.satpass`) and the on-demand
+`!satpass` command (`commands.satpass_cmd`).
+
+Upsert rule: latest-wins on epoch — skip if cached epoch >= incoming.
+Read-time staleness: callers exclude epoch older than 14 days.
+"""
+from __future__ import annotations
+
+import time
+from typing import Optional
+
+from meshai.persistence import get_db
+
+# Rows with epoch older than this are stale (no tombstone upstream).
+STALE_DAYS = 14
+
+
+def upsert_tle(conn, norad_id: int, name: str, line1: str, line2: str,
+               epoch, now: Optional[int] = None) -> bool:
+    """Upsert one TLE into sat_tles with latest-epoch-wins semantics.
+
+    Shared by BOTH ingest paths — historically the Central envelope handler
+    and the native Celestrak fetcher (`env.tle_fetch`), now just the native
+    fetcher — so the predictor reads TLEs identically regardless of source.
+    `epoch` is a lexicographically-sortable string (ISO 8601 derived from the
+    TLE line-1 epoch field); a cached row whose epoch is >= the incoming
+    epoch is left untouched.
+
+    Returns True if a row was written (insert or update), False if the
+    cached epoch was same-or-newer and the write was skipped.
+    """
+    now = now if now is not None else int(time.time())
+    epoch = str(epoch)
+
+    existing = conn.execute(
+        "SELECT epoch FROM sat_tles WHERE norad_id = ?",
+        (norad_id,),
+    ).fetchone()
+
+    if existing is not None and existing["epoch"] >= epoch:
+        # Cached epoch is same or newer — skip.
+        return False
+
+    conn.execute(
+        "INSERT INTO sat_tles(norad_id, name, line1, line2, epoch, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(norad_id) DO UPDATE SET "
+        "name=excluded.name, line1=excluded.line1, line2=excluded.line2, "
+        "epoch=excluded.epoch, updated_at=excluded.updated_at",
+        (norad_id, name, line1, line2, epoch, now),
+    )
+    return True
+
+
+def get_fresh_tles(conn=None, max_age_days: int = STALE_DAYS) -> list[dict]:
+    """Return all TLEs with epoch within max_age_days of now.
+
+    Each dict has: norad_id, name, line1, line2, epoch, updated_at.
+    """
+    if conn is None:
+        conn = get_db()
+    # epoch is ISO string; compare lexicographically against cutoff
+    import datetime
+    cutoff = (datetime.datetime.now(datetime.timezone.utc)
+              - datetime.timedelta(days=max_age_days)).isoformat()
+    rows = conn.execute(
+        "SELECT norad_id, name, line1, line2, epoch, updated_at "
+        "FROM sat_tles WHERE epoch >= ? ORDER BY name",
+        (cutoff,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_tle_by_norad(norad_id: int, conn=None) -> Optional[dict]:
+    """Return a single TLE by NORAD ID, or None if missing/stale."""
+    if conn is None:
+        conn = get_db()
+    import datetime
+    cutoff = (datetime.datetime.now(datetime.timezone.utc)
+              - datetime.timedelta(days=STALE_DAYS)).isoformat()
+    row = conn.execute(
+        "SELECT norad_id, name, line1, line2, epoch, updated_at "
+        "FROM sat_tles WHERE norad_id = ? AND epoch >= ?",
+        (norad_id, cutoff),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def search_tle_by_name(query: str, conn=None, limit: int = 5) -> list[dict]:
+    """Fuzzy search TLEs by name (case-insensitive LIKE match).
+
+    Returns up to `limit` fresh results sorted by name.
+    """
+    if conn is None:
+        conn = get_db()
+    import datetime
+    cutoff = (datetime.datetime.now(datetime.timezone.utc)
+              - datetime.timedelta(days=STALE_DAYS)).isoformat()
+    rows = conn.execute(
+        "SELECT norad_id, name, line1, line2, epoch, updated_at "
+        "FROM sat_tles WHERE name LIKE ? AND epoch >= ? "
+        "ORDER BY name LIMIT ?",
+        (f"%{query}%", cutoff, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
