@@ -22,7 +22,7 @@ from __future__ import annotations
 import pytest
 
 from meshai import central_normalizer as cn
-from meshai.central.budget import budget_for
+from meshai.notifications.formatters._budget import budget_for
 from meshai.central.wfigs_handler import (
     _build_canonical,
     _render as _wfigs_render,

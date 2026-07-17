@@ -38,7 +38,7 @@ from datetime import datetime
 
 import pytest
 
-from meshai.central.budget import budget_for
+from meshai.notifications.formatters._budget import budget_for
 from meshai.notifications.formatters.nws import format as nws_format
 from meshai.notifications.gating.nws import decide as nws_decide
 from meshai.persistence import close_thread_connection, init_db

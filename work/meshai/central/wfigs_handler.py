@@ -29,7 +29,7 @@ inside that connection's autocommit mode.
 
 from __future__ import annotations
 from meshai.adapter_config import adapter_config
-from meshai.central.budget import budget_for, fit_to_budget
+from meshai.notifications.formatters._budget import budget_for, fit_to_budget
 
 import logging
 import time

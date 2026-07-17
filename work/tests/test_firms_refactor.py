@@ -31,7 +31,7 @@ import uuid
 
 import pytest
 
-from meshai.central.budget import budget_for
+from meshai.notifications.formatters._budget import budget_for
 from meshai.notifications.formatters.fire import format as fire_format
 from meshai.notifications.formatters.firms import format as firms_format
 from meshai.notifications.gating.firms import decide as firms_decide
