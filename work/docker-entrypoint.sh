@@ -34,9 +34,6 @@ history:
   database: /data/conversations.db
   max_messages_per_user: 50
   conversation_timeout: 86400
-  auto_cleanup: true
-  cleanup_interval_hours: 24
-  max_age_days: 30
 
 memory:
   enabled: true
