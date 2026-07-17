@@ -55,16 +55,10 @@ Everything is driven from the web UI, organized into **General**, **Meshtastic**
 ```bash
 git clone https://github.com/zvx-echo6/meshai.git
 cd meshai
-cd dashboard-frontend && npm ci && npm run build && cd ..   # builds the web dashboard -- required, see note below
 pip install -e .
 cp config.example.yaml config.yaml   # then edit config.yaml (or use the dashboard)
 meshai
 ```
-
-> The frontend build step is required. `meshai/dashboard/static/` is no longer
-> committed to the repo, so skipping it means no dashboard UI is served (the
-> bot and API still run fine). Docker users don't need this -- the image
-> builds the frontend automatically. Requires Node.js/npm.
 
 Or with Docker:
 

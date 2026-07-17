@@ -71,10 +71,16 @@ As you save settings, MeshAI persists them back into `/data` as focused per-doma
 ```bash
 git clone https://github.com/zvx-echo6/meshai.git
 cd meshai/work
+cd dashboard-frontend && npm ci && npm run build && cd ..   # builds the web dashboard — required, see note
 pip install -e .
 cp config.example.yaml config.yaml   # minimal starting point, not exhaustive — see note below
 meshai
 ```
+
+> **The frontend build step is required.** `meshai/dashboard/static/` is no longer
+> committed to the repo, so skipping it means no dashboard UI is served (the bot and
+> API still run fine). Docker users don't need this — the image builds the frontend
+> automatically. Requires Node.js/npm.
 
 Unlike Docker, `meshai` won't create a config file for you — it needs one to exist before it will start. `config.example.yaml` bootstraps the basics (connection, LLM backend, bot behavior); once it's running, open `http://localhost:8080` and use the dashboard for everything else.
 
