@@ -105,6 +105,53 @@ async def get_config_section(section: str, request: Request):
     return section_data
 
 
+def _is_dataclass_type(tp) -> bool:
+    """True for a nested dataclass FIELD TYPE (config.py uses real classes, not
+    string annotations, so __dataclass_fields__ is reachable here)."""
+    return hasattr(tp, "__dataclass_fields__")
+
+
+def _merge_over_current(base: dict, body: dict, cls) -> dict:
+    """Merge a PARTIAL `body` over the CURRENT section dict `base`.
+
+    Keys ABSENT from `body` keep their current value; keys PRESENT in `body`
+    win -- including falsy ones ('' / False / 0 / []), so intentional clearing
+    still works. Only key presence matters, never the value.
+
+    Nested semantics (deliberate, see the module tests):
+      * dict -> nested DATACLASS field  : DEEP-MERGE. Fixed, known schema, so a
+        partial like {"region_routes": {"mc_enabled": true}} must not drop the
+        sibling `cells`/`mt_enabled` fields.
+      * dict -> bare `dict` field       : REPLACE-AT-KEY. These are dynamic maps
+        (region_routes.cells, notifications.toggles/destinations,
+        webhook_headers). Deep-merging them would make key DELETION impossible
+        -- a removed cell/toggle would be resurrected from `base`.
+      * list                            : REPLACE-AT-KEY. Same deletion argument
+        (notifications.rules, mesh_sources, regions).
+
+    Keying the recursion off the dataclass schema -- not off "is it a dict" --
+    is what keeps deletion working for maps while still protecting nested
+    dataclasses from the partial-payload wipe.
+    """
+    if not isinstance(base, dict) or not isinstance(body, dict):
+        return body
+
+    field_types = {}
+    if cls is not None and _is_dataclass_type(cls):
+        field_types = {f.name: f.type for f in cls.__dataclass_fields__.values()}
+
+    merged = dict(base)
+    for key, value in body.items():
+        field_type = field_types.get(key)
+        if (isinstance(value, dict)
+                and isinstance(base.get(key), dict)
+                and _is_dataclass_type(field_type)):
+            merged[key] = _merge_over_current(base[key], value, field_type)
+        else:
+            merged[key] = value
+    return merged
+
+
 @router.put("/config/{section}")
 async def update_config_section(section: str, request: Request):
     """Update a configuration section."""
@@ -146,7 +193,36 @@ async def update_config_section(section: str, request: Request):
                 for v in new_value
             ]
         elif hasattr(field_type, "__dataclass_fields__"):
-            new_value = _dict_to_dataclass(field_type, body)
+            # MERGE the (possibly partial) body over the CURRENT live section
+            # before coercing. _dict_to_dataclass() builds kwargs only from the
+            # keys it is handed and lets `cls(**kwargs)` default the rest, so
+            # coercing a partial body directly resets every omitted field to its
+            # dataclass default. That is what took both radios offline on
+            # 2026-07-17: a one-key PUT of meshcore_advert_interval_seconds
+            # rewrote type/tcp_host/meshcore_host/meshcore_conn_type/
+            # meshcore_serial_port to defaults (see tests/
+            # test_config_partial_save_merge.py).
+            #
+            # The merge base is the LIVE config -- the same values GET
+            # /api/config/{section} serves and the UI edits on top of -- so a
+            # partial PUT now lands exactly where a full-object PUT from that
+            # same GET would have. Full-object callers are unaffected: every key
+            # they send simply wins.
+            current = getattr(request.app.state, "config", None)
+            base = None
+            if current is not None:
+                base = _section_to_plain(getattr(current, section, None))
+            if isinstance(base, dict) and isinstance(body, dict):
+                merged_body = _merge_over_current(base, body, field_type)
+            else:
+                # No live base to merge over (should not happen in prod, where
+                # app.state.config is always set) -- fall back to the historical
+                # coerce-the-body-as-given path rather than inventing a base.
+                logger.warning(
+                    "Config PUT %r: no live section to merge over; "
+                    "applying body as-is", section)
+                merged_body = body
+            new_value = _dict_to_dataclass(field_type, merged_body)
             data_to_save = _dataclass_to_dict(new_value)
         else:
             new_value = body

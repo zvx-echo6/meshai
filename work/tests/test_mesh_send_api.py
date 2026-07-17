@@ -587,10 +587,13 @@ def test_meshcore_advert_no_meshcore_child():
 
 
 def test_connection_config_advert_interval_default():
-    """meshcore_advert_interval_seconds defaults to 10800 (3 h)."""
+    """meshcore_advert_interval_seconds defaults to 86400 (24 h).
+
+    Was 10800 (3 h) -- far too frequent a default for a public mesh.
+    """
     from meshai.config import ConnectionConfig
     cfg = ConnectionConfig()
-    assert cfg.meshcore_advert_interval_seconds == 10800
+    assert cfg.meshcore_advert_interval_seconds == 86400
 
 
 def test_connection_config_advert_interval_zero():

@@ -61,9 +61,14 @@ export default function MeshCoreCompanion() {
 
   // Auto-advert control state — interval in hours (0 = disabled)
   // Loaded from connection config; editable in-page and PUTted back.
-  const [advertIntervalHours, setAdvertIntervalHours] = useState<number>(3)
+  const [advertIntervalHours, setAdvertIntervalHours] = useState<number>(24)
   const [advertIntervalSaving, setAdvertIntervalSaving] = useState(false)
   const [advertIntervalSaved, setAdvertIntervalSaved] = useState(false)
+  const [advertIntervalError, setAdvertIntervalError] = useState<string | null>(null)
+  // The FULL connection section as fetched. Saving spreads this so the PUT
+  // carries every field, matching every other updateConfig('connection', ...)
+  // caller. See handleSaveAdvertInterval.
+  const [connConfig, setConnConfig] = useState<Record<string, unknown> | null>(null)
 
   useEffect(() => {
     document.title = 'Companion & Channels - MeshAI'
@@ -101,6 +106,7 @@ export default function MeshCoreCompanion() {
         const resp = await fetch('/api/config/connection')
         if (resp.ok) {
           const data = await resp.json() as Record<string, unknown>
+          setConnConfig(data)
           const sec = data['meshcore_advert_interval_seconds']
           if (typeof sec === 'number') {
             setAdvertIntervalHours(sec > 0 ? sec / 3600 : 0)
@@ -140,17 +146,32 @@ export default function MeshCoreCompanion() {
   const handleSaveAdvertInterval = useCallback(async () => {
     setAdvertIntervalSaving(true)
     setAdvertIntervalSaved(false)
+    setAdvertIntervalError(null)
     try {
       const seconds = Math.round(advertIntervalHours * 3600)
-      await updateConfig('connection', { meshcore_advert_interval_seconds: seconds })
+      // Spread the full fetched section, don't PUT a lone key. On 2026-07-17 a
+      // single-key body here reset every OMITTED connection field to its
+      // dataclass default (type -> serial, meshcore_host -> '', ...) and took
+      // both radios offline. The route now merges partial bodies server-side,
+      // but this page still sends the whole object like every other caller:
+      // belt and braces, and it keeps the PUT's meaning explicit.
+      const current = connConfig ?? {}
+      await updateConfig('connection', {
+        ...current,
+        meshcore_advert_interval_seconds: seconds,
+      })
+      setConnConfig({ ...current, meshcore_advert_interval_seconds: seconds })
       setAdvertIntervalSaved(true)
       setTimeout(() => setAdvertIntervalSaved(false), 2000)
-    } catch {
-      // keep saving=false, let UI show failure implicitly
+    } catch (err) {
+      // A failed save MUST be visible. This handler used to swallow the error
+      // and "let the UI show failure implicitly" -- it showed nothing at all,
+      // so the operator saw a silent no-op while the write had already failed.
+      setAdvertIntervalError(err instanceof Error ? err.message : 'Save failed')
     } finally {
       setAdvertIntervalSaving(false)
     }
-  }, [advertIntervalHours])
+  }, [advertIntervalHours, connConfig])
 
   const handleCopyKey = useCallback(async (key: string) => {
     try {
@@ -343,10 +364,10 @@ export default function MeshCoreCompanion() {
                   >
                     <option value={0}>Disabled</option>
                     <option value={1}>Every 1 hour</option>
-                    <option value={3}>Every 3 hours (default)</option>
+                    <option value={3}>Every 3 hours</option>
                     <option value={6}>Every 6 hours</option>
                     <option value={12}>Every 12 hours</option>
-                    <option value={24}>Every 24 hours</option>
+                    <option value={24}>Every 24 hours (default)</option>
                   </select>
                   <button
                     onClick={handleSaveAdvertInterval}
@@ -356,6 +377,11 @@ export default function MeshCoreCompanion() {
                     {advertIntervalSaving ? 'Saving…' : advertIntervalSaved ? 'Saved' : 'Save'}
                   </button>
                 </div>
+                {advertIntervalError && (
+                  <p className="text-xs text-red-400" role="alert">
+                    Save failed — {advertIntervalError}
+                  </p>
+                )}
                 <p className="text-xs text-[#555]">
                   AIDA sends a flood advertisement at this interval so it stays discoverable.
                   Stored in <code className="text-accent/80">connection.meshcore_advert_interval_seconds</code>.

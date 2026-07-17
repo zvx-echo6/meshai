@@ -297,7 +297,24 @@ export async function updateConfig(
     body: JSON.stringify(data),
   })
   if (!response.ok) {
-    throw new Error(`API error: ${response.status} ${response.statusText}`)
+    // Surface the server's `detail` when there is one. A bare
+    // "API error: 500 Internal Server Error" hid the actual cause of the
+    // 2026-07-17 outage from the operator -- the real message was
+    // "[Errno 13] Permission denied: '/data/config/local.yaml'", which would
+    // have named the problem outright.
+    let detail = ''
+    try {
+      const body = await response.json() as { detail?: unknown }
+      if (typeof body?.detail === 'string') detail = body.detail
+      else if (body?.detail != null) detail = JSON.stringify(body.detail)
+    } catch {
+      // non-JSON error body — fall back to the status line
+    }
+    throw new Error(
+      detail
+        ? `${detail} (${response.status})`
+        : `API error: ${response.status} ${response.statusText}`
+    )
   }
   return response.json()
 }
