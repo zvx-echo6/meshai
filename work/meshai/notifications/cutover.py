@@ -40,8 +40,22 @@ import os
 # Central-render impact. Consumed by store._emit_event (decider gate) and
 # renderers.composer.compose_mesh_message (formatter gate) so native fires take
 # the exact same single render path a cut-over category would.
+#
+# stream_flood_warning / stream_high_water (env/usgs.py) are the same shape of
+# problem: they are emitted ONLY by the native USGS adapter (the Central nwis
+# path emits the separate `stream_flow` category instead -- see
+# notifications/gating/__init__.py and notifications/formatters/__init__.py).
+# Before this fix neither category had a registered decider/formatter at all,
+# so every elevated gauge reading was silently dropped (no formatter -> no
+# renderable wire; get_toggle() resolving to "seismic" made no difference
+# since nothing was registered under that name either). Forcing them onto the
+# shared hydro decider+formatter here, like fire above, has no Central-render
+# impact (Central never emits these two category strings).
 NATIVE_ALWAYS_DECIDE = frozenset(
-    {"wildfire_incident", "wildfire_declared", "wildfire_closed"}
+    {
+        "wildfire_incident", "wildfire_declared", "wildfire_closed",
+        "stream_flood_warning", "stream_high_water",
+    }
 )
 
 

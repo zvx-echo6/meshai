@@ -8,6 +8,7 @@
 import json
 import logging
 import time
+from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -34,6 +35,35 @@ def _cfg_str(config, attr: str, default: str) -> str:
     empty, or not a real string (e.g. an unconfigured test mock)."""
     value = getattr(config, attr, None)
     return value if isinstance(value, str) and value else default
+
+
+# Maps the flood_status strings _fetch() sets (see severity-classification
+# block above) onto the ranked threshold_state vocabulary the shared hydro
+# gating/formatter modules speak (meshai.central.idaho_gauge_sites.
+# THRESHOLD_RANK / meshai.notifications.gating.hydro / formatters.hydro).
+# Kept local rather than importing from central.idaho_gauge_sites so this
+# adapter has no dependency on the (Central-only, reference-only) central
+# package -- only the string vocabulary is shared, not the code.
+_FLOOD_STATUS_TO_THRESHOLD_STATE = {
+    "Action Stage": "action",
+    "Minor Flood": "flood_minor",
+    "Moderate Flood": "flood_moderate",
+    "Major Flood": "flood_major",
+}
+
+
+def _parse_iso_epoch(s: Optional[str]) -> Optional[int]:
+    """Parse a USGS instantaneous-values dateTime string to an epoch int.
+
+    USGS IV timestamps carry a UTC offset (e.g. "2026-06-04T12:00:00.000-06:00");
+    accept a trailing "Z" too for robustness. Returns None on any parse failure.
+    """
+    if not s:
+        return None
+    try:
+        return int(datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp())
+    except Exception:
+        return None
 
 
 class USGSStreamsAdapter:
@@ -526,6 +556,33 @@ class USGSStreamsAdapter:
             summary_parts.append(str(flood_status))
             summary = " | ".join(summary_parts)[:300]
 
+            # Canonical hydro schema (event.data) — same shape the Central nwis
+            # path writes (site_id, gauge_name, stage_ft, flow_cfs, unit,
+            # threshold_state, reading_time, lat, lon, parameter_code), so the
+            # shared gating.hydro.decide() / formatters.hydro.format() work
+            # unmodified for both sources. flood_status is only ever computed
+            # for gage-height (00065) readings above, so a reading that reaches
+            # this point is always a stage reading -- parameter_code is fixed
+            # to "00065" and value maps to stage_ft (never flow_cfs; the
+            # companion discharge reading, if any, arrives as its own separate
+            # evt with no flood_status and never reaches to_event()).
+            reading_time = _parse_iso_epoch(props.get("timestamp"))
+            if reading_time is None:
+                fetched_at = evt.get("fetched_at")
+                reading_time = int(fetched_at) if isinstance(fetched_at, (int, float)) else int(time.time())
+            data = {
+                "site_id": props.get("site_id"),
+                "gauge_name": props.get("site_name") or title,
+                "stage_ft": value,
+                "flow_cfs": None,
+                "unit": unit,
+                "threshold_state": _FLOOD_STATUS_TO_THRESHOLD_STATE.get(str(flood_status), "normal"),
+                "reading_time": reading_time,
+                "lat": lat,
+                "lon": lon,
+                "parameter_code": "00065",
+            }
+
             # event_id is already the stable "{site_id}_{param}" key. Re-polls of
             # the same gauge/parameter coalesce on this group_key; using it as the
             # sole inhibit_key lets the pipeline Inhibitor suppress lower-severity
@@ -543,6 +600,7 @@ class USGSStreamsAdapter:
                 lon=lon,
                 group_key=event_id,
                 inhibit_keys=[event_id],
+                data=data,
             )
         except Exception:
             logger.exception(f"USGS to_event failed for evt: {evt.get('event_id')}")
