@@ -93,11 +93,17 @@ register("traffic_congestion", _incident_fmt_mod.format)
 
 # Phase-3: USGS NWIS stream-gauge hydro. The Central nwis path maps every
 # `central.hydro.*` envelope to the flat category `stream_flow` (see
-# central.consumer.map_category / category_from_subject), so that is the real
-# registry key. Native env/usgs.py categories (stream_flood_warning /
-# stream_high_water) are deferred — see gating/__init__.py note.
+# central.consumer.map_category / category_from_subject). Native env/usgs.py
+# categories (stream_flood_warning / stream_high_water) reuse the same
+# formatter — env/usgs.py's to_event() now populates event.data with the same
+# canonical schema (gauge_name/threshold_state/stage_ft/flow_cfs/lat/lon) the
+# Central path writes, so the wire renders identically for both sources. Forced
+# onto the live render path unconditionally via cutover.NATIVE_ALWAYS_DECIDE
+# (see gating/__init__.py note) since Central never emits these two strings.
 from meshai.notifications.formatters import hydro as _hydro_fmt_mod  # noqa: E402,F401
 register("stream_flow", _hydro_fmt_mod.format)
+register("stream_flood_warning", _hydro_fmt_mod.format)
+register("stream_high_water", _hydro_fmt_mod.format)
 
 # Phase-3b: WFIGS wildfire. The Central wfigs_handler emits THREE explicit
 # categories, all under toggle "fire": `wildfire_declared` (first-sight New,

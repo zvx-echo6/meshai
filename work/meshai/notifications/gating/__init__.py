@@ -84,12 +84,18 @@ register("traffic_congestion", _incident_gate_mod.decide)
 
 # Phase-3: USGS NWIS stream-gauge hydro. Registered under `stream_flow` — the
 # flat category the Central nwis path produces for every `central.hydro.*`
-# envelope (map_category "hydro." -> "stream_flow"). Native usgs categories
-# (stream_flood_warning / stream_high_water, emitted only by env/usgs.py) are a
-# deferred follow-up: env/usgs.py is NOT migrated this phase and, since hydro is
-# NOT cut over, store._emit_event's native decider hook won't run it.
+# envelope (map_category "hydro." -> "stream_flow") — AND under the two
+# threshold-classified categories env/usgs.py actually emits natively:
+# stream_flood_warning (at/above flood stage) and stream_high_water (action
+# stage). All three share the same hydro.decide() gate; store._emit_event
+# forces the native two onto the live decider path unconditionally via
+# cutover.NATIVE_ALWAYS_DECIDE (mirrors the native fire categories below),
+# independent of the MESHAI_CUTOVER_CATEGORIES shadow-bake env var, since
+# Central never emits those two category strings.
 from meshai.notifications.gating import hydro as _hydro_gate_mod  # noqa: E402,F401
 register("stream_flow", _hydro_gate_mod.decide)
+register("stream_flood_warning", _hydro_gate_mod.decide)
+register("stream_high_water", _hydro_gate_mod.decide)
 
 # Phase-3b: WFIGS wildfire. Three explicit categories the wfigs_handler emits:
 # `wildfire_declared` (New), `wildfire_incident` (growth Update), and

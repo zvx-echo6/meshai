@@ -24,7 +24,8 @@ Broadcast rule (verbatim from the old handler):
 IMPORTANT — division of labour with the handler:
     * The append-only gauge_readings INSERT stays INLINE in the Central handler
       (unconditional time-series write).  This decider only READS gauge_readings
-      to determine prior state; it NEVER writes it.
+      to determine prior state for source="nwis"; it NEVER writes for that
+      source.  See "Native persistence" below for source="usgs".
     * The decider MUST run BEFORE the handler's INSERT (the old handler did its
       prior-SELECT and 00060 back-look before inserting the new row), so the
       reads never see the current reading.  The prior-SELECT additionally
@@ -33,6 +34,34 @@ IMPORTANT — division of labour with the handler:
       the decider owns NO deferred state write → commit is None.  The
       event_log.handled flip stays handler-owned (mirrors the old
       _attach_commit, wrapped in the cutover branch like quake_handler).
+
+Native persistence (fix/native-gauge-flood-alerts):
+    env/usgs.py (source="usgs") has no handler module of its own with a
+    persistence connection the way central.nwis_handler does for source="nwis"
+    -- it is a pure HTTP-fetch-and-translate adapter.  Central stopped writing
+    gauge_readings when nwis_handler stopped running, so without SOME writer
+    every native prior-state SELECT above would return "normal" (no row)
+    forever, and every elevated reading would rank as an upward crossing and
+    rebroadcast on every 15-minute tick instead of once per crossing.  This
+    decider owns that write for source != "nwis" (see _persist_native_reading
+    below), keeping the "decider reads-only, handler writes" contract intact
+    for the Central source.
+
+    KNOWN LIMITATION: env/usgs.py's to_event() only ever emits ELEVATED
+    readings (action stage or above) by design -- a routine/below-action
+    reading has no flood_status and is intentionally never turned into an
+    Event, so it never reaches this decider and a "back to normal" row is
+    never written.  If a gauge fully recedes below action stage and later
+    re-crosses into action stage, the most recent gauge_readings row for that
+    site is still the last ELEVATED tier it saw (not "normal"), so the
+    re-crossing will compare equal-rank and be SUPPRESSED rather than
+    broadcast as a new crossing.  This degrades toward silence, not spam (the
+    safe direction), and only resolves once the gauge reaches a HIGHER tier
+    than it last alerted at.  Fixing it properly would mean also emitting
+    normal-state readings from env/usgs.py so a recede-to-normal row gets
+    written, which is a materially bigger behavior change to the native
+    emission/inhibition pipeline than this fix's scope -- left for the
+    Central rip-out follow-up.
 
 data_patch keys (populated on EVERY call, broadcast or suppress, so the
 handler's unconditional INSERT + render use the back-looked values):
@@ -124,6 +153,14 @@ def decide(data: dict, *, source: str, now: float) -> GateResult:
     # Resolved values returned so the handler's inline INSERT + render match.
     patch: dict = {"threshold_state": threshold_state, "stage_ft": stage_ft}
 
+    # Native persistence: own the write for the native source only (source=
+    # "nwis" keeps its inline handler-owned INSERT, per the module docstring).
+    # Must run AFTER the reads above (same ordering rule as the Central
+    # handler's INSERT) so this reading is never its own "prior".
+    if source != "nwis":
+        _persist_native_reading(conn, data, threshold_state=threshold_state,
+                                 stage_ft=stage_ft, now=now)
+
     prior_rank = _rank(prior_state)
     cur_rank = _rank(threshold_state)
 
@@ -150,3 +187,39 @@ def decide(data: dict, *, source: str, now: float) -> GateResult:
         reason=f"crossing {prior_state}->{threshold_state}",
         data_patch=patch, commit=None,
     )
+
+
+def _persist_native_reading(conn, data: dict, *, threshold_state: str,
+                             stage_ft: Optional[float], now: float) -> None:
+    """Unconditional INSERT of a native (env/usgs.py) gauge reading.
+
+    Mirrors central.nwis_handler's inline INSERT into the same table with the
+    same column shape, but owned here because env/usgs.py has no handler
+    module of its own with a persistence connection.  Runs regardless of the
+    broadcast decision -- exactly like the Central handler's INSERT -- so the
+    NEXT native reading's prior-state SELECT above sees this one.  Never
+    raises: a persistence failure degrades the next lookup (falls back to
+    "no prior" / first-crossing) rather than blocking the current decision.
+    """
+    reading_time = data.get("reading_time")
+    if not isinstance(reading_time, (int, float)):
+        reading_time = now
+    try:
+        conn.execute(
+            "INSERT INTO gauge_readings(site_id, gauge_name, reading_value, "
+            "reading_unit, threshold_state, flow_cfs, reading_time, lat, lon) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                data.get("site_id"),
+                data.get("gauge_name"),
+                stage_ft,
+                data.get("unit"),
+                threshold_state,
+                data.get("flow_cfs"),
+                int(reading_time),
+                data.get("lat"),
+                data.get("lon"),
+            ),
+        )
+    except Exception:
+        logger.exception("hydro decide: native gauge_readings persist failed")
