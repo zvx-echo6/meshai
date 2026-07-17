@@ -297,7 +297,7 @@ async def get_regions(request: Request):
 
         regions.append({
             "name": region.name,
-            "local_name": region.name,  # Could be overridden by region_labels
+            "local_name": region.name,  # TODO: surface region.local_name (real field, unused here)
             "node_count": len(region.node_ids),
             "infra_count": infra_total,
             "infra_online": infra_online,

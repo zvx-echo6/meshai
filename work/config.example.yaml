@@ -114,22 +114,31 @@ mesh_sources: []
 #
 # mesh_intelligence:
 #   enabled: true
-#   region_radius_miles: 40.0      # Radius for region clustering
-#   locality_radius_miles: 8.0     # Radius for locality clustering
-#   offline_threshold_hours: 2     # Hours before node considered offline
-#   packet_threshold: 500          # Non-text packets per 24h to flag
-#   battery_warning_percent: 30    # Battery level for warnings
-#   infra_overrides: []            # Node IDs to exclude from infrastructure
-#   region_labels: {}              # Override auto-names: {"Twin Falls": "Magic Valley"}
+#   regions:                        # Fixed region anchors (explicit, not auto-clustered)
+#     - name: "magic_valley"
+#       lat: 42.56
+#       lon: -114.47
+#       local_name: "Magic Valley"
+#       description: "Twin Falls, Burley, Jerome along I-84/US-93"
+#       aliases: ["southern Idaho"]
+#       cities: ["Twin Falls", "Burley", "Jerome"]
+#   locality_radius_miles: 8.0      # Radius for locality clustering within regions
+#   offline_threshold_hours: 2      # Hours before node considered offline
+#   packet_threshold: 500           # Non-text packets per 24h to flag
+#   battery_warning_percent: 30     # Battery level for warnings
+#   critical_nodes: []              # Short names of critical nodes (e.g., ["MHR", "HPR"])
+#   alert_channel: -1               # Channel to broadcast alerts on. -1 = disabled, 0+ = channel index
+#   alert_rules: {}                 # Per-condition alert toggles/thresholds (see AlertRulesConfig)
 mesh_intelligence:
   enabled: false
-  region_radius_miles: 40.0
+  regions: []
   locality_radius_miles: 8.0
   offline_threshold_hours: 2
   packet_threshold: 500
   battery_warning_percent: 30
-  infra_overrides: []
-  region_labels: {}
+  critical_nodes: []
+  alert_channel: -1
+  alert_rules: {}
 
 # === ENVIRONMENTAL FEEDS ===
 # Live situational awareness from NWS, NOAA Space Weather, and Open-Meteo.
@@ -223,9 +232,6 @@ environmental:
 # Categories match alert types from alert_engine.py.
 notifications:
   enabled: false
-  quiet_hours_enabled: true    # Master toggle for quiet hours feature
-  quiet_hours_start: "22:00"   # Suppress non-emergency alerts during quiet hours
-  quiet_hours_end: "06:00"
 
   # Digest scheduler settings
   # The digest collects priority/routine events and delivers a summary
@@ -250,7 +256,6 @@ notifications:
       delivery_type: mesh_broadcast
       broadcast_channel: 0
       cooldown_minutes: 5
-      override_quiet: true     # Send even during quiet hours
 
     # Infrastructure Down - critical node and infrastructure offline alerts
     - name: "Infrastructure Down"
@@ -261,7 +266,6 @@ notifications:
       delivery_type: mesh_broadcast
       broadcast_channel: 0
       cooldown_minutes: 30
-      override_quiet: false
 
     # Fire Alert - wildfire proximity and new ignition
     - name: "Fire Alert"
@@ -272,7 +276,6 @@ notifications:
       delivery_type: mesh_broadcast
       broadcast_channel: 0
       cooldown_minutes: 60
-      override_quiet: false
 
     # Severe Weather - weather warnings
     - name: "Severe Weather"
@@ -283,7 +286,6 @@ notifications:
       delivery_type: mesh_broadcast
       broadcast_channel: 0
       cooldown_minutes: 30
-      override_quiet: false
 
     # Example: Morning Digest -> mesh broadcast
     # Delivers the accumulated digest at the configured schedule time

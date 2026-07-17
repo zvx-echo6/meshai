@@ -1226,6 +1226,29 @@ def _migrate_legacy_channels(notifications, data: dict):
         _config_logger.info("Migrated to %d self-contained rules", len(notifications.rules))
 
 
+# Keys that are legitimately present in raw config dicts but intentionally have
+# NO matching dataclass field on the target class -- they're consumed by
+# special-case logic elsewhere in _dict_to_dataclass (e.g. legacy-format
+# migration) rather than becoming a field. Warning about these would be a
+# false positive: the key isn't a typo, it's a known, still-supported legacy
+# shape. Keyed by (dataclass, key name).
+_KNOWN_LEGACY_DROP_KEYS = {
+    # Pre-v0.5 notifications.channels list; migrated into self-contained
+    # rules by _migrate_legacy_channels (reads straight from the raw dict,
+    # not from the coerced NotificationsConfig).
+    (NotificationsConfig, "channels"): (
+        "legacy notifications.channels format, handled by _migrate_legacy_channels"
+    ),
+    # Pre-region-routing-split master switch. The explicit region_routes
+    # handler (in the "notifications" branch below) reads this directly via
+    # rr.get("enabled", ...) as the default for mt_enabled; it never becomes
+    # a RegionRouteMatrix field.
+    (RegionRouteMatrix, "enabled"): (
+        "legacy region_routes.enabled (pre-mt/mc split), mapped to mt_enabled"
+    ),
+}
+
+
 def _dict_to_dataclass(cls, data: dict):
     """Recursively convert dict to dataclass, handling nested structures."""
     if data is None:
@@ -1238,6 +1261,13 @@ def _dict_to_dataclass(cls, data: dict):
         if key.startswith("_"):
             continue
         if key not in field_types:
+            if (cls, key) not in _KNOWN_LEGACY_DROP_KEYS:
+                _config_logger.warning(
+                    "Config key '%s' is not a recognized field on %s -- it will "
+                    "be IGNORED (dropped) on load. Check for a typo, or a "
+                    "renamed/removed field.",
+                    key, cls.__name__,
+                )
             continue
 
         field_type = field_types[key]
