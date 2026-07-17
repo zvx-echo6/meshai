@@ -1,11 +1,13 @@
 """Mesh health and node API routes."""
 
+import logging
 from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
 router = APIRouter(tags=["mesh"])
+logger = logging.getLogger(__name__)
 
 
 def _serialize_health_score(score) -> dict:
@@ -68,6 +70,22 @@ async def get_health(request: Request):
     health = health_engine.mesh_health
     score = health.score
 
+    # `recommendations_available` distinguishes "the engine ran and found
+    # nothing" (empty list, mesh is genuinely healthy) from "the engine
+    # couldn't run" (unwired reporter or an exception) — the two must not
+    # look identical to the operator. See mesh_reporter.recommendations_list().
+    mesh_reporter = getattr(request.app.state, "mesh_reporter", None)
+    recommendations: list[str] = []
+    recommendations_available = True
+    if mesh_reporter:
+        try:
+            recommendations = mesh_reporter.recommendations_list("mesh")
+        except Exception:
+            logger.exception("mesh_reporter.recommendations_list failed")
+            recommendations_available = False
+    else:
+        recommendations_available = False
+
     return {
         "score": round(score.composite, 1),
         "tier": score.tier,
@@ -90,7 +108,8 @@ async def get_health(request: Request):
         "total_regions": health.total_regions,
         "unlocated_count": len(health.unlocated_nodes),
         "last_computed": _format_timestamp(health.last_computed),
-        "recommendations": [],  # TODO: Add recommendations
+        "recommendations": recommendations,
+        "recommendations_available": recommendations_available,
     }
 
 

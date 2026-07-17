@@ -32,7 +32,13 @@ export interface MeshHealth {
   total_regions: number
   unlocated_count: number
   last_computed: string
-  recommendations: string[]
+  // Only populated by the REST /api/health response; the websocket
+  // health_update push includes neither of these (see mesh_routes.py).
+  recommendations?: string[]
+  // false when the recommendations engine couldn't run (unwired reporter or
+  // an exception) — distinct from a genuinely empty `recommendations` list.
+  // Must NOT be treated the same as "mesh is healthy".
+  recommendations_available?: boolean
 }
 
 export interface NodeInfo {

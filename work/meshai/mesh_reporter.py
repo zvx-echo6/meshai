@@ -1324,11 +1324,17 @@ class MeshReporter:
 
         return recs
 
-    def build_recommendations(self, scope: str, scope_value: str = None) -> str:
-        """Generate actionable optimization recommendations."""
+    def recommendations_list(self, scope: str, scope_value: str = None) -> list[str]:
+        """Generate actionable optimization recommendations as a plain list.
+
+        This is the canonical source of recommendation text, consumed both
+        by build_recommendations() (LLM prompt injection, formatted as a
+        string) and by API/UI callers that want a list[str] directly (e.g.
+        the dashboard health endpoint).
+        """
         health = self.health_engine.mesh_health
         if not health:
-            return ""
+            return []
 
         recs = []
 
@@ -1345,11 +1351,17 @@ class MeshReporter:
         else:  # mesh scope
             recs.extend(self._mesh_recommendations(health))
 
+        return recs[:10]
+
+    def build_recommendations(self, scope: str, scope_value: str = None) -> str:
+        """Generate actionable optimization recommendations."""
+        recs = self.recommendations_list(scope, scope_value)
+
         if not recs:
             return ""
 
         lines = ["OPTIMIZATION RECOMMENDATIONS:"]
-        for rec in recs[:10]:
+        for rec in recs:
             lines.append(f"  - {rec}")
 
         return "\n".join(lines)
