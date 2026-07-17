@@ -67,11 +67,17 @@ def _seed_tle(conn, *, norad_id, name, line1, line2, epoch, updated_at=None):
 
 
 class TestTLEUpsert:
-    """T1: TLE upsert latest-wins on epoch."""
+    """T1: TLE upsert latest-wins on epoch.
+
+    Exercises `upsert_tle` directly — the shared latest-wins primitive used
+    by every writer of `sat_tles` (native env.tle_fetch is the only one
+    left; the Central envelope ingest path that used to call it via
+    `tle_handler.handle_tle` was retired with Central).
+    """
 
     def test_newer_epoch_updates(self):
         _enable_satpass()
-        from meshai.central.tle_handler import handle_tle
+        from meshai.env.satellite.tle_store import upsert_tle
         conn = get_db()
         now = int(time.time())
 
@@ -79,20 +85,9 @@ class TestTLEUpsert:
         _seed_tle(conn, norad_id=25544, name="ISS", line1="OLD1", line2="OLD2",
                   epoch="2024-06-10T00:00:00Z")
 
-        # Send newer TLE
-        env = {
-            "data": {
-                "adapter": "celestrak_tle",
-                "data": {
-                    "norad_id": 25544,
-                    "satellite_name": "ISS (ZARYA)",
-                    "tle_line1": "NEW1",
-                    "tle_line2": "NEW2",
-                    "epoch": "2024-06-15T00:00:00Z",
-                },
-            }
-        }
-        handle_tle(env, "central.sat.tle.25544", now=now)
+        # Upsert a newer TLE
+        upsert_tle(conn, 25544, "ISS (ZARYA)", "NEW1", "NEW2",
+                   "2024-06-15T00:00:00Z", now=now)
 
         row = conn.execute("SELECT line1, line2 FROM sat_tles WHERE norad_id=25544").fetchone()
         assert row["line1"] == "NEW1"
@@ -100,7 +95,7 @@ class TestTLEUpsert:
 
     def test_older_epoch_skipped(self):
         _enable_satpass()
-        from meshai.central.tle_handler import handle_tle
+        from meshai.env.satellite.tle_store import upsert_tle
         conn = get_db()
         now = int(time.time())
 
@@ -108,49 +103,20 @@ class TestTLEUpsert:
         _seed_tle(conn, norad_id=25544, name="ISS", line1="CURRENT1", line2="CURRENT2",
                   epoch="2024-06-15T00:00:00Z")
 
-        # Send older TLE — should be skipped
-        env = {
-            "data": {
-                "adapter": "celestrak_tle",
-                "data": {
-                    "norad_id": 25544,
-                    "satellite_name": "ISS (ZARYA)",
-                    "tle_line1": "OLD1",
-                    "tle_line2": "OLD2",
-                    "epoch": "2024-06-10T00:00:00Z",
-                },
-            }
-        }
-        handle_tle(env, "central.sat.tle.25544", now=now)
+        # Upsert an older TLE — should be skipped
+        written = upsert_tle(conn, 25544, "ISS (ZARYA)", "OLD1", "OLD2",
+                             "2024-06-10T00:00:00Z", now=now)
 
+        assert written is False
         row = conn.execute("SELECT line1 FROM sat_tles WHERE norad_id=25544").fetchone()
         assert row["line1"] == "CURRENT1", "older epoch should not overwrite"
-
-    def test_returns_none_always(self):
-        """TLE handler is storage-only, never returns wire."""
-        _enable_satpass()
-        from meshai.central.tle_handler import handle_tle
-        env = {
-            "data": {
-                "adapter": "celestrak_tle",
-                "data": {
-                    "norad_id": 99999,
-                    "satellite_name": "TEST",
-                    "tle_line1": "L1",
-                    "tle_line2": "L2",
-                    "epoch": "2024-06-15T00:00:00Z",
-                },
-            }
-        }
-        result = handle_tle(env, "central.sat.tle.99999")
-        assert result is None
 
 
 class TestTLEStaleness:
     """T2: 14-day staleness exclusion at read time."""
 
     def test_fresh_tle_returned(self):
-        from meshai.central.tle_handler import get_tle_by_norad
+        from meshai.env.satellite.tle_store import get_tle_by_norad
         conn = get_db()
         # Seed with recent epoch
         recent = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
@@ -161,7 +127,7 @@ class TestTLEStaleness:
         assert tle["norad_id"] == 25544
 
     def test_stale_tle_excluded(self):
-        from meshai.central.tle_handler import get_tle_by_norad
+        from meshai.env.satellite.tle_store import get_tle_by_norad
         conn = get_db()
         # Seed with 15-day old epoch
         stale = (datetime.now(timezone.utc) - timedelta(days=15)).isoformat()
@@ -171,7 +137,7 @@ class TestTLEStaleness:
         assert tle is None, "stale TLE (>14 days) should be excluded"
 
     def test_search_excludes_stale(self):
-        from meshai.central.tle_handler import search_tle_by_name
+        from meshai.env.satellite.tle_store import search_tle_by_name
         conn = get_db()
         stale = (datetime.now(timezone.utc) - timedelta(days=15)).isoformat()
         _seed_tle(conn, norad_id=25544, name="ISS (ZARYA)", line1=ISS_LINE1,
@@ -185,7 +151,7 @@ class TestPassPredictor:
 
     def test_iss_produces_passes(self):
         """ISS TLE for Boise should produce at least one pass in 24h."""
-        from meshai.central.pass_predictor import compute_passes
+        from meshai.env.satellite.pass_predictor import compute_passes
         # Use a fixed time near the TLE epoch for best accuracy
         start = datetime(2024, 6, 16, 0, 0, 0, tzinfo=timezone.utc)
         passes = compute_passes(ISS_LINE1, ISS_LINE2, BOISE_LAT, BOISE_LON,
@@ -194,7 +160,7 @@ class TestPassPredictor:
 
     def test_pass_max_elevation_reasonable(self):
         """Max elevation should be between min_el and 90°."""
-        from meshai.central.pass_predictor import compute_passes
+        from meshai.env.satellite.pass_predictor import compute_passes
         start = datetime(2024, 6, 16, 0, 0, 0, tzinfo=timezone.utc)
         passes = compute_passes(ISS_LINE1, ISS_LINE2, BOISE_LAT, BOISE_LON,
                                 window_h=24, min_el=10.0, now=start)
@@ -204,7 +170,7 @@ class TestPassPredictor:
 
     def test_pass_aos_before_los(self):
         """AOS should be before LOS for every pass."""
-        from meshai.central.pass_predictor import compute_passes
+        from meshai.env.satellite.pass_predictor import compute_passes
         start = datetime(2024, 6, 16, 0, 0, 0, tzinfo=timezone.utc)
         passes = compute_passes(ISS_LINE1, ISS_LINE2, BOISE_LAT, BOISE_LON,
                                 window_h=24, min_el=10.0, now=start)
@@ -214,7 +180,7 @@ class TestPassPredictor:
 
     def test_pass_duration_reasonable(self):
         """Pass durations should be positive; 30s step may merge adjacent passes."""
-        from meshai.central.pass_predictor import compute_passes
+        from meshai.env.satellite.pass_predictor import compute_passes
         start = datetime(2024, 6, 16, 0, 0, 0, tzinfo=timezone.utc)
         passes = compute_passes(ISS_LINE1, ISS_LINE2, BOISE_LAT, BOISE_LON,
                                 window_h=24, min_el=10.0, now=start)
@@ -232,7 +198,7 @@ class TestPassPredictor:
         over Boise (43.6°N, 51.6° inclination orbit). We assert that at
         least one pass in 24h exceeds 30° — a conservative threshold.
         """
-        from meshai.central.pass_predictor import compute_passes
+        from meshai.env.satellite.pass_predictor import compute_passes
         start = datetime(2024, 6, 16, 0, 0, 0, tzinfo=timezone.utc)
         passes = compute_passes(ISS_LINE1, ISS_LINE2, BOISE_LAT, BOISE_LON,
                                 window_h=24, min_el=10.0, now=start)
@@ -243,7 +209,7 @@ class TestPassPredictor:
 
     def test_azimuth_range(self):
         """Azimuths should be in [0, 360) range."""
-        from meshai.central.pass_predictor import compute_passes
+        from meshai.env.satellite.pass_predictor import compute_passes
         start = datetime(2024, 6, 16, 0, 0, 0, tzinfo=timezone.utc)
         passes = compute_passes(ISS_LINE1, ISS_LINE2, BOISE_LAT, BOISE_LON,
                                 window_h=24, min_el=10.0, now=start)
@@ -252,7 +218,7 @@ class TestPassPredictor:
             assert 0 <= p.azimuth_at_los < 360, f"LOS azimuth {p.azimuth_at_los} out of range"
 
     def test_compass_conversion(self):
-        from meshai.central.pass_predictor import azimuth_to_compass
+        from meshai.env.satellite.pass_predictor import azimuth_to_compass
         assert azimuth_to_compass(0) == "N"
         assert azimuth_to_compass(45) == "NE"
         assert azimuth_to_compass(90) == "E"
@@ -442,7 +408,7 @@ class TestReplyFormat:
 
     def test_line_format_matches_spec(self):
         """Lines should match 'NAME HH:MM–HH:MM TZ max XX° DIR→DIR'."""
-        from meshai.central.pass_predictor import compute_passes, azimuth_to_compass, PassInfo
+        from meshai.env.satellite.pass_predictor import compute_passes, azimuth_to_compass, PassInfo
         from meshai.commands.satpass_cmd import SatpassCommand
         from zoneinfo import ZoneInfo
 

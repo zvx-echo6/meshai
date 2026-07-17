@@ -15,7 +15,7 @@ from meshai.env.tle_fetch import (
     parse_tle_block,
     parse_tle_epoch,
 )
-from meshai.central.tle_handler import get_tle_by_norad
+from meshai.env.satellite.tle_store import get_tle_by_norad
 from meshai.config import SatpassConfig
 from meshai.persistence import get_db
 

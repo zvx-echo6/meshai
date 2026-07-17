@@ -1,93 +1,35 @@
-"""TLE cache handler — consumes central.sat.tle.> and upserts sat_tles.
+"""TLE cache storage — sat_tles upsert/read helpers.
 
-Central publishes ~190 TLEs every ~4h on CENTRAL_SAT stream, subject
-central.sat.tle.{norad_id}. Envelope payload path:
-    data.data.{norad_id, satellite_name, tle_line1, tle_line2, epoch}
+Relocated from `meshai.central.tle_handler` (the retired Central
+NATS-consumer service) during the Central ripout. `upsert_tle` is shared by
+BOTH ingest paths that remain: the native Celestrak fetcher (`env.tle_fetch`)
+and reads feed the native pass predictor (`env.satpass`) and the on-demand
+`!satpass` command (`commands.satpass_cmd`).
 
 Upsert rule: latest-wins on epoch — skip if cached epoch >= incoming.
 Read-time staleness: callers exclude epoch older than 14 days.
 """
 from __future__ import annotations
 
-import logging
 import time
 from typing import Optional
 
 from meshai.persistence import get_db
 
-logger = logging.getLogger(__name__)
-
 # Rows with epoch older than this are stale (no tombstone upstream).
 STALE_DAYS = 14
-
-
-def handle_tle(envelope: dict, subject: str,
-               data: Optional[dict] = None,
-               now: Optional[int] = None) -> Optional[str]:
-    """Process a TLE update from Central.
-
-    Always returns None — TLE updates are storage-only, never broadcast.
-    """
-    if not isinstance(envelope, dict):
-        return None
-
-    inner = envelope.get("data") or {}
-    adapter = inner.get("adapter") or ""
-
-    # Enabled gate: silently drop when disabled, log once at INFO
-    try:
-        from meshai.adapter_config import adapter_config
-        if not getattr(adapter_config.satpass, "enabled", False):
-            if not getattr(handle_tle, "_disabled_logged", False):
-                logger.info("satpass disabled; sat TLE events dropped")
-                handle_tle._disabled_logged = True
-            return None
-    except Exception:
-        pass  # adapter_config may not be initialised in tests
-
-    # Accept both sat_tles and sat_passes adapter (Central may tag either)
-    d = inner.get("data") or {}
-
-    norad_id = d.get("norad_id")
-    if norad_id is None:
-        return None
-    try:
-        norad_id = int(norad_id)
-    except (TypeError, ValueError):
-        return None
-
-    name = d.get("satellite_name") or d.get("name") or f"SAT-{norad_id}"
-    line1 = d.get("tle_line1") or d.get("line1")
-    line2 = d.get("tle_line2") or d.get("line2")
-    epoch = d.get("epoch")
-
-    if not line1 or not line2 or not epoch:
-        logger.debug("tle_handler: missing line1/line2/epoch for NORAD %s", norad_id)
-        return None
-
-    now = now if now is not None else int(time.time())
-
-    try:
-        conn = get_db()
-    except Exception:
-        logger.exception("tle_handler: persistence unavailable")
-        return None
-
-    upsert_tle(conn, norad_id, name, line1, line2, epoch, now=now)
-
-    return None  # storage-only, never broadcast
 
 
 def upsert_tle(conn, norad_id: int, name: str, line1: str, line2: str,
                epoch, now: Optional[int] = None) -> bool:
     """Upsert one TLE into sat_tles with latest-epoch-wins semantics.
 
-    Shared by BOTH ingest paths — the Central envelope handler
-    (`handle_tle`) and the native Celestrak fetcher (`env.tle_fetch`) — so
-    the predictor reads TLEs identically regardless of source. `epoch` is a
-    lexicographically-sortable string (ISO 8601 for Central, ISO 8601
-    derived from the TLE line-1 epoch field for the native fetch); a cached
-    row whose epoch is >= the incoming epoch is left untouched.
+    Shared by BOTH ingest paths — historically the Central envelope handler
+    and the native Celestrak fetcher (`env.tle_fetch`), now just the native
+    fetcher — so the predictor reads TLEs identically regardless of source.
+    `epoch` is a lexicographically-sortable string (ISO 8601 derived from the
+    TLE line-1 epoch field); a cached row whose epoch is >= the incoming
+    epoch is left untouched.
 
     Returns True if a row was written (insert or update), False if the
     cached epoch was same-or-newer and the write was skipped.

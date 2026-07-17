@@ -1,9 +1,9 @@
 """Celestrak TLE fetcher — native, keyless population of sat_tles.
 
-Storage-only native adapter (like central.tle_handler): it does NOT emit
-mesh Events. Its sole job is to keep the shared `sat_tles` table populated
-with fresh two-line element sets so the native SGP4 pass-predictor (built
-next) has current orbital data when satpass runs with feed_source="native".
+Storage-only native adapter: it does NOT emit mesh Events. Its sole job is
+to keep the shared `sat_tles` table populated with fresh two-line element
+sets so the native SGP4 pass-predictor has current orbital data when
+satpass runs with feed_source="native".
 
 Source: Celestrak GP API (https://celestrak.org/NORAD/elements/gp.php),
 FORMAT=tle (classic 3-line: name / line1 / line2). Two selector styles:
@@ -15,11 +15,10 @@ Config (SatpassConfig): `tle_groups` (list of group names), `norad_ids`
 update ~daily so the default is 6h). Gated on feed_source=="native" via
 the normal EnvironmentalStore registration.
 
-Upserts flow through `central.tle_handler.upsert_tle` so native and
-Central ingestion share identical latest-epoch-wins semantics and the same
-`sat_tles` columns. The TLE line-1 epoch field (columns 19-32) is parsed
-into an ISO-8601 string so it is directly comparable with the ISO epochs
-Central stores.
+Upserts flow through `env.satellite.tle_store.upsert_tle`, the shared
+latest-epoch-wins helper used by every writer of the `sat_tles` table. The
+TLE line-1 epoch field (columns 19-32) is parsed into an ISO-8601 string so
+epochs are directly comparable regardless of source.
 """
 
 from __future__ import annotations
@@ -204,7 +203,7 @@ class TLEFetchAdapter:
         if not records:
             return 0
         from meshai.persistence import get_db
-        from meshai.central.tle_handler import upsert_tle
+        from meshai.env.satellite.tle_store import upsert_tle
 
         conn = get_db()
         now = int(time.time())

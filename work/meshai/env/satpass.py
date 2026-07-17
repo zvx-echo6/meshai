@@ -1,12 +1,11 @@
 """Native SGP4 satellite-pass adapter — predicts + broadcasts locally.
 
-The final piece of native satpass: unlike the Central path (which receives
-one per-observer envelope at a time, buffers them in `satpass_pending`, and
-relies on the Central consumer's timer to fire `consolidate_satpass_pending`),
-this adapter computes ALL observers for a satellite in a SINGLE `tick()`. That
-lets it consolidate across observers in-memory and gate synchronously — so it
-needs NEITHER the `satpass_pending` buffer NOR the Central consumer/timer,
-both of which are OFF in standalone (feed_source="native") mode.
+Unlike the retired Central path (which received one per-observer envelope at
+a time, buffered them in a `satpass_pending` table, and relied on a
+consumer timer to fire a consolidation pass), this adapter computes ALL
+observers for a satellite in a SINGLE `tick()`. That lets it consolidate
+across observers in-memory and gate synchronously — no buffer table, no
+timer, no consumer.
 
 Flow per tick (slow poll, ~15 min; passes are computed over `window_hours`):
     1. Resolve target satellites from the shared `sat_tles` table (populated
@@ -19,14 +18,14 @@ Flow per tick (slow poll, ~15 min; passes are computed over `window_hours`):
            "predict for everything the fetcher stocked". Broadcast volume is
            still bounded by the gate's rate cap + dry-run default.
     2. For each satellite x each enabled observer, run the SGP4 predictor
-       (`central.pass_predictor.compute_passes`).
+       (`env.satellite.pass_predictor.compute_passes`).
     3. Group every (observer, PassInfo) by the observer-independent canonical
-       id `{norad}:{aos_epoch//3600}` and consolidate across observers exactly
-       like `consolidate_satpass_pending`: earliest AOS, latest LOS, the
-       max-elevation observer supplies max_elevation + peak_compass, and the
-       entry/exit observers are the earliest-AOS / latest-LOS stations.
-    4. Hand each consolidated pass to the SHARED, source-agnostic
-       `satpass_handler.gate_consolidated_pass`, which dedups vs
+       id `{norad}:{aos_epoch//3600}` and consolidate across observers:
+       earliest AOS, latest LOS, the max-elevation observer supplies
+       max_elevation + peak_compass, and the entry/exit observers are the
+       earliest-AOS / latest-LOS stations (see `_consolidate` below).
+    4. Hand each consolidated pass to
+       `env.satellite.pass_format.gate_consolidated_pass`, which dedups vs
        `satpass_events`, applies the rate cap + dry-run, upserts the event
        row, and attaches the deferred commit. Staged results feed
        `get_events()` / `to_event()`.
@@ -124,7 +123,7 @@ class SatpassAdapter:
         sat_tles with GOES/METEOR/FENGYUN etc.; the strict post-filter
         guarantees those never leak into predictions once a list is set.
         """
-        from meshai.central.tle_handler import get_fresh_tles, get_tle_by_norad
+        from meshai.env.satellite.tle_store import get_fresh_tles, get_tle_by_norad
 
         if self._norad_ids:
             allowed = set(self._norad_ids)
@@ -138,11 +137,10 @@ class SatpassAdapter:
 
     @staticmethod
     def _consolidate(cid: str, recs: list[dict]) -> dict:
-        """Merge per-observer records for one canonical pass.
-
-        Mirrors `consolidate_satpass_pending`: earliest AOS, latest LOS, the
-        max-elevation observer supplies max_elevation + peak_compass, and the
-        entry/exit observers are the earliest-AOS / latest-LOS stations.
+        """Merge per-observer records for one canonical pass: earliest AOS,
+        latest LOS, the max-elevation observer supplies max_elevation +
+        peak_compass, and the entry/exit observers are the earliest-AOS /
+        latest-LOS stations.
         """
         by_aos = sorted(recs, key=lambda r: r["aos_epoch"])
         by_los = sorted(recs, key=lambda r: r["los_epoch"])
@@ -168,8 +166,8 @@ class SatpassAdapter:
 
     def _compute_staged(self, now_epoch: int) -> list[dict]:
         """Predict → consolidate → gate. Returns staged event dicts."""
-        from meshai.central import satpass_handler as sh
-        from meshai.central.pass_predictor import compute_passes
+        from meshai.env.satellite import pass_format as sh
+        from meshai.env.satellite.pass_predictor import compute_passes
         from meshai.persistence.observer_locations import get_observers
 
         observers = get_observers()
