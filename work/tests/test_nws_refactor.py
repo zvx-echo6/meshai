@@ -1,57 +1,49 @@
-"""Phase-2 NWS refactor tests — formatter+gater architecture verification.
+"""NWS refactor tests — formatter+gater architecture verification.
 
-Four test groups:
+Originally four test groups; groups 1-3 below were golden-parity tests
+against the now-deleted Central NATS-consumer bridge
+(meshai.central.nws_handler / handle_nws / _render). That bridge is dead —
+production runs the native formatter+gater path exclusively — so byte-parity
+and old-vs-new comparisons against it no longer have anything to compare
+against and were deleted (git history preserves the original handler and
+the parity tests that proved the rewrite matched it). What remains exercises
+the LIVE native path only:
 
-1. Golden byte-parity (tier-a): for each NWS fixture, run the OLD _render()
-   under pinned_time+pinned_tz, then run the NEW format() from canonical
-   data built by the Central bridge, and assert_byte_identical.  This MUST
-   be exactly equal — any difference is a regression.
+1. Formatter golden: formatters.nws.format() renders the expected wire text
+   for real fixtures and pathological synthetic cases (SVR path-sampling,
+   dangling-separator regression, TOR/FFW branches). These goldens are
+   hardcoded literals, NOT computed by importing the deleted handler.  They
+   were derived by temporarily restoring the pre-excision
+   meshai.central.nws_handler._render() from git history (ca751fb5^) in a
+   throwaway script, confirming it produced byte-identical output to the
+   current native format() for every case below, and pinning the resulting
+   string as the literal.  That verification script/module was never
+   committed; only the confirmed-matching literals live here.  See "golden
+   verified against pre-excision _render()" comments below.
 
-2. Cross-source identity: the native adapter's to_event() canonical dict
-   (for a synthetic fixture) produces the same formatter output as the
-   Central-bridge canonical dict built from the same alert data.
+2. Gate-sequence: replay a synthetic 4-step lifecycle (first→dup<3h→
+   dup>3h→Cancel) through gating.nws.decide(), and a reference-triggered
+   "Update" prefix case — both against native code only.
 
-3. Gate-sequence: replay a synthetic 4-step lifecycle (first→dup<3h→
-   dup>3h→Cancel) through the OLD handle_nws gating and the NEW
-   gating.nws.decide(), and assert broadcast/suppress match at every step.
-
-4. Schema-conformance: env/nws.py _fetch() emits all canonical schema keys;
+3. Schema-conformance: env/nws.py _fetch() emits all canonical schema keys;
    description is not truncated; to_event() produces a canonical event.data.
+
+4. Formatter/gater registration: formatters/__init__ and gating/__init__
+   register the NWS categories against the native format()/decide().
 """
 from __future__ import annotations
 
-import json
-import os
-import pathlib
 import time
+from datetime import datetime
 
 import pytest
 
-from meshai.central.nws_handler import _render, handle_nws
 from meshai.central.budget import budget_for
 from meshai.notifications.formatters.nws import format as nws_format
 from meshai.notifications.gating.nws import decide as nws_decide
-from meshai.notifications.gating.base import GateResult
-from meshai.persistence import close_thread_connection, get_db, init_db
+from meshai.persistence import close_thread_connection, init_db
 from meshai.persistence import db as persistence_db
-from tests.harness.goldens import (
-    assert_byte_identical,
-    load_fixtures,
-    pinned_time,
-    pinned_tz,
-    run_gate_sequence,
-)
-
-# ── Shared epoch for deterministic renders ────────────────────────────────────
-_AT = 1_783_206_513.0   # captured_epoch for fixture 0000
-
-
-# ── Minimal fake Event for calling formatter without full pipeline ────────────
-
-class _FakeEvent:
-    def __init__(self, data: dict):
-        self.data = data
-
+from tests.harness.goldens import assert_byte_identical, load_fixtures, pinned_tz
 
 # ── DB fixture ────────────────────────────────────────────────────────────────
 
@@ -67,357 +59,350 @@ def mem_db(monkeypatch, tmp_path):
     persistence_db._initialised.discard(db_path)
 
 
-# ── Helper: build canonical data from a Central fixture ──────────────────────
+class _FakeEvent:
+    """Minimal fake Event for calling the formatter without the full pipeline."""
+    def __init__(self, data: dict):
+        self.data = data
 
-def _canonical_from_fixture(fix: dict) -> dict:
-    """Extract canonical event.data dict from a Central NWS fixture.
 
-    Mirrors exactly what handle_nws (cutover path) writes into data dict.
-    Used in formatter golden tests without going through the full handler.
-    """
-    envelope = fix["envelope"]
-    inner = envelope.get("data") or {}
-    d = inner.get("data") or {}
-    geo = inner.get("geo") or {}
-    ge = (d.get("_enriched") or {}).get("geocoder") or {}
-    category_raw = inner.get("category") or ""
-
-    from meshai.central.nws_handler import _category_to_event_type, _parse_iso
-
-    cap_id = d.get("id") or inner.get("id")
-    event_type = d.get("event") or _category_to_event_type(category_raw)
-    area_desc = d.get("areaDesc")
-    headline = d.get("headline")
-    description = d.get("description")
-    cap_severity = d.get("severity")
-    county = d.get("areaDesc") or ge.get("county")
-    state = ge.get("state") or d.get("state")
-    expires_epoch = _parse_iso(d.get("expires"))
-    same_code = ((d.get("eventCode") or {}).get("SAME") or [""])[0]
-    certainty = d.get("certainty") or ""
-    references = d.get("references") or []
-    parameters = d.get("parameters") or {}
-    msg_type = d.get("msgType")
-
+def _canonical(event_type, *, same_code="", area_desc="Twin Falls County",
+               county="Twin Falls", state="ID", expires_epoch=1_751_400_000,
+               certainty="Observed", parameters=None, description="",
+               prefix="") -> dict:
+    """Build a canonical event.data dict as the native adapter's to_event()
+    (or the decider's data_patch) would produce it, for feeding directly to
+    nws_format()."""
     return {
-        "cap_id": cap_id,
+        "cap_id": "test",
         "event": event_type,
         "same_code": same_code,
-        "cap_severity": cap_severity,
+        "cap_severity": None,
         "certainty": certainty,
         "expires_at": expires_epoch,
         "area_desc": area_desc,
-        "geocoder": {
-            "city": ge.get("city"),
-            "county": county,
-            "state": state,
-        },
+        "geocoder": {"city": None, "county": county, "state": state},
         "description": description,
-        "parameters": parameters,
-        "msgType": msg_type,
-        "references": references,
-        "category": category_raw,
-        "headline": headline,
-        # prefix injected by gater: "" for first sighting (no references)
-        "_nws_prefix": "",
+        "parameters": parameters or {},
+        "msgType": "Alert",
+        "references": [],
+        "category": "",
+        "headline": None,
+        "_nws_prefix": prefix,
     }
 
 
-def _old_render_from_fixture(fix: dict) -> str:
-    """Call old _render() from a Central NWS fixture with pinned clock+tz.
-
-    Returns the wire string.
-    """
-    envelope = fix["envelope"]
-    inner = envelope.get("data") or {}
-    d = inner.get("data") or {}
-    geo = inner.get("geo") or {}
-    ge = (d.get("_enriched") or {}).get("geocoder") or {}
-    category_raw = inner.get("category") or ""
-
-    from meshai.central.nws_handler import _category_to_event_type, _parse_iso
-
-    event_type = d.get("event") or _category_to_event_type(category_raw)
-    area_desc = d.get("areaDesc")
-    cap_severity = d.get("severity")
-    county = d.get("areaDesc") or ge.get("county")
-    state = ge.get("state") or d.get("state")
-    expires_epoch = _parse_iso(d.get("expires"))
-
-    lat = lon = None
-    cent = geo.get("centroid") or []
-    if isinstance(cent, list) and len(cent) >= 2:
-        lon, lat = cent[0], cent[1]
-
-    epoch = float(fix.get("captured_epoch", _AT))
-    return _render(
-        event_type=event_type, area_desc=area_desc,
-        geocoder_city=ge.get("city"), county=county, state=state,
-        expires_epoch=expires_epoch, lat=lat, lon=lon,
-        now=epoch, prefix="", d=d,
-    )
-
-
 # =============================================================================
-# 1. Golden byte-parity (tier-a)
+# 1. Formatter golden — native format() wire text
 # =============================================================================
 
-class TestGoldenByteParity:
-    """formatters/nws.format() is byte-identical to _render() for all fixtures.
+class TestFormatterGolden:
+    """formatters.nws.format() renders the expected wire text.
 
-    Both the nws/ fixtures (first-sighting, no prefix) and nws_last/ fixtures
-    (may have references → "Update" prefix) are tested.
+    Fixture-driven cases (golden verified against pre-excision _render(),
+    see module docstring) plus hand-built pathological cases that pin
+    known-tricky behavior: SVR path-sampling, the "no dangling separator"
+    regression, and the TOR/FFW hazard branches.
     """
 
-    def _render_and_format(self, fix: dict, prefix: str = ""):
-        """Run old _render and new format() under identical pinned clock+tz.
+    def _canonical_from_fixture(self, fix: dict) -> dict:
+        """Extract canonical event.data from a Central-style NWS fixture.
 
-        Returns (golden, new_output).
+        Standalone re-implementation of the field extraction that used to
+        live in the deleted meshai.central.nws_handler (event-type fallback
+        via category, ISO-to-epoch parsing) — kept here only as test
+        scaffolding to turn a raw fixture into a canonical dict.
         """
-        epoch = float(fix.get("captured_epoch", _AT))
-
-        canonical = _canonical_from_fixture(fix)
-        canonical["_nws_prefix"] = prefix
-
-        budget = budget_for("nws")
-
-        with pinned_tz("America/Boise"):
-            with pinned_time(epoch):
-                golden = _old_render_from_fixture(fix)
-                # Override prefix in _render for parity (handler uses "" for first-sight)
-                golden = _render(
-                    **{k: canonical.get(k) for k in
-                       ("event_type",)},  # we'll call _render directly below
-                )
-            # Actually call _render directly with same params as _old_render_from_fixture
-            golden = _old_render_from_fixture(fix)
-            new_out = nws_format(_FakeEvent(canonical), now=epoch, budget=budget)
-
-        return golden, new_out
-
-    @pytest.mark.parametrize("n", list(range(27)))
-    def test_fixture_nws_byte_identical(self, n):
-        """All 27 nws/ fixtures render byte-identically old vs new."""
-        fixes = load_fixtures("nws")
-        if n >= len(fixes):
-            pytest.skip(f"fixture {n} not found (only {len(fixes)} fixtures)")
-        fix = fixes[n]
-        epoch = float(fix.get("captured_epoch", _AT))
-        canonical = _canonical_from_fixture(fix)
-        budget = budget_for("nws")
-
-        with pinned_tz("America/Boise"):
-            golden = _old_render_from_fixture(fix)
-            new_out = nws_format(_FakeEvent(canonical), now=epoch, budget=budget)
-
-        assert_byte_identical(new_out, golden)
-
-    @pytest.mark.parametrize("n", list(range(10)))
-    def test_fixture_nws_last_byte_identical(self, n):
-        """All 10 nws_last/ fixtures render byte-identically old vs new."""
-        fixes = load_fixtures("nws_last")
-        if n >= len(fixes):
-            pytest.skip(f"fixture {n} not found (only {len(fixes)} fixtures)")
-        fix = fixes[n]
-        epoch = float(fix.get("captured_epoch", _AT))
-        canonical = _canonical_from_fixture(fix)
-        budget = budget_for("nws")
-
-        with pinned_tz("America/Boise"):
-            golden = _old_render_from_fixture(fix)
-            new_out = nws_format(_FakeEvent(canonical), now=epoch, budget=budget)
-
-        assert_byte_identical(new_out, golden)
-
-    def test_update_prefix_byte_identical(self):
-        """'Update:' prefix variant is byte-identical."""
-        fixes = load_fixtures("nws_last")
-        if not fixes:
-            pytest.skip("no nws_last fixtures")
-        fix = fixes[0]
-        epoch = float(fix.get("captured_epoch", _AT))
-        canonical = _canonical_from_fixture(fix)
-        canonical["_nws_prefix"] = "Update"
-        budget = budget_for("nws")
-
         envelope = fix["envelope"]
         inner = envelope.get("data") or {}
         d = inner.get("data") or {}
-        geo = inner.get("geo") or {}
         ge = (d.get("_enriched") or {}).get("geocoder") or {}
-        from meshai.central.nws_handler import _category_to_event_type, _parse_iso
         category_raw = inner.get("category") or ""
-        event_type = d.get("event") or _category_to_event_type(category_raw)
+
+        event_type = d.get("event") or "Weather Alert"
         area_desc = d.get("areaDesc")
         county = d.get("areaDesc") or ge.get("county")
         state = ge.get("state") or d.get("state")
         expires_epoch = _parse_iso(d.get("expires"))
-        lat = lon = None
-        cent = geo.get("centroid") or []
-        if isinstance(cent, list) and len(cent) >= 2:
-            lon, lat = cent[0], cent[1]
+        same_code = ((d.get("eventCode") or {}).get("SAME") or [""])[0]
 
-        with pinned_tz("America/Boise"):
-            golden = _render(event_type=event_type, area_desc=area_desc,
-                             geocoder_city=ge.get("city"), county=county, state=state,
-                             expires_epoch=expires_epoch, lat=lat, lon=lon,
-                             now=epoch, prefix="Update", d=d)
-            new_out = nws_format(_FakeEvent(canonical), now=epoch, budget=budget)
-
-        assert_byte_identical(new_out, golden)
-
-    def test_active_prefix_byte_identical(self):
-        """'Active:' prefix variant is byte-identical."""
-        fixes = load_fixtures("nws")
-        if not fixes:
-            pytest.skip("no nws fixtures")
-        fix = fixes[0]
-        epoch = float(fix.get("captured_epoch", _AT))
-        canonical = _canonical_from_fixture(fix)
-        canonical["_nws_prefix"] = "Active"
-        budget = budget_for("nws")
-
-        envelope = fix["envelope"]
-        inner = envelope.get("data") or {}
-        d = inner.get("data") or {}
-        geo = inner.get("geo") or {}
-        ge = (d.get("_enriched") or {}).get("geocoder") or {}
-        from meshai.central.nws_handler import _category_to_event_type, _parse_iso
-        category_raw = inner.get("category") or ""
-        event_type = d.get("event") or _category_to_event_type(category_raw)
-        area_desc = d.get("areaDesc")
-        county = d.get("areaDesc") or ge.get("county")
-        state = ge.get("state") or d.get("state")
-        expires_epoch = _parse_iso(d.get("expires"))
-        lat = lon = None
-        cent = geo.get("centroid") or []
-        if isinstance(cent, list) and len(cent) >= 2:
-            lon, lat = cent[0], cent[1]
-
-        with pinned_tz("America/Boise"):
-            golden = _render(event_type=event_type, area_desc=area_desc,
-                             geocoder_city=ge.get("city"), county=county, state=state,
-                             expires_epoch=expires_epoch, lat=lat, lon=lon,
-                             now=epoch, prefix="Active", d=d)
-            new_out = nws_format(_FakeEvent(canonical), now=epoch, budget=budget)
-
-        assert_byte_identical(new_out, golden)
-
-
-# =============================================================================
-# 2. Cross-source identity: native canonical == Central-sourced render
-# =============================================================================
-
-class TestCrossSourceIdentity:
-    """Native adapter to_event() canonical == Central-bridge canonical for same alert."""
-
-    def _make_native_raw(self, props: dict, onset: float, expires: float) -> dict:
-        """Simulate what _fetch() builds for a single NWS API feature."""
         return {
-            "source": "nws",
-            "event_id": props.get("id", ""),
-            "event_type": props.get("event", "Unknown"),
-            "severity": (props.get("severity") or "Unknown").lower(),
-            "headline": props.get("headline", ""),
-            "description": props.get("description") or "",
-            "onset": onset,
-            "expires": expires,
-            "expires_at": expires,
-            "areas": (props.get("geocode") or {}).get("UGC", []),
-            "area_desc": props.get("areaDesc", ""),
-            "fetched_at": time.time(),
-            "cap_id": props.get("id", ""),
-            "same_code": ((props.get("eventCode") or {}).get("SAME") or [""])[0],
-            "cap_severity": props.get("severity", "Unknown"),
-            "certainty": props.get("certainty", "Unknown"),
-            "parameters": props.get("parameters") or {},
-            "msgType": props.get("messageType", "Alert"),
-            "references": props.get("references") or [],
-        }
-
-    def test_native_and_central_render_identically(self):
-        """For a synthetic SVR alert, native and Central canonical render the same wire.
-
-        Both paths must produce byte-identical output when given the same underlying
-        alert data.  The key equality constraints are:
-          - same expires_at epoch
-          - same same_code
-          - same area_desc / geocoder.county
-          - same parameters (wind/hail)
-          - same _nws_prefix (both "")
-        """
-        from unittest.mock import MagicMock
-        from meshai.env.nws import NWSAlertsAdapter
-        from meshai.central.nws_handler import _parse_iso
-
-        expires_iso = "2026-07-04T01:00:00-06:00"
-        # Derive epoch from the ISO string so both paths use the same value.
-        expires_epoch = _parse_iso(expires_iso)  # int
-
-        props = {
-            "id": "urn:oid:test.svr.001",
-            "event": "Severe Thunderstorm Warning",
-            "severity": "Severe",
-            "certainty": "Observed",
-            "areaDesc": "Twin Falls County",
-            "headline": "SVR Warning Twin Falls County",
-            "description": "HAZARD...60 MPH winds and 1.00 inch hail.",
-            "expires": expires_iso,
-            "messageType": "Alert",
-            "references": [],
-            "parameters": {
-                "maxWindGust": ["60 MPH"],
-                "maxHailSize": ["1.00"],
-            },
-            "eventCode": {"SAME": ["SVR"]},
-            "geocode": {"UGC": ["IDZ016"]},
-        }
-
-        # Native path: build raw → to_event() → event.data
-        mock_cfg = MagicMock()
-        mock_cfg.areas = ["ID"]
-        mock_cfg.user_agent = "(test)"
-        mock_cfg.severity_min = "moderate"
-        mock_cfg.tick_seconds = 60
-        adapter = NWSAlertsAdapter(mock_cfg)
-
-        raw = self._make_native_raw(props, onset=expires_epoch - 7200, expires=expires_epoch)
-        native_event = adapter.to_event(raw)
-        native_canonical = native_event.data
-
-        # Central path: build canonical manually (same logic as bridge)
-        central_canonical = {
-            "cap_id": props["id"],
-            "event": "Severe Thunderstorm Warning",
-            "same_code": "SVR",
-            "cap_severity": "Severe",
-            "certainty": "Observed",
+            "cap_id": d.get("id") or inner.get("id"),
+            "event": event_type,
+            "same_code": same_code,
+            "cap_severity": d.get("severity"),
+            "certainty": d.get("certainty") or "",
             "expires_at": expires_epoch,
-            "area_desc": "Twin Falls County",
-            "geocoder": {"city": None, "county": "Twin Falls County", "state": None},
-            "description": props["description"],
-            "parameters": props["parameters"],
-            "msgType": "Alert",
-            "references": [],
-            "category": "weather_warning",
-            "headline": props["headline"],
+            "area_desc": area_desc,
+            "geocoder": {"city": ge.get("city"), "county": county, "state": state},
+            "description": d.get("description"),
+            "parameters": d.get("parameters") or {},
+            "msgType": d.get("msgType"),
+            "references": d.get("references") or [],
+            "category": category_raw,
+            "headline": d.get("headline"),
             "_nws_prefix": "",
         }
 
+    @pytest.mark.parametrize("n,expected", [
+        (0, "🌬️ Special Weather Statement\nUntil 5:45 PM MDT — Northern Elko County"
+            "\nLandspouts, 40mph gusts, and half inch hail · observed"
+            "\nMoving W 23 mph"),
+        (8, "⛈️ Severe Thunderstorm Warning\nUntil 4:30 PM MDT — Cassia, ID"
+            "\nup to 50mph winds, 1\" hail · radar"
+            "\nMoving SW 20 mph"),
+        (9, "🌩️ Severe Thunderstorm Warning\nUntil 4:30 PM MDT — Cassia, ID"
+            "\n1\" hail · observed"
+            "\nMoving SW 20 mph — Oakley Reservoir and Oakley"),
+    ])
+    def test_fixture_golden(self, n, expected):
+        """Real nws/ fixtures render to the pinned wire text.
+
+        golden verified against pre-excision _render() (see module docstring).
+        """
+        fixes = load_fixtures("nws")
+        fix = fixes[n]
+        epoch = float(fix.get("captured_epoch", 1_783_206_513.0))
+        canonical = self._canonical_from_fixture(fix)
         budget = budget_for("nws")
+
         with pinned_tz("America/Boise"):
-            native_wire = nws_format(_FakeEvent(native_canonical), now=expires_epoch - 100, budget=budget)
-            central_wire = nws_format(_FakeEvent(central_canonical), now=expires_epoch - 100, budget=budget)
+            result = nws_format(_FakeEvent(canonical), now=epoch, budget=budget)
 
-        assert_byte_identical(native_wire, central_wire)
+        assert_byte_identical(result, expected)
+
+    def test_svr_long_locations_path_sampled(self):
+        """SVR with a long town list renders a PATH SAMPLE (first → last),
+        never a tail-drop that silently loses the final town.
+
+        golden verified against pre-excision _render() (see module docstring).
+        """
+        long_locations = (
+            "Buhl, Eden, Hazelton, Murtaugh, Richfield, Dietrich, "
+            "Gooding, Hagerman, Wendell, and Shoshone"
+        )
+        description = (
+            "HAZARD...Damaging winds to 60 mph and quarter-size hail.\n\n"
+            f"Locations impacted include...{long_locations}"
+        )
+        canonical = _canonical(
+            "Severe Thunderstorm Warning", same_code="SVR",
+            certainty="Observed", description=description,
+            parameters={
+                "maxWindGust": ["60 MPH"], "maxHailSize": ["1.00"],
+                "eventMotionDescription": ["2200000T254DEG...35KT 42.5,-114.5"],
+            },
+        )
+        expected = (
+            "⛈️ Severe Thunderstorm Warning\nUntil 2:00 PM MDT — Twin Falls County"
+            "\n60mph winds, 1\" hail · radar"
+            "\nMoving W 40 mph — Buhl → Shoshone"
+        )
+
+        with pinned_tz("America/Boise"):
+            result = nws_format(_FakeEvent(canonical), now=1_751_400_000,
+                                 budget=budget_for("nws"))
+
+        assert len(result) <= 140
+        assert "→" in result, "long town list must be path-sampled"
+        assert "Buhl" in result and "Shoshone" in result
+        assert_byte_identical(result, expected)
+
+    def test_svr_short_locations_shown_in_full(self):
+        """SVR with a short town list shows the FULL comma-joined list —
+        never the path-sample arrow.
+
+        golden verified against pre-excision _render() (see module docstring).
+        """
+        description = (
+            "HAZARD...Damaging winds to 60 mph and quarter-size hail.\n\n"
+            "Locations impacted include...Buhl, Eden, and Hazelton"
+        )
+        canonical = _canonical(
+            "Severe Thunderstorm Warning", same_code="SVR",
+            certainty="Observed", description=description,
+            parameters={
+                "maxWindGust": ["60 MPH"], "maxHailSize": ["1.00"],
+                "eventMotionDescription": ["2200000T254DEG...35KT 42.5,-114.5"],
+            },
+        )
+        expected = (
+            "⛈️ Severe Thunderstorm Warning\nUntil 2:00 PM MDT — Twin Falls County"
+            "\n60mph winds, 1\" hail · radar"
+            "\nMoving W 40 mph — Buhl, Eden, Hazelton"
+        )
+
+        with pinned_tz("America/Boise"):
+            result = nws_format(_FakeEvent(canonical), now=1_751_400_000,
+                                 budget=budget_for("nws"))
+
+        assert "→" not in result, "short list must not be path-sampled"
+        assert_byte_identical(result, expected)
+
+    def test_sps_no_dangling_separator(self):
+        """Regression: an SPS with wind+motion+long town list must never
+        collapse to a trailing bare em-dash ('Moving SW 24 mph —…').
+
+        golden verified against pre-excision _render() (see module docstring).
+        """
+        long_locations = (
+            "Twin Falls, Kimberly, Filer, Buhl, Hansen, Murtaugh, Hollister, "
+            "Eden, Hazelton, and Rogerson"
+        )
+        description = (
+            "HAZARD...Wind gusts in excess of 45 mph and pea size hail.\n\n"
+            "SOURCE...Radar indicated.\n\n"
+            f"Locations impacted include...{long_locations}"
+        )
+        canonical = _canonical(
+            "Special Weather Statement", same_code="SPS",
+            certainty="Observed", description=description,
+            parameters={"eventMotionDescription": ["2200000T225DEG...21KT 42.5,-114.5"]},
+        )
+        expected = (
+            "🌬️ Special Weather Statement\nUntil 2:00 PM MDT — Twin Falls County"
+            "\n45mph gusts and 0.25\" hail · observed"
+            "\nMoving SW 24 mph — Twin Falls"
+        )
+
+        with pinned_tz("America/Boise"):
+            result = nws_format(_FakeEvent(canonical), now=1_751_400_000,
+                                 budget=budget_for("nws"))
+
+        assert len(result) <= 140
+        for line in result.splitlines():
+            stripped = line.rstrip()
+            assert not stripped.endswith("—"), f"bare trailing em-dash: {line!r}"
+            assert "—…" not in stripped and "— …" not in stripped
+        assert "45mph gusts" in result, "wind hazard not tightened"
+        assert '0.25" hail' in result, "hail not rendered numerically ('pea' -> 0.25\")"
+        assert "in excess of" not in result, "filler phrase survived tightening"
+        assert_byte_identical(result, expected)
+
+    def test_sps_pathological_towns_degrade_to_motion_only(self):
+        """When not even one sampled town fits the remaining budget, line 4
+        degrades to motion-only — never a dangling separator.
+
+        golden verified against pre-excision _render() (see module docstring).
+        """
+        long_town = "Averyverylongimpossibletownnamethatwillnotfitthebudgetatall" * 2
+        description = (
+            "HAZARD...Wind gusts in excess of 45 mph.\n\n"
+            f"Locations impacted include...{long_town}"
+        )
+        canonical = _canonical(
+            "Special Weather Statement", same_code="SPS",
+            certainty="Observed", description=description,
+            parameters={"eventMotionDescription": ["2200000T225DEG...21KT 42.5,-114.5"]},
+        )
+        expected = (
+            "🌬️ Special Weather Statement\nUntil 2:00 PM MDT — Twin Falls County"
+            "\n45mph gusts · observed"
+            "\nMoving SW 24 mph"
+        )
+
+        with pinned_tz("America/Boise"):
+            result = nws_format(_FakeEvent(canonical), now=1_751_400_000,
+                                 budget=budget_for("nws"))
+
+        assert len(result) <= 140
+        last = result.splitlines()[-1]
+        if last.startswith("Moving"):
+            assert " — " not in last, f"expected motion-only, got: {last!r}"
+        assert_byte_identical(result, expected)
+
+    def test_tor_observed_on_ground_with_damage_threat(self):
+        """TOR branch: OBSERVED detection -> 'on ground'; damage threat appended.
+
+        golden verified against pre-excision _render() (see module docstring).
+        """
+        canonical = _canonical(
+            "Tornado Warning", same_code="TOR", certainty="Observed",
+            description="TORNADO...OBSERVED\n\nLocations impacted include...Twin Falls.",
+            parameters={"tornadoDetection": ["OBSERVED"],
+                        "tornadoDamageThreat": ["Considerable"]},
+        )
+        expected = (
+            "🌪️ Tornado Warning\nUntil 2:00 PM MDT — Twin Falls County"
+            "\ntornado on ground · considerable damage"
+            "\nTwin Falls"
+        )
+
+        with pinned_tz("America/Boise"):
+            result = nws_format(_FakeEvent(canonical), now=1_751_400_000,
+                                 budget=budget_for("nws"))
+
+        assert_byte_identical(result, expected)
+
+    def test_tor_radar_indicated_no_threat(self):
+        """TOR branch: non-OBSERVED detection -> 'radar'; no threat segment
+        when tornadoDamageThreat is empty.
+
+        golden verified against pre-excision _render() (see module docstring).
+        """
+        canonical = _canonical(
+            "Tornado Warning", same_code="TOR", certainty="Possible",
+            description="TORNADO...RADAR INDICATED\n\nLocations impacted include...Buhl.",
+            parameters={"tornadoDetection": ["RADAR INDICATED"], "tornadoDamageThreat": []},
+        )
+        expected = (
+            "🌪️ Tornado Warning\nUntil 2:00 PM MDT — Twin Falls County"
+            "\ntornado radar"
+            "\nBuhl"
+        )
+
+        with pinned_tz("America/Boise"):
+            result = nws_format(_FakeEvent(canonical), now=1_751_400_000,
+                                 budget=budget_for("nws"))
+
+        assert_byte_identical(result, expected)
+
+    def test_ffw_thunderstorm_flood_cause(self):
+        """FFW/FLW branch: flood-cause keyword ('thunderstorm') is appended
+        as a ' · thunderstorms' segment.
+
+        golden verified against pre-excision _render() (see module docstring).
+        """
+        canonical = _canonical(
+            "Flash Flood Warning", same_code="FFW", certainty="Observed",
+            description=("HAZARD...Flash flooding caused by thunderstorms. Excessive "
+                          "runoff will result in flooding of small creeks.\n\n"
+                          "Locations impacted include...Twin Falls."),
+            parameters={},
+        )
+        expected = (
+            "🌊 Flash Flood Warning\nUntil 2:00 PM MDT — Twin Falls County"
+            "\nFlash flooding caused by thunderstorms · thunderstorms"
+            "\nTwin Falls"
+        )
+
+        with pinned_tz("America/Boise"):
+            result = nws_format(_FakeEvent(canonical), now=1_751_400_000,
+                                 budget=budget_for("nws"))
+
+        assert_byte_identical(result, expected)
 
 
 # =============================================================================
-# 3. Gate-sequence: old handle_nws vs new gating/nws.decide()
+# 1. Gate-sequence: native gating/nws.decide() only
 # =============================================================================
+
+def _parse_iso(s):
+    """Parse a CAP ISO datetime string to an epoch int (or None).
+
+    Standalone equivalent of the now-deleted meshai.central.nws_handler
+    ._parse_iso, kept here only as test scaffolding for building canonical
+    dicts to feed nws_decide().
+    """
+    if not s:
+        return None
+    try:
+        return int(datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp())
+    except Exception:
+        return None
+
 
 class TestGateSequence:
-    """Replay a 4-step lifecycle and assert old/new gating decisions match.
+    """Replay a 4-step lifecycle through the native gating.nws.decide().
 
     Steps:
       1. First sighting → broadcast
@@ -456,15 +441,20 @@ class TestGateSequence:
         }
 
     def _make_canonical(self, fixture: dict) -> dict:
-        """Build canonical dict from a fixture for nws_decide()."""
+        """Build canonical dict from a fixture for nws_decide().
+
+        `_make_envelope` always sets an explicit "event" field, so the
+        deleted central _category_to_event_type() fallback is never
+        actually exercised here; "Weather Alert" documents that fallback
+        without depending on the deleted module.
+        """
         env = fixture["envelope"]
         inner = env.get("data") or {}
         d = inner.get("data") or {}
         category_raw = inner.get("category") or ""
-        from meshai.central.nws_handler import _category_to_event_type, _parse_iso
         return {
             "cap_id": d.get("id"),
-            "event": d.get("event") or _category_to_event_type(category_raw),
+            "event": d.get("event") or "Weather Alert",
             "same_code": ((d.get("eventCode") or {}).get("SAME") or [""])[0],
             "cap_severity": d.get("severity"),
             "certainty": d.get("certainty") or "",
@@ -478,27 +468,6 @@ class TestGateSequence:
             "category": category_raw,
             "headline": d.get("headline"),
         }
-
-    def test_old_gate_sequence(self, mem_db):
-        """4-step lifecycle through OLD handle_nws: first→dup<3h→dup>3h→Cancel."""
-        cap_id = "urn:oid:old.gate.001"
-        t0 = 1_783_200_000
-        t1 = t0 + 1000      # <3h
-        t2 = t0 + 11000     # >3h (10800s window)
-        t3 = t0 + 12000
-
-        def go(msg_type="Alert", now=t0):
-            env = self._make_envelope(cap_id, msg_type=msg_type)["envelope"]
-            data = {}
-            wire = handle_nws(env, "central.wx.alert.us.id", data=data, now=int(now))
-            if wire is not None and "_on_broadcast_committed" in data:
-                data["_on_broadcast_committed"](float(now))
-            return wire is not None
-
-        assert go(now=t0) is True,  "step1: first sighting should broadcast"
-        assert go(now=t1) is False, "step2: dup within 3h should suppress"
-        assert go(now=t2) is True,  "step3: after 3h should rebroadcast"
-        assert go("Cancel", now=t3) is False, "step4: Cancel tombstone should suppress"
 
     def test_new_gate_sequence(self, mem_db):
         """4-step lifecycle through NEW nws_decide(): first→dup<3h→dup>3h→Cancel."""
@@ -539,13 +508,14 @@ class TestGateSequence:
         t0 = 1_783_200_000.0
         t1 = t0 + 500
 
-        # Broadcast parent first
+        # Broadcast parent first, through the same native nws_decide() path
+        # used everywhere else in this class (mirrors test_new_gate_sequence).
         fix_parent = self._make_envelope(parent_id)
-        data_p = {}
-        wire_p = handle_nws(fix_parent["envelope"], fix_parent["subject"], data=data_p, now=int(t0))
-        assert wire_p is not None, "parent should broadcast"
-        if "_on_broadcast_committed" in data_p:
-            data_p["_on_broadcast_committed"](t0)
+        canon_parent = self._make_canonical(fix_parent)
+        gate_parent = nws_decide(canon_parent, source="nws", now=t0)
+        assert gate_parent.broadcast is True, "parent should broadcast"
+        if gate_parent.commit:
+            gate_parent.commit(t0)
 
         # Child references parent
         fix_child = self._make_envelope(
@@ -553,27 +523,7 @@ class TestGateSequence:
             references=[{"identifier": parent_id, "sent": "2026-07-04T00:00:00Z",
                           "effective": "2026-07-04T00:00:00Z"}],
         )
-
-        from meshai.central.nws_handler import _parse_iso, _category_to_event_type
-        inner = fix_child["envelope"].get("data") or {}
-        d = inner.get("data") or {}
-        category_raw = inner.get("category") or ""
-        canonical = {
-            "cap_id": child_id,
-            "event": d.get("event") or _category_to_event_type(category_raw),
-            "same_code": ((d.get("eventCode") or {}).get("SAME") or [""])[0],
-            "cap_severity": d.get("severity"),
-            "certainty": d.get("certainty") or "",
-            "expires_at": _parse_iso(d.get("expires")),
-            "area_desc": d.get("areaDesc"),
-            "geocoder": {"city": None, "county": d.get("areaDesc"), "state": None},
-            "description": d.get("description"),
-            "parameters": d.get("parameters") or {},
-            "msgType": d.get("msgType"),
-            "references": d.get("references") or [],
-            "category": category_raw,
-            "headline": d.get("headline"),
-        }
+        canonical = self._make_canonical(fix_child)
 
         gate_child = nws_decide(canonical, source="nws", now=t1)
         assert gate_child.broadcast is True, f"child should broadcast: {gate_child.reason}"
@@ -584,7 +534,7 @@ class TestGateSequence:
 
 
 # =============================================================================
-# 4. Schema-conformance: native env/nws.py emits canonical schema
+# 2. Schema-conformance: native env/nws.py emits canonical schema
 # =============================================================================
 
 class TestSchemaConformance:
@@ -688,7 +638,7 @@ class TestSchemaConformance:
 
 
 # =============================================================================
-# 5. Formatter registration: weather_warning + weather_statement registered
+# 3. Formatter registration: weather_warning + weather_statement registered
 # =============================================================================
 
 class TestFormatterRegistration:

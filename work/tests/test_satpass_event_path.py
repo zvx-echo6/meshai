@@ -91,32 +91,6 @@ def _enable_satpass():
     invalidate_cache()
 
 
-# ── CENTRAL_ADAPTER_TO_SOURCE mapping ───────────────────────────────
-
-def test_adapter_to_source_celestrak_tle():
-    from meshai.central.consumer import CENTRAL_ADAPTER_TO_SOURCE
-    assert CENTRAL_ADAPTER_TO_SOURCE["celestrak_tle"] == "satpass"
-
-
-def test_adapter_to_source_n2yo_visualpasses():
-    from meshai.central.consumer import CENTRAL_ADAPTER_TO_SOURCE
-    assert CENTRAL_ADAPTER_TO_SOURCE["n2yo_visualpasses"] == "satpass"
-
-
-def test_adapter_to_source_satpass_predict():
-    from meshai.central.consumer import CENTRAL_ADAPTER_TO_SOURCE
-    assert CENTRAL_ADAPTER_TO_SOURCE["satpass_predict"] == "satpass"
-
-
-def test_no_stale_sat_names_in_adapter_map():
-    """Wire names sat_passes / sat_tles / sat_tle must NOT appear."""
-    from meshai.central.consumer import CENTRAL_ADAPTER_TO_SOURCE
-    for stale in ("sat_passes", "sat_tles", "sat_tle"):
-        assert stale not in CENTRAL_ADAPTER_TO_SOURCE, (
-            f"stale adapter name {stale!r} still in CENTRAL_ADAPTER_TO_SOURCE"
-        )
-
-
 # ── TLE handler route ──────────────────────────────────────────────
 
 def test_tle_handler_inserts_sat_tles_row():
@@ -216,25 +190,3 @@ def test_handler_reads_min_elevation():
     src = inspect.getsource(satpass_handler)
     assert "min_elevation" in src
     assert "min_elevation_deg" not in src
-
-
-# ── Dispatch routing in consumer._normalize ─────────────────────────
-
-def test_consumer_dispatch_celestrak_tle():
-    """consumer._normalize dispatch must route celestrak_tle to tle_handler."""
-    import inspect
-    from meshai.central import consumer
-    src = inspect.getsource(consumer)
-    assert '"celestrak_tle"' in src
-    assert '"sat_tles"' not in src
-    assert '"sat_tle"' not in src
-
-
-def test_consumer_dispatch_n2yo_and_satpass_predict():
-    """consumer._normalize dispatch must route n2yo/satpass_predict to satpass_handler."""
-    import inspect
-    from meshai.central import consumer
-    src = inspect.getsource(consumer)
-    assert '"n2yo_visualpasses"' in src
-    assert '"satpass_predict"' in src
-    assert '"sat_passes"' not in src

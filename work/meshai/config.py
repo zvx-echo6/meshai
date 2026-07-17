@@ -597,24 +597,6 @@ class IPAWSConfig(_SourcedFeed):
 
 
 @dataclass
-class CentralConsumerConfig:
-    """Connection settings for the Central NATS JetStream consumer (v0.4).
-
-    v0.5.4 adds `region` — a dotted v0.9.20 region token (e.g. 'us.id' for
-    Idaho) appended to each subscribed Central subject so the firehose is
-    filtered server-side. Empty string falls back to bare wildcards (pre-
-    v0.9.20 behaviour). One region applies to all central adapters; per-
-    adapter overrides can land in v0.6.
-    """
-
-    enabled: bool = False
-    url: str = "nats://central.echo6.mesh:4222"
-    durable: str = "meshai-consumer"
-    connect_timeout: float = 10.0
-    region: str = "us.id"
-
-
-@dataclass
 class GeocoderConfig:
     """Photon reverse geocoder settings."""
     
@@ -643,7 +625,6 @@ class EnvironmentalConfig:
     firms: FIRMSConfig = field(default_factory=FIRMSConfig)
     satpass: SatpassConfig = field(default_factory=SatpassConfig)
     ipaws: IPAWSConfig = field(default_factory=IPAWSConfig)
-    central: CentralConsumerConfig = field(default_factory=CentralConsumerConfig)
     geocoder: GeocoderConfig = field(default_factory=GeocoderConfig)
 
 

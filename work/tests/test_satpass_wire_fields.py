@@ -260,30 +260,3 @@ def test_observer_fallback_to_slug():
     ).fetchone()
     assert row is not None
     assert row["observer"] == "filer"
-
-
-
-# ── Consumer category mapping ──────────────────────────────────────
-
-def test_category_map_pass_prefix():
-    """pass.n2yo_visualpasses must map to sat_pass, not other."""
-    from meshai.central.consumer import map_category
-    assert map_category("pass.n2yo_visualpasses") == "sat_pass"
-
-
-def test_category_map_pass_satpass_predict():
-    """pass.satpass_predict must map to sat_pass."""
-    from meshai.central.consumer import map_category
-    assert map_category("pass.satpass_predict") == "sat_pass"
-
-
-def test_category_map_sat_prefix_still_works():
-    """sat.pass must still map to sat_pass (backward compat)."""
-    from meshai.central.consumer import map_category
-    assert map_category("sat.pass") == "sat_pass"
-
-
-def test_subject_domain_sat_fallback():
-    """Subject central.sat.pass.* must map to sat_pass via domain fallback."""
-    from meshai.central.consumer import category_from_subject
-    assert category_from_subject("central.sat.pass.us.id.filer") == "sat_pass"

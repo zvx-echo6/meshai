@@ -1,9 +1,20 @@
 """Phase-1 SWPC refactor tests.
 
-Six test groups:
+The Central `swpc_handler` module (`_render()`, `handle_swpc()`) has been
+deleted — the native path is the only production path now. Pure old-vs-new
+parity assertions, the flare_class-string-parsing tests that only existed
+to exercise the deleted handler's Central-only mapping, and the
+`solar_radiation_storm`/proton "legacy path" test (which imported the now
+also-deleted `swpc_handler` -- proton events have no broadcast path at all
+post-excision, native or otherwise; flagged for Matt, not fixed here) have
+been removed. Original diffs are preserved in git history. What remains
+exercises native code directly (hand-written expected strings are kept as
+regression pins on the current wire format).
 
-1. Parity — for a kindex-style fixture and a flare fixture, the new formatter
-   produces output equivalent to old _render() (noting tier-b severity fix).
+Five test groups:
+
+1. Parity — for a kindex-style fixture and a flare fixture, the formatter
+   produces the expected wire text (noting tier-b severity fix).
 
 2. Cross-source identity — same Kp from swpc_kindex and swpc_alerts shares
    the 600s geomag dedup window (committed broadcast suppresses the second).
@@ -108,20 +119,13 @@ def _commit(data: dict, t: float) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestFormatterParity:
-    """formatters/swpc.format() renders equivalent output to swpc_handler._render()."""
-
-    def _render_old(self, event_kind: str, scale_code: str, label: str,
-                    scalar_str: str, *, detail: str = "", time_tag: str = "") -> str:
-        from meshai.central.swpc_handler import _render
-        return _render(event_kind, scale_code, label, scalar_str,
-                       is_update=False, detail=detail, time_tag=time_tag)
+    """formatters/swpc.format() renders the expected wire text from canonical data."""
 
     def test_kindex_g3_parity(self, mem_db):
-        """Kp=7 (G3) kindex envelope → new formatter ≈ old _render.
+        """Kp=7 (G3) kindex envelope → formatter output matches hand-written expected.
 
-        Tier-b note: the only intentional delta is _severity_override (now
-        "priority" instead of missing/routine), which does NOT affect the
-        wire text — parity is exact for the text body.
+        Tier-b note: _severity_override (now "priority" instead of
+        missing/routine) does NOT affect the wire text.
         """
         from meshai.notifications.formatters.swpc import format as sfmt
 
@@ -135,29 +139,24 @@ class TestFormatterParity:
             "issued_at": "2026-07-04T05:00:00Z",
         }
 
-        old_wire = self._render_old(
-            "geomag", "G3", "strong", "Kp7",
-            detail="HF degraded, aurora possible",
-            time_tag="2026-07-04 05:00",
+        expected = (
+            "🧲 New: G3 Geomagnetic Storm — Kp7"
+            "\nHF degraded, aurora possible"
+            "\nSWPC · 2026-07-04 05:00"
         )
 
         with pinned_time(_AT):
             new_wire = sfmt(_make_fake_event(canonical), now=_AT, budget=140)
 
-        # Content must match: same line 1 and line 2.
         assert "G3" in new_wire, f"scale_code missing from wire: {new_wire!r}"
         assert "Kp7" in new_wire, f"scalar 'Kp7' missing from wire: {new_wire!r}"
         assert "Geomagnetic Storm" in new_wire
-
-        # Old wire content also present
-        assert "G3" in old_wire
-        assert "Kp7" in old_wire
-        assert new_wire == old_wire, (
-            f"Parity failure for G3/Kp7:\n  old: {old_wire!r}\n  new: {new_wire!r}"
+        assert new_wire == expected, (
+            f"Wire mismatch for G3/Kp7:\n  expected: {expected!r}\n  got: {new_wire!r}"
         )
 
     def test_flare_x1_r3_parity(self, mem_db):
-        """X1.0 flare (R3) alert → new formatter ≈ old _render.
+        """X1.0 flare (R3) alert → formatter output matches hand-written expected.
 
         Fixture mirrors swpc_last/0003.json (XX0S, X1.0 flare, R3 Strong).
         """
@@ -172,10 +171,10 @@ class TestFormatterParity:
             "issued_at": "2026-06-03T11:59:00Z",
         }
 
-        old_wire = self._render_old(
-            "flare", "R3", "strong", "X1.0",
-            detail="HF radio fading, GPS may glitch",
-            time_tag="2026-06-03 11:59",
+        expected = (
+            "☀️ New: X1.0 Solar Flare — R3"
+            "\nHF radio fading, GPS may glitch"
+            "\nSWPC · 2026-06-03 11:59"
         )
 
         with pinned_time(_AT):
@@ -184,8 +183,8 @@ class TestFormatterParity:
         assert "R3" in new_wire
         assert "X1.0" in new_wire
         assert "Solar Flare" in new_wire
-        assert new_wire == old_wire, (
-            f"Parity failure for X1.0/R3:\n  old: {old_wire!r}\n  new: {new_wire!r}"
+        assert new_wire == expected, (
+            f"Wire mismatch for X1.0/R3:\n  expected: {expected!r}\n  got: {new_wire!r}"
         )
 
     def test_g5_kp9_parity(self, mem_db):
@@ -201,10 +200,10 @@ class TestFormatterParity:
             "issued_at": "2026-07-04T08:00:00Z",
         }
 
-        old_wire = self._render_old(
-            "geomag", "G5", "extreme", "Kp9",
-            detail="Widespread power disruptions possible",
-            time_tag="2026-07-04 08:00",
+        expected = (
+            "🧲 New: G5 Geomagnetic Storm — Kp9"
+            "\nWidespread power disruptions possible"
+            "\nSWPC · 2026-07-04 08:00"
         )
 
         with pinned_time(_AT):
@@ -212,8 +211,8 @@ class TestFormatterParity:
 
         assert "G5" in new_wire
         assert "Kp9" in new_wire
-        assert new_wire == old_wire, (
-            f"G5 parity failure:\n  old: {old_wire!r}\n  new: {new_wire!r}"
+        assert new_wire == expected, (
+            f"G5 wire mismatch:\n  expected: {expected!r}\n  got: {new_wire!r}"
         )
 
     def test_null_scalar_renders_without_dash_tail(self, mem_db):
@@ -444,48 +443,6 @@ class TestFlareRScaleFloor:
         assert gate.broadcast, "R5 must broadcast"
         assert gate.data_patch.get("_severity_override") == "immediate"
 
-    def test_m5_flare_suppressed_via_handler(self, mem_db):
-        """M5.5 flare maps to R2 via old path → new arch suppresses at R2 floor."""
-        from meshai.central.swpc_handler import handle_swpc
-
-        env = {
-            "id": "m55_new_arch",
-            "subject": "central.space.alert.m55",
-            "data": {
-                "id": "m55_new_arch",
-                "adapter": "swpc_alerts",
-                "category": "space.alert",
-                "severity": 0,
-                "geo": {},
-                "data": {"id": "m55_new_arch", "flare_class": "M5.5",
-                         "time": "2026-07-04T06:00:00Z"},
-            },
-        }
-        wire = handle_swpc(env, env["subject"], data={}, now=int(_AT))
-        assert wire is None, "M5.5 (R2) must be suppressed"
-
-    def test_x1_flare_broadcasts_via_handler(self, mem_db):
-        """X1.0 flare maps to R3 → broadcasts via new arch."""
-        from meshai.central.swpc_handler import handle_swpc
-
-        env = {
-            "id": "x10_new_arch",
-            "subject": "central.space.alert.x10",
-            "data": {
-                "id": "x10_new_arch",
-                "adapter": "swpc_alerts",
-                "category": "space.alert",
-                "severity": 0,
-                "geo": {},
-                "data": {"id": "x10_new_arch", "flare_class": "X1.0",
-                         "time": "2026-07-04T06:00:00Z"},
-            },
-        }
-        wire = handle_swpc(env, env["subject"], data={}, now=int(_AT))
-        assert wire is not None, "X1.0 (R3) must broadcast"
-        assert "R3" in wire
-        assert "X1.0" in wire
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. Schema conformance — to_event() emits required canonical fields
@@ -646,52 +603,3 @@ class TestProtonNotRegistered:
         assert "rf_propagation_alert" in DECIDERS, (
             "rf_propagation_alert must be in DECIDERS"
         )
-
-    def test_proton_stays_on_legacy_path(self):
-        """Proton events (S1+) still broadcast via legacy path in swpc_handler.
-
-        Uses swpc_protons adapter with 15 pfu (S1 threshold).  The legacy path
-        must still work — no regression from the new arch changes.
-        """
-        import pytest
-        pytest.importorskip("meshai.central.swpc_handler")
-
-        # This test needs a DB fixture — create one inline
-        import tempfile, os
-        from meshai.persistence import close_thread_connection, init_db
-        from meshai.persistence import db as persistence_db
-
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = os.path.join(tmp, "proton-test.sqlite")
-            old_env = os.environ.get("MESHAI_DB_PATH")
-            os.environ["MESHAI_DB_PATH"] = db_path
-            persistence_db._initialised.clear()
-            close_thread_connection()
-            try:
-                init_db()
-                from meshai.central.swpc_handler import handle_swpc
-
-                env = {
-                    "id": "p_s1_legacy",
-                    "subject": "central.space.proton_flux",
-                    "data": {
-                        "id": "p_s1_legacy",
-                        "adapter": "swpc_protons",
-                        "category": "space.proton_flux",
-                        "severity": 0,
-                        "geo": {},
-                        "data": {"id": "p_s1_legacy", "p10mev": 15.0,
-                                 "time": "2026-07-04T06:00:00Z"},
-                    },
-                }
-                wire = handle_swpc(env, env["subject"], data={}, now=int(_AT))
-                assert wire is not None, "S1 proton must still broadcast via legacy path"
-                assert "S1" in wire
-                assert "☢️" in wire
-            finally:
-                close_thread_connection()
-                persistence_db._initialised.discard(db_path)
-                if old_env is None:
-                    os.environ.pop("MESHAI_DB_PATH", None)
-                else:
-                    os.environ["MESHAI_DB_PATH"] = old_env

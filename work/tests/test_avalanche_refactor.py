@@ -1,17 +1,20 @@
 """Phase-1 avalanche refactor tests — formatter+decider architecture.
 
-Four test groups:
+The Central `avy_handler` module (and its centralseverity→NAADS remap,
+`handle_avy()`, `_render()`) has been deleted — the native path is the only
+production path now. Pure old-vs-new parity tests and tests of
+Central-only logic (`_remap_centralseverity`, `handle_avy`) have been
+removed; original diffs are preserved in git history. What remains
+exercises native code directly (hand-written expected strings are kept as
+regression pins on the current wire format).
 
-1. Parity (tier-b): formatter renders from canonical data.
-   Expected strings are hand-written (the new correct format).
-   OLD _render() output for the same fixture is captured in comments so the
-   intended tier-b diff is explicit and reviewable.
-   The centralseverity=2 (Considerable) case is OLD-vs-NEW identical.
-   The is_update=True case shows the Update: prefix diff.
+Three test groups:
 
-2. Cross-source identity: native AvalancheAdapter.to_event() builds the same
-   canonical data as the Central path for fixture 0000.  Both render
-   byte-identically via the registered formatter.
+1. Parity (tier-b): formatter renders from canonical data. Expected
+   strings are hand-written (the current correct format).
+
+2. Cross-source identity: native AvalancheAdapter.to_event() canonical data
+   renders correctly via the registered formatter.
 
 3. Gate-sequence: replay canonical data through gating.avalanche.decide().
    Verify danger-level gate (below / at / above threshold) and first→update
@@ -66,16 +69,6 @@ def _canonical_from_fixture(fixture: dict, *, is_update: bool = False) -> dict:
     }
 
 
-def _avy_render_old(*, danger_level: int, danger_name: str, zone_name: str,
-                    center_id: str, travel: str) -> str:
-    """Capture OLD _render() output from avy_handler for diff comments."""
-    from meshai.central.avy_handler import _render
-    return _render(
-        danger_level=danger_level, danger_name=danger_name,
-        zone_name=zone_name, center_id=center_id, travel=travel,
-    )
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. Parity (tier-b) — formatter renders from canonical data
 # ─────────────────────────────────────────────────────────────────────────────
@@ -117,17 +110,6 @@ class TestFormatterParity:
 
         assert_byte_identical(result, expected)
 
-        # Confirm old _render() is identical for this case (no tier-b diff)
-        old_wire = _avy_render_old(
-            danger_level=3, danger_name="Considerable",
-            zone_name="Sawtooth Mountains", center_id="SNFAC",
-            travel="Dangerous conditions on steep slopes. Conservative decision-making is advised.",
-        )
-        assert_byte_identical(result, old_wire), (
-            "For fixture 0000 (Considerable, is_update=False) old and new "
-            "outputs must be identical — tier-b diff only appears for is_update=True."
-        )
-
     def test_fixture_0001_high_warning_prefix(self):
         """Fixture 0001 (High, NAADS 4) → formatter uses 'WARNING:' prefix.
 
@@ -156,15 +138,6 @@ class TestFormatterParity:
             result = avyfmt(_make_fake_event(canonical), now=_AT, budget=140)
 
         assert_byte_identical(result, expected)
-
-        old_wire = _avy_render_old(
-            danger_level=4, danger_name="High",
-            zone_name="Banner Summit", center_id="SNFAC",
-            travel="Avoid all avalanche terrain today. Natural avalanches are likely on steep slopes.",
-        )
-        assert_byte_identical(result, old_wire), (
-            "For High (level=4, is_update=False) old and new must be identical."
-        )
 
     def test_fixture_0002_extreme_warning_prefix(self):
         """Fixture 0002 (Extreme, NAADS 5) → formatter uses 'WARNING:' prefix.
@@ -196,17 +169,7 @@ class TestFormatterParity:
         assert_byte_identical(result, expected)
 
     def test_tier_b_update_prefix_rendered(self):
-        """Tier-b: is_update=True produces 'AVY Update:' prefix.
-
-        OLD _render() output (no is_update path):
-            '⛷ AVY Watch: Sawtooth Mountains — Considerable (3)
-            Dangerous conditions on steep slopes.
-            SNFAC · valid today'
-        NEW formatter output (is_update=True):
-            '⛷ AVY Update: Sawtooth Mountains — Considerable (3)
-            Dangerous conditions on steep slopes.
-            SNFAC · valid today'
-        """
+        """Tier-b: is_update=True produces 'AVY Update:' prefix."""
         from meshai.notifications.formatters.avalanche import format as avyfmt
 
         fixtures = load_fixtures("avalanche")
@@ -214,17 +177,6 @@ class TestFormatterParity:
         # Extract with is_update=True
         canonical = _canonical_from_fixture(fx, is_update=True)
 
-        # OLD _render() output (no is_update support)
-        old_wire = _avy_render_old(
-            danger_level=3, danger_name="Considerable",
-            zone_name="Sawtooth Mountains", center_id="SNFAC",
-            travel="Dangerous conditions on steep slopes. Conservative decision-making is advised.",
-        )
-        expected_old = (
-            "⛷ AVY Watch: Sawtooth Mountains — Considerable (3)"
-            "\nDangerous conditions on steep slopes."
-            "\nSNFAC · valid today"
-        )
         expected_new = (
             "⛷ AVY Update: Sawtooth Mountains — Considerable (3)"
             "\nDangerous conditions on steep slopes."
@@ -234,7 +186,6 @@ class TestFormatterParity:
         with pinned_time(_AT):
             result = avyfmt(_make_fake_event(canonical), now=_AT, budget=140)
 
-        assert_byte_identical(old_wire, expected_old)
         assert_byte_identical(result, expected_new)
         assert "Update:" in result
         assert "Watch:" not in result
@@ -435,39 +386,6 @@ class TestCrossSourceIdentity:
             "the formatter registry governs rendering"
         )
 
-    def test_handle_avy_writes_canonical_into_data(self):
-        """handle_avy() writes canonical fields into the shared data dict on broadcast."""
-        from meshai.central.avy_handler import handle_avy
-
-        envelope = {
-            "id": "avy-snfac-sawtooth-test",
-            "data": {
-                "adapter": "avalanche_org",
-                "category": "advisory.us.id",
-                "severity": 2,
-                "geo": {"centroid": [-114.9, 43.8]},
-                "data": {
-                    "danger_level": 3,
-                    "danger_name": "Considerable",
-                    "zone_name": "Sawtooth Mountains",
-                    "center_id": "SNFAC",
-                    "travel_advice": "Dangerous conditions.",
-                },
-            },
-        }
-        data: dict = {}
-        wire = handle_avy(envelope, "central.avy.advisory.us.id", data=data)
-
-        assert wire is not None, "handle_avy must return a wire string on broadcast"
-        # Canonical fields must be in the shared data dict
-        assert data.get("danger_level") == 3
-        assert data.get("danger_name") == "Considerable"
-        assert data.get("zone_name") == "Sawtooth Mountains"
-        assert data.get("center_id") == "SNFAC"
-        assert "_on_broadcast_committed" in data
-        assert "_broadcast_audit" in data
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. Gate-sequence — danger-level gate + first→update trend
 # ─────────────────────────────────────────────────────────────────────────────
@@ -540,86 +458,6 @@ class TestGateSequence:
         from meshai.notifications.gating.avalanche import decide
         result = decide({"zone_name": "test"}, source="avalanche", now=_AT)
         assert result.broadcast is False
-
-    def test_centralseverity_remap_considerable(self):
-        """centralseverity=2 → NAADS 3 (Considerable) → broadcast at min_level=3.
-
-        This tests the remap logic in _remap_centralseverity() as used by
-        handle_avy() when data.data.danger_level is absent.
-
-        ⚠ Mapping table (needs live validation in-season Oct+):
-            centralseverity 2 → NAADS 3 (Considerable) [documented]
-            centralseverity 3 → NAADS 4 (High)          [documented]
-            centralseverity 4 → NAADS 5 (Extreme)        [documented]
-            centralseverity 0 → NAADS 1 (Low)            [inferred]
-            centralseverity 1 → NAADS 2 (Moderate)       [inferred]
-        """
-        from meshai.central.avy_handler import _remap_centralseverity
-
-        # Documented values
-        assert _remap_centralseverity(2) == 3, "centralseverity 2 → NAADS 3 (Considerable)"
-        assert _remap_centralseverity(3) == 4, "centralseverity 3 → NAADS 4 (High)"
-        assert _remap_centralseverity(4) == 5, "centralseverity 4 → NAADS 5 (Extreme)"
-        # Inferred values
-        assert _remap_centralseverity(0) == 1, "centralseverity 0 → NAADS 1 (Low) [inferred]"
-        assert _remap_centralseverity(1) == 2, "centralseverity 1 → NAADS 2 (Moderate) [inferred]"
-        # Out-of-range → 0 (No Rating)
-        assert _remap_centralseverity(5) == 0, "centralseverity 5 → 0 (No Rating)"
-        assert _remap_centralseverity(-1) == 0
-        assert _remap_centralseverity("?") == 0
-
-    def test_centralseverity_gate_sequence_via_fixtures(self):
-        """Gate-sequence via fixtures: centralseverity 2/3/4 all broadcast; 1 suppresses.
-
-        Uses handle_avy to exercise the full Central ingestion path including
-        the centralseverity → NAADS remap and the decide() call.
-        """
-        from meshai.central.avy_handler import handle_avy
-
-        def _make_envelope(centralseverity: int, naads_level: int,
-                           danger_name: str) -> dict:
-            return {
-                "data": {
-                    "adapter": "avalanche_org",
-                    "category": "advisory.us.id",
-                    "severity": centralseverity,
-                    "geo": {"centroid": [-114.9, 43.8]},
-                    "data": {
-                        "danger_level": naads_level,
-                        "danger_name": danger_name,
-                        "zone_name": "Test Zone",
-                        "center_id": "SNFAC",
-                        "travel_advice": "Test advice.",
-                    },
-                }
-            }
-
-        # centralseverity=1 → NAADS 2 (Moderate) → suppressed (below min_level=3)
-        env_moderate = _make_envelope(1, 2, "Moderate")
-        data_m: dict = {}
-        wire_m = handle_avy(env_moderate, "central.avy.advisory.us.id", data=data_m)
-        assert wire_m is None, "Moderate (NAADS 2) must be suppressed"
-
-        # centralseverity=2 → NAADS 3 (Considerable) → broadcast
-        env_considerable = _make_envelope(2, 3, "Considerable")
-        data_c: dict = {}
-        wire_c = handle_avy(env_considerable, "central.avy.advisory.us.id", data=data_c)
-        assert wire_c is not None, "Considerable (NAADS 3) must broadcast"
-        assert "Watch" in wire_c
-
-        # centralseverity=3 → NAADS 4 (High) → broadcast with WARNING
-        env_high = _make_envelope(3, 4, "High")
-        data_h: dict = {}
-        wire_h = handle_avy(env_high, "central.avy.advisory.us.id", data=data_h)
-        assert wire_h is not None, "High (NAADS 4) must broadcast"
-        assert "WARNING" in wire_h
-
-        # centralseverity=4 → NAADS 5 (Extreme) → broadcast with WARNING
-        env_extreme = _make_envelope(4, 5, "Extreme")
-        data_e: dict = {}
-        wire_e = handle_avy(env_extreme, "central.avy.advisory.us.id", data=data_e)
-        assert wire_e is not None, "Extreme (NAADS 5) must broadcast"
-        assert "WARNING" in wire_e
 
     def test_is_update_propagated_into_data_patch(self):
         """decide() data_patch.is_update reflects the incoming is_update flag."""

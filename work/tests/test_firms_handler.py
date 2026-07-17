@@ -347,38 +347,3 @@ def test_short_acq_time_zero_padded(mem_db):
     assert out is None
     assert _row_count(mem_db, "firms_pixels") == 1
 
-
-# ============================================================================
-# Integration: envelope through the full consumer -> handler -> SQLite path
-# ============================================================================
-
-
-def test_end_to_end_envelope_through_consumer(mem_db, monkeypatch):
-    """Confirm: envelope enters consumer._normalize, handle_firms is invoked,
-    firms_pixels row is inserted, and consumer returns None (default-deny
-    keeps the broadcast suppressed). mesh_broadcasts_out MUST stay empty."""
-    from unittest.mock import MagicMock
-    from meshai.config import Config
-    from meshai.central.consumer import CentralConsumer
-
-    cfg = Config()
-    cfg.notifications.cold_start_grace_seconds = 0
-    bus = MagicMock()
-    consumer = CentralConsumer(cfg.environmental, bus)
-
-    env = _firms_env(envelope_id="e2e_001")
-    out = consumer._normalize(env["subject"], env)
-
-    # consumer.normalize returns None -> Event never reaches bus.
-    assert out is None
-    bus.emit.assert_not_called()
-
-    # firms_pixels MUST have the row; mesh_broadcasts_out MUST be empty.
-    assert _row_count(mem_db, "firms_pixels") == 1
-    assert _row_count(mem_db, "mesh_broadcasts_out") == 0
-
-    # event_log records the storage.
-    log = _last_event_log(mem_db)
-    assert log["source"] == "firms"
-    assert log["handled"] == 1
-    assert log["table_name"] == "firms_pixels"

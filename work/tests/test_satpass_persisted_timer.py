@@ -1,26 +1,26 @@
-"""Tests for the satpass persisted-timer reboot-recovery fix.
+"""Tests for the satpass persisted-timer `due_at` column.
 
 Pending satellite-pass consolidations used to be scheduled only as in-memory
 asyncio TimerHandles, so a restart orphaned any satpass_pending rows: the row
-survived but its timer did not, and it was never consolidated/broadcast.
+survived but its timer did not, and it was never consolidated/broadcast. The
+fix persisted a durable `due_at` on each pending row and added a startup
+sweep (`CentralConsumer._sweep_pending_satpass`) that reconstructed a timer
+for every pending consolidated_id off its persisted due_at.
 
-The fix persists a durable `due_at` on each pending row and adds a startup
-sweep (`CentralConsumer._sweep_pending_satpass`) that reconstructs a timer for
-every pending consolidated_id off its persisted due_at, reusing the existing
-`_satpass_consolidation_fire` emit path.
-
-These tests cover:
-  - a PAST-due orphan is recovered (its timer fires -> consolidation invoked)
-  - a FUTURE-due row is scheduled, NOT fired immediately
-  - `due_at` is persisted on the normal ingest path
-  - SCHEMA_VERSION == 22 and the v22 migration applies cleanly on a fresh DB
+The Central NATS consumer (and `_sweep_pending_satpass` with it) was retired
+2026-07 -- the sweep's tests are gone with it. The native satpass path
+(env/satpass.py) never used the satpass_pending buffer or this sweep in the
+first place (it consolidates in-memory within a single tick), so nothing
+live is affected. What remains here:
+  - `due_at` is persisted on the normal ingest path (satpass_handler.py,
+    still live -- shared by both paths historically, now native-only)
+  - SCHEMA_VERSION == 26 and the v22 migration (which added the due_at
+    column) still applies cleanly on a fresh DB
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import time
-import types
 
 import pytest
 
@@ -42,33 +42,6 @@ def _enable_satpass_db(norad_ids=(25544,), dry_run=True):
                  "WHERE adapter='satpass' AND key='norad_ids'",
                  (json.dumps(list(norad_ids)),))
     invalidate_cache()
-
-
-def _insert_pending(consolidated_id, *, due_at, observer="Boise",
-                    norad_id=25544, received_at=None):
-    """Write a single satpass_pending row with an explicit due_at."""
-    conn = get_db()
-    now = int(time.time()) if received_at is None else received_at
-    aos = now + 600
-    los = aos + 360
-    conn.execute(
-        "INSERT OR REPLACE INTO satpass_pending("
-        "consolidated_id, observer, sat_name, norad_id, max_elevation, "
-        "aos_at, los_at, aos_compass, los_compass, peak_compass, received_at, "
-        "due_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-        (consolidated_id, observer, "ISS", norad_id, 72.5,
-         aos, los, "SW", "NE", "S", now, due_at))
-
-
-def _make_consumer(bus=None):
-    """Construct a CentralConsumer with minimal fakes (no NATS needed)."""
-    from meshai.central.consumer import CentralConsumer
-    env = types.SimpleNamespace(central=None)
-    return CentralConsumer(env, bus)
-
-
-def _run(coro):
-    return asyncio.new_event_loop().run_until_complete(coro)
 
 
 def _ingest_envelope(norad_id=25544, observer="Boise", max_el=72.5,
@@ -147,100 +120,3 @@ def test_due_at_persisted_on_normal_ingest():
     assert row["due_at"] is not None
     assert row["due_at"] == row["received_at"] + CONSOLIDATION_DELAY
     assert row["due_at"] == now + CONSOLIDATION_DELAY
-
-
-# ── startup sweep: past-due orphan is recovered ──────────────────────
-
-def test_sweep_recovers_past_due_orphan(monkeypatch):
-    """A pending row with due_at in the PAST fires consolidation via the sweep."""
-    _enable_satpass_db(norad_ids=[25544], dry_run=True)
-    now = int(time.time())
-    cid = "25544:ORPHAN"
-    _insert_pending(cid, due_at=now - 100, received_at=now - 105)
-
-    fired = []
-    import meshai.central.satpass_handler as sh
-    real = sh.consolidate_satpass_pending
-
-    def _spy(consolidated_id):
-        fired.append(consolidated_id)
-        return real(consolidated_id)  # exercise the real path (dry-run -> None)
-
-    monkeypatch.setattr(sh, "consolidate_satpass_pending", _spy)
-
-    consumer = _make_consumer(bus=None)
-
-    async def _main():
-        consumer._sweep_pending_satpass(now=now)
-        # overdue orphan is armed at ~0.5s; give the loop time to fire it.
-        await asyncio.sleep(1.0)
-
-    _run(_main())
-
-    assert cid in fired, "sweep did not fire consolidation for the orphaned cid"
-    # Orphan recovered: consolidation (dry-run) drained its pending rows.
-    conn = get_db()
-    remaining = conn.execute(
-        "SELECT COUNT(*) AS n FROM satpass_pending WHERE consolidated_id=?",
-        (cid,)).fetchone()["n"]
-    assert remaining == 0
-
-
-# ── startup sweep: future row scheduled, not fired now ───────────────
-
-def test_sweep_schedules_future_row_without_firing(monkeypatch):
-    """A pending row with due_at in the FUTURE is armed but does not fire yet."""
-    _enable_satpass_db(norad_ids=[25544], dry_run=True)
-    now = int(time.time())
-    cid = "25544:FUTURE"
-    _insert_pending(cid, due_at=now + 3600, received_at=now)
-
-    fired = []
-    import meshai.central.satpass_handler as sh
-    monkeypatch.setattr(sh, "consolidate_satpass_pending",
-                        lambda c: fired.append(c))
-
-    consumer = _make_consumer(bus=None)
-
-    async def _main():
-        consumer._sweep_pending_satpass(now=now)
-        await asyncio.sleep(0.3)
-
-    _run(_main())
-
-    assert cid not in fired, "future row fired immediately"
-    assert cid in consumer._pending_satpass_timers, "future row was not armed"
-    # Pending row untouched (still awaiting its future fire).
-    conn = get_db()
-    remaining = conn.execute(
-        "SELECT COUNT(*) AS n FROM satpass_pending WHERE consolidated_id=?",
-        (cid,)).fetchone()["n"]
-    assert remaining == 1
-
-
-# ── sweep does not double-schedule an already-armed cid ──────────────
-
-def test_sweep_does_not_double_schedule(monkeypatch):
-    """A cid already armed by the live path is skipped by the sweep."""
-    _enable_satpass_db(norad_ids=[25544], dry_run=True)
-    now = int(time.time())
-    cid = "25544:ARMED"
-    _insert_pending(cid, due_at=now - 10, received_at=now - 15)
-
-    consumer = _make_consumer(bus=None)
-
-    fired = []
-    import meshai.central.satpass_handler as sh
-    monkeypatch.setattr(sh, "consolidate_satpass_pending",
-                        lambda c: fired.append(c))
-
-    async def _main():
-        sentinel = object()
-        consumer._pending_satpass_timers[cid] = sentinel  # live path owns it
-        consumer._sweep_pending_satpass(now=now)
-        # The sweep must not have replaced the live handle.
-        assert consumer._pending_satpass_timers[cid] is sentinel
-        await asyncio.sleep(0.1)
-
-    _run(_main())
-    assert cid not in fired, "sweep double-scheduled an already-armed cid"

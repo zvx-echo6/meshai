@@ -1,27 +1,37 @@
 """Phase-2 incident/roads refactor tests — TIER-A (byte-identical goldens).
 
-Test strategy
--------------
-Golden (byte-identical) tests call the old per-source parsers and the legacy
-renderer directly, then compare byte-for-byte against the new
-formatters.incident.format() output.  This bypasses the handle_incident
-freshness gate (which drops all captured fixtures as stale) and isolates the
-rendering logic — exactly the same pattern as test_quake_refactor.py.
+The Central `incident_handler` module (`_parse_tomtom_incident()`,
+`_parse_itd_511_incident()`, `_render()`) has been deleted along with the
+rest of the Central NATS consumer path. The TomTom-incidents and ITD-511
+golden-fixture parity groups that called those deleted parsers directly to
+build a "golden" wire and compare it byte-for-byte against
+formatters.incident.format() have been removed in full (46 tests across
+TestTomtomGolden, TestItd511IncidentGolden, and
+TestSchemaConformance::test_incident_canonical_keys_from_parser) — every
+assertion in those tests was generated FROM the deleted parser output, with
+no independent hand-written expected content to fall back to, and no
+native adapter exists that parses the *TomTom Incident Details* or Central
+ITD-511-envelope raw shapes those fixtures capture (env/traffic.py is the
+TomTom traffic-*flow* adapter, a different feed; env/roads511.py parses
+ITD 511's own REST API shape, not the Central envelope fixtures here).
+Original diffs are preserved in git history. This is a real production gap
+flagged for Matt: TomTom road-incident ingestion in particular has no
+native replacement.
+
+Work-zone parity is unaffected — `meshai.central_normalizer` (a top-level,
+non-Central-NATS module; note the name is legacy) and
+`meshai.notifications.renderers.work_zone` were never part of the deleted
+consumer path and remain live.
 
 Groups
 ------
-1.  Tomtom incident golden byte-parity (all 40 traffic/*.json fixtures with
-    min_magnitude override=0 so the parser doesn't filter them; fixtures that
-    the parser still rejects for other reasons are skipped gracefully).
-2.  ITD-511 incident golden byte-parity (traffic/0032.json + the non-work-zone
-    fixtures in traffic_last/).
-3.  Work-zone golden byte-parity (traffic_last/0002 itd_511, traffic_last/0003
+1.  Work-zone golden byte-parity (traffic_last/0002 itd_511, traffic_last/0003
     wzdx) — calls normalize() directly, same as the production consumer.
-4.  Gate sequence: decide() lifecycle transitions (new → cold-dup →
+2.  Gate sequence: decide() lifecycle transitions (new → cold-dup →
     suppress-on-update-False → magnitude-up → suppress-no-change).
-5.  _anchor.resolve_anchor: DB hit and Photon fallback path.
-6.  Schema conformance: canonical data dict has all expected keys.
-7.  Cross-source identity: same render fields → same output regardless of
+3.  _anchor.resolve_anchor: DB hit and Photon fallback path.
+4.  Schema conformance: canonical data dict has all expected keys.
+5.  Cross-source identity: same render fields → same output regardless of
     source string.
 """
 from __future__ import annotations
@@ -45,15 +55,6 @@ _FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures"
 # Using captured_epoch of the traffic_last fixtures (1783206522).
 _AT_WZ = 1_783_206_522.0
 
-# Expected canonical data keys for incident events.
-_INCIDENT_CANONICAL_KEYS = frozenset({
-    "external_id", "source", "sub_type", "road", "direction",
-    "from_loc", "to_loc", "mile_start", "mile_end", "mile_marker",
-    "lanes_affected", "cause", "comment", "impact",
-    "county", "state", "lat", "lon", "geocoder_city", "landclass",
-    "start_at", "end_at", "magnitude", "delay_seconds", "icon_category",
-})
-
 # Expected canonical data keys for work-zone events.
 _WZ_CANONICAL_KEYS = frozenset({
     "road", "direction", "mile_start", "mile_end", "sub_type", "impact",
@@ -75,42 +76,10 @@ def _load_dir(hazard: str):
     return out
 
 
-_TRAFFIC_FX = _load_dir("traffic")       # 40 files (mostly tomtom, one itd_511)
 _TRAFFIC_LAST_FX = _load_dir("traffic_last")   # 6 files (mixed adapters)
 
 
-# ── Helper: build canonical incident dict from parser output ─────────────────
-
-def _n_to_canonical_incident(n: dict) -> dict:
-    """Mirror the cutover-branch canonical extraction in handle_incident."""
-    return {
-        "external_id":    n.get("external_id"),
-        "source":         n.get("source"),
-        "sub_type":       n.get("sub_type"),
-        "road":           n.get("road"),
-        "direction":      n.get("direction"),
-        "from_loc":       n.get("from_loc"),
-        "to_loc":         n.get("to_loc"),
-        "mile_start":     n.get("mile_start"),
-        "mile_end":       n.get("mile_end"),
-        "mile_marker":    n.get("mile_marker"),
-        "lanes_affected": n.get("lanes_affected"),
-        "cause":          n.get("cause"),
-        "comment":        n.get("comment"),
-        "impact":         n.get("impact"),
-        "county":         n.get("county"),
-        "state":          n.get("state"),
-        "lat":            n.get("lat"),
-        "lon":            n.get("lon"),
-        "geocoder_city":  n.get("geocoder_city"),
-        "landclass":      n.get("landclass"),
-        "start_at":       n.get("start_at"),
-        "end_at":         n.get("end_at"),
-        "magnitude":      n.get("magnitude"),
-        "delay_seconds":  n.get("delay_seconds"),
-        "icon_category":  n.get("icon_category"),
-    }
-
+# ── Helper: build canonical work-zone dict from normalize() output ───────────
 
 def _n_to_canonical_workzone(n: dict) -> dict:
     """Build canonical work-zone data dict from a normalize() result.
@@ -154,20 +123,6 @@ def _make_event(category: str, data: dict):
 # ── pytest fixtures: adapter_config overrides ────────────────────────────────
 
 @pytest.fixture()
-def tomtom_min_mag_zero():
-    """Set tomtom_incidents.min_magnitude=-999 via runtime override for one test.
-
-    The parser uses `int(adapter_config.tomtom_incidents.min_magnitude or 4)`
-    which treats 0 as falsy and falls back to 4.  Using -999 (truthy) forces
-    all magnitudes to pass the `magnitude < min_mag` filter.
-    """
-    from meshai.adapter_config._accessor import set_runtime_override, _overrides
-    set_runtime_override("tomtom_incidents", "min_magnitude", -999)
-    yield
-    _overrides.pop(("tomtom_incidents", "min_magnitude"), None)
-
-
-@pytest.fixture()
 def broadcast_on_update_on():
     """Enable incident.broadcast_on_update for gate-sequence tests."""
     from meshai.adapter_config._accessor import set_runtime_override, _overrides
@@ -176,143 +131,13 @@ def broadcast_on_update_on():
     _overrides.pop(("incident", "broadcast_on_update"), None)
 
 
-# ── Helpers: determine adapter type and call the right parser ────────────────
+# ── Helper: determine adapter type ────────────────────────────────────────────
 
 def _adapter_for(fx: dict) -> str:
     return (fx["envelope"]["data"] or {}).get("adapter") or ""
 
 
-def _category_for(fx: dict) -> str:
-    return (fx["envelope"]["data"] or {}).get("category") or ""
-
-
-# ── 1. Tomtom incident golden byte-parity ────────────────────────────────────
-
-class TestTomtomGolden:
-    """All traffic/*.json tomtom fixtures rendered via old parser + _render()
-    must produce byte-identical output from the new formatters.incident.format().
-
-    min_magnitude is overridden to 0 so all fixtures (including mag=3 ones)
-    exercise the renderer.  The one itd_511 fixture (0032) is skipped here.
-    """
-
-    @pytest.mark.parametrize("name,fx", _TRAFFIC_FX)
-    def test_golden_parity(self, name, fx, tomtom_min_mag_zero):
-        from meshai.central.incident_handler import _parse_tomtom_incident, _render
-        from meshai.notifications.formatters.incident import format as fmt
-        from meshai.notifications.formatters._budget import budget_for
-
-        adapter = _adapter_for(fx)
-        if adapter != "tomtom_incidents":
-            pytest.skip(f"{name}: adapter={adapter!r}, not tomtom")
-
-        envelope = fx["envelope"]
-        now = int(fx.get("captured_epoch", time.time()))
-
-        n = _parse_tomtom_incident(envelope, now)
-        if n is None:
-            pytest.skip(f"{name}: parser returned None (filtered)")
-
-        golden = _render(n)
-        canonical = _n_to_canonical_incident(n)
-
-        # Determine event category from category_kind
-        kind_map = {
-            "incident":      "road_incident",
-            "closure":       "road_closure",
-            "special_event": "road_incident",
-            "work_zone":     "work_zone",
-        }
-        cat = kind_map.get(n.get("category_kind", "incident"), "road_incident")
-        event = _make_event(cat, canonical)
-
-        budget = budget_for("incident")
-        new_out = fmt(event, now=float(now), budget=budget)
-
-        assert_byte_identical(new_out, golden)
-
-
-# ── 2. ITD-511 incident golden byte-parity ───────────────────────────────────
-
-class TestItd511IncidentGolden:
-    """itd_511 incident/closure/special_event fixtures rendered via
-    _parse_itd_511_incident + _render() must be byte-identical from formatter.
-
-    Covers traffic/0032.json (itd_511) + non-work-zone traffic_last fixtures.
-    """
-
-    def _run_single(self, name: str, fx: dict):
-        from meshai.central.incident_handler import _parse_itd_511_incident, _render
-        from meshai.notifications.formatters.incident import format as fmt
-        from meshai.notifications.formatters._budget import budget_for
-
-        envelope = fx["envelope"]
-        category_raw = _category_for(fx)
-        now = int(fx.get("captured_epoch", time.time()))
-
-        n = _parse_itd_511_incident(envelope, category_raw, now)
-        if n is None:
-            pytest.skip(f"{name}: parser returned None (filtered/work_zone)")
-
-        golden = _render(n)
-        canonical = _n_to_canonical_incident(n)
-        kind_map = {
-            "incident":      "road_incident",
-            "closure":       "road_closure",
-            "special_event": "road_incident",
-            "work_zone":     "work_zone",
-        }
-        cat = kind_map.get(n.get("category_kind", "incident"), "road_incident")
-        event = _make_event(cat, canonical)
-
-        budget = budget_for("incident")
-        new_out = fmt(event, now=float(now), budget=budget)
-        assert_byte_identical(new_out, golden)
-
-    @pytest.mark.parametrize("name,fx", [
-        (name, fx) for name, fx in _TRAFFIC_FX if (
-            (fx["envelope"].get("data") or {}).get("adapter") == "itd_511"
-        )
-    ])
-    def test_traffic_itd511(self, name, fx):
-        self._run_single(name, fx)
-
-    @pytest.mark.parametrize("name,fx", [
-        (name, fx) for name, fx in _TRAFFIC_LAST_FX if (
-            (fx["envelope"].get("data") or {}).get("adapter") == "itd_511"
-            and not ((fx["envelope"].get("data") or {}).get("category") or "").startswith("work_zone.")
-        )
-    ])
-    def test_traffic_last_itd511(self, name, fx):
-        self._run_single(name, fx)
-
-    @pytest.mark.parametrize("name,fx", [
-        (name, fx) for name, fx in _TRAFFIC_LAST_FX if (
-            (fx["envelope"].get("data") or {}).get("adapter") == "tomtom_incidents"
-        )
-    ])
-    def test_traffic_last_tomtom(self, name, fx, tomtom_min_mag_zero):
-        """traffic_last tomtom fixtures go through this group (min_mag override on)."""
-        from meshai.central.incident_handler import _parse_tomtom_incident, _render
-        from meshai.notifications.formatters.incident import format as fmt
-        from meshai.notifications.formatters._budget import budget_for
-
-        envelope = fx["envelope"]
-        now = int(fx.get("captured_epoch", time.time()))
-
-        n = _parse_tomtom_incident(envelope, now)
-        if n is None:
-            pytest.skip(f"{name}: parser returned None")
-
-        golden = _render(n)
-        canonical = _n_to_canonical_incident(n)
-        event = _make_event("road_incident", canonical)
-        budget = budget_for("incident")
-        new_out = fmt(event, now=float(now), budget=budget)
-        assert_byte_identical(new_out, golden)
-
-
-# ── 3. Work-zone golden byte-parity ─────────────────────────────────────────
+# ── 1. Work-zone golden byte-parity ─────────────────────────────────────────
 
 class TestWorkZoneGolden:
     """traffic_last/0002 (itd_511 work_zone) and traffic_last/0003 (wzdx)
@@ -363,7 +188,7 @@ class TestWorkZoneGolden:
         self._run_wz("0003.json", "wzdx")
 
 
-# ── 4. Gate sequence ──────────────────────────────────────────────────────────
+# ── 2. Gate sequence ──────────────────────────────────────────────────────────
 
 class TestGateSequence:
     """decide() lifecycle transitions:
@@ -473,7 +298,7 @@ class TestGateSequence:
         assert result.commit is None
 
 
-# ── 5. _anchor.resolve_anchor ────────────────────────────────────────────────
+# ── 3. _anchor.resolve_anchor ────────────────────────────────────────────────
 
 class TestAnchorResolve:
     """resolve_anchor() returns a result from the town_anchors DB when a row
@@ -553,28 +378,11 @@ class TestAnchorResolve:
         assert resolve_anchor(43.6, None, max_mi=50.0) is None
 
 
-# ── 6. Schema conformance ────────────────────────────────────────────────────
+# ── 4. Schema conformance ────────────────────────────────────────────────────
 
 class TestSchemaConformance:
     """Canonical data dicts produced by to_event() and the bridge must
     contain all expected keys."""
-
-    def test_incident_canonical_keys_from_parser(self):
-        """All canonical keys present in extraction from a tomtom parse."""
-        from meshai.central.incident_handler import _parse_tomtom_incident
-        from meshai.adapter_config._accessor import set_runtime_override, _overrides
-
-        set_runtime_override("tomtom_incidents", "min_magnitude", -999)
-        try:
-            # Use fixture 0002 (mag=4, the minimal fixture that passes)
-            with open(_FIXTURE_DIR / "traffic" / "0002.json", encoding="utf-8") as f:
-                fx = json.load(f)
-            n = _parse_tomtom_incident(fx["envelope"], int(fx.get("captured_epoch", 0)))
-            assert n is not None
-            canonical = _n_to_canonical_incident(n)
-            assert _INCIDENT_CANONICAL_KEYS == set(canonical.keys())
-        finally:
-            _overrides.pop(("tomtom_incidents", "min_magnitude"), None)
 
     def test_workzone_canonical_keys_from_normalize(self):
         """All work-zone canonical keys present in extraction from normalize()."""
@@ -621,7 +429,7 @@ class TestSchemaConformance:
             assert key in d, f"Missing key {key!r} in Roads511Adapter canonical data"
 
 
-# ── 7. Cross-source identity ─────────────────────────────────────────────────
+# ── 5. Cross-source identity ─────────────────────────────────────────────────
 
 class TestCrossSourceIdentity:
     """Same render-relevant canonical fields → same formatter output regardless

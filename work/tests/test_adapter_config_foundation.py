@@ -153,9 +153,9 @@ def test_registry_has_no_duplicate_keys():
 
 
 def test_adapter_meta_at_19(fresh_db):
-    # Count sentinel — bump when an adapter row is added. 23 -> 24 with the
-    # IPAWS civil-alert adapter (adapter_config/defaults.py ADAPTER_META["ipaws"]).
-    assert len(ADAPTER_META) == 24
+    # Count sentinel — bump when an adapter row is added/removed. 24 -> 23
+    # with the removal of ADAPTER_META["central"] (dead NATS consumer excised).
+    assert len(ADAPTER_META) == 23
 
 
 # ---------- seed ----------------------------------------------------------
@@ -301,12 +301,6 @@ def test_accessor_returns_json_list(fresh_db):
     # broadcast_severities was removed in the config-schema cleanup (deprecated,
     # no longer enforced); tombstone_msgtypes is the surviving nws json-list key.
     assert adapter_config.nws.tombstone_msgtypes == ["Cancel", "Expire"]
-
-
-def test_accessor_returns_json_dict(fresh_db):
-    invalidate_cache()
-    v = adapter_config.central.severity_thresholds
-    assert v == {"routine_max": 1, "priority_max": 2, "immediate_min": 3}
 
 
 def test_accessor_returns_json_none(fresh_db):

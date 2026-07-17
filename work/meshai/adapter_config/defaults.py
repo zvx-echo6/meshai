@@ -247,15 +247,6 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     },
 
     # =================================================================
-    # CENTRAL consumer -- 1 setting (severity-int bucket boundaries)
-    # =================================================================
-    ("central", "severity_thresholds"): {
-        "default": {"routine_max": 1, "priority_max": 2, "immediate_min": 3},
-        "type": "json",
-        "description": "Central int severity buckets: 0..routine_max -> routine, priority_max -> priority, >= immediate_min -> immediate.",
-    },
-
-    # =================================================================
     # DISPATCHER -- 4 settings (LRU cap + cooldown prune params + retention)
     # =================================================================
     ("dispatcher", "dedup_lru_max"): {
@@ -761,11 +752,6 @@ ADAPTER_META: dict[str, dict[str, Any]] = {
         "display_name": "Band conditions (HF propagation)",
         "include_in_llm_context": True,
         "description": "3x/day scheduled broadcast of HF band ratings (SWPC-local + HamQSL fallback).",
-    },
-    "central": {
-        "display_name": "Central consumer routing",
-        "include_in_llm_context": False,
-        "description": "Adapter <-> source remap + severity buckets. Operational, not LLM-relevant.",
     },
     "dispatcher": {
         "display_name": "Dispatcher state",
