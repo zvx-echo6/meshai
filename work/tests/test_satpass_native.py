@@ -1,13 +1,12 @@
 """Tests for the native SGP4 satpass adapter (env.satpass).
 
 The native adapter computes every observer for a satellite in ONE tick, so it
-consolidates in-memory and gates synchronously via the SHARED
-`satpass_handler.gate_consolidated_pass` — with NO `satpass_pending` buffer and
-NO Central consumer/timer. These tests monkeypatch `compute_passes` and
+consolidates in-memory and gates synchronously via
+`env.satellite.pass_format.gate_consolidated_pass` — with no buffer table and
+no consumer/timer. These tests monkeypatch `compute_passes` and
 `get_observers` (no SGP4 / no network) and seed a fresh `sat_tles` row, then
 exercise: multi-observer consolidation, cross-tick dedup via `satpass_events`,
-resilient empty cases, the precomposed aos→peak→los wire, and a guard that the
-Central path still feeds the shared gate the correctly-merged consolidation.
+resilient empty cases, and the precomposed aos→peak→los wire.
 """
 from __future__ import annotations
 
@@ -18,8 +17,8 @@ import pytest
 
 from meshai.env.satpass import SatpassAdapter
 from meshai.config import SatpassConfig
-from meshai.central.pass_predictor import PassInfo
-from meshai.central.tle_handler import upsert_tle
+from meshai.env.satellite.pass_predictor import PassInfo
+from meshai.env.satellite.tle_store import upsert_tle
 from meshai.persistence import get_db
 
 
@@ -85,7 +84,7 @@ def _adapter(**overrides) -> SatpassAdapter:
 
 
 def _patch_predictor(monkeypatch, fake):
-    monkeypatch.setattr("meshai.central.pass_predictor.compute_passes", fake)
+    monkeypatch.setattr("meshai.env.satellite.pass_predictor.compute_passes", fake)
 
 
 def _patch_observers(monkeypatch, observers):
@@ -251,63 +250,6 @@ def test_emitted_event_renders_aos_peak_los(monkeypatch):
     assert composed == evt["wire"]
     assert "SW→S→NE" in composed          # aos -> peak -> los
     assert composed.startswith("\U0001F6F0")        # satellite emoji
-
-
-# ══════════════════════════════════════════════════════════════════════
-# 5. SHARED-GATE EXTRACTION GUARD (Central path still feeds the gate right)
-# ══════════════════════════════════════════════════════════════════════
-
-def test_central_consolidate_feeds_shared_gate_merged(monkeypatch):
-    """consolidate_satpass_pending must merge observers and hand the SAME
-    shared gate a correctly-consolidated dict (earliest AOS / latest LOS /
-    max-el observer / entry+exit / observer_list). Spying the gate proves the
-    Central path routes through the extracted, source-agnostic function."""
-    import meshai.central.satpass_handler as sh
-
-    conn = get_db()
-    cid = f"25544:{T0 // 3600}"
-    # Two pending rows for the same canonical id (boise entry, twin exit+peak).
-    rows = [
-        (cid, "boise", "ISS", 25544, 40.0, T0, T0 + 300, "SW", "NW", "E", T0, T0 + 5),
-        (cid, "twin", "ISS", 25544, 70.0, T0 + 60, T0 + 400, "W", "NE", "S", T0, T0 + 5),
-    ]
-    for r in rows:
-        conn.execute(
-            "INSERT OR REPLACE INTO satpass_pending("
-            "consolidated_id, observer, sat_name, norad_id, max_elevation, "
-            "aos_at, los_at, aos_compass, los_compass, peak_compass, "
-            "received_at, due_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", r)
-
-    captured = {}
-
-    def _spy(consolidated, *, now):
-        captured["c"] = consolidated
-        captured["now"] = now
-        return None  # short-circuit: no broadcast side effects
-
-    monkeypatch.setattr(sh, "gate_consolidated_pass", _spy)
-
-    result = sh.consolidate_satpass_pending(cid)
-    assert result is None
-
-    c = captured["c"]
-    assert c["consolidated_id"] == cid
-    assert c["norad_id"] == 25544
-    assert c["max_elevation"] == 70.0              # twin (higher)
-    assert c["aos_epoch"] == T0                     # boise earliest AOS
-    assert c["los_epoch"] == T0 + 400               # twin latest LOS
-    assert c["aos_compass"] == "SW"                 # boise
-    assert c["los_compass"] == "NE"                 # twin
-    assert c["peak_compass"] == "S"                 # twin (max-el observer)
-    assert c["entry_observer"] == "boise"
-    assert c["exit_observer"] == "twin"
-    assert c["observer_list"] == "boise,twin"
-
-    # Pending buffer is drained regardless of the gate's decision.
-    left = conn.execute(
-        "SELECT COUNT(*) AS n FROM satpass_pending WHERE consolidated_id=?",
-        (cid,)).fetchone()
-    assert left["n"] == 0
 
 
 # ══════════════════════════════════════════════════════════════════════
