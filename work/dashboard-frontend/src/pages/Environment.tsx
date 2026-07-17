@@ -208,7 +208,7 @@ function FeedSourceToggle({ value, onChange, disabled, centralDisabled }: {
    <button
     type="button"
     disabled={disabled || centralDisabled}
-    title={centralDisabled ? 'Central not available for this adapter' : ''}
+    title={centralDisabled ? 'Central feed source has been retired — native only' : ''}
     onClick={() => { if (!centralDisabled) onChange('central') }}
     className={`${base} ${centralDisabled ? 'text-[#666] cursor-not-allowed' : value === 'central' ? 'bg-accent text-white' : 'text-[#777] hover:text-white'}`}
    >central</button>
@@ -228,7 +228,13 @@ function AdapterPanel({ title, subtitle, enabled, onEnabled, feedSource, onFeedS
  /** Called when user toggles include_in_llm_context */
  onLlmContext?: (v: boolean) => void
 }) {
- const centralDisabled = nativeOnly || !hasCentral
+ // The Central service was retired 2026-07-15 (NATS broker gone, DB dropped) — there is
+ // nothing left to serve a "central" feed_source for ANY adapter, so the button is
+ // hard-disabled here regardless of `hasCentral`/`nativeOnly`. Those two stay wired in
+ // (rather than deleted) because the full removal of feed_source/hasCentral/nativeOnly and
+ // this whole toggle is a separate, larger refactor still pending; this is just the stopgap
+ // that keeps operators from picking a feed source that silently stops working.
+ const centralDisabled = true || nativeOnly || !hasCentral
  return (
   <div className="border border-border p-4 space-y-3">
    <div className="flex items-center justify-between">
@@ -260,8 +266,8 @@ function AdapterPanel({ title, subtitle, enabled, onEnabled, feedSource, onFeedS
      API key required — set it in the field below
     </div>
    )}
-   {nativeOnly && (
-    <div className="text-[11px] text-[#666]">Central not available for this adapter — native only</div>
+   {centralDisabled && (
+    <div className="text-[11px] text-[#666]">Central feed source has been retired — native only</div>
    )}
    <div className={enabled ? 'space-y-3' : 'space-y-3 opacity-40 pointer-events-none select-none'}>
     {children}
