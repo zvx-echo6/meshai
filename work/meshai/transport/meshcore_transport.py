@@ -21,6 +21,7 @@ from typing import Callable, Optional
 from .base import MeshTransport
 from .send_queue import RadioSendQueue
 from ..connector import MeshMessage
+from ..meshcore_roster import reconcile_contacts
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,10 @@ class MeshCoreTransport(MeshTransport):
         self._chan_details: list[dict] = []
         # Self-advertisement tracking.
         self._last_advert_sent: Optional[float] = None   # epoch seconds or None
+        # When the contact roster was last synced from the companion (epoch
+        # seconds): set at connect and on every refresh_contacts(). Lets the
+        # dashboard show roster freshness rather than implying "live".
+        self._contacts_synced_at: Optional[float] = None
         # asyncio.Task handle for the periodic advert loop; None when inactive.
         self._advert_task = None
         # asyncio.Task handle for the telemetry auto-poll loop; None when inactive.
@@ -145,6 +150,48 @@ class MeshCoreTransport(MeshTransport):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _connection_descriptor(self) -> dict:
+        """Describe the CONFIGURED connection: how we attach to the companion.
+
+        Single source of truth for both the connect() log line and the
+        ``self_info()`` API payload, so the two can never disagree about which
+        device meshai is attached to. Exactly one transport's fields are
+        populated per ``conn_type``; the rest are None. ``target`` is the
+        human-readable form ("serial:/dev/x@115200", "host:port", "ble:addr").
+
+        Reads config only — it describes the configured attachment, not a live
+        handle, so it is safe to call before connect() and while disconnected.
+        """
+        conn_type = (getattr(self.config, "meshcore_conn_type", "tcp") or "tcp").strip().lower()
+        base = {
+            "conn_type": conn_type,
+            "host": None,
+            "port": None,
+            "serial_port": None,
+            "baud": None,
+            "ble_address": None,
+        }
+        if conn_type == "serial":
+            serial_port = getattr(self.config, "meshcore_serial_port", "") or ""
+            baud = getattr(self.config, "meshcore_baud", 115200)
+            base.update({
+                "serial_port": serial_port or None,
+                "baud": baud,
+                "target": f"serial:{serial_port}@{baud}",
+            })
+            return base
+        if conn_type == "ble":
+            ble_address = getattr(self.config, "meshcore_ble_address", "") or ""
+            base.update({
+                "ble_address": ble_address or None,
+                "target": f"ble:{ble_address or 'auto'}",
+            })
+            return base
+        host = getattr(self.config, "meshcore_host", "") or ""
+        port = getattr(self.config, "meshcore_port", 5050)
+        base.update({"host": host or None, "port": port, "target": f"{host}:{port}"})
+        return base
 
     def _run_coro(self, coro, timeout: float = _COMMAND_TIMEOUT):
         """Submit *coro* to the dedicated event loop and block until done.
@@ -991,6 +1038,238 @@ class MeshCoreTransport(MeshTransport):
             })
         return roster
 
+    def contacts_synced_at(self) -> Optional[float]:
+        """Epoch seconds when the roster was last synced from the companion."""
+        return self._contacts_synced_at
+
+    async def _refresh_contacts_async(self) -> dict:
+        """Force a FULL contact refetch and reconcile the lib's cache. Runs on the MC loop.
+
+        ``ensure_contacts()`` is a no-op once the cache is populated, and even
+        when it does fetch it passes ``lastmod`` (incremental). Neither path can
+        ever shrink the cache, because the lib's CONTACTS handler only merges.
+        This forces ``get_contacts(lastmod=0)`` — the authoritative FULL set —
+        and then REPLACES the cache with it, so entries the companion no longer
+        has are dropped rather than surviving forever.
+
+        Only reconciles on a successful CONTACTS event: an ERROR/timeout leaves
+        the cache untouched, because treating a failed fetch as authoritative
+        would delete the entire roster.
+
+        Returns the reconcile stats dict (before/after/added/removed/updated).
+        """
+        from meshcore import EventType  # noqa: PLC0415 (lazy import intentional)
+
+        mc = self._mc
+        if mc is None:
+            raise RuntimeError("MeshCore not connected")
+
+        result = await mc.commands.get_contacts(lastmod=0)
+        if result is None:
+            raise RuntimeError("contact refresh failed: no response from companion")
+        if getattr(result, "type", None) == EventType.ERROR:
+            reason = (getattr(result, "payload", None) or {}).get("reason", "unknown")
+            raise RuntimeError(f"contact refresh failed: {reason}")
+
+        payload = getattr(result, "payload", None) or {}
+        # Re-key by public_key to match the lib's own cache layout — the event
+        # payload may be keyed differently, but every value carries its key.
+        fresh: dict[str, dict] = {}
+        for contact in payload.values():
+            if not isinstance(contact, dict):
+                continue
+            pubkey = contact.get("public_key")
+            if pubkey:
+                fresh[pubkey] = contact
+
+        cached = dict(getattr(mc, "contacts", None) or {})
+        reconciled, stats = reconcile_contacts(cached, fresh)
+
+        # Replace the lib's cache in place. The lib exposes ``contacts`` as a
+        # read-only property over ``_contacts``, so the private attr is the only
+        # way to apply removals; assigning a fresh dict would also break the
+        # lib's own handlers that mutate it in place.
+        mc._contacts.clear()
+        mc._contacts.update(reconciled)
+        mc._contacts_dirty = False
+
+        self._contacts_synced_at = _time.time()
+        logger.info(
+            "MeshCore: roster resync — %d before, %d after (+%d added, -%d removed, %d updated)",
+            stats["before"], stats["after"], stats["added"], stats["removed"], stats["updated"],
+        )
+        return stats
+
+    def refresh_contacts(self) -> dict:
+        """Force a FULL roster resync from the companion and reconcile the cache.
+
+        Blocking wrapper around ``_refresh_contacts_async``. Raises RuntimeError
+        when not connected or when the companion fetch fails. Returns the
+        reconcile stats dict.
+        """
+        if self._mc is None or not self._connected:
+            raise RuntimeError("MeshCore not connected")
+        return self._run_coro(self._refresh_contacts_async(), timeout=30.0)
+
+    def resync(self) -> dict:
+        """Re-read the companion's full device view: contacts AND channels.
+
+        meshai's picture of the device is otherwise built once at connect —
+        contacts by ``ensure_contacts()``, channels by ``_enumerate_channels()``
+        — and never re-read. A channel provisioned on the radio afterwards is
+        invisible until the process restarts. This is the one operator action
+        that re-reads both.
+
+        Must be called OFF the MC loop (it bridges through ``_run_coro``); the
+        dashboard route thread is the intended caller.
+
+        Returns ``{"contacts": <reconcile stats>, "channels": {before, after,
+        added, removed}}``.
+        """
+        if self._mc is None or not self._connected:
+            raise RuntimeError("MeshCore not connected")
+
+        contact_stats = self.refresh_contacts()
+
+        # Channels: re-walk the companion's slot table. _enumerate_channels()
+        # rebuilds BOTH _chan_name_to_idx and _chan_details (the async variant
+        # only does the former, which would leave the Channels view stale).
+        before = set(self.known_channels())
+        self._enumerate_channels()
+        after = set(self.known_channels())
+        channel_stats = {
+            "before": len(before),
+            "after": len(after),
+            "added": sorted(after - before),
+            "removed": sorted(before - after),
+        }
+        if channel_stats["added"] or channel_stats["removed"]:
+            logger.info(
+                "MeshCore: channel resync — +%s / -%s",
+                channel_stats["added"], channel_stats["removed"],
+            )
+        return {"contacts": contact_stats, "channels": channel_stats}
+
+    def remove_contact(self, pubkey: str) -> None:
+        """Remove a contact from the companion by full pubkey.
+
+        Wraps the lib's ``commands.remove_contact`` (CMD 0x0f). The lib does not
+        touch its own cache on removal, so the entry is dropped from the mirror
+        here too — otherwise the deleted contact would reappear in the roster
+        until the next full resync.
+
+        A FULL 64-hex pubkey is required: the lib validates with
+        ``prefix_length=32``, and a prefix could otherwise resolve to the wrong
+        node — the wrong contact silently deleted. Raises ValueError on a bad
+        key, RuntimeError when not connected or when the companion rejects it.
+        """
+        if self._mc is None or not self._connected:
+            raise RuntimeError("MeshCore not connected")
+        key = (pubkey or "").strip().lower()
+        if len(key) != 64:
+            raise ValueError("A full 64-character hex pubkey is required to remove a contact")
+        try:
+            bytes.fromhex(key)
+        except ValueError:
+            raise ValueError(f"Invalid pubkey hex: {pubkey!r}")
+
+        from meshcore import EventType  # noqa: PLC0415 (lazy import intentional)
+
+        result = self._run_coro(self._mc.commands.remove_contact(key), timeout=15.0)
+        if result is None:
+            raise RuntimeError("remove_contact failed: no response from companion")
+        if getattr(result, "type", None) == EventType.ERROR:
+            reason = (getattr(result, "payload", None) or {}).get("reason", "unknown")
+            raise RuntimeError(f"remove_contact failed: {reason}")
+
+        try:
+            self._mc._contacts.pop(key, None)
+        except Exception:
+            logger.debug("MeshCore: could not drop %s from cache mirror", key, exc_info=True)
+        logger.info("MeshCore: removed contact %s from companion", key)
+
+    def export_roster(self) -> list[dict]:
+        """Roster as importable records: the raw lib fields, not the UI view.
+
+        ``get_contacts()`` returns a display projection; a record has to carry
+        every field ``commands.update_contact`` writes back (type, flags, the
+        out_path triplet, adv_name, last_advert, adv_lat/adv_lon) or it cannot
+        be imported onto another companion. Returns [] when not connected.
+        """
+        if self._mc is None or not self._connected:
+            return []
+        contacts = getattr(self._mc, "contacts", None) or {}
+        records: list[dict] = []
+        for pubkey_hex, contact in contacts.items():
+            if not isinstance(contact, dict):
+                continue
+            pubkey = contact.get("public_key") or pubkey_hex
+            try:
+                out_path_len = int(contact.get("out_path_len", -1))
+            except (TypeError, ValueError):
+                out_path_len = -1
+            records.append({
+                "name": contact.get("adv_name"),
+                "pubkey": pubkey,
+                "type": contact.get("type"),
+                "flags": contact.get("flags"),
+                "last_advert": contact.get("last_advert"),
+                "adv_lat": contact.get("adv_lat"),
+                "adv_lon": contact.get("adv_lon"),
+                "out_path": contact.get("out_path"),
+                "out_path_len": out_path_len,
+                "out_path_hash_mode": contact.get("out_path_hash_mode"),
+                "path_established": out_path_len >= 0,
+            })
+        return sorted(records, key=lambda r: (r["name"] or "").lower())
+
+    def import_contact(self, record: dict) -> None:
+        """Write one exported roster record onto the companion.
+
+        Uses ``commands.add_contact`` (which delegates to ``update_contact``,
+        CMD 0x09) to rebuild a contact on a replacement companion without
+        waiting to rediscover it by advert. This is a LOCAL device write — it
+        does not transmit to the mesh.
+
+        Additive/idempotent by nature: CMD 0x09 upserts, so re-importing an
+        existing contact overwrites that record rather than duplicating it.
+        Raises ValueError on a malformed record, RuntimeError on rejection.
+        """
+        if self._mc is None or not self._connected:
+            raise RuntimeError("MeshCore not connected")
+        pubkey = (record.get("pubkey") or "").strip().lower()
+        if len(pubkey) != 64:
+            raise ValueError("Each contact needs a full 64-character hex pubkey")
+        try:
+            bytes.fromhex(pubkey)
+        except ValueError:
+            raise ValueError(f"Invalid pubkey hex: {pubkey!r}")
+
+        # Rebuild the lib-shaped contact dict update_contact() expects. The
+        # defaults keep a hand-written or older export importable: an unknown
+        # path simply means "flood until a path is discovered".
+        contact = {
+            "public_key": pubkey,
+            "type": int(record.get("type") or 0),
+            "flags": int(record.get("flags") or 0),
+            "out_path": record.get("out_path") or "",
+            "out_path_len": int(record.get("out_path_len", -1) if record.get("out_path_len") is not None else -1),
+            "out_path_hash_mode": int(record.get("out_path_hash_mode") or 0),
+            "adv_name": record.get("name") or "",
+            "last_advert": int(record.get("last_advert") or 0),
+            "adv_lat": float(record.get("adv_lat") or 0.0),
+            "adv_lon": float(record.get("adv_lon") or 0.0),
+        }
+
+        from meshcore import EventType  # noqa: PLC0415 (lazy import intentional)
+
+        result = self._run_coro(self._mc.commands.add_contact(contact), timeout=15.0)
+        if result is None:
+            raise RuntimeError("import_contact failed: no response from companion")
+        if getattr(result, "type", None) == EventType.ERROR:
+            reason = (getattr(result, "payload", None) or {}).get("reason", "unknown")
+            raise RuntimeError(f"import_contact failed: {reason}")
+
     # A MeshCore ROOM SERVER is a contact whose ``type`` is ROOM (3) in the
     # firmware CONTACT_TYPENAMES table [NONE, CLI, REP, ROOM, SENS]. We route
     # to a room via the DM primitive (send_msg to its pubkey), so a room is
@@ -1106,18 +1385,34 @@ class MeshCoreTransport(MeshTransport):
         return await self._do_mc_dm_send_async(text, pubkey)
 
     def self_info(self) -> dict:
-        """Companion self/connection status. {connected: False} if not connected."""
+        """Companion self/connection status. {connected: False} if not connected.
+
+        ``name``/``pubkey`` identify the ACTUAL connected device; the connection
+        fields describe how we are attached to it. Only the fields belonging to
+        the live ``conn_type`` are populated — the others are None. Reporting
+        ``host``/``port`` unconditionally (as this did previously) meant a serial
+        connection still advertised whatever stale ``meshcore_host`` sat in the
+        config, i.e. the API named a device meshai was not talking to. Anyone
+        trusting that pointer investigates the wrong physical radio.
+        """
         if self._mc is None or not self._connected:
             return {"connected": False}
         info = self._self_info or {}
+        descriptor = self._connection_descriptor()
         return {
             "name": info.get("name"),
             "pubkey": info.get("public_key"),
             "connected": True,
-            "host": getattr(self.config, "meshcore_host", "100.64.0.9"),
-            "port": getattr(self.config, "meshcore_port", 5050),
+            "conn_type": descriptor["conn_type"],
+            "target": descriptor["target"],
+            "host": descriptor["host"],
+            "port": descriptor["port"],
+            "serial_port": descriptor["serial_port"],
+            "baud": descriptor["baud"],
+            "ble_address": descriptor["ble_address"],
             "channel_count": len(self.known_channels()),
             "last_advert_sent": self._last_advert_sent,
+            "contacts_synced_at": self._contacts_synced_at,
         }
 
     def set_context_config(self, cfg) -> None:
@@ -1532,8 +1827,28 @@ class MeshCoreTransport(MeshTransport):
         self._mc.subscribe(EventType.NEW_CONTACT, self._on_new_contact)
         try:
             await self._mc.ensure_contacts()
+            self._contacts_synced_at = _time.time()
         except Exception:
             logger.debug("MeshCore: ensure_contacts failed (non-fatal)", exc_info=True)
+
+        # Let the lib refresh its roster when it hears an ADVERTISEMENT /
+        # PATH_UPDATE. The lib defaults this OFF, which leaves the roster a
+        # connect-time snapshot that only grows (its CONTACTS handler merges and
+        # never removes) until something forces a refetch.
+        #
+        # TRADE-OFF: each advert heard costs one incremental get_contacts()
+        # round-trip to the companion — local serial/TCP chatter, never a mesh
+        # transmission. On a dense mesh (and especially with
+        # meshcore_auto_add_contacts, where the firmware adds every node it
+        # hears) that is a steady trickle of fetches. Set
+        # meshcore_auto_update_contacts=false to keep the lib default and rely
+        # on the explicit "Resync" action instead.
+        if getattr(self.config, "meshcore_auto_update_contacts", True):
+            try:
+                self._mc.auto_update_contacts = True
+                logger.info("MeshCore: auto-update-contacts ENABLED (adverts refresh the roster)")
+            except Exception as exc:
+                logger.warning("MeshCore: could not enable auto_update_contacts (non-fatal): %s", exc)
         if getattr(self.config, "meshcore_auto_add_contacts", True):
             try:
                 await self._mc.commands.set_autoadd_config(1)
@@ -1571,13 +1886,9 @@ class MeshCoreTransport(MeshTransport):
         auto_reconnect = getattr(self.config, "meshcore_auto_reconnect", True)
         max_attempts = getattr(self.config, "meshcore_max_reconnect_attempts", 5)
 
-        # Build a human-readable target string for logging.
-        if conn_type == "serial":
-            target = f"serial:{serial_port}@{baud}"
-        elif conn_type == "ble":
-            target = f"ble:{ble_address or 'auto'}"
-        else:
-            target = f"{host}:{port}"
+        # Human-readable target for logging — from the same descriptor that
+        # self_info() reports, so the log and the API never disagree.
+        target = self._connection_descriptor()["target"]
 
         logger.info("MeshCoreTransport: connecting to %s …", target)
 

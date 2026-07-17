@@ -10,6 +10,32 @@ import {
   type TestSendResult,
 } from '../lib/api'
 
+// How meshai is attached to the companion. Distinct colours so the transport is
+// readable at a glance — an operator must be able to tell WHICH device this is
+// before acting on it.
+const CONN_TYPE_BADGE: Record<string, string> = {
+  serial: 'bg-emerald-500/15 text-emerald-400',
+  tcp: 'bg-sky-500/15 text-sky-400',
+  ble: 'bg-violet-500/15 text-violet-400',
+}
+
+/** The live connection target, from whichever fields belong to this conn_type.
+ *
+ * Falls back to the per-transport fields if `target` is absent (older backend).
+ * Never falls back to host/port for a non-TCP link: that is exactly the
+ * mistake this display exists to prevent.
+ */
+function connectionTarget(self: MeshcoreSelf | null): string {
+  if (!self) return '—'
+  if (self.target) return self.target
+  if (self.conn_type === 'serial') {
+    return self.serial_port ? `${self.serial_port}@${self.baud ?? 115200}` : 'serial'
+  }
+  if (self.conn_type === 'ble') return self.ble_address || 'ble'
+  if (self.host) return `${self.host}${self.port != null ? `:${self.port}` : ''}`
+  return '—'
+}
+
 /** Format epoch seconds as a human-readable relative time string. */
 function relativeTime(epochSec: number): string {
   const diffSec = Math.floor(Date.now() / 1000 - epochSec)
@@ -178,10 +204,18 @@ export default function MeshCoreCompanion() {
                     <dd className="text-slate-100">{self?.name ?? 'unnamed'}</dd>
                   </div>
                   <div>
-                    <dt className="text-[#777] mb-1">Host</dt>
-                    <dd className="text-slate-100 font-mono">
-                      {self?.host ?? '—'}
-                      {self?.port != null ? `:${self.port}` : ''}
+                    <dt className="text-[#777] mb-1">Connection</dt>
+                    <dd className="flex items-center gap-2">
+                      <span
+                        className={`px-1.5 py-0.5 text-[10px] uppercase tracking-wide rounded ${
+                          CONN_TYPE_BADGE[self?.conn_type ?? ''] ?? 'bg-slate-600/30 text-slate-400'
+                        }`}
+                      >
+                        {self?.conn_type ?? 'unknown'}
+                      </span>
+                      <span className="text-slate-100 font-mono text-xs break-all">
+                        {connectionTarget(self)}
+                      </span>
                     </dd>
                   </div>
                   <div className="sm:col-span-2">

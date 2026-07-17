@@ -59,6 +59,10 @@ class ConnectionConfig:
     meshcore_baud: int = 115200
     meshcore_ble_address: str = ""             # optional; for ble
     meshcore_auto_add_contacts: bool = True     # firmware auto-adds every node it hears an advert from (so AIDA can DM anyone)
+    # Refresh the cached roster whenever an advert/path-update is heard. Costs one
+    # incremental contact fetch to the companion per advert (local chatter, never a
+    # mesh send); false = lib default (connect-time snapshot + explicit resync only).
+    meshcore_auto_update_contacts: bool = True
     meshcore_ack_wait_seconds: float = 6.0       # wait for delivery ACK before falling back to path discovery
     meshcore_discovery_wait_seconds: float = 8.0  # path-discovery timeout on the no-ACK fallback (was hardcoded 25s)
 

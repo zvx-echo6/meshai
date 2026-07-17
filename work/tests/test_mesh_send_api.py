@@ -6,6 +6,7 @@ Uses a bare FastAPI() + TestClient with a hand-seeded ``app.state.connector``
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -198,12 +199,17 @@ _SAMPLE_ROSTER = [
 def test_meshcore_contacts_active():
     mc = _child("meshcore", connected=True)
     mc.get_contacts.return_value = list(_SAMPLE_ROSTER)
+    mc.contacts_synced_at.return_value = 1700000000.0
     connector = _composite([mc])
     client = _client(connector)
 
     r = client.get("/api/meshcore/contacts")
     assert r.status_code == 200
-    assert r.json() == {"active": True, "contacts": _SAMPLE_ROSTER}
+    assert r.json() == {
+        "active": True,
+        "contacts": _SAMPLE_ROSTER,
+        "last_synced_at": 1700000000.0,
+    }
 
 
 def test_meshcore_contacts_no_meshcore():
@@ -213,7 +219,7 @@ def test_meshcore_contacts_no_meshcore():
 
     r = client.get("/api/meshcore/contacts")
     assert r.status_code == 200
-    assert r.json() == {"active": False, "contacts": []}
+    assert r.json() == {"active": False, "contacts": [], "last_synced_at": None}
 
 
 def test_meshcore_contacts_disconnected():
@@ -223,7 +229,250 @@ def test_meshcore_contacts_disconnected():
 
     r = client.get("/api/meshcore/contacts")
     assert r.status_code == 200
-    assert r.json() == {"active": False, "contacts": []}
+    assert r.json() == {"active": False, "contacts": [], "last_synced_at": None}
+
+
+# ============================================================================
+# POST /api/meshcore/contacts/refresh — full resync + reconcile
+# ============================================================================
+
+_REFRESH_STATS = {
+    "before": 3, "after": 3, "added": 1, "removed": 1, "updated": 0,
+    "added_keys": ["cc" * 32], "removed_keys": ["bb" * 32],
+}
+
+
+_CHANNEL_STATS = {"before": 4, "after": 5, "added": ["#new-chan"], "removed": []}
+
+
+def test_meshcore_refresh_returns_contact_and_channel_stats():
+    """The resync re-reads BOTH halves of the device view, and reports each."""
+    mc = _child("meshcore", connected=True, known=["#aida", "#new-chan"])
+    mc.resync.return_value = {"contacts": dict(_REFRESH_STATS), "channels": dict(_CHANNEL_STATS)}
+    mc.get_contacts.return_value = list(_SAMPLE_ROSTER)
+    mc.contacts_synced_at.return_value = 1700000000.0
+    client = _client(_composite([mc]))
+
+    r = client.post("/api/meshcore/contacts/refresh")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["stats"] == _REFRESH_STATS
+    assert body["channel_stats"] == _CHANNEL_STATS
+    assert body["contacts"] == _SAMPLE_ROSTER
+    assert body["channels"] == ["#aida", "#new-chan"]
+    assert body["last_synced_at"] == 1700000000.0
+    mc.resync.assert_called_once()
+
+
+def test_meshcore_refresh_conflict_when_disconnected():
+    mc = _child("meshcore", connected=False)
+    client = _client(_composite([mc]))
+
+    r = client.post("/api/meshcore/contacts/refresh")
+
+    assert r.status_code == 409
+    mc.resync.assert_not_called()
+
+
+def test_meshcore_refresh_surfaces_companion_failure():
+    """A failed fetch must surface, not be reported as a successful resync."""
+    mc = _child("meshcore", connected=True)
+    mc.resync.side_effect = RuntimeError("contact refresh failed: timeout")
+    client = _client(_composite([mc]))
+
+    r = client.post("/api/meshcore/contacts/refresh")
+
+    assert r.status_code == 502
+    assert "timeout" in r.json()["detail"]
+
+
+# ============================================================================
+# DELETE /api/meshcore/contacts/{pubkey}
+# ============================================================================
+
+def test_meshcore_delete_contact_removes_and_returns_roster():
+    mc = _child("meshcore", connected=True)
+    mc.get_contacts.return_value = list(_SAMPLE_ROSTER)
+    client = _client(_composite([mc]))
+
+    r = client.delete(f"/api/meshcore/contacts/{'aa' * 32}")
+
+    assert r.status_code == 200
+    assert r.json() == {"active": True, "contacts": _SAMPLE_ROSTER}
+    mc.remove_contact.assert_called_once_with("aa" * 32)
+
+
+def test_meshcore_delete_contact_rejects_bad_key():
+    mc = _child("meshcore", connected=True)
+    mc.remove_contact.side_effect = ValueError("A full 64-character hex pubkey is required")
+    client = _client(_composite([mc]))
+
+    r = client.delete("/api/meshcore/contacts/aa11")
+
+    assert r.status_code == 400
+
+
+def test_meshcore_delete_contact_conflict_when_disconnected():
+    mc = _child("meshcore", connected=False)
+    client = _client(_composite([mc]))
+
+    r = client.delete(f"/api/meshcore/contacts/{'aa' * 32}")
+
+    assert r.status_code == 409
+    mc.remove_contact.assert_not_called()
+
+
+# ============================================================================
+# GET /api/meshcore/contacts/export
+# ============================================================================
+
+def test_meshcore_export_returns_envelope_and_attachment():
+    mc = _child("meshcore", connected=True)
+    mc.export_roster.return_value = [{"name": "N", "pubkey": "aa" * 32, "type": 1}]
+    mc.self_info.return_value = {
+        "name": "AIDA", "pubkey": "a6" * 32,
+        "conn_type": "serial", "target": "serial:/dev/meshcore-rak@115200",
+    }
+    mc.contacts_synced_at.return_value = 1700000000.0
+    client = _client(_composite([mc]))
+
+    r = client.get("/api/meshcore/contacts/export")
+
+    assert r.status_code == 200
+    assert "attachment" in r.headers["content-disposition"]
+    body = r.json()
+    assert body["format"] == "meshai.meshcore.roster"
+    assert body["count"] == 1
+    # The roster is only meaningful paired with the device it came from.
+    assert body["device"]["conn_type"] == "serial"
+    assert body["device"]["target"] == "serial:/dev/meshcore-rak@115200"
+
+
+def test_meshcore_export_conflict_when_disconnected():
+    mc = _child("meshcore", connected=False)
+    client = _client(_composite([mc]))
+
+    assert client.get("/api/meshcore/contacts/export").status_code == 409
+
+
+# ============================================================================
+# POST /api/meshcore/contacts/import
+# ============================================================================
+
+def test_meshcore_import_writes_each_record():
+    mc = _child("meshcore", connected=True)
+    client = _client(_composite([mc]))
+
+    r = client.post("/api/meshcore/contacts/import", json={
+        "contacts": [{"pubkey": "aa" * 32}, {"pubkey": "bb" * 32}],
+    })
+
+    assert r.status_code == 200
+    assert r.json() == {"active": True, "imported": 2, "failed": 0, "errors": []}
+    assert mc.import_contact.call_count == 2
+
+
+def test_meshcore_import_collects_per_record_errors():
+    """One bad record must not strand the batch with no report of what landed."""
+    mc = _child("meshcore", connected=True)
+    mc.import_contact.side_effect = [None, ValueError("bad pubkey")]
+    client = _client(_composite([mc]))
+
+    r = client.post("/api/meshcore/contacts/import", json={
+        "contacts": [{"pubkey": "aa" * 32}, {"pubkey": "nope"}],
+    })
+
+    body = r.json()
+    assert body["imported"] == 1
+    assert body["failed"] == 1
+    assert body["errors"][0]["pubkey"] == "nope"
+
+
+def test_meshcore_import_rejects_empty_payload():
+    mc = _child("meshcore", connected=True)
+    client = _client(_composite([mc]))
+
+    assert client.post("/api/meshcore/contacts/import", json={"contacts": []}).status_code == 400
+
+
+# ============================================================================
+# GET /api/meshcore/route-health
+# ============================================================================
+
+def _config_with_cells(cells, mc_enabled=True):
+    return SimpleNamespace(
+        notifications=SimpleNamespace(
+            region_routes=SimpleNamespace(mt_enabled=True, mc_enabled=mc_enabled, cells=cells)
+        )
+    )
+
+
+def _health_client(connector, config):
+    app = FastAPI()
+    app.include_router(router, prefix="/api")
+    app.state.connector = connector
+    app.state.config = config
+    return TestClient(app)
+
+
+def test_route_health_flags_dangling_room_cell():
+    mc = _child("meshcore", connected=True, known=["#aida"])
+    mc.get_contacts.return_value = []
+    config = _config_with_cells({"fire": {"SC Idaho": {"mc": f"room:{'de' * 32}", "enabled": True}}})
+    client = _health_client(_composite([mc]), config)
+
+    body = client.get("/api/meshcore/route-health").json()
+
+    assert body["active"] is True
+    assert len(body["dangling"]) == 1
+    assert body["dangling"][0]["reason"] == "room_not_found"
+    assert body["dangling_enabled"] == 1
+
+
+def test_route_health_clean_when_targets_resolve():
+    mc = _child("meshcore", connected=True, known=["#aida"])
+    mc.get_contacts.return_value = [
+        {"pubkey": "aa" * 32, "name": "Room", "type": 3},
+    ]
+    config = _config_with_cells({
+        "weather": {
+            "SW Idaho": {"mc": "#aida", "enabled": True},
+            "SC Idaho": {"mc": f"room:{'aa' * 32}", "enabled": True},
+        }
+    })
+    client = _health_client(_composite([mc]), config)
+
+    body = client.get("/api/meshcore/route-health").json()
+
+    assert body["dangling"] == []
+    assert body["checked"] == 2
+
+
+def test_route_health_reports_name_collisions():
+    mc = _child("meshcore", connected=True, known=[])
+    mc.get_contacts.return_value = [
+        {"pubkey": "aa" * 32, "name": "SC ID AIDA Alerts", "type": 3},
+        {"pubkey": "bb" * 32, "name": "SC ID AIDA Alerts", "type": 3},
+    ]
+    client = _health_client(_composite([mc]), _config_with_cells({}))
+
+    body = client.get("/api/meshcore/route-health").json()
+
+    assert len(body["collisions"]) == 1
+    assert body["collisions"][0]["count"] == 2
+
+
+def test_route_health_inactive_when_disconnected():
+    """A disconnected companion is not evidence that a route is broken."""
+    mc = _child("meshcore", connected=False)
+    config = _config_with_cells({"fire": {"SC Idaho": {"mc": "room:dead", "enabled": True}}})
+    client = _health_client(_composite([mc]), config)
+
+    body = client.get("/api/meshcore/route-health").json()
+
+    assert body["active"] is False
+    assert body["dangling"] == []
 
 
 # ============================================================================
