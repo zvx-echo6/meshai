@@ -119,7 +119,7 @@ _SUBJECT = "central.fire.hotspot.N20.high.us.id"
 def _drive_two_pass_growth(irwin_id, center_lat, center_lon):
     """Seed a fire + pass A (5 px) + first pass-B pixel 1 mi N. Returns the
     (wire, data) from the boundary pixel that fires wildfire_growth."""
-    from meshai.central.firms_handler import handle_firms
+    from meshai.env.fire_fusion import handle_firms
     _seed_fire(irwin_id=irwin_id, lat=center_lat, lon=center_lon, name="Pine Gulch")
     for i in range(5):
         env = _envelope(lat=center_lat + 0.0001 * i,
@@ -136,7 +136,7 @@ def _drive_two_pass_growth(irwin_id, center_lat, center_lon):
 
 def _seed_pass_a_hex_then_close(irwin_id, center_lat, center_lon,
                                 start_now=1780747200):
-    from meshai.central.firms_handler import handle_firms
+    from meshai.env.fire_fusion import handle_firms
     _seed_fire(irwin_id=irwin_id, lat=center_lat, lon=center_lon, name=irwin_id)
     for i in range(6):
         angle = i * math.pi / 3
@@ -156,7 +156,7 @@ def _offset_mi(lat, lon, north_mi, east_mi):
 def _drive_spotting(irwin_id, center_lat, center_lon, now=1780768800):
     """Seed hex pass A + closed perimeter, then a pass-B pixel 2 mi NE that
     fires wildfire_spotting. Returns (wire, data)."""
-    from meshai.central.firms_handler import handle_firms
+    from meshai.env.fire_fusion import handle_firms
     _seed_pass_a_hex_then_close(irwin_id, center_lat, center_lon)
     sp_lat, sp_lon = _offset_mi(center_lat, center_lon,
                                 north_mi=2.0 / math.sqrt(2),
@@ -354,7 +354,7 @@ class TestFormatterGolden:
             _clear_cache()
 
     def test_halt_wire_golden(self, monkeypatch):
-        from meshai.central.firms_handler import _maybe_emit_halt
+        from meshai.env.fire_fusion import _maybe_emit_halt
         from meshai.persistence import get_db
         _cutover(monkeypatch, "wildfire_halted")
         try:
@@ -416,7 +416,7 @@ class TestNotCutoverLegacyVerbatim:
         assert "_on_broadcast_committed" not in data
 
     def test_halt_eager_latch_stamped(self, _no_cutover):
-        from meshai.central.firms_handler import _maybe_emit_halt
+        from meshai.env.fire_fusion import _maybe_emit_halt
         from meshai.persistence import get_db
         now = 1780768800
         _seed_stale_fire("ID-HN", now_epoch=now, idle_hours=14)
@@ -439,7 +439,7 @@ class TestNotCutoverLegacyVerbatim:
 
 class TestClusterBelowThreshold:
     def test_maybe_emit_cluster_below_threshold_returns_none(self):
-        from meshai.central.firms_handler import _maybe_emit_cluster
+        from meshai.env.fire_fusion import _maybe_emit_cluster
         from meshai.persistence import get_db
         data = {}
         # No pixels in firms_pixels -> the cluster query finds < min_pixels

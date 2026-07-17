@@ -81,7 +81,7 @@ def _envelope(*, lat, lon, acq_date="2026-06-06", acq_time="1200",
 
 
 def test_pixel_within_radius_attributes_to_fire():
-    from meshai.central.firms_handler import handle_firms
+    from meshai.env.fire_fusion import handle_firms
     from meshai.persistence import get_db
 
     # Cache Peak Fire stub @ 42.118, -113.643.
@@ -120,7 +120,7 @@ def test_pixel_within_radius_attributes_to_fire():
 def test_centroid_recomputes_as_median_across_passes():
     """A second attributed pixel updates the centroid to the median, not
     just the latest pixel's coords."""
-    from meshai.central.firms_handler import handle_firms
+    from meshai.env.fire_fusion import handle_firms
     from meshai.persistence import get_db
 
     _seed_fire(irwin_id="ID-TEST-002",
@@ -157,7 +157,7 @@ def test_centroid_recomputes_as_median_across_passes():
 
 
 def test_pixel_outside_radius_stays_unattributed():
-    from meshai.central.firms_handler import handle_firms
+    from meshai.env.fire_fusion import handle_firms
     from meshai.persistence import get_db
 
     _seed_fire(irwin_id="ID-TEST-003",
@@ -196,7 +196,7 @@ def _hhmm(h, m=0):
 
 
 def test_three_unattributed_pixels_fire_cluster_once():
-    from meshai.central.firms_handler import handle_firms
+    from meshai.env.fire_fusion import handle_firms
     from meshai.persistence import get_db
 
     # No fires seeded -- everything is unattributed.
@@ -235,7 +235,7 @@ def test_three_unattributed_pixels_fire_cluster_once():
 
 
 def test_fourth_pixel_in_same_cluster_does_not_refire():
-    from meshai.central.firms_handler import handle_firms
+    from meshai.env.fire_fusion import handle_firms
     from meshai.persistence import get_db
 
     base_lat, base_lon = 43.500, -114.500
@@ -279,7 +279,7 @@ def test_fifth_pixel_after_time_window_can_form_new_cluster():
     no nearby unstamped pixels to count, so it stays silent -- but if
     we then ingest TWO more nearby pixels (also outside the original
     window), we should fire a NEW cluster."""
-    from meshai.central.firms_handler import handle_firms
+    from meshai.env.fire_fusion import handle_firms
 
     base_lat, base_lon = 43.500, -114.500
     # First cluster at 12:00..12:20 -> fires + stamps all 3.
@@ -321,7 +321,7 @@ def test_fifth_pixel_after_time_window_can_form_new_cluster():
 
 
 def test_wfigs_first_sight_tags_wildfire_declared():
-    from meshai.central.wfigs_handler import handle_wfigs
+    from meshai.env.fire_render import handle_wfigs
 
     normalized = {
         "_kind": "wfigs_incident",
@@ -351,7 +351,7 @@ def test_wfigs_first_sight_tags_wildfire_declared():
 def test_wfigs_update_does_not_retag_wildfire_declared():
     """After a row exists AND has been broadcast, an acres-grew Update
     must NOT carry the wildfire_declared category."""
-    from meshai.central.wfigs_handler import handle_wfigs
+    from meshai.env.fire_render import handle_wfigs
     from meshai.persistence import get_db
 
     # Pre-existing row that has already been broadcast.

@@ -279,7 +279,7 @@ def test_fires_has_tombstoned_at_column():
 
 def test_wfigs_tombstone_stamps_column():
     """A tombstone envelope sets fires.tombstoned_at."""
-    from meshai.central.wfigs_handler import handle_wfigs
+    from meshai.env.fire_render import handle_wfigs
     conn = get_db()
     # Seed an active fire row.
     irwin = "TOMB-1"

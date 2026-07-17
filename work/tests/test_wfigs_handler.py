@@ -20,7 +20,7 @@ import time
 import pytest
 
 from meshai import central_normalizer as cn
-from meshai.central.wfigs_handler import (
+from meshai.env.fire_render import (
     WFIGS_BROADCAST_COOLDOWN_S,
     handle_wfigs,
     _render as _wfigs_render,
@@ -47,7 +47,7 @@ def mem_db(monkeypatch, tmp_path):
         pass
     # Reset the stale-fire cleanup throttle so it runs deterministically.
     try:
-        from meshai.central import wfigs_handler as _wh
+        from meshai.env import fire_render as _wh
         _wh._last_cleanup = 0
     except Exception:
         pass

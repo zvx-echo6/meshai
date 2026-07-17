@@ -73,7 +73,7 @@ def _envelope(*, lat, lon, acq_date="2026-06-06", acq_time="1200",
 def test_two_pass_drift_emits_growth_with_direction_and_speed():
     """Pass 1 (N20 bucket A), pass 2 (N20 bucket B, ~6h later, centroid
     1.0 mi N of pass 1). Drift should be ~1.0 mi N, broadcast must fire."""
-    from meshai.central.firms_handler import handle_firms
+    from meshai.env.fire_fusion import handle_firms
     from meshai.persistence import get_db
 
     _seed_fire(irwin_id="ID-GROWTH-001",
@@ -139,7 +139,7 @@ def test_two_pass_drift_emits_growth_with_direction_and_speed():
 def test_drift_below_threshold_does_not_emit_growth():
     """0.3 mi drift between consecutive passes -- below the 0.5 mi
     default -- must NOT broadcast wildfire_growth."""
-    from meshai.central.firms_handler import handle_firms
+    from meshai.env.fire_fusion import handle_firms
     from meshai.persistence import get_db
 
     _seed_fire(irwin_id="ID-DRIFT-001",
@@ -181,7 +181,7 @@ def test_drift_below_threshold_does_not_emit_growth():
 def test_halt_detector_fires_once_after_12h_idle():
     """Fire with last_pass_at 14h ago + no new pixels in that fire
     triggers halt on the next FIRMS pixel arrival (for any fire)."""
-    from meshai.central.firms_handler import handle_firms, _maybe_emit_halt
+    from meshai.env.fire_fusion import handle_firms, _maybe_emit_halt
     from meshai.persistence import get_db
 
     now_epoch = 1780768800   # 2026-06-06 18:00 UTC
@@ -214,7 +214,7 @@ def test_halt_detector_fires_once_after_12h_idle():
 
 def test_halt_detector_no_second_broadcast_for_same_fire():
     """Once halt_broadcast_at is stamped, the detector skips that fire."""
-    from meshai.central.firms_handler import _maybe_emit_halt
+    from meshai.env.fire_fusion import _maybe_emit_halt
     from meshai.persistence import get_db
 
     now_epoch = 1780768800
@@ -238,7 +238,7 @@ def test_halt_eligibility_returns_after_new_pass_arrives():
     """A previously halted fire that receives a new pixel becomes eligible
     for halt again if it goes idle a second time. The detector filter is
     halt_broadcast_at IS NULL OR halt_broadcast_at < last_pass_at."""
-    from meshai.central.firms_handler import _maybe_emit_halt
+    from meshai.env.fire_fusion import _maybe_emit_halt
     from meshai.persistence import get_db
 
     now_epoch = 1780768800
@@ -267,7 +267,7 @@ def test_halt_eligibility_returns_after_new_pass_arrives():
 
 def test_bearing_and_direction_round_trip():
     """Bearing helper + 8-way mapping cover all cardinals/intercardinals."""
-    from meshai.central.firms_handler import _bearing, _direction_8
+    from meshai.env.fire_fusion import _bearing, _direction_8
     # Source point.
     s_lat, s_lon = 42.0, -114.0
     # Each cardinal/intercardinal direction we test by walking ~1 mi.
@@ -289,7 +289,7 @@ def test_bearing_and_direction_round_trip():
 
 
 def test_direction_8_boundary_cases():
-    from meshai.central.firms_handler import _direction_8
+    from meshai.env.fire_fusion import _direction_8
     # Bearings on the boundary -- check the +22.5 offset rounds correctly.
     assert _direction_8(0.0) == "N"
     assert _direction_8(22.4) == "N"
@@ -339,7 +339,7 @@ def test_pass_row_aggregates_match_member_pixels():
     """5 pixels attributed in the same pass yield ONE fire_passes row
     with pixel_count=5, total_frp = sum, pass_started_at = min(acq),
     pass_ended_at = max(acq), centroid = median."""
-    from meshai.central.firms_handler import handle_firms
+    from meshai.env.fire_fusion import handle_firms
     from meshai.persistence import get_db
 
     _seed_fire(irwin_id="ID-AGG-001",

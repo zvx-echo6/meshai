@@ -23,7 +23,7 @@ import pytest
 
 from meshai import central_normalizer as cn
 from meshai.notifications.formatters._budget import budget_for
-from meshai.central.wfigs_handler import (
+from meshai.env.fire_render import (
     _build_canonical,
     _render as _wfigs_render,
     handle_wfigs,
@@ -55,7 +55,7 @@ def mem_db(monkeypatch, tmp_path):
     except Exception:
         pass
     try:
-        from meshai.central import wfigs_handler as _wh
+        from meshai.env import fire_render as _wh
         _wh._last_cleanup = 0
     except Exception:
         pass

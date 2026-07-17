@@ -138,7 +138,7 @@ class FIRMSAdapter:
         new_events = self._parse_csv(csv_data)
 
         # Feed every fetched pixel into the SHARED source-agnostic fusion engine
-        # (central.firms_handler.ingest_hotspot_pixel): attribution + growth /
+        # (env.fire_fusion.ingest_hotspot_pixel): attribution + growth /
         # spotting / halt. DB-level dedup (firms_pixels unique key) makes this
         # idempotent across ticks, so re-fetched pixels never double-count.
         # NEVER broadcasts raw hotspots -- only the fusion wires it returns.
@@ -422,14 +422,14 @@ class FIRMSAdapter:
         engine and collect the fire-fusion broadcasts.
 
         Every parsed pixel is mapped to the canonical FIRMS schema and passed to
-        ``central.firms_handler.ingest_hotspot_pixel`` -- the exact same engine
+        ``env.fire_fusion.ingest_hotspot_pixel`` -- the exact same engine
         the Central NATS handler drives. The engine INSERTs the pixel, runs
         attribution, and runs the growth / spotting / halt fusion; it returns
         ONLY fusion wires (never a raw-hotspot / cluster broadcast). DB-level
         dedup makes re-fetched pixels no-ops, so nothing double-counts.
         """
         try:
-            from meshai.central.firms_handler import (
+            from meshai.env.fire_fusion import (
                 ingest_hotspot_pixel, _parse_acq_epoch,
             )
         except Exception:
