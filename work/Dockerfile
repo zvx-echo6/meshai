@@ -71,7 +71,6 @@ COPY --chown=meshai:meshai meshai/ ./meshai/
 # Overwrite with freshly built frontend assets from stage 1
 COPY --from=frontend --chown=meshai:meshai /build/meshai/dashboard/static/ ./meshai/dashboard/static/
 COPY --chown=meshai:meshai pyproject.toml .
-COPY --chown=meshai:meshai README.md .
 # Reference only: docker-entrypoint.sh writes its own minimal default to
 # /data/config.yaml on first boot and does NOT read this file. It's shipped
 # for local/pip installs and anyone who wants the legacy single-file schema
