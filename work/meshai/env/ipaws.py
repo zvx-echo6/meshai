@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from meshai.county_centroids import centroid_for_same
 from meshai.env.nws import _cfg_str, map_cap_severity
 from meshai.notifications.events import Event, make_event
 
@@ -330,6 +331,33 @@ class IPAWSAlertsAdapter:
             if not any(c in self._same_codes for c in area_same_codes):
                 return None
 
+        # ── County-centroid fallback for county-only (no-polygon) alerts ─────
+        # A civil CAP alert that carries only SAME county geocode(s) and NO
+        # <polygon> has no geometry, so the geometry-based coverage/region
+        # tagger (CoverageFilter -> event_region_names -> matching_area_names)
+        # cannot place it. With no region it never matches the region-routing
+        # matrix and is SILENTLY not broadcast — the exact gap this closes.
+        # Resolve each SAME county to its Census internal point so the EXISTING
+        # geometry tagger locates it. Multi-county alerts become a MultiPoint so
+        # EVERY county's region is tagged (Shapely intersects any point). A real
+        # <polygon> always wins and is never overridden.
+        if geometry is None and area_same_codes:
+            county_points = []          # [(lat, lon), ...] in resolution order
+            seen_points = set()
+            for code in area_same_codes:
+                pt = centroid_for_same(code)
+                if pt and pt not in seen_points:
+                    seen_points.add(pt)
+                    county_points.append(pt)
+            if len(county_points) == 1:
+                lat, lon = county_points[0]
+                geometry = {"type": "Point", "coordinates": [lon, lat]}
+            elif len(county_points) > 1:
+                geometry = {
+                    "type": "MultiPoint",
+                    "coordinates": [[lon, lat] for (lat, lon) in county_points],
+                }
+
         # Stable per-alert id (also the dedup / group key).
         event_id = identifier or f"ipaws:{same_value}:{sent}"
 
@@ -395,10 +423,29 @@ class IPAWSAlertsAdapter:
 
     @staticmethod
     def _centroid(geometry: Optional[dict]) -> Optional[tuple]:
-        """Best-effort (lat, lon) centroid of a GeoJSON Polygon (or None)."""
-        if not geometry or geometry.get("type") != "Polygon":
+        """Best-effort (lat, lon) centroid of a GeoJSON Polygon / Point /
+        MultiPoint (or None). Point/MultiPoint arise from the county-centroid
+        fallback for county-only alerts; MultiPoint returns the mean point (a
+        reasonable display centroid — region tagging uses the full geometry, not
+        this value)."""
+        if not geometry:
             return None
+        gtype = geometry.get("type")
         coords = geometry.get("coordinates") or []
+        if gtype == "Point":
+            # GeoJSON Point coordinates are [lon, lat].
+            if len(coords) >= 2:
+                return (coords[1], coords[0])
+            return None
+        if gtype == "MultiPoint":
+            pts = [c for c in coords if len(c) >= 2]
+            if not pts:
+                return None
+            lats = [c[1] for c in pts]
+            lons = [c[0] for c in pts]
+            return (sum(lats) / len(lats), sum(lons) / len(lons))
+        if gtype != "Polygon":
+            return None
         if not coords or not coords[0]:
             return None
         ring = coords[0]
