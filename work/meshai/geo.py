@@ -1,7 +1,22 @@
-"""Geographic utilities for mesh clustering and naming."""
+"""Geographic utilities: mesh clustering/naming, plus event-to-town
+resolution (haversine distance/bearing, Photon reverse-geocoding, H3-cached
+nearest-populated-place lookup).
 
+The nearest_town()/Photon section below was relocated from the now-deleted
+Central-envelope adapter-normalizer module (a per-adapter Central-envelope
+shaper with no live production caller, removed in chore/ripout-2e-geo-
+normalizer) — it has no adapter-shape logic of its own, just generic
+lat/lon → place-name resolution, so it belongs here next to the existing
+`nearest_city()` hardcoded-table lookup.
+"""
+
+import json
 import logging
 import math
+import urllib.error
+import urllib.parse
+import urllib.request
+from collections import OrderedDict
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -295,3 +310,199 @@ def assign_to_nearest_cluster(
             nearest_idx = i
 
     return nearest_idx
+
+
+# ── event → town resolution (distance/bearing + Photon reverse-geocoding) ──
+#
+# Relocated verbatim from the deleted Central-envelope adapter-normalizer
+# module. Distinct from nearest_city() above: nearest_city() picks the
+# closest entry in the small hardcoded CITY_LOOKUP table; nearest_town()
+# below calls the live Photon reverse-geocoder for ANY populated place
+# worldwide, H3-cell-cached. Different implementations for different jobs —
+# both kept.
+#
+# NOTE on de-duplication: that module had its own `_haversine_miles`
+# helper, algebraically identical to `haversine_distance` above (same
+# haversine formula; `_haversine_miles` closed via `asin`, `haversine_distance`
+# via the equivalent, more numerically-stable `atan2` form — same distances
+# to floating-point precision for every realistic input). That was a TRUE
+# duplicate, so it was dropped in the move: the functions below call
+# `haversine_distance` directly instead of carrying a second copy.
+
+
+def _bearing_compass(lat1: float, lon1: float, lat2: float, lon2: float) -> str:
+    """Compass bearing FROM (lat2, lon2) TO (lat1, lon1) -- i.e., 'event is
+    <bearing> of town'. We orient so the event's bearing relative to the
+    town reads naturally ("8 mi N of Plummer" = event is north of Plummer)."""
+    phi1, phi2 = math.radians(lat2), math.radians(lat1)
+    dl = math.radians(lon1 - lon2)
+    x = math.sin(dl) * math.cos(phi2)
+    y = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(dl)
+    brng = (math.degrees(math.atan2(x, y)) + 360) % 360
+    points = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+    return points[int((brng + 22.5) // 45) % 8]
+
+
+def _compute_distance_bearing(
+    event_lat: Optional[float], event_lon: Optional[float], town: Optional[str]
+) -> tuple[Optional[int], Optional[str]]:
+    """Distance (rounded mi) + compass bearing from a named, curated town
+    anchor (meshai.persistence.curation.lookup_town_anchor) to the event
+    coords. Returns (None, None) if the town isn't in the curated table."""
+    if event_lat is None or event_lon is None or not town:
+        return None, None
+    key = str(town).strip().lower()
+    from meshai.persistence.curation import lookup_town_anchor
+    coords = lookup_town_anchor(key)
+    if coords is None:
+        return None, None
+    tlat, tlon = coords
+    d = haversine_distance(event_lat, event_lon, tlat, tlon)
+    b = _bearing_compass(event_lat, event_lon, tlat, tlon)
+    return int(round(d)), b
+
+
+# Photon is reachable from CT108 at this Tailscale address (verified
+# 2026-06-04). It's the same Echo6-local Photon instance that backs Central's
+# (now-retired) NaviBackend reverse-geocoder. Photon takes osm_tag=place (KEY
+# only, not key:value with comma-list -- that returns 0 features -- per probe).
+# Geocoder config is set via init_geocoder_config(); defaults to public
+# Komoot Photon, deployments override in config.yaml.
+
+class _GeocoderSettings:
+    url: str = "https://photon.komoot.io"
+    timeout_seconds: float = 2.0
+    radius_km: float = 80.0
+    limit: int = 10
+
+_geocoder = _GeocoderSettings()
+
+
+def init_geocoder_config(url: str = None, timeout: float = None,
+                         radius: float = None, limit: int = None) -> None:
+    """Initialize geocoder settings from config.yaml values."""
+    if url is not None:
+        _geocoder.url = url
+    if timeout is not None:
+        _geocoder.timeout_seconds = timeout
+    if radius is not None:
+        _geocoder.radius_km = radius
+    if limit is not None:
+        _geocoder.limit = limit
+
+
+# OSM place classes we accept as "town". Suburb included for metro coverage;
+# locality is rare but valid for tiny rural places.
+_TOWN_OSM_VALUES = frozenset({"city", "town", "village"})
+
+
+# Process-lifetime LRU cache keyed by H3 cell (resolution 7 ≈ 5km hexagons).
+# Cells don't move and Photon's reverse output for a coord is stable, so
+# entries never expire within a process lifetime. Cap at 10k entries.
+_H3_CACHE_RESOLUTION = 7
+_H3_CACHE_MAX = 10_000
+_h3_cache: "OrderedDict[str, Optional[dict]]" = OrderedDict()
+
+
+def _h3_cell(lat: float, lon: float) -> Optional[str]:
+    try:
+        import h3   # local import: keep module-import-time h3-free
+        return h3.latlng_to_cell(lat, lon, _H3_CACHE_RESOLUTION)
+    except Exception:
+        # Fallback: coarse-grain by rounding coords (~1.1 km per 0.01 deg).
+        return f"fallback:{round(lat, 2)},{round(lon, 2)}"
+
+
+def _photon_reverse_places(lat: float, lon: float) -> list[dict]:
+    """Call Photon /reverse with osm_tag=place. Return raw feature list."""
+    qs = urllib.parse.urlencode({
+        "lat":     f"{lat:.6f}",
+        "lon":     f"{lon:.6f}",
+        "radius":  _geocoder.radius_km,
+        "osm_tag": "place",
+        "limit":   _geocoder.limit,
+    })
+    url = f"{_geocoder.url}/reverse?{qs}"
+    try:
+        with urllib.request.urlopen(url, timeout=_geocoder.timeout_seconds) as resp:
+            body = resp.read()
+        d = json.loads(body)
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError,
+            json.JSONDecodeError, ConnectionError) as e:
+        logger.debug("Photon /reverse failed (%s) for %.4f,%.4f", e, lat, lon)
+        return []
+    feats = d.get("features") or []
+    return feats if isinstance(feats, list) else []
+
+
+def nearest_town(lat: float, lon: float, max_distance_mi: float = 50.0) -> Optional[dict]:
+    """Return the nearest populated place to (lat, lon) within max_distance_mi.
+
+    Result shape: {name: str, distance_mi: int (rounded), bearing: str}
+    where bearing is an 8-point compass (N/NE/E/SE/S/SW/W/NW) of the event
+    location relative to the town -- i.e. "8 mi N of Plummer" means the
+    event is N of the town. Returns None if no town within range or if
+    Photon is unreachable.
+
+    Calls Photon /reverse?osm_tag=place at _geocoder.url. Results are
+    H3-cell-cached (resolution 7 ≈ 5 km cells) so the second event near
+    the same town is free.
+    """
+    if lat is None or lon is None:
+        return None
+    try:
+        lat, lon = float(lat), float(lon)
+    except (TypeError, ValueError):
+        return None
+
+    cell = _h3_cell(lat, lon)
+    if cell is not None and cell in _h3_cache:
+        # LRU touch
+        _h3_cache.move_to_end(cell)
+        cached = _h3_cache[cell]
+        if cached is None or cached.get("distance_mi", 999) <= max_distance_mi:
+            return cached
+
+    feats = _photon_reverse_places(lat, lon)
+    candidates: list[tuple[float, dict]] = []
+    for f in feats:
+        p = f.get("properties") or {}
+        # Only accept proper populated places.
+        if p.get("osm_key") != "place" or p.get("osm_value") not in _TOWN_OSM_VALUES:
+            continue
+        coords = (f.get("geometry") or {}).get("coordinates")
+        if not (isinstance(coords, list) and len(coords) >= 2):
+            continue
+        tlon, tlat = coords[0], coords[1]
+        try:
+            tlat, tlon = float(tlat), float(tlon)
+        except (TypeError, ValueError):
+            continue
+        d_mi = haversine_distance(lat, lon, tlat, tlon)
+        if d_mi > max_distance_mi:
+            continue
+        name = p.get("name")
+        if not name:
+            continue
+        candidates.append((d_mi, {
+            "name":        str(name),
+            "distance_mi": int(round(d_mi)),
+            "bearing":     _bearing_compass(lat, lon, tlat, tlon),
+        }))
+
+    if not candidates:
+        if cell is not None:
+            _h3_cache[cell] = None
+            _h3_cache.move_to_end(cell)
+            while len(_h3_cache) > _H3_CACHE_MAX:
+                _h3_cache.popitem(last=False)
+        return None
+
+    candidates.sort(key=lambda kv: kv[0])
+    result = candidates[0][1]
+    if cell is not None:
+        _h3_cache[cell] = result
+        _h3_cache.move_to_end(cell)
+        while len(_h3_cache) > _H3_CACHE_MAX:
+            _h3_cache.popitem(last=False)
+    return result

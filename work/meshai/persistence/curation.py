@@ -5,7 +5,8 @@ adapter_config: created by a migration, seeded from Python data on first
 boot, then runtime reads from SQLite via cached accessors.
 
 gauge_sites replaces idaho_gauge_sites.IDAHO_CURATED_SITES.
-town_anchors replaces central_normalizer._TOWN_COORDS.
+town_anchors replaces a hardcoded _TOWN_COORDS table that used to live in
+the (since-deleted) Central-envelope adapter-normalizer module.
 """
 from __future__ import annotations
 
@@ -81,7 +82,8 @@ _GAUGE_SITES_SEED: dict[str, dict[str, Any]] = {
     },
 }
 
-# Idaho + neighbor towns originally from central_normalizer._TOWN_COORDS.
+# Idaho + neighbor towns, originally from a hardcoded _TOWN_COORDS table in
+# the (since-deleted) Central-envelope adapter-normalizer module.
 _TOWN_ANCHORS_SEED: dict[str, dict[str, Any]] = {
     "boise":          {"lat": 43.6150, "lon": -116.2023, "state": "ID"},
     "meridian":       {"lat": 43.6121, "lon": -116.3915, "state": "ID"},

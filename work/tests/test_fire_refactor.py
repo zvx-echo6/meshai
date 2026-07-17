@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import pytest
 
-from meshai import central_normalizer as cn
 from meshai.notifications.formatters._budget import budget_for
 from meshai.env.fire_render import (
     _build_canonical,
@@ -37,6 +36,7 @@ from tests.test_wfigs_handler import (
     _IRWIN_A,
     _make_active_envelope,
     _make_tombstone,
+    _normalize_wfigs,
 )
 
 _AT = 1_800_000_000.0  # pinned epoch (unused by fire render; kept for parity)
@@ -148,14 +148,14 @@ class TestFormatterGolden:
         # Drive the real handler to produce the legacy all-clear wire, then
         # assert the formatter reproduces it byte-for-byte from event.data.
         env = _make_active_envelope(geocoder_city="Burley")
-        n0 = cn.normalize(env)
+        n0 = _normalize_wfigs(env)
         data0 = {}
         handle_wfigs(n0, env, env["subject"], data=data0, now=1_000_000)
         data0["_on_broadcast_committed"](float(1_000_000))  # arm last_broadcast_*
 
         tomb = _make_tombstone()
         data_t = {}
-        old_wire = handle_wfigs(cn.normalize(tomb), tomb, tomb["subject"],
+        old_wire = handle_wfigs(_normalize_wfigs(tomb), tomb, tomb["subject"],
                                 data=data_t, now=2_000_000)
         assert old_wire is not None
         assert old_wire.startswith("✅ Cache Peak Fire — contained & closed")
@@ -186,7 +186,7 @@ class TestGateSequenceParity:
     """A full fire lifecycle agrees between decide() and handle_wfigs()."""
 
     def _decide(self, env, now):
-        n = cn.normalize(env)
+        n = _normalize_wfigs(env)
         canonical = _build_canonical(n, n["_kind"])
         return fire_decide(canonical, source="wfigs", now=float(now))
 
@@ -198,7 +198,7 @@ class TestGateSequenceParity:
         legacy (not-cutover) stamps must equal decide()'s data_patch, and we arm
         last_broadcast_* via the commit callback (simulating the dispatcher).
         """
-        n = cn.normalize(env)
+        n = _normalize_wfigs(env)
         gate = self._decide(env, now)
         assert gate.broadcast is expect_broadcast, (
             f"decide broadcast {gate.broadcast} != {expect_broadcast} "
@@ -268,7 +268,7 @@ class TestGateSequenceParity:
             irwin_id=_IRWIN_A, geocoder_city="Burley",
             daily_acres=250.0, pct_contained=0, fire_discovery_dt_ms=disc_ms)
         gate = self._decide(env_new, base)
-        n = cn.normalize(env_new)
+        n = _normalize_wfigs(env_new)
         assert gate.data_patch["_dedup_suffix"] == f"{n['acres']}|{n['contained_pct']}"
         assert gate.data_patch["_cooldown_suffix"] == _IRWIN_A
 
@@ -279,7 +279,7 @@ class TestGateSequenceParity:
         assert gate.broadcast is False
         assert gate.lifecycle == "suppress"
         # Handler agrees: returns None.
-        out = handle_wfigs(cn.normalize(tomb), tomb, tomb["subject"],
+        out = handle_wfigs(_normalize_wfigs(tomb), tomb, tomb["subject"],
                            data={}, now=1_000_000)
         assert out is None
 

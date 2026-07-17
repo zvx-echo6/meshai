@@ -11,13 +11,13 @@ from types import SimpleNamespace
 
 import pytest
 
-import meshai.central_normalizer as cn
+from meshai import geo
 from meshai.env.wzdx import WZDxAdapter
 
 
 @pytest.fixture(autouse=True)
 def _no_photon(monkeypatch):
-    monkeypatch.setattr(cn, "nearest_town", lambda *a, **k: None)
+    monkeypatch.setattr(geo, "nearest_town", lambda *a, **k: None)
 
 
 @pytest.fixture
