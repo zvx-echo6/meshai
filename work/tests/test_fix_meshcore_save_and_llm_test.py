@@ -12,6 +12,7 @@ Bug 2 — POST /api/config/test-llm "string indices must be integers, not 'str'"
 """
 from __future__ import annotations
 
+import importlib
 import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,9 +21,23 @@ import pytest
 
 # -----------------------------------------------------------------------
 # Stub heavy optional deps so config_routes can be imported without them.
+#
+# Try the real import first -- sys.modules.setdefault() alone is only a
+# no-op "in production where the real packages are installed" if some
+# earlier-run test has already imported the real module. When this file
+# collects first (test order is alphabetical, not guaranteed), setdefault()
+# permanently replaces a genuinely-installed module (e.g. aiosqlite) with a
+# bare MagicMock for the rest of the pytest session -- every later test's
+# `await aiosqlite.connect(...)` then breaks with "MagicMock can't be used
+# in 'await' expression". Only fall back to the mock when the real package
+# truly isn't importable.
 # -----------------------------------------------------------------------
 for _mod in ("openai", "aiosqlite", "anthropic", "google", "google.genai"):
-    sys.modules.setdefault(_mod, MagicMock())
+    if _mod not in sys.modules:
+        try:
+            importlib.import_module(_mod)
+        except ImportError:
+            sys.modules[_mod] = MagicMock()
 
 
 # ==========================================================================
