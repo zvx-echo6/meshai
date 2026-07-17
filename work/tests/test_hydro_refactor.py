@@ -208,8 +208,8 @@ class TestGateSequenceParity:
 
     def _canonical(self, fixture):
         """Build canonical data from a Central-style fixture (as the deleted
-        handler used to) via the still-live idaho_gauge_sites helpers."""
-        from meshai.central.idaho_gauge_sites import (
+        handler used to) via the still-live gauge_sites helpers."""
+        from meshai.env.gauge_sites import (
             compute_threshold_state, lookup_site, normalize_site_id,
         )
         env = fixture["envelope"]

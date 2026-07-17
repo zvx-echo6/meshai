@@ -39,11 +39,11 @@ def _cfg_str(config, attr: str, default: str) -> str:
 
 # Maps the flood_status strings _fetch() sets (see severity-classification
 # block above) onto the ranked threshold_state vocabulary the shared hydro
-# gating/formatter modules speak (meshai.central.idaho_gauge_sites.
-# THRESHOLD_RANK / meshai.notifications.gating.hydro / formatters.hydro).
-# Kept local rather than importing from central.idaho_gauge_sites so this
-# adapter has no dependency on the (Central-only, reference-only) central
-# package -- only the string vocabulary is shared, not the code.
+# gating/formatter modules speak (meshai.notifications.gating.hydro.
+# THRESHOLD_RANK / formatters.hydro).
+# Kept local rather than importing from gating.hydro so this adapter has
+# no dependency on the gating package -- only the string vocabulary is
+# shared, not the code.
 _FLOOD_STATUS_TO_THRESHOLD_STATE = {
     "Action Stage": "action",
     "Minor Flood": "flood_minor",
