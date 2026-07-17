@@ -309,7 +309,7 @@ def _resolve_budget(event: Event) -> int:
     src = (getattr(event, "source", "") or "").strip()
     if src:
         try:
-            from meshai.central.budget import budget_for
+            from meshai.notifications.formatters._budget import budget_for
             return budget_for(src)
         except Exception:
             pass

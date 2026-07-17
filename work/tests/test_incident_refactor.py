@@ -18,10 +18,13 @@ Original diffs are preserved in git history. This is a real production gap
 flagged for Matt: TomTom road-incident ingestion in particular has no
 native replacement.
 
-Work-zone parity is unaffected — `meshai.central_normalizer` (a top-level,
-non-Central-NATS module; note the name is legacy) and
-`meshai.notifications.renderers.work_zone` were never part of the deleted
-consumer path and remain live.
+Work-zone parity: `meshai.central_normalizer` (a top-level, non-Central-NATS
+module; note the name is legacy) was never part of the deleted consumer path
+and remains live. `meshai.notifications.renderers.work_zone` was ALSO never
+part of the deleted consumer path, but was itself dead code (zero production
+callers) once formatters.incident absorbed it as `_render_work_zone()`; it
+was removed in a later ripout pass. See TestWorkZoneGolden below for how its
+golden-parity coverage was preserved as pinned literals.
 
 Groups
 ------
@@ -143,16 +146,30 @@ class TestWorkZoneGolden:
     """traffic_last/0002 (itd_511 work_zone) and traffic_last/0003 (wzdx)
     must produce byte-identical output from the new formatter.
 
-    Golden is computed via normalize() → format_work_zone_mesh() (old path).
-    New path: normalize() → canonical data → formatters.incident.format().
+    Originally the golden was computed live via normalize() →
+    format_work_zone_mesh() (old renderers.work_zone path) and compared
+    against normalize() → canonical data → formatters.incident.format()
+    (new path). renderers.work_zone.py has since been deleted (dead code,
+    zero production callers post-Central-excision; formatters.incident's
+    _render_work_zone() is its byte-identical live replacement — see that
+    module's docstring). Mirroring the approach in test_nws_refactor.py for
+    the same situation: the golden strings below were captured by running
+    format_work_zone_mesh() against these exact fixtures immediately before
+    its deletion (confirmed byte-identical to the new formatter's output at
+    that time) and are now pinned as literals, so this test exercises the
+    LIVE formatters.incident.format() path only.
 
     now is pinned to captured_epoch (1783206522) for both paths so the
     ends-at segment is deterministic.
     """
 
+    _GOLDEN = {
+        "0002.json": "🚧 US-91, near Chubbuck: southbound, road construction, ends Aug 17",
+        "0003.json": "🚧 US-95, near Wilder: southbound, ends Jul 19",
+    }
+
     def _run_wz(self, fixture_name: str, adapter_expected: str):
         from meshai.central_normalizer import normalize
-        from meshai.notifications.renderers.work_zone import format_work_zone_mesh
         from meshai.notifications.formatters.incident import format as fmt
 
         # Find the fixture by name
@@ -167,12 +184,10 @@ class TestWorkZoneGolden:
 
         envelope = fx["envelope"]
         now_epoch = float(fx.get("captured_epoch", time.time()))
-        now_dt = datetime.fromtimestamp(now_epoch)
 
-        # Old renderer golden
         n = normalize(envelope)
         assert n is not None, f"normalize() returned None for {fixture_name!r}"
-        golden = format_work_zone_mesh(n, now=now_dt)
+        golden = self._GOLDEN[fixture_name]
 
         # New formatter
         canonical = _n_to_canonical_workzone(n)

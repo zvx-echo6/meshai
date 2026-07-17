@@ -2,7 +2,9 @@
 
 Covers the cutover path: itd_511 supplies all Idaho work_zone broadcasts now
 (state_511_atis ID is skipped). The parser must produce the same flat dict
-shape as _parse_state_511_atis so format_work_zone_mesh works unchanged.
+shape as _parse_state_511_atis so the work-zone renderer (now
+formatters.incident._render_work_zone(), via _n_to_canonical_workzone())
+works unchanged.
 """
 
 from datetime import datetime, timezone
@@ -95,18 +97,6 @@ def test_itd_511_work_zone_full_closure_impact(no_photon):
     env = _itd_work_zone_env(is_full_closure=True)
     n = cn.normalize(env)
     assert n["impact"] == "full_closure"
-
-
-def test_itd_511_work_zone_renderer_produces_wire(no_photon):
-    from meshai.notifications.renderers.work_zone import format_work_zone_mesh
-    env = _itd_work_zone_env()
-    n = cn.normalize(env)
-    wire = format_work_zone_mesh(n)
-    assert wire is not None
-    # Format matches state_511 convention: 🚧 emoji + road
-    assert "🚧" in wire
-    assert "SH-55" in wire
-    assert "McCall" in wire
 
 
 def test_itd_511_work_zone_end_date_formatting(no_photon):

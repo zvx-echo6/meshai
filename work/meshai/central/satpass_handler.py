@@ -43,7 +43,7 @@ from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from meshai.adapter_config import adapter_config
-from meshai.central.budget import budget_for, fit_to_budget
+from meshai.notifications.formatters._budget import budget_for, fit_to_budget
 from meshai.persistence import get_db
 
 logger = logging.getLogger(__name__)
