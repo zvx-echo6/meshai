@@ -78,6 +78,15 @@ def create_app() -> FastAPI:
     # WebSocket router (no prefix, path is /ws/live)
     app.include_router(ws_router)
 
+    # Auto-refresh the live ToggleFilter after any successful notifications/
+    # config PUT so enabling a family toggle takes effect WITHOUT a manual
+    # POST /api/notifications/refresh-toggles. The middleware is defined in
+    # config_routes.register_config_routes_hooks(); it was previously only wired
+    # up in tests, so in prod a saved toggle read "enabled" in config while the
+    # running filter's enabled-set was stale until the manual poke.
+    from .api.config_routes import register_config_routes_hooks
+    register_config_routes_hooks(app)
+
     # Static files setup for SPA
     static_dir = Path(__file__).parent / "static"
     index_html = static_dir / "index.html"

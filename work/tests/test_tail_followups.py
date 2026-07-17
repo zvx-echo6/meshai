@@ -71,6 +71,24 @@ def test_auto_refresh_does_not_fire_on_other_section():
     assert refreshed["n"] == 0
 
 
+def test_create_app_registers_auto_refresh_middleware():
+    """Regression: create_app() must actually WIRE the auto-refresh middleware.
+    It was defined in register_config_routes_hooks() but never called from
+    create_app(), so in prod a saved toggle never refreshed the live filter and
+    had to be poked with POST /api/notifications/refresh-toggles by hand."""
+    from meshai.dashboard.server import create_app
+
+    app = create_app()
+    dispatches = []
+    for mw in app.user_middleware:
+        fn = (getattr(mw, "kwargs", {}) or {}).get("dispatch")
+        if fn is not None:
+            dispatches.append(getattr(fn, "__qualname__", ""))
+    assert any("_auto_refresh_toggle_filter" in q for q in dispatches), (
+        "create_app() did not register the toggle auto-refresh middleware"
+    )
+
+
 # ============================================================================
 # Item 2 -- env_reporter cap from adapter_config
 # ============================================================================
