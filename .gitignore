@@ -58,8 +58,13 @@ config.yaml
 *.pem
 *.key
 
-# Frontend build output (built in Docker via multi-stage)
-meshai/dashboard/static/
+# Frontend build output (built in Docker via multi-stage, or manually for
+# the pip install path -- see README "Quick start"). Anchored with the
+# work/ prefix: the bare "meshai/dashboard/static/" pattern silently
+# stopped matching anything after 2e1fb325 moved the source tree into
+# work/, which is how these build artifacts got committed in the first
+# place.
+work/meshai/dashboard/static/
 
 # Node (frontend deps, reinstalled via package-lock.json / npm ci)
 node_modules/
