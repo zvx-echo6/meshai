@@ -23,7 +23,7 @@ import time
 
 import pytest
 
-from meshai.central.wfigs_handler import handle_wfigs
+from meshai.env.fire_render import handle_wfigs
 from meshai.notifications.env_reporter import EnvReporter
 from meshai.persistence import get_db
 

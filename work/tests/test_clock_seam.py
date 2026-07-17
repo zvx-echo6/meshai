@@ -10,7 +10,7 @@ import time
 import pytest
 
 import meshai.notifications.clock as clock_mod
-import meshai.central.wfigs_handler as wfigs_handler
+import meshai.env.fire_render as wfigs_handler
 
 
 _FROZEN_TS = 1_700_000_000.0

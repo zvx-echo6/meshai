@@ -73,7 +73,7 @@ def _pixel(*, lat, lon, acq_date="2026-06-06", acq_time="1200",
 
 
 def _feed(pixel, *, now, seed=False):
-    from meshai.central.firms_handler import ingest_hotspot_pixel
+    from meshai.env.fire_fusion import ingest_hotspot_pixel
     return ingest_hotspot_pixel(pixel, now=now, seed=seed)
 
 

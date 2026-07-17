@@ -1,5 +1,15 @@
 """v0.7-fire-tracker-3 FIRMS handler -- storage + attribution + cluster + growth/halt/spotting.
 
+Relocated from `meshai.central.firms_handler` during the Central ripout
+(central/ handler retirement, chore/ripout-2d). ``ingest_hotspot_pixel`` is
+the LIVE fire-fusion engine with one consumer: the native FIRMS adapter
+(`meshai.env.firms` -> `_run_fusion`). ``handle_firms`` (the Central
+NATS-envelope entrypoint) has no live production caller -- Central's
+consumer that drove it is gone -- but it remains the parity-tested legacy
+contract (see `tests/test_firms_handler.py`, `tests/test_firms_refactor.py`,
+`tests/test_fire_tracker_phase1/2/3.py`) -- kept verbatim, not deleted, per
+that coverage.
+
 Pre-v0.6-1 the v0.5.13 default-deny gate at consumer._normalize() silently
 dropped every `central.fire.hotspot.>` envelope because no per-adapter handler
 existed (audit doc v0.6-phase1-audit.md finding #2). The `firms_pixels`
@@ -70,6 +80,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from meshai.persistence import get_db
+from meshai.env.fire_render import _render
 
 logger = logging.getLogger(__name__)
 
@@ -919,7 +930,6 @@ def _handle_pass_boundary(conn, *, irwin_id, pass_id, lat, lon,
     if fire is None:
         return None
 
-    from meshai.central.wfigs_handler import _render
     movement = {"direction": drift_direction, "speed_mph": drift_mi_per_hour or 0.0}
     normalized = dict(fire)
     normalized["irwin_id"] = irwin_id
@@ -948,7 +958,14 @@ def _handle_pass_boundary(conn, *, irwin_id, pass_id, lat, lon,
 
 def _render_growth_wire(*, incident_name, direction, speed_mph,
                           lat, lon):
-    """Per design doc section 4 + Phase 2 spec item 3."""
+    """Per design doc section 4 + Phase 2 spec item 3.
+
+    NOTE: unreferenced (verified via repo-wide rg during the chore/ripout-2d
+    relocation -- zero callers in source or tests). `_handle_pass_boundary`
+    renders growth wires via the WFIGS `_render` instead. Left in place
+    (moved verbatim, not deleted) since dropping dead code is out of scope
+    for this pure-move PR.
+    """
     near_part = ""
     try:
         from meshai.central_normalizer import nearest_town

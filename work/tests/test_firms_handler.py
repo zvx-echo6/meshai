@@ -10,8 +10,8 @@ Envelope shape sourced from firms-investigation.md sampling (250 envelopes
 """
 import pytest
 
-from meshai.central import firms_handler
-from meshai.central.firms_handler import handle_firms
+from meshai.env import fire_fusion as firms_handler
+from meshai.env.fire_fusion import handle_firms
 from meshai.persistence import close_thread_connection, init_db
 from meshai.persistence import db as persistence_db
 

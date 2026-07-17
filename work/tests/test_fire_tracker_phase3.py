@@ -71,7 +71,7 @@ def test_pass_close_stamps_perimeter_geojson():
     """Pass A: 6 pixels in a hex around the seeded center. First pixel
     of pass B triggers boundary close -> perimeter_geojson written for
     pass A as a closed GeoJSON Polygon."""
-    from meshai.central.firms_handler import handle_firms
+    from meshai.env.fire_fusion import handle_firms
     from meshai.persistence import get_db
 
     center_lat, center_lon = 42.500, -114.500
@@ -121,7 +121,7 @@ def _seed_pass_a_hex_then_close(*, irwin_id, center_lat, center_lon,
                                   start_now=1780747200):
     """Helper: seed a fire + 6 hex-vertex pass A pixels. Caller follows up
     with a pass B pixel to trigger boundary close + perimeter write."""
-    from meshai.central.firms_handler import handle_firms
+    from meshai.env.fire_fusion import handle_firms
     _seed_fire(irwin_id=irwin_id, lat=center_lat, lon=center_lon,
                  name=irwin_id)
     for i in range(6):
@@ -138,7 +138,7 @@ def _seed_pass_a_hex_then_close(*, irwin_id, center_lat, center_lon,
 def test_pixel_2mi_ne_of_perimeter_emits_spotting():
     """Pass B pixel 2 mi NE of pass A's perimeter centroid fires
     wildfire_spotting with the correct distance + direction."""
-    from meshai.central.firms_handler import handle_firms
+    from meshai.env.fire_fusion import handle_firms
     from meshai.persistence import get_db
 
     center_lat, center_lon = 43.000, -115.000
@@ -188,7 +188,7 @@ def test_pixel_2mi_ne_of_perimeter_emits_spotting():
 
 
 def test_pixel_inside_perimeter_no_spotting():
-    from meshai.central.firms_handler import handle_firms
+    from meshai.env.fire_fusion import handle_firms
 
     center_lat, center_lon = 43.500, -114.500
     _seed_pass_a_hex_then_close(irwin_id="ID-SPOT-003",
@@ -223,7 +223,7 @@ def test_pixel_inside_perimeter_no_spotting():
 
 
 def test_second_spotting_within_cooldown_suppressed():
-    from meshai.central.firms_handler import handle_firms
+    from meshai.env.fire_fusion import handle_firms
 
     center_lat, center_lon = 44.000, -116.000
     _seed_pass_a_hex_then_close(irwin_id="ID-SPOT-004",
@@ -257,7 +257,7 @@ def test_second_spotting_within_cooldown_suppressed():
 
 
 def test_spotting_refires_after_cooldown():
-    from meshai.central.firms_handler import handle_firms
+    from meshai.env.fire_fusion import handle_firms
 
     center_lat, center_lon = 44.500, -116.500
     _seed_pass_a_hex_then_close(irwin_id="ID-SPOT-005",
@@ -286,7 +286,7 @@ def test_spotting_refires_after_cooldown():
 
 
 def test_convex_hull_basic():
-    from meshai.central.firms_handler import _convex_hull
+    from meshai.env.fire_fusion import _convex_hull
     pts = [(0, 0), (1, 0), (1, 1), (0, 1), (0.5, 0.5)]
     hull = _convex_hull(pts)
     assert (0.5, 0.5) not in hull
@@ -294,7 +294,7 @@ def test_convex_hull_basic():
 
 
 def test_point_in_polygon_basic():
-    from meshai.central.firms_handler import _point_in_polygon
+    from meshai.env.fire_fusion import _point_in_polygon
     square = [(0, 0), (0, 10), (10, 10), (10, 0)]  # (lat, lon)
     assert _point_in_polygon((5, 5), square) is True
     assert _point_in_polygon((15, 5), square) is False
@@ -303,7 +303,7 @@ def test_point_in_polygon_basic():
 
 def test_geojson_round_trip_via_hull():
     """Hull -> GeoJSON -> parse -> ring shape sane."""
-    from meshai.central.firms_handler import _convex_hull, _hull_to_geojson
+    from meshai.env.fire_fusion import _convex_hull, _hull_to_geojson
     hull = _convex_hull([(0, 0), (1, 0), (0, 1), (1, 1)])
     raw = _hull_to_geojson(hull)
     parsed = json.loads(raw)

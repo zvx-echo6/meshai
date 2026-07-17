@@ -3,6 +3,13 @@ must be importable without error after the budget shim refactor.
 
 This guards against a broken import chain (e.g. circular imports or a bad
 re-export in the shim) that would silently break all handlers.
+
+chore/ripout-2d: the last two central/ handlers (firms_handler.py,
+wfigs_handler.py) relocated to meshai/env/fire_fusion.py + fire_render.py
+(central/ has no *_handler.py left -- the fusion engine's only consumer is
+the native env/firms.py adapter). The glob below now also covers those two
+explicitly so this guard still exercises the relocated live import chain;
+it keeps globbing central/ too in case a future handler lands back there.
 """
 
 import glob
@@ -11,17 +18,16 @@ import os
 
 
 def _handler_modules():
-    """Collect meshai.central.*_handler module names by globbing the source tree."""
-    pattern = os.path.join(
+    """Collect handler-ish module names: meshai.central.*_handler (glob) +
+    the fire-fusion modules relocated out of central/ during the ripout."""
+    central_pattern = os.path.join(
         os.path.dirname(__file__),
         "..", "meshai", "central", "*_handler.py",
     )
-    paths = sorted(glob.glob(pattern))
-    assert paths, "No *_handler.py files found — check the glob path"
-    modules = []
-    for p in paths:
-        name = os.path.basename(p)[:-3]  # strip .py
-        modules.append(f"meshai.central.{name}")
+    central_paths = sorted(glob.glob(central_pattern))
+    modules = [f"meshai.central.{os.path.basename(p)[:-3]}" for p in central_paths]
+    modules += ["meshai.env.fire_fusion", "meshai.env.fire_render"]
+    assert modules, "No handler-ish modules found — check the glob path"
     return modules
 
 

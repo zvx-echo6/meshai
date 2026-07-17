@@ -100,7 +100,7 @@ def _offset_mi(lat, lon, north_mi, east_mi):
 
 
 def _feed(pixel, *, now):
-    from meshai.central.firms_handler import ingest_hotspot_pixel
+    from meshai.env.fire_fusion import ingest_hotspot_pixel
     return ingest_hotspot_pixel(pixel, now=now)
 
 
@@ -407,7 +407,7 @@ _SUBJECT = "central.fire.hotspot.N20.high.us.id"
 
 class TestCentralPathUnchanged:
     def test_storage_only_pixel_still_stores_and_returns_none(self):
-        from meshai.central.firms_handler import handle_firms
+        from meshai.env.fire_fusion import handle_firms
         from meshai.persistence import get_db
         env = _envelope(lat=42.19664, lon=-113.70981)
         out = handle_firms(env, subject=_SUBJECT, data={}, now=1780660000)
@@ -427,7 +427,7 @@ class TestCentralPathUnchanged:
     def test_central_growth_wire_and_stamps_identical(self):
         """The extracted core produces the SAME growth wire/stamps on the
         Central envelope path that the inline handler did."""
-        from meshai.central.firms_handler import handle_firms
+        from meshai.env.fire_fusion import handle_firms
         center_lat, center_lon = 42.0, -114.0
         _seed_fire(irwin_id="ID-CG", lat=center_lat, lon=center_lon,
                    name="Pine Gulch")

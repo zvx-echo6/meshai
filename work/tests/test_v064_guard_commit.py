@@ -169,7 +169,7 @@ def test_dedup_suffix_lets_updates_pass_and_repeats_dedup():
 
 
 def test_wfigs_handler_stamps_dedup_suffix():
-    from meshai.central.wfigs_handler import _attach_commit_handles
+    from meshai.env.fire_render import _attach_commit_handles
     data = {}
     _attach_commit_handles(data, irwin_id="{X}", acres=42.0,
                             contained_pct=15, event_log_row_id=None)

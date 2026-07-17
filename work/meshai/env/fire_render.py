@@ -1,5 +1,15 @@
 """WFIGS handler: persistence-backed change-detection + wire renderer.
 
+Relocated from `meshai.central.wfigs_handler` during the Central ripout
+(central/ handler retirement, chore/ripout-2d). ``handle_wfigs`` has no live
+production caller (Central's NATS consumer that drove it is gone), but it
+remains the parity-tested legacy contract for the WFIGS wildfire wire format
+(see `tests/test_fire_refactor.py`, `tests/test_wfigs_handler.py`) -- kept
+verbatim, not deleted, per that oracle. ``_render`` IS live: it is imported
+by `meshai.env.fire_fusion._handle_pass_boundary` on the FIRMS growth path
+(`env/firms.py` -> `ingest_hotspot_pixel` -> ... -> `_handle_pass_boundary`
+-> `_render`) to render the `wildfire_growth` wire.
+
 v0.5.8b refactor: New: vs Update: decision now keys on `last_broadcast_at`,
 not on row existence. Cold-start scenarios where the dispatcher drops the
 broadcast (cold-start grace, stale filter, cooldown, dedup) leave the fires
@@ -469,7 +479,7 @@ def _render(n: dict, *, prefix: str = "",
     lines: list[str] = []
 
     # Line 1: header
-    lines.append(f"🔥 {name} \u2014 {prefix}")
+    lines.append(f"🔥 {name} — {prefix}")
 
     # Line 2: size / containment with delta (plain text -- no bold markdown).
     acres_str = f"{int(acres):,} ac" if acres is not None else "size unknown"

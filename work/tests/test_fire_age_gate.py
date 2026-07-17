@@ -1,6 +1,6 @@
 """Step 3 fire age-gate tests (Step 5 verification, age-gate part).
 
-Targets `meshai.central.wfigs_handler._fire_too_old_to_announce` and the
+Targets `meshai.env.fire_render._fire_too_old_to_announce` and the
 handler's "New"-path suppression behaviour.
 
 The gate exists because MeshAI broadcast a 6-week-old, already-closed fire
@@ -21,7 +21,7 @@ import time
 
 import pytest
 
-from meshai.central.wfigs_handler import _fire_too_old_to_announce
+from meshai.env.fire_render import _fire_too_old_to_announce
 
 
 _14D = 14 * 86400
@@ -131,7 +131,7 @@ def test_handler_new_path_suppresses_old_fire():
     """Case (i): a brand-new fire whose declared_at is ~45d old is INSERTed
     but the 'New' broadcast is suppressed (wire is None), and the New-path
     category tag is NOT applied."""
-    from meshai.central.wfigs_handler import handle_wfigs
+    from meshai.env.fire_render import handle_wfigs
     from meshai.persistence import get_db
 
     now = int(time.time())
@@ -154,7 +154,7 @@ def test_handler_new_path_suppresses_old_fire():
 def test_handler_new_path_announces_recent_fire():
     """Case (i): a recent fire (~5d) DOES broadcast 'New' and tags
     wildfire_declared."""
-    from meshai.central.wfigs_handler import handle_wfigs
+    from meshai.env.fire_render import handle_wfigs
 
     now = int(time.time())
     declared = now - _5D
@@ -171,7 +171,7 @@ def test_handler_update_path_still_emits_for_old_fire():
     """An already-broadcast OLD fire that grows acreage still emits an
     'Update' (Case (iii) is NOT gated -- genuine old-but-active fires keep
     getting containment/acreage updates)."""
-    from meshai.central.wfigs_handler import handle_wfigs
+    from meshai.env.fire_render import handle_wfigs
     from meshai.persistence import get_db
 
     now = int(time.time())
