@@ -7,6 +7,7 @@ Covers:
   (d) ContextConfig.max_age default is 14 days (1_209_600 seconds)
 """
 
+import importlib
 import sys
 from unittest.mock import MagicMock
 
@@ -14,11 +15,23 @@ import pytest
 
 # ---------------------------------------------------------------------------
 # Stub optional heavy deps so meshai.router can be imported in this env.
-# These stubs are set before any meshai.router import in this process;
-# they are no-ops in production where the real packages are installed.
+#
+# Try the real import first -- sys.modules.setdefault() alone is only a
+# no-op "in production where the real packages are installed" if some
+# earlier-run test has already imported the real module. When this file
+# collects first (test order is alphabetical, not guaranteed), setdefault()
+# permanently replaces a genuinely-installed module (e.g. aiosqlite) with a
+# bare MagicMock for the rest of the pytest session -- every later test's
+# `await aiosqlite.connect(...)` then breaks with "MagicMock can't be used
+# in 'await' expression". Only fall back to the mock when the real package
+# truly isn't importable.
 # ---------------------------------------------------------------------------
 for _mod in ("openai", "aiosqlite", "anthropic", "google", "google.genai"):
-    sys.modules.setdefault(_mod, MagicMock())
+    if _mod not in sys.modules:
+        try:
+            importlib.import_module(_mod)
+        except ImportError:
+            sys.modules[_mod] = MagicMock()
 
 from meshai.config import (  # noqa: E402
     BotConfig,
