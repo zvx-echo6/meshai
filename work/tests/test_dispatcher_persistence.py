@@ -554,8 +554,50 @@ def test_source_to_table_fallback_stamps_audit_row(db_path):
     assert row["source_event_pk"] is None, "pk should be NULL for fallback path"
 
 
+def test_source_to_table_fallback_stamps_ipaws_audit_row(db_path):
+    """Parity guard for the IPAWS civil-alert adapter: a native ipaws event
+    with no _broadcast_audit must stamp source_event_table='ipaws_alerts' so
+    emergency sends show labeled (not NULL/unlabeled) in the Activity Log.
+    """
+    from unittest.mock import MagicMock
+    from meshai.notifications.events import make_event
+    from meshai.notifications.pipeline.dispatcher import Dispatcher
+    from meshai.persistence import get_db
+
+    cfg = _build_config(cold_start_grace=0)
+    factory, _ = _mk_channel_factory()
+    d = Dispatcher(cfg, factory)
+
+    ev = make_event(
+        source="ipaws",
+        category="emergency_evacuation",
+        severity="immediate",
+        region="US-ID",
+        title="🚨 Evacuation Immediate",
+        lat=43.6, lon=-116.2,
+    )
+
+    rule = MagicMock()
+    rule.broadcast_channel = 1
+    rule.delivery_types = ["mesh_broadcast"]
+
+    payload = MagicMock()
+    payload.message = "🚨 Evacuation Immediate — test"
+
+    d._post_broadcast_commit(ev, payload, rule, "mesh_broadcast", success=True)
+
+    conn = get_db()
+    row = conn.execute(
+        "SELECT source_event_table FROM mesh_broadcasts_out ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None, "No audit row was written"
+    assert row["source_event_table"] == "ipaws_alerts", (
+        f"Expected 'ipaws_alerts', got {row['source_event_table']!r}"
+    )
+
+
 def test_source_to_table_fallback_all_native_sources(db_path):
-    """Verify _SOURCE_TO_TABLE covers all five native adapter sources."""
+    """Verify _SOURCE_TO_TABLE covers all native adapter sources."""
     from meshai.notifications.pipeline.dispatcher import Dispatcher
     expected = {
         "nws":     "nws_alerts",
@@ -563,6 +605,7 @@ def test_source_to_table_fallback_all_native_sources(db_path):
         "wzdx":    "traffic_events",
         "traffic": "traffic_events",
         "511":     "traffic_events",
+        "ipaws":   "ipaws_alerts",
     }
     cfg = _build_config()
     factory, _ = _mk_channel_factory()

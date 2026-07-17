@@ -52,6 +52,7 @@ const TABLE_LABELS: Record<string, string> = {
   swpc_events:                'Space Wx',
   gauge_readings:             'Hydro',
   event_log:                  'Avalanche',
+  ipaws_alerts:               'Emergency',
 }
 
 // Text-prefix / emoji heuristics for legacy NULL-source rows.
@@ -66,6 +67,7 @@ const TABLE_LABELS: Record<string, string> = {
 //   incident_handler.py (legacy) → "⚠️ Road Incident …" | "🚫 Road Closed …"
 // NOTE: more-specific prefixes must appear before shorter ones that share a leading char.
 const TEXT_HINTS: Array<[string, string]> = [
+  ['🚨', 'Emergency'],  // ipaws.py immediate civil alerts (evac/AMBER/HazMat)
   ['🔥', 'Fire'],
   ['🚧', 'Traffic'],
   ['⚠️ Road Incident', 'Traffic'],  // legacy road-incident rows (⚠️ = U+26A0+FE0F)
@@ -115,6 +117,7 @@ const CATEGORIES = [
   { value: 'satpass_events', label: 'Satellite' },
   { value: 'band_conditions_broadcasts', label: 'Band' },
   { value: 'traffic_events', label: 'Traffic' },
+  { value: 'ipaws_alerts', label: 'Emergency' },
 ]
 
 const PAGE = 100

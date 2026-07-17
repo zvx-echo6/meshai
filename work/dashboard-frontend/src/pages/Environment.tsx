@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import {
  Cloud, Flame, Radio, Car, Mountain, Satellite, Activity, Server,
  Save, RotateCcw, RefreshCw, AlertCircle, AlertTriangle, Info, Bell,
- Sliders, ChevronRight,
+ Sliders, ChevronRight, Siren,
 } from 'lucide-react'
 import {
  Toggle, TextInput, NumberInput, SelectInput, ListInput, NumberListInput,
@@ -33,6 +33,10 @@ interface EnvConfig {
  roads511: { enabled: boolean; tick_seconds: number; api_key: string; base_url: string; endpoints: string[]; bbox: number[]; feed_source?: FeedSource }
  wzdx: { enabled: boolean; tick_seconds: number; api_key: string; base_url: string; endpoints: string[]; bbox: number[]; states: string[]; registry_url: string; registry_ttl?: number; feed_source?: FeedSource }
  firms: { enabled: boolean; tick_seconds: number; map_key: string; source: string; bbox: number[]; day_range: number; confidence_min: string; proximity_km: number; feed_source?: FeedSource }
+ // FEMA IPAWS-OPEN civil-alert feed (native only). Two-stage Atom+CAP fetch;
+ // NON-weather emergencies (evacuation, AMBER, HazMat, 911 outage, …) → the
+ // `emergency` notification family.
+ ipaws: { enabled: boolean; tick_seconds: number; base_url: string; user_agent: string; state_fips: string[]; same_codes: string[]; exclude_weather: boolean; drop_senders: string[]; status_actual_only: boolean; feed_source?: FeedSource }
  // Native satpass (SGP4) YAML layer — drives env/satpass.py + env/tle_fetch.py.
  // Distinct from the Central adapter_config/satpass layer (see SatpassConfig
  // interface + satpassConfig state below). `observers` seeds observer_locations.
@@ -63,6 +67,22 @@ const SATPASS_NATIVE_DEFAULT: EnvConfig['satpass'] = {
  tle_refresh_seconds: 21600,
  broadcast_lead_seconds: 3600,
  feed_source: 'central',
+}
+
+// Sane defaults for the ipaws block so a GET payload predating the IPAWS
+// adapter (no `environmental.ipaws`) doesn't crash the editor. Mirrors
+// config.py::IPAWSConfig defaults (Idaho + neighbouring-state FIPS).
+const IPAWS_DEFAULT: EnvConfig['ipaws'] = {
+ enabled: false,
+ tick_seconds: 60,
+ base_url: 'https://apps.fema.gov/IPAWSOPEN_EAS_SERVICE/rest',
+ user_agent: '',
+ state_fips: ['16', '53', '41', '32', '49', '56', '30'],
+ same_codes: [],
+ exclude_weather: true,
+ drop_senders: ['noaa.gov', 'nws', 'weather.gov'],
+ status_actual_only: true,
+ feed_source: 'native',
 }
 
 // WFIGS adapter config shape
@@ -262,7 +282,7 @@ function AdapterPanel({ title, subtitle, enabled, onEnabled, feedSource, onFeedS
 }
 
 // ---------------------------------------------------------------- families
-type AdapterKey = 'nws' | 'fires' | 'firms' | 'swpc' | 'ducting' | 'traffic' | 'roads511' | 'wzdx' | 'usgs_quake' | 'usgs' | 'avalanche' | 'satpass'
+type AdapterKey = 'nws' | 'fires' | 'firms' | 'swpc' | 'ducting' | 'traffic' | 'roads511' | 'wzdx' | 'usgs_quake' | 'usgs' | 'avalanche' | 'satpass' | 'ipaws'
 
 interface AdapterMeta { label: string; subtitle: string; health: string; hasCentral: boolean; nativeOnly: boolean; hasKey: boolean }
 
@@ -279,6 +299,7 @@ const META: Record<AdapterKey, AdapterMeta> = {
  usgs: { label: 'USGS Stream Gauges', subtitle: 'River and stream water levels', health: 'usgs', hasCentral: true, nativeOnly: false, hasKey: true },
  avalanche: { label: 'Avalanche Advisories', subtitle: 'Backcountry avalanche danger ratings', health: 'avalanche', hasCentral: true, nativeOnly: false, hasKey: true },
  satpass: { label: 'Satellite Passes', subtitle: 'Observer pass alerts via Central', health: 'satpass', hasCentral: true, nativeOnly: false, hasKey: true },
+ ipaws: { label: 'FEMA IPAWS civil alerts', subtitle: 'Evacuations, AMBER, HazMat, 911 outages (non-weather)', health: 'ipaws', hasCentral: false, nativeOnly: true, hasKey: false },
 }
 
 // Keyed adapters → their secret env var (matches secrets_store.SECRET_LABELS).
@@ -299,6 +320,7 @@ const FAMILIES: { key: string; label: string; icon: typeof Cloud; adapters: Adap
  { key: 'rf', label: 'RF Propagation', icon: Radio, adapters: ['swpc', 'ducting'] },
  { key: 'roads', label: 'Roads', icon: Car, adapters: ['traffic', 'roads511', 'wzdx'] },
  { key: 'geohazards', label: 'Geohazards', icon: Mountain, adapters: ['usgs_quake', 'usgs', 'avalanche'] },
+ { key: 'emergency', label: 'Emergency', icon: Siren, adapters: ['ipaws'] },
  { key: 'tracking', label: 'Tracking', icon: Satellite, adapters: ['satpass'] },
  { key: 'mesh', label: 'Mesh Health', icon: Activity, adapters: [] },
  { key: 'family_settings', label: 'Family Settings', icon: Bell, adapters: [] },
@@ -411,6 +433,7 @@ export default function Environment() {
     // round-trip PUT restores them rather than dropping them).
     data.satpass = { ...SATPASS_NATIVE_DEFAULT, ...(data.satpass ?? {}) }
     data.wzdx = { states: ['ID'], registry_url: '', ...(data.wzdx ?? {}) }
+    data.ipaws = { ...IPAWS_DEFAULT, ...(data.ipaws ?? {}) }
     setEnv(data)
     setOriginal(JSON.stringify(data))
 
@@ -855,6 +878,7 @@ const save = async () => {
   usgs_quake: 'usgs_quake',
   avalanche: 'avalanche',
   satpass: 'satpass',
+  ipaws: 'ipaws',
  }
 
  // ── Notification family gating helpers ────────────────────────────────────
@@ -1449,6 +1473,49 @@ const save = async () => {
       ))}
      </div>
     )}
+   </>)
+   case 'ipaws': return (<>
+    <div className="text-[11px] text-[#666]">
+     Keyless FEMA IPAWS-OPEN EAS feed. Broadcasts NON-weather civil emergencies
+     (evacuation orders, AMBER, HazMat, 911 outages, law-enforcement/shelter-in-place).
+     Weather CAP is dropped so it never double-broadcasts the NWS adapter.
+    </div>
+    <TextInput label="Base URL" value={env.ipaws.base_url} onChange={(v) => up({ ipaws: { ...env.ipaws, base_url: v } })}
+     placeholder="https://apps.fema.gov/IPAWSOPEN_EAS_SERVICE/rest"
+     helper="IPAWS-OPEN EAS REST root — Atom index at /feed, per-alert CAP at /eas/<id>. Point at the Conduit proxy in prod." />
+    <TextInput label="User Agent" value={env.ipaws.user_agent} onChange={(v) => up({ ipaws: { ...env.ipaws, user_agent: v } })}
+     placeholder="meshai-ipaws/1.0 (you@email.com)" helper="Sent on every FEMA request. Blank uses the built-in default." />
+    <NumberInput label="Tick Seconds" value={env.ipaws.tick_seconds} onChange={(v) => up({ ipaws: { ...env.ipaws, tick_seconds: v } })} min={30} />
+    {scopedByCoverage('ipaws') ? (
+     <div className="text-xs text-[#666] bg-bg-hover px-3 py-2 border border-border/50">
+      Region scope (state FIPS / SAME codes) is set by the{' '}
+      <a href="/coverage" className="text-accent hover:underline">Coverage map</a>.
+     </div>
+    ) : (<>
+     <ListInput label="State FIPS" value={env.ipaws.state_fips} onChange={(v) => up({ ipaws: { ...env.ipaws, state_fips: v } })}
+      helper="Coarse pre-fetch gate — 2-digit state FIPS to keep, e.g. 16 (ID), 41 (OR), 53 (WA)" />
+     <ListInput label="SAME Codes" value={env.ipaws.same_codes} onChange={(v) => up({ ipaws: { ...env.ipaws, same_codes: v } })}
+      helper="Optional fine gate — 6-digit SAME county codes, e.g. 016001. Empty = all counties in the FIPS states." />
+    </>)}
+    <div className="border-t border-border pt-4 mt-4">
+     <div className="text-[10px] font-sans font-medium uppercase tracking-widest text-[#666] mb-3">Broadcast Filters</div>
+     <div className="space-y-2">
+      <label className="flex items-center justify-between">
+       <span className="text-sm font-sans text-[#e0e0e0]">Exclude weather-sourced alerts</span>
+       <input type="checkbox" checked={env.ipaws.exclude_weather}
+        onChange={(e) => up({ ipaws: { ...env.ipaws, exclude_weather: e.target.checked } })}
+        className="w-4 h-4 accent-[#f59e0b]" />
+      </label>
+      <p className="text-xs text-[#666]">Drop NWS/NOAA-originated CAP so weather stays on the NWS adapter (no double-broadcast).</p>
+      <label className="flex items-center justify-between pt-2">
+       <span className="text-sm font-sans text-[#e0e0e0]">Actual status only</span>
+       <input type="checkbox" checked={env.ipaws.status_actual_only}
+        onChange={(e) => up({ ipaws: { ...env.ipaws, status_actual_only: e.target.checked } })}
+        className="w-4 h-4 accent-[#f59e0b]" />
+      </label>
+      <p className="text-xs text-[#666]">Skip Test / Exercise / System messages — broadcast only status=Actual alerts.</p>
+     </div>
+    </div>
    </>)
    case 'satpass': {
     // Armed state keys off the NATIVE enable (environmental.satpass.enabled),

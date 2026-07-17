@@ -1354,6 +1354,10 @@ class Dispatcher:
         "wzdx":    "traffic_events",
         "traffic": "traffic_events",
         "511":     "traffic_events",
+        # IPAWS civil alerts (env/ipaws.py, source="ipaws"). Own dedup table
+        # ipaws_alerts — so region-routed emergency sends land in the audit
+        # feed labeled "Emergency" instead of NULL/unlabeled.
+        "ipaws":   "ipaws_alerts",
     }
 
     def _post_broadcast_commit(self, event, payload, rule, ch_type: str,
