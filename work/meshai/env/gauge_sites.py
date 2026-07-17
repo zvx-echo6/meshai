@@ -1,4 +1,4 @@
-"""v0.6-4 Idaho gauge-site lookups (now backed by gauge_sites table).
+"""v0.6-4 gauge-site lookups (now backed by gauge_sites table).
 
 The IDAHO_CURATED_SITES Python dict was migrated to the gauge_sites SQLite
 table in v8.sql. seed_gauge_sites() (called from init_db on first boot)
@@ -6,16 +6,17 @@ populates the table with the original 9 sites. The lookup helpers below
 read from the table via meshai.persistence.curation.
 
 Module exports retained for backward-compat with existing tests:
-    lookup_site, normalize_site_id, THRESHOLD_RANK, compute_threshold_state.
+    lookup_site, normalize_site_id, compute_threshold_state.
 The IDAHO_CURATED_SITES name itself is gone -- new code should call
 lookup_site() (DB-backed) or the curation accessor directly.
+
+(Relocated from meshai/central/idaho_gauge_sites.py -- Central is gone;
+this is pure hydro/gauge domain code, not a Central handler. The "idaho_"
+prefix was dropped on the move: the data is Idaho-scoped but the code
+itself is generic gauge/threshold logic. THRESHOLD_RANK, formerly exported
+here, was inlined into its sole consumer, meshai.notifications.gating.hydro.)
 """
 from typing import Optional
-
-
-# Ordered list of threshold names from low to high. Used to compare
-# "is current threshold higher than prior" (upward crossing detection).
-THRESHOLD_RANK = ["normal", "action", "flood_minor", "flood_moderate", "flood_major"]
 
 
 def normalize_site_id(raw: Optional[str]) -> Optional[str]:

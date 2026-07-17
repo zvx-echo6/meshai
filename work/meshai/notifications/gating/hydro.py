@@ -74,11 +74,16 @@ import logging
 from typing import Optional
 
 from meshai.adapter_config import adapter_config
-from meshai.central.idaho_gauge_sites import THRESHOLD_RANK
 from meshai.notifications.gating.base import GateResult
 from meshai.persistence import get_db
 
 logger = logging.getLogger(__name__)
+
+# Ordered list of threshold names from low to high. Used to compare
+# "is current threshold higher than prior" (upward crossing detection).
+# Formerly meshai.central.idaho_gauge_sites.THRESHOLD_RANK -- inlined here
+# since this decider was its only consumer.
+THRESHOLD_RANK = ["normal", "action", "flood_minor", "flood_moderate", "flood_major"]
 
 
 def _rank(state: Optional[str]) -> int:
