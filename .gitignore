@@ -61,6 +61,9 @@ config.yaml
 # Frontend build output (built in Docker via multi-stage)
 meshai/dashboard/static/
 
+# Node (frontend deps, reinstalled via package-lock.json / npm ci)
+node_modules/
+
 
 # OS
 .DS_Store
