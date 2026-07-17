@@ -57,12 +57,17 @@ from meshai.notifications.gating import avalanche as _avy_gate_mod  # noqa: E402
 register("avalanche_warning", _avy_gate_mod.decide)
 register("avalanche_watch", _avy_gate_mod.decide)
 
-# SWPC: geomagnetic_storm (swpc_kindex / native G-scale) and rf_propagation_alert
-# (swpc_alerts flare / native R-scale).  solar_radiation_storm (proton) stays on
-# the legacy path — NOT registered here.
+# SWPC: geomagnetic_storm (swpc_kindex / native G-scale), rf_propagation_alert
+# (swpc_alerts flare / native R-scale), and solar_radiation_storm (native
+# S-scale proton events). One decider handles all three; the broadcast floor
+# is G3+/R3+ for geomag/flare but S1+ for proton — see
+# gating/swpc.py's _floor_for_scale() docstring for why S has a lower floor
+# (it recovers central/swpc_handler.py's original proton threshold, not a
+# new policy).
 from meshai.notifications.gating import swpc as _swpc_gate_mod  # noqa: E402,F401
 register("geomagnetic_storm", _swpc_gate_mod.decide)
 register("rf_propagation_alert", _swpc_gate_mod.decide)
+register("solar_radiation_storm", _swpc_gate_mod.decide)
 
 # Phase-2: NWS weather alerts (weather_warning + weather_statement +
 # weather_watch + weather_advisory).  All four categories share the same

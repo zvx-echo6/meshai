@@ -1,20 +1,10 @@
 """Phase-1 SWPC refactor tests.
 
-The Central `swpc_handler` module (`_render()`, `handle_swpc()`) has been
-deleted — the native path is the only production path now. Pure old-vs-new
-parity assertions, the flare_class-string-parsing tests that only existed
-to exercise the deleted handler's Central-only mapping, and the
-`solar_radiation_storm`/proton "legacy path" test (which imported the now
-also-deleted `swpc_handler` -- proton events have no broadcast path at all
-post-excision, native or otherwise; flagged for Matt, not fixed here) have
-been removed. Original diffs are preserved in git history. What remains
-exercises native code directly (hand-written expected strings are kept as
-regression pins on the current wire format).
+Seven test groups:
 
-Five test groups:
-
-1. Parity — for a kindex-style fixture and a flare fixture, the formatter
-   produces the expected wire text (noting tier-b severity fix).
+1. Parity — for a kindex-style fixture and a flare fixture, the new formatter
+   produces output equivalent to old _render() (noting tier-b severity fix).
+   Also covers proton (S-scale) parity against the old proton _render() branch.
 
 2. Cross-source identity — same Kp from swpc_kindex and swpc_alerts shares
    the 600s geomag dedup window (committed broadcast suppresses the second).
@@ -26,8 +16,10 @@ Five test groups:
 
 5. Schema conformance — to_event() emits all required canonical fields.
 
-6. Proton NOT registered — solar_radiation_storm is absent from both
-   FORMATTERS and DECIDERS registries.
+6. Proton registered — solar_radiation_storm IS present in both FORMATTERS
+   and DECIDERS registries (native S-scale support), with its own S1+ floor
+   (lower than G3+/R3+) recovered from central/swpc_handler.py's original
+   proton threshold.
 """
 from __future__ import annotations
 
@@ -119,13 +111,28 @@ def _commit(data: dict, t: float) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestFormatterParity:
-    """formatters/swpc.format() renders the expected wire text from canonical data."""
+    """formatters/swpc.format() renders equivalent output to swpc_handler._render().
+
+    PROVENANCE (pinned goldens): the `old_wire = "..."` literals below were
+    captured by calling `meshai.central.swpc_handler._render()` directly
+    (the pre-excision oracle) with the exact arguments each test previously
+    passed through the now-removed `_render_old()` helper, then verified
+    byte-identical against this branch's native formatter output before
+    being pinned. They are a verified spec of Central's original wire
+    format, NOT a snapshot of current native-formatter behavior — do not
+    "fix" them to match a future formatter change; a mismatch means the
+    formatter regressed, not the golden. swpc_handler.py is scheduled for
+    deletion by PR #144 (chore/excise-dead-central-path); pinning these as
+    literals removes the `from meshai.central.swpc_handler import _render`
+    import so this file no longer breaks when that PR lands.
+    """
 
     def test_kindex_g3_parity(self, mem_db):
-        """Kp=7 (G3) kindex envelope → formatter output matches hand-written expected.
+        """Kp=7 (G3) kindex envelope → new formatter ≈ old _render.
 
-        Tier-b note: _severity_override (now "priority" instead of
-        missing/routine) does NOT affect the wire text.
+        Tier-b note: the only intentional delta is _severity_override (now
+        "priority" instead of missing/routine), which does NOT affect the
+        wire text — parity is exact for the text body.
         """
         from meshai.notifications.formatters.swpc import format as sfmt
 
@@ -139,24 +146,29 @@ class TestFormatterParity:
             "issued_at": "2026-07-04T05:00:00Z",
         }
 
-        expected = (
-            "🧲 New: G3 Geomagnetic Storm — Kp7"
-            "\nHF degraded, aurora possible"
-            "\nSWPC · 2026-07-04 05:00"
+        old_wire = (
+            "🧲 New: G3 Geomagnetic Storm — Kp7\n"
+            "HF degraded, aurora possible\n"
+            "SWPC · 2026-07-04 05:00"
         )
 
         with pinned_time(_AT):
             new_wire = sfmt(_make_fake_event(canonical), now=_AT, budget=140)
 
+        # Content must match: same line 1 and line 2.
         assert "G3" in new_wire, f"scale_code missing from wire: {new_wire!r}"
         assert "Kp7" in new_wire, f"scalar 'Kp7' missing from wire: {new_wire!r}"
         assert "Geomagnetic Storm" in new_wire
-        assert new_wire == expected, (
-            f"Wire mismatch for G3/Kp7:\n  expected: {expected!r}\n  got: {new_wire!r}"
+
+        # Old wire content also present
+        assert "G3" in old_wire
+        assert "Kp7" in old_wire
+        assert new_wire == old_wire, (
+            f"Parity failure for G3/Kp7:\n  old: {old_wire!r}\n  new: {new_wire!r}"
         )
 
     def test_flare_x1_r3_parity(self, mem_db):
-        """X1.0 flare (R3) alert → formatter output matches hand-written expected.
+        """X1.0 flare (R3) alert → new formatter ≈ old _render.
 
         Fixture mirrors swpc_last/0003.json (XX0S, X1.0 flare, R3 Strong).
         """
@@ -171,10 +183,10 @@ class TestFormatterParity:
             "issued_at": "2026-06-03T11:59:00Z",
         }
 
-        expected = (
-            "☀️ New: X1.0 Solar Flare — R3"
-            "\nHF radio fading, GPS may glitch"
-            "\nSWPC · 2026-06-03 11:59"
+        old_wire = (
+            "☀️ New: X1.0 Solar Flare — R3\n"
+            "HF radio fading, GPS may glitch\n"
+            "SWPC · 2026-06-03 11:59"
         )
 
         with pinned_time(_AT):
@@ -183,8 +195,8 @@ class TestFormatterParity:
         assert "R3" in new_wire
         assert "X1.0" in new_wire
         assert "Solar Flare" in new_wire
-        assert new_wire == expected, (
-            f"Wire mismatch for X1.0/R3:\n  expected: {expected!r}\n  got: {new_wire!r}"
+        assert new_wire == old_wire, (
+            f"Parity failure for X1.0/R3:\n  old: {old_wire!r}\n  new: {new_wire!r}"
         )
 
     def test_g5_kp9_parity(self, mem_db):
@@ -200,10 +212,10 @@ class TestFormatterParity:
             "issued_at": "2026-07-04T08:00:00Z",
         }
 
-        expected = (
-            "🧲 New: G5 Geomagnetic Storm — Kp9"
-            "\nWidespread power disruptions possible"
-            "\nSWPC · 2026-07-04 08:00"
+        old_wire = (
+            "🧲 New: G5 Geomagnetic Storm — Kp9\n"
+            "Widespread power disruptions possible\n"
+            "SWPC · 2026-07-04 08:00"
         )
 
         with pinned_time(_AT):
@@ -211,8 +223,8 @@ class TestFormatterParity:
 
         assert "G5" in new_wire
         assert "Kp9" in new_wire
-        assert new_wire == expected, (
-            f"G5 wire mismatch:\n  expected: {expected!r}\n  got: {new_wire!r}"
+        assert new_wire == old_wire, (
+            f"G5 parity failure:\n  old: {old_wire!r}\n  new: {new_wire!r}"
         )
 
     def test_null_scalar_renders_without_dash_tail(self, mem_db):
@@ -235,6 +247,102 @@ class TestFormatterParity:
         assert "Geomagnetic Storm" in wire
         # No "—" dash when scalar is None (no Kp to show)
         assert "Kp" not in wire, f"Unexpected Kp in wire when scalar=None: {wire!r}"
+
+    def test_proton_s1_parity(self, mem_db):
+        """S1 proton event (10 pfu) -> new formatter matches old _render()
+        proton branch.
+
+        central/swpc_handler.py._render's "proton" branch (event_kind="proton")
+        is the specification recovered here: it is DERIVED from the old code,
+        not captured from the new formatter's own output. scalar="10 pfu"
+        mirrors the scalar_str central computed for a 10 pfu / S1 reading
+        (swpc_handler.py L256).
+        """
+        from meshai.notifications.formatters.swpc import format as sfmt
+
+        canonical = {
+            "event_id": "proton_s1_parity",
+            "driver": None,          # native env/swpc.py always sets driver=None for S
+            "scalar": "10 pfu",
+            "scale_code": "S1",
+            "message": "Polar HF radio affected",
+            "issued_at": "2026-07-04T06:00:00Z",
+        }
+
+        old_wire = (
+            "☢️ New: S1 Radiation Storm — 10 pfu\n"
+            "Polar HF radio affected\n"
+            "SWPC · 2026-07-04 06:00"
+        )
+
+        with pinned_time(_AT):
+            new_wire = sfmt(_make_fake_event(canonical), now=_AT, budget=140)
+
+        assert "S1" in new_wire
+        assert "10 pfu" in new_wire
+        assert "Radiation Storm" in new_wire
+        assert "☢️" in new_wire
+        assert new_wire == old_wire, (
+            f"Parity failure for S1/10 pfu:\n  old: {old_wire!r}\n  new: {new_wire!r}"
+        )
+
+    def test_proton_s5_parity(self, mem_db):
+        """S5 proton event (200000 pfu) -> new formatter matches old _render().
+
+        Derived from central/swpc_handler.py._render, same as test_proton_s1_parity.
+        """
+        from meshai.notifications.formatters.swpc import format as sfmt
+
+        canonical = {
+            "event_id": "proton_s5_parity",
+            "driver": None,
+            "scalar": "200000 pfu",
+            "scale_code": "S5",
+            "message": "Widespread satellite/HF disruption",
+            "issued_at": "2026-07-04T09:00:00Z",
+        }
+
+        old_wire = (
+            "☢️ New: S5 Radiation Storm — 200000 pfu\n"
+            "Widespread satellite/HF disruption\n"
+            "SWPC · 2026-07-04 09:00"
+        )
+
+        with pinned_time(_AT):
+            new_wire = sfmt(_make_fake_event(canonical), now=_AT, budget=140)
+
+        assert "S5" in new_wire
+        assert new_wire == old_wire, (
+            f"Parity failure for S5:\n  old: {old_wire!r}\n  new: {new_wire!r}"
+        )
+
+    def test_proton_null_scalar_renders_without_dash_tail(self, mem_db):
+        """Native path: S-scale scalar=None (no pfu reading available from
+        noaa-scales.json) -> renders without '— N pfu' tail.
+
+        This is the real shape env/swpc.py produces today (see
+        TestSchemaConformance.test_s1_canonical_driver_none) — unlike the
+        S1/S5 parity tests above, which use a hypothetical scalar to prove
+        wire-format parity with the old Central proton renderer.
+        """
+        from meshai.notifications.formatters.swpc import format as sfmt
+
+        canonical = {
+            "event_id": "native_s1",
+            "driver": None,
+            "scalar": None,
+            "scale_code": "S1",
+            "message": "",
+            "issued_at": None,
+        }
+
+        with pinned_time(_AT):
+            wire = sfmt(_make_fake_event(canonical), now=_AT, budget=140)
+
+        assert "S1" in wire
+        assert "Radiation Storm" in wire
+        assert "pfu" not in wire, f"Unexpected pfu in wire when scalar=None: {wire!r}"
+        assert "Polar HF radio affected" in wire  # default line2 fallback
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -443,6 +551,123 @@ class TestFlareRScaleFloor:
         assert gate.broadcast, "R5 must broadcast"
         assert gate.data_patch.get("_severity_override") == "immediate"
 
+    # NOTE: test_m5_flare_suppressed_via_handler and
+    # test_x1_flare_broadcasts_via_handler previously lived here, exercising
+    # Central's flare_class ("M5.5"/"X1.0") -> R-scale string-parsing
+    # (swpc_handler.py::_flare_r_scale) via the legacy handle_swpc() entry
+    # point. That mapping is Central-only dead logic: the native path
+    # (env/swpc.py) never parses flare_class text — it reads the R-scale
+    # level directly from noaa-scales.json, same as G/S. There is no native
+    # equivalent to convert these to. Removed (rather than converted) because
+    # the behavior they actually cared about — R2 suppressed / R3 broadcasts
+    # at the floor — is already covered natively by test_r2_suppressed and
+    # test_r3_broadcasts above, and the R3/X1.0 wire-format text is covered
+    # by TestFormatterParity.test_flare_x1_r3_parity. Deleting them removes
+    # their `from meshai.central.swpc_handler import handle_swpc` imports,
+    # which would otherwise ModuleNotFoundError once PR #144
+    # (chore/excise-dead-central-path) deletes that module.
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4b. Proton S-scale floor — S1+ passes (lower floor than G3+/R3+)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestProtonSScaleFloor:
+    """S-scale (proton) floor gate: S1+ broadcasts — unlike G/R's G3+/R3+ floor.
+
+    Threshold provenance: central/swpc_handler.py's module docstring states
+    the original proton broadcast rule verbatim: "Solar proton event >= 10 pfu
+    @ >= 10 MeV (S1 minor radiation storm or higher)". That IS the S1 NOAA
+    threshold, so Central's floor was S1+ (level >= 1) — a deliberately lower
+    bar than the G3+/R3+ floor used for geomag/flare. Native S-scale support
+    recovers that floor exactly (gating/swpc.py._floor_for_scale), it does not
+    invent a new one.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, mem_db):
+        self.db = mem_db
+
+    def _proton_canonical(self, scale_code: str, event_id: str,
+                          scalar: str | None = None) -> dict:
+        return {
+            "event_id": event_id,
+            "driver": None,       # native env/swpc.py always sets driver=None for S
+            "scalar": scalar,
+            "scale_code": scale_code,
+            "message": "",
+            "issued_at": None,
+        }
+
+    def test_s0_suppressed(self):
+        """Defensive: a sub-S1 scale_code (not produced by env/swpc.py today,
+        which never emits level<1) is still suppressed by the floor check."""
+        from meshai.notifications.gating.swpc import decide
+        gate = decide(self._proton_canonical("S0", "s0_test"),
+                      source="swpc", now=_AT)
+        assert not gate.broadcast, "S0 must be suppressed (below S1 floor)"
+
+    def test_s1_broadcasts(self):
+        """S1 broadcasts — unlike R1/G1, which are suppressed (see
+        TestFlareRScaleFloor.test_r1_suppressed)."""
+        from meshai.notifications.gating.swpc import decide
+        gate = decide(self._proton_canonical("S1", "s1_test"),
+                      source="swpc", now=_AT)
+        assert gate.broadcast, "S1 must broadcast (meets S1+ floor)"
+        assert gate.data_patch.get("_severity_override") == "routine"
+
+    def test_s2_broadcasts(self):
+        from meshai.notifications.gating.swpc import decide
+        gate = decide(self._proton_canonical("S2", "s2_test"),
+                      source="swpc", now=_AT)
+        assert gate.broadcast, "S2 must broadcast"
+        assert gate.data_patch.get("_severity_override") == "routine"
+
+    def test_s3_broadcasts_priority(self):
+        from meshai.notifications.gating.swpc import decide
+        gate = decide(self._proton_canonical("S3", "s3_test"),
+                      source="swpc", now=_AT)
+        assert gate.broadcast, "S3 must broadcast"
+        assert gate.data_patch.get("_severity_override") == "priority"
+
+    def test_s4_broadcasts_immediate(self):
+        from meshai.notifications.gating.swpc import decide
+        gate = decide(self._proton_canonical("S4", "s4_test"),
+                      source="swpc", now=_AT)
+        assert gate.broadcast, "S4 must broadcast"
+        assert gate.data_patch.get("_severity_override") == "immediate"
+
+    def test_s5_broadcasts_immediate(self):
+        from meshai.notifications.gating.swpc import decide
+        gate = decide(self._proton_canonical("S5", "s5_test"),
+                      source="swpc", now=_AT)
+        assert gate.broadcast, "S5 must broadcast"
+        assert gate.data_patch.get("_severity_override") == "immediate"
+
+    def test_s1_not_suppressed_by_geomag_window(self):
+        """Proton events (driver=None) must not be affected by the kp-only
+        600s geomag cross-adapter dedup window."""
+        from meshai.notifications.gating.swpc import decide, _geomag_window
+        _geomag_window["S1"] = _AT  # would only matter if S-scale shared the window
+        gate = decide(self._proton_canonical("S1", "s1_window_test"),
+                      source="swpc", now=_AT + 1)
+        assert gate.broadcast, "proton events must not consult the geomag window"
+
+    def test_s1_first_sighting_then_suppressed(self):
+        """Point-in-time semantics apply to proton same as geomag/flare: a
+        second decide() for the same event_id after a committed broadcast is
+        suppressed (no re-broadcast on revision)."""
+        from meshai.notifications.gating.swpc import decide
+
+        gate1 = decide(self._proton_canonical("S1", "s1_repeat"),
+                       source="swpc", now=_AT)
+        assert gate1.broadcast
+        gate1.commit(_AT)
+
+        gate2 = decide(self._proton_canonical("S1", "s1_repeat"),
+                       source="swpc", now=_AT + 100)
+        assert not gate2.broadcast, "already-broadcast proton event must suppress"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. Schema conformance — to_event() emits required canonical fields
@@ -558,27 +783,60 @@ class TestSchemaConformance:
         assert "G3" in result
         assert len(result) <= 140, f"Budget exceeded: {len(result)} > 140"
 
+    def test_s1_canonical_data_doesnt_crash_formatter(self):
+        """S1 from native to_event() (driver=None, scalar=None) can be fed to
+        the formatter without crashing — the real shape env/swpc.py produces."""
+        from unittest.mock import MagicMock
+        from meshai.env.swpc import SWPCAdapter
+        from meshai.notifications.formatters.swpc import format as sfmt
+
+        cfg = MagicMock()
+        adapter = SWPCAdapter(cfg)
+        evt = self._make_swpc_evt("s", 1)
+        event = adapter.to_event(evt)
+
+        assert event is not None
+        with pinned_time(_AT):
+            result = sfmt(event, now=_AT, budget=140)
+
+        assert result is not None
+        assert "S1" in result
+        assert len(result) <= 140, f"Budget exceeded: {len(result)} > 140"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6. Proton NOT registered — solar_radiation_storm absent from registries
+# 6. Proton registered — solar_radiation_storm present in both registries
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestProtonNotRegistered:
-    """solar_radiation_storm must not appear in either registry."""
+class TestProtonRegistered:
+    """solar_radiation_storm (S-scale/proton) IS registered in both registries.
 
-    def test_solar_radiation_storm_not_in_formatters(self):
+    Native S-scale support closes the silent-drop gap: env/swpc.py already
+    emitted solar_radiation_storm events, but neither registry carried a
+    decider/formatter for it, so they were dropped before dispatch (see
+    formatters/swpc.py and gating/swpc.py for the proton branches added to
+    close this gap).
+    """
+
+    def test_solar_radiation_storm_in_formatters(self):
         from meshai.notifications.formatters import FORMATTERS
-        assert "solar_radiation_storm" not in FORMATTERS, (
-            "solar_radiation_storm must NOT be in FORMATTERS "
-            "(proton events stay on legacy path)"
+        assert "solar_radiation_storm" in FORMATTERS, (
+            "solar_radiation_storm must be in FORMATTERS (native S-scale support)"
         )
 
-    def test_solar_radiation_storm_not_in_deciders(self):
+    def test_solar_radiation_storm_in_deciders(self):
         from meshai.notifications.gating import DECIDERS
-        assert "solar_radiation_storm" not in DECIDERS, (
-            "solar_radiation_storm must NOT be in DECIDERS "
-            "(proton events stay on legacy path)"
+        assert "solar_radiation_storm" in DECIDERS, (
+            "solar_radiation_storm must be in DECIDERS (native S-scale support)"
         )
+
+    def test_get_decider_resolves_solar_radiation_storm(self):
+        from meshai.notifications.gating import get_decider
+        assert get_decider("solar_radiation_storm") is not None
+
+    def test_get_formatter_resolves_solar_radiation_storm(self):
+        from meshai.notifications.formatters import get_formatter
+        assert get_formatter("solar_radiation_storm") is not None
 
     def test_geomagnetic_storm_in_formatters(self):
         from meshai.notifications.formatters import FORMATTERS
@@ -603,3 +861,19 @@ class TestProtonNotRegistered:
         assert "rf_propagation_alert" in DECIDERS, (
             "rf_propagation_alert must be in DECIDERS"
         )
+
+    # NOTE: test_proton_stays_on_legacy_path previously lived here, exercising
+    # Central's swpc_protons raw p10mev-pfu-flux -> S-scale mapping (S1 at
+    # 15 pfu) via the legacy handle_swpc() entry point, guarded with
+    # pytest.importorskip("meshai.central.swpc_handler") plus an unguarded
+    # `from meshai.central.swpc_handler import handle_swpc` inside the body.
+    # That raw-pfu-flux mapping is Central-only dead logic: the native path
+    # (env/swpc.py) never parses p10mev — it reads the S-scale level directly
+    # from noaa-scales.json, same as R/G. There is no native equivalent to
+    # convert this to, and it duplicates coverage that already exists
+    # natively: the S1+ floor/broadcast behavior is covered by
+    # TestProtonSScaleFloor.test_s1_broadcasts, and the "S1"/"☢️" wire-format
+    # text is covered by TestFormatterParity.test_proton_s1_parity. Removed
+    # so this file no longer imports meshai.central.swpc_handler, which would
+    # otherwise ModuleNotFoundError once PR #144
+    # (chore/excise-dead-central-path) deletes that module.

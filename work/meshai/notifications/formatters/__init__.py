@@ -66,12 +66,15 @@ from meshai.notifications.formatters import avalanche as _avy_fmt_mod  # noqa: E
 register("avalanche_warning", _avy_fmt_mod.format)
 register("avalanche_watch", _avy_fmt_mod.format)
 
-# SWPC: geomagnetic_storm (swpc_kindex / native G-scale) and rf_propagation_alert
-# (swpc_alerts flare / native R-scale).  solar_radiation_storm (proton) stays on
-# the legacy Mode-B path — NOT registered here.
+# SWPC: geomagnetic_storm (swpc_kindex / native G-scale), rf_propagation_alert
+# (swpc_alerts flare / native R-scale), and solar_radiation_storm (native
+# S-scale proton/radiation-storm events). All three share one formatter that
+# dispatches internally (geomag/flare on `driver`, proton on `scale_code`
+# prefix "S" — see formatters/swpc.py for why).
 from meshai.notifications.formatters import swpc as _swpc_fmt_mod  # noqa: E402,F401
 register("geomagnetic_storm", _swpc_fmt_mod.format)
 register("rf_propagation_alert", _swpc_fmt_mod.format)
+register("solar_radiation_storm", _swpc_fmt_mod.format)
 
 # Phase-2: NWS weather alerts (weather_warning + weather_statement +
 # weather_watch + weather_advisory).  All four categories share the same
