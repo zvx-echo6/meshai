@@ -105,7 +105,7 @@ class SatpassCommand(CommandHandler):
 
         tles = []
         if norad_ids:
-            from meshai.central.tle_handler import get_tle_by_norad
+            from meshai.env.satellite.tle_store import get_tle_by_norad
             for nid in norad_ids:
                 tle = get_tle_by_norad(nid, conn=conn)
                 if tle:
@@ -114,11 +114,11 @@ class SatpassCommand(CommandHandler):
                 id_str = ", ".join(str(n) for n in norad_ids)
                 return f"No fresh TLE for NORAD {id_str}. TLE cache may be empty."
         elif sat_name_query:
-            from meshai.central.tle_handler import search_tle_by_name
+            from meshai.env.satellite.tle_store import search_tle_by_name
             # Try exact NORAD ID first
             try:
                 exact_id = int(sat_name_query)
-                from meshai.central.tle_handler import get_tle_by_norad
+                from meshai.env.satellite.tle_store import get_tle_by_norad
                 tle = get_tle_by_norad(exact_id, conn=conn)
                 if tle:
                     tles = [tle]
@@ -141,7 +141,7 @@ class SatpassCommand(CommandHandler):
 
         # Compute passes for each satellite
         try:
-            from meshai.central.pass_predictor import compute_passes, azimuth_to_compass
+            from meshai.env.satellite.pass_predictor import compute_passes, azimuth_to_compass
         except ImportError:
             return "Pass predictor not available (sgp4 missing?)."
 
@@ -163,7 +163,7 @@ class SatpassCommand(CommandHandler):
                 continue
 
             for p in passes:
-                from meshai.central.satpass_handler import format_pass
+                from meshai.env.satellite.pass_format import format_pass
                 az_aos = azimuth_to_compass(p.azimuth_at_aos)
                 az_los = azimuth_to_compass(p.azimuth_at_los)
                 az_peak = azimuth_to_compass(p.azimuth_at_peak)
