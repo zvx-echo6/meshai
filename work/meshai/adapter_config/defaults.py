@@ -155,7 +155,7 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     # INCIDENT -- 2 settings (shared freshness gate + Update-after-New toggle)
     # =================================================================
     ("incident", "freshness_seconds"): {
-        "default": 1800,                    # incident_handler.py:49 + central_normalizer.py:917
+        "default": 1800,                    # notifications/pipeline/dispatcher.py freshness gate
         "type": "int",
         "description": "Drop incidents older than this many seconds.",
     },
@@ -319,7 +319,7 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "description": "OSM place classes that count as a town for the nearest_town anchor.",
     },
     ("geocoder", "h3_cache_max"): {
-        "default": 10000,                   # central_normalizer.py:297
+        "default": 10000,                   # geo.py _H3_CACHE_MAX
         "type": "int",
         "description": "Max H3 cache entries before LRU eviction.",
     },

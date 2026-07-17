@@ -39,6 +39,7 @@ inside that connection's autocommit mode.
 
 from __future__ import annotations
 from meshai.adapter_config import adapter_config
+from meshai.geo import haversine_distance, _bearing_compass
 from meshai.notifications.formatters._budget import budget_for, fit_to_budget
 
 import logging
@@ -531,15 +532,13 @@ def _location_anchor(n: dict) -> str:
         # Try curated town_anchors first
         try:
             from meshai.persistence import get_db
-            from meshai.central_normalizer import _haversine_miles as _haversine_mi
-            from meshai.central_normalizer import _bearing_compass
             rows = get_db().execute(
                 "SELECT name, lat, lon FROM town_anchors WHERE lat IS NOT NULL AND lon IS NOT NULL"
             ).fetchall()
             best = None
             best_d = float("inf")
             for row in rows:
-                d = _haversine_mi(lat, lon, row["lat"], row["lon"])
+                d = haversine_distance(lat, lon, row["lat"], row["lon"])
                 if d < best_d:
                     best_d = d
                     best = row
@@ -553,7 +552,11 @@ def _location_anchor(n: dict) -> str:
             logger.exception("town_anchors lookup failed; falling back to Photon")
 
         try:
-            from meshai.central_normalizer import nearest_town
+            # Kept as a lazy, per-call import (not hoisted to the top-level
+            # geo import above) because several tests monkeypatch
+            # `meshai.geo.nearest_town` and rely on this function doing a
+            # fresh attribute lookup on every call to pick that up.
+            from meshai.geo import nearest_town
             nt = nearest_town(lat, lon, max_distance_mi=float(adapter_config.wfigs.anchor_max_mi))
         except Exception:
             logger.exception("nearest_town failed; falling through")

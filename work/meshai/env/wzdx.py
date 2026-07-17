@@ -25,12 +25,11 @@ as the other native adapters.
 
 Canonical ``work_zone`` data shape
 ----------------------------------
-Field mapping reuses ``central_normalizer._parse_wzdx_federal`` verbatim so
-the wire is identical to what the Central-side parser would have produced
-(road, direction, mile posts, folded sub_type, impact, ends_at). ``to_event``
-then converts ``ends_at`` → ``ends_at_epoch`` exactly as the Phase-2 bridge
-does (``calendar.timegm`` of the naive datetime) and augments with lat/lon +
-a stable ``external_id``.
+Field mapping delegates to ``env.wzdx_parse._parse_wzdx_federal`` (road,
+direction, mile posts, folded sub_type, impact, ends_at). ``to_event`` then
+converts ``ends_at`` → ``ends_at_epoch`` exactly as the Phase-2 bridge does
+(``calendar.timegm`` of the naive datetime) and augments with lat/lon + a
+stable ``external_id``.
 
 Coalescing
 ----------
@@ -58,10 +57,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from meshai.notifications.events import Event, make_event
-
-# Reuse the exact WZDx field-mapping logic from the Central normalizer so the
-# native path and the Central path produce an identical canonical shape.
-from meshai.central_normalizer import _parse_wzdx_federal
+from meshai.env.wzdx_parse import _parse_wzdx_federal
 
 if TYPE_CHECKING:
     from ..config import WZDxConfig
@@ -372,7 +368,7 @@ class WZDxAdapter:
         """Parse one WZDx v4 road_event feature into a stored event dict.
 
         Only ``work-zone`` road_events are kept. Field mapping delegates to
-        ``central_normalizer._parse_wzdx_federal`` (which reads either the
+        ``env.wzdx_parse._parse_wzdx_federal`` (which reads either the
         raw ``core_details.*`` nesting or a flattened envelope). Returns None
         for non-work-zone / malformed / id-less features (never raises).
 

@@ -18,18 +18,25 @@ Original diffs are preserved in git history. This is a real production gap
 flagged for Matt: TomTom road-incident ingestion in particular has no
 native replacement.
 
-Work-zone parity: `meshai.central_normalizer` (a top-level, non-Central-NATS
-module; note the name is legacy) was never part of the deleted consumer path
-and remains live. `meshai.notifications.renderers.work_zone` was ALSO never
-part of the deleted consumer path, but was itself dead code (zero production
-callers) once formatters.incident absorbed it as `_render_work_zone()`; it
-was removed in a later ripout pass. See TestWorkZoneGolden below for how its
-golden-parity coverage was preserved as pinned literals.
+Work-zone parity: the (now fully deleted) Central-envelope adapter-normalizer
+module was never part of the deleted Central consumer path, but
+chore/ripout-2e-geo-normalizer found it had no live production
+caller of its OWN either (env/roads511.py, the real live itd_511 adapter,
+never used it) and deleted it in turn -- name and all. Its one live part,
+the wzdx federal parser, moved to `meshai.env.wzdx_parse` next to its real
+consumer `env.wzdx`. `meshai.notifications.renderers.work_zone` was ALSO
+never part of the deleted Central consumer path, but was itself dead code
+(zero production callers) once formatters.incident absorbed it as
+`_render_work_zone()`; it was removed in a later ripout pass. See
+TestWorkZoneGolden below for how both dead parsers' golden-parity coverage
+was preserved as pinned literals (the itd_511 canonical dict) or a direct
+call to the surviving live parser (wzdx).
 
 Groups
 ------
-1.  Work-zone golden byte-parity (traffic_last/0002 itd_511, traffic_last/0003
-    wzdx) — calls normalize() directly, same as the production consumer.
+1.  Work-zone golden byte-parity (traffic_last/0002 itd_511 -- pinned
+    canonical-dict literal, the parser is dead; traffic_last/0003 wzdx --
+    calls the live _parse_wzdx_federal directly).
 2.  Gate sequence: decide() lifecycle transitions (new → cold-dup →
     suppress-on-update-False → magnitude-up → suppress-no-change).
 3.  _anchor.resolve_anchor: DB hit and Photon fallback path.
@@ -161,6 +168,22 @@ class TestWorkZoneGolden:
 
     now is pinned to captured_epoch (1783206522) for both paths so the
     ends-at segment is deterministic.
+
+    chore/ripout-2e-geo-normalizer update: the deleted normalizer's
+    normalize() (and the itd_511 work_zone parser it dispatched to,
+    _parse_itd_511_work_zone) is now gone -- it had no live production
+    caller (env.roads511, the actual live itd_511 adapter, never used it).
+    For 0002.json (itd_511) the CANONICAL DICT that used to be computed live
+    via normalize() is now, by the same "pin it before the source goes away"
+    methodology already used for the wire-string goldens above, captured as
+    a literal (`_ITD511_0002_CANONICAL` below -- captured by running
+    normalize() against this exact fixture immediately before that module's
+    deletion, confirmed byte-identical to the pinned wire golden at that
+    time).
+    For 0003.json (wzdx) the parser (_parse_wzdx_federal) IS still live --
+    it moved to meshai.env.wzdx_parse, next to its real consumer env.wzdx --
+    so that fixture keeps calling the real parser directly instead of a
+    pinned literal.
     """
 
     _GOLDEN = {
@@ -168,8 +191,22 @@ class TestWorkZoneGolden:
         "0003.json": "🚧 US-95, near Wilder: southbound, ends Jul 19",
     }
 
+    # Captured from the deleted normalizer's normalize() + _n_to_canonical_workzone()
+    # against traffic_last/0002.json immediately before that module's
+    # deletion. town="Chubbuck"/bearing="NW"/distance_mi=0 came from a live
+    # Photon nearest_town() call at capture time (this fixture's geocoder.city
+    # is null) -- the same live dependency the pinned wire golden above already
+    # implicitly baked in ("near Chubbuck").
+    _ITD511_0002_CANONICAL = {
+        "road": "US-91", "direction": "southbound",
+        "mile_start": None, "mile_end": None,
+        "sub_type": "road construction", "impact": "partial",
+        "ends_at_epoch": 1786968000.0,
+        "town": "Chubbuck", "distance_mi": 0, "bearing": "NW",
+        "lat": None, "lon": None,
+    }
+
     def _run_wz(self, fixture_name: str, adapter_expected: str):
-        from meshai.central_normalizer import normalize
         from meshai.notifications.formatters.incident import format as fmt
 
         # Find the fixture by name
@@ -184,13 +221,18 @@ class TestWorkZoneGolden:
 
         envelope = fx["envelope"]
         now_epoch = float(fx.get("captured_epoch", time.time()))
-
-        n = normalize(envelope)
-        assert n is not None, f"normalize() returned None for {fixture_name!r}"
         golden = self._GOLDEN[fixture_name]
 
-        # New formatter
-        canonical = _n_to_canonical_workzone(n)
+        if adapter == "wzdx":
+            from meshai.env.wzdx_parse import _parse_wzdx_federal
+            inner = envelope["data"]
+            n = _parse_wzdx_federal(inner["data"], inner.get("geo") or {})
+            assert n is not None, f"_parse_wzdx_federal returned None for {fixture_name!r}"
+            canonical = _n_to_canonical_workzone(n)
+        else:
+            # itd_511: dead parser, pinned canonical dict (see class docstring).
+            canonical = dict(self._ITD511_0002_CANONICAL)
+
         event = _make_event("work_zone", canonical)
         new_out = fmt(event, now=now_epoch, budget=140)
 
@@ -366,7 +408,7 @@ class TestAnchorResolve:
         import time as _time
         from meshai.persistence import get_db
         from meshai.notifications.formatters._anchor import resolve_anchor
-        import meshai.central_normalizer as cn_mod
+        from meshai import geo
 
         # Clear all seeded town_anchors so the DB step finds nothing.
         conn = get_db()
@@ -378,7 +420,7 @@ class TestAnchorResolve:
             called.append((lat, lon))
             return {"name": "Photon City", "distance_mi": 5, "bearing": "NW"}
 
-        monkeypatch.setattr(cn_mod, "nearest_town", fake_nearest_town)
+        monkeypatch.setattr(geo, "nearest_town", fake_nearest_town)
 
         result = resolve_anchor(43.615, -116.205, max_mi=50.0)
         assert result is not None
@@ -400,12 +442,17 @@ class TestSchemaConformance:
     contain all expected keys."""
 
     def test_workzone_canonical_keys_from_normalize(self):
-        """All work-zone canonical keys present in extraction from normalize()."""
-        from meshai.central_normalizer import normalize
+        """All work-zone canonical keys present in extraction from the live
+        wzdx parser. (Was the deleted normalizer's normalize() against
+        0002.json (itd_511) -- that parser is dead and the module is gone;
+        0003.json (wzdx) exercises the same _n_to_canonical_workzone() key
+        shape via the still-live _parse_wzdx_federal.)"""
+        from meshai.env.wzdx_parse import _parse_wzdx_federal
 
-        with open(_FIXTURE_DIR / "traffic_last" / "0002.json", encoding="utf-8") as f:
+        with open(_FIXTURE_DIR / "traffic_last" / "0003.json", encoding="utf-8") as f:
             fx = json.load(f)
-        n = normalize(fx["envelope"])
+        inner = fx["envelope"]["data"]
+        n = _parse_wzdx_federal(inner["data"], inner.get("geo") or {})
         assert n is not None
         canonical = _n_to_canonical_workzone(n)
         assert _WZ_CANONICAL_KEYS == set(canonical.keys())

@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import meshai.central_normalizer as cn
+from meshai import geo
 from meshai.env.wzdx import WZDxAdapter
 from meshai.notifications.events import Event
 from meshai.notifications.formatters.incident import format as format_incident
@@ -26,7 +26,7 @@ from meshai.notifications.formatters.incident import format as format_incident
 @pytest.fixture(autouse=True)
 def _no_photon(monkeypatch):
     """Disable the Photon nearest_town lookup so parsing is network-free."""
-    monkeypatch.setattr(cn, "nearest_town", lambda *a, **k: None)
+    monkeypatch.setattr(geo, "nearest_town", lambda *a, **k: None)
 
 
 @pytest.fixture

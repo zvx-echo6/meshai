@@ -6,15 +6,15 @@ Returns {town: str, distance_mi: int, bearing: str} or None.
 
 Priority:
   1. Curated ``town_anchors`` SQLite table (GUI-managed, haversine nearest).
-  2. Photon reverse geocoder via central_normalizer.nearest_town() fallback.
+  2. Photon reverse geocoder via geo.nearest_town() fallback.
 
 The function is PURE (no side-effects beyond the LRU cache inside
 nearest_town) and safe to call from any formatter.  Both the incident
 formatter (Phase 2) and the WFIGS fire formatter (Phase 3) use it.
 
 Haversine and bearing implementations are local copies so the module
-has no runtime dependency on central_normalizer (avoids the circular
-import chain formatters → central_normalizer → persistence → formatters).
+has no runtime dependency on meshai.geo at import time (avoids the
+circular import chain formatters → geo → persistence → formatters).
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
-# ── Geometry helpers (mirrors central_normalizer exactly) ─────────────────
+# ── Geometry helpers (mirrors meshai.geo exactly) ──────────────────────────
 
 
 def _haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -44,7 +44,7 @@ def _bearing_compass(
 
     Result is the direction the event lies relative to the town, so
     '8 mi N of Plummer' means the event is north of the town.
-    Mirrors central_normalizer._bearing_compass and wfigs_handler._location_anchor.
+    Mirrors meshai.geo._bearing_compass and env.fire_render._location_anchor.
     """
     phi1, phi2 = math.radians(lat2), math.radians(lat1)
     dl = math.radians(lon1 - lon2)
@@ -69,8 +69,8 @@ def resolve_anchor(
     1. Curated ``town_anchors`` SQLite table — haversine nearest row with
        ``lat IS NOT NULL AND lon IS NOT NULL``.  GUI-managed and always
        tried first so curated entries beat the Photon fallback.
-    2. ``central_normalizer.nearest_town()`` Photon reverse-geocoder —
-       same H3-cached Photon call used by the normalizer's town selection.
+    2. ``geo.nearest_town()`` Photon reverse-geocoder — same H3-cached
+       Photon call used by the WZDx/state_511_atis town-selection chain.
 
     Parameters
     ----------
@@ -117,7 +117,7 @@ def resolve_anchor(
 
     # ── 2. Photon nearest_town fallback ──────────────────────────────────
     try:
-        from meshai.central_normalizer import nearest_town
+        from meshai.geo import nearest_town
         nt = nearest_town(lat, lon, max_distance_mi=max_mi)
         if nt and nt.get("name"):
             return {

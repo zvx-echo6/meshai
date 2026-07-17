@@ -1,4 +1,4 @@
-"""Tests for meshai/central/wfigs_handler.py -- WFIGS persistence wire-up.
+"""Tests for env/fire_render.py's handle_wfigs() -- WFIGS persistence wire-up.
 
 Covers:
   (a) parse clean active-incident envelope (all fields populated)
@@ -12,14 +12,27 @@ Covers:
   (i) known IRWIN acres up but <8h elapsed -> drop, last_broadcast_* unchanged
   (j) known IRWIN acres up + >=8h elapsed -> "Update:" prefix + audit row
   (k) location anchor priority: geocoder.city > nearest_town > landclass > county
+
+handle_wfigs (env/fire_render.py) has no live production caller -- Central's
+NATS consumer that drove it is gone -- but it remains the parity-tested
+legacy contract for the WFIGS wire format (see that module's docstring), and
+`_location_anchor`, which it shares with the LIVE `_render` (used on the
+FIRMS fire-growth path), is real regression-tested surface here. It expects
+its input pre-shaped into a flat "normalized" dict; that shaping used to be
+done by the WFIGS dispatch branch of the deleted Central-envelope adapter-
+normalizer module's `normalize()` + its `_parse_wfigs_incidents` helper.
+`_normalize_wfigs()` below is a verbatim-logic local replica of that
+dispatch, scoped to the wfigs_incidents/wfigs_perimeters envelope shapes the
+fixtures in this file build -- it exists so this test file has no dependency
+on that (now fully removed) module.
 """
 
 import os
 import time
+from typing import Any, Optional
 
 import pytest
 
-from meshai import central_normalizer as cn
 from meshai.env.fire_render import (
     WFIGS_BROADCAST_COOLDOWN_S,
     handle_wfigs,
@@ -27,6 +40,123 @@ from meshai.env.fire_render import (
 )
 from meshai.persistence import close_thread_connection, init_db
 from meshai.persistence import db as persistence_db
+
+
+# ---------- local replica of the deleted normalize()/_parse_wfigs_incidents
+# ---------- WFIGS dispatch (see module docstring) --------------------------
+
+_WFIGS_ACRES_KEYS = ("DailyAcres", "IncidentSize")
+_WFIGS_ACRES_RAW_KEYS = ("IncidentSize", "DiscoveryAcres", "FinalAcres")
+_WFIGS_CONTAINED_KEYS = ("PercentContained",)
+_WFIGS_CONTAINED_RAW_KEYS = ("PercentContained",)
+
+
+def _first_non_null(d: dict, keys) -> Any:
+    for k in keys:
+        v = d.get(k)
+        if v is not None and v != "":
+            return v
+    return None
+
+
+def _parse_wfigs_acres(inner_data: dict) -> Optional[float]:
+    val = _first_non_null(inner_data, _WFIGS_ACRES_KEYS)
+    if val is None:
+        raw = inner_data.get("raw") or {}
+        if isinstance(raw, dict):
+            val = _first_non_null(raw, _WFIGS_ACRES_RAW_KEYS)
+    if val is None:
+        return None
+    try: return float(val)
+    except (TypeError, ValueError): return None
+
+
+def _parse_wfigs_contained(inner_data: dict) -> Optional[int]:
+    val = _first_non_null(inner_data, _WFIGS_CONTAINED_KEYS)
+    if val is None:
+        raw = inner_data.get("raw") or {}
+        if isinstance(raw, dict):
+            val = _first_non_null(raw, _WFIGS_CONTAINED_RAW_KEYS)
+    if val is None:
+        return None
+    try: return int(round(float(val)))
+    except (TypeError, ValueError): return None
+
+
+def _parse_wfigs_incidents(inner_data: dict, geo: dict) -> Optional[dict]:
+    geocoder = geo.get("geocoder") or {}
+    irwin_id = inner_data.get("IrwinID") or inner_data.get("irwin_id")
+    name = inner_data.get("IncidentName")
+    itype = inner_data.get("IncidentTypeCategory")
+    if itype is not None and itype not in ("WF", "wildfire"):
+        return None
+    lat = inner_data.get("latitude")
+    lon = inner_data.get("longitude")
+    county = inner_data.get("POOCounty")
+    state = inner_data.get("POOState")
+    landclass = geocoder.get("landclass")
+
+    declared_at_epoch = None
+    fdt = inner_data.get("FireDiscoveryDateTime")
+    if isinstance(fdt, (int, float)):
+        declared_at_epoch = int(fdt / 1000) if fdt > 1e12 else int(fdt)
+
+    acres = _parse_wfigs_acres(inner_data)
+    contained_pct = _parse_wfigs_contained(inner_data)
+    city = geocoder.get("city")
+    raw = inner_data.get("raw") or {}
+
+    return {
+        "irwin_id":           irwin_id,
+        "incident_name":      name,
+        "incident_type":      itype,
+        "acres":              acres,
+        "contained_pct":      contained_pct,
+        "lat":                lat,
+        "lon":                lon,
+        "county":             county,
+        "state":              state,
+        "landclass":          landclass,
+        "geocoder_city":      city,
+        "declared_at_epoch":  declared_at_epoch,
+        "fire_cause":         raw.get("FireCause"),
+        "agency":             raw.get("POOJurisdictionalAgency"),
+        "personnel":          raw.get("TotalIncidentPersonnel"),
+        "unique_fire_id":     raw.get("UniqueFireIdentifier"),
+    }
+
+
+def _normalize_wfigs(envelope: dict) -> Optional[dict]:
+    """wfigs_incidents/wfigs_perimeters envelope -> flat normalized dict,
+    same shape the deleted normalizer's normalize() used to produce."""
+    inner = envelope.get("data") or {}
+    adapter = inner.get("adapter") or ""
+    inner_data = inner.get("data") or {}
+    geo = inner.get("geo") or {}
+    category_raw = inner.get("category") or ""
+
+    if adapter == "wfigs_incidents":
+        if category_raw.startswith("fire.incident.removed"):
+            return {
+                "_kind":    "wfigs_tombstone",
+                "irwin_id": inner_data.get("irwin_id") or inner_data.get("IrwinID"),
+                "state":    inner_data.get("state") or inner_data.get("POOState"),
+                "county":   inner_data.get("county") or inner_data.get("POOCounty"),
+            }
+        if category_raw.startswith("fire.incident"):
+            n = _parse_wfigs_incidents(inner_data, geo)
+            if n is None:
+                return None
+            n["_kind"] = "wfigs_incident"
+            return n
+    if adapter == "wfigs_perimeters":
+        return {
+            "_kind":    "wfigs_perimeter",
+            "irwin_id": inner_data.get("irwin_id") or inner_data.get("IrwinID"),
+            "state":    inner_data.get("state") or inner_data.get("POOState"),
+            "county":   inner_data.get("county") or inner_data.get("POOCounty"),
+        }
+    return None
 
 
 # ---------- fixtures ------------------------------------------------------
@@ -60,10 +190,11 @@ def mem_db(monkeypatch, tmp_path):
 def no_photon(monkeypatch):
     """Force nearest_town to return None so anchor falls through deterministically.
     Tests that exercise nearest_town wire it in directly."""
-    monkeypatch.setattr(cn, "_photon_reverse_places", lambda lat, lon: [])
+    from meshai import geo
+    monkeypatch.setattr(geo, "_photon_reverse_places", lambda lat, lon: [])
     # Also reset the H3 LRU so cache state doesn't leak across tests.
-    if hasattr(cn, "_H3_NEAREST_CACHE"):
-        cn._H3_NEAREST_CACHE.clear()
+    if hasattr(geo, "_H3_NEAREST_CACHE"):
+        geo._H3_NEAREST_CACHE.clear()
 
 
 # ---------- envelope builders --------------------------------------------
@@ -175,7 +306,7 @@ def _make_perimeter(irwin_id=_IRWIN_A, state="ID", county="Cassia",
 # ============================================================================
 def test_a_parse_clean_active_envelope(mem_db, no_photon):
     env = _make_active_envelope()
-    n = cn.normalize(env)
+    n = _normalize_wfigs(env)
     assert n is not None
     assert n["_kind"] == "wfigs_incident"
     assert n["irwin_id"] == _IRWIN_A
@@ -196,7 +327,7 @@ def test_b_acres_fallback_to_raw_discovery_acres(mem_db, no_photon):
     env = _make_active_envelope(daily_acres=None, pct_contained=None,
                                   raw_discovery_acres=0.1,
                                   raw_pct_contained=0)
-    n = cn.normalize(env)
+    n = _normalize_wfigs(env)
     assert n["acres"] == 0.1
     assert n["contained_pct"] == 0
 
@@ -209,7 +340,7 @@ def test_c_acres_missing_renders_na(mem_db, no_photon):
                                   pct_contained=None,
                                   irwin_id=_IRWIN_C,
                                   landclass="Sawtooth National Forest")
-    wire = handle_wfigs(cn.normalize(env), env, env["subject"], now=1_000_000)
+    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"], now=1_000_000)
     assert wire is not None
     assert "size unknown" in wire
     assert "containment unknown" in wire
@@ -223,7 +354,7 @@ def test_d_ia_placeholder_passthrough(mem_db, no_photon):
                                   daily_acres=None, pct_contained=None,
                                   landclass="Sawtooth National Forest",
                                   irwin_id=_IRWIN_B)
-    wire = handle_wfigs(cn.normalize(env), env, env["subject"], now=1_000_000)
+    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"], now=1_000_000)
     assert wire is not None
     assert "IA 1" in wire
 
@@ -233,7 +364,7 @@ def test_d_ia_placeholder_passthrough(mem_db, no_photon):
 # ============================================================================
 def test_e_tombstone_returns_none_and_logs(mem_db, no_photon):
     env = _make_tombstone()
-    n = cn.normalize(env)
+    n = _normalize_wfigs(env)
     assert n["_kind"] == "wfigs_tombstone"
     out = handle_wfigs(n, env, env["subject"], now=2_000_000)
     assert out is None
@@ -257,7 +388,7 @@ def test_e_tombstone_returns_none_and_logs(mem_db, no_photon):
 # ============================================================================
 def test_f_perimeter_returns_none_and_logs(mem_db, no_photon):
     env = _make_perimeter()
-    n = cn.normalize(env)
+    n = _normalize_wfigs(env)
     assert n["_kind"] == "wfigs_perimeter"
     out = handle_wfigs(n, env, env["subject"], now=3_000_000)
     assert out is None
@@ -278,7 +409,7 @@ def test_g_new_irwin_inserts_and_broadcasts(mem_db, no_photon):
     env = _make_active_envelope(geocoder_city="Burley")  # avoids Photon path
     now = 5_000_000
     data = {}
-    wire = handle_wfigs(cn.normalize(env), env, env["subject"],
+    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"],
                          data=data, now=now)
     assert wire is not None
     assert wire.startswith("🔥 Cache Peak Fire — New")
@@ -336,14 +467,14 @@ def test_h_known_irwin_no_change_drops(mem_db, no_photon):
     env = _make_active_envelope(geocoder_city="Burley",
                                  fire_discovery_dt_ms=(first_now - 2 * 86400) * 1000)
     data0 = {}
-    handle_wfigs(cn.normalize(env), env, env["subject"],
+    handle_wfigs(_normalize_wfigs(env), env, env["subject"],
                   data=data0, now=first_now)
     # v0.5.8b: dispatcher commit closes the broadcast.
     data0["_on_broadcast_committed"](float(first_now))
 
     # Re-publish the same incident exactly 30 min later: same acres + contained.
     later = first_now + 1800
-    out = handle_wfigs(cn.normalize(env), env, env["subject"], now=later)
+    out = handle_wfigs(_normalize_wfigs(env), env, env["subject"], now=later)
     assert out is None
 
     fr = mem_db.execute(
@@ -377,7 +508,7 @@ def test_i_known_irwin_change_inside_cooldown_drops(mem_db, no_photon):
         geocoder_city="Burley",
         fire_discovery_dt_ms=(_base - 2 * 86400) * 1000)
     data0 = {}
-    handle_wfigs(cn.normalize(env_initial), env_initial,
+    handle_wfigs(_normalize_wfigs(env_initial), env_initial,
                   env_initial["subject"], data=data0, now=_base)
     data0["_on_broadcast_committed"](float(_base))
 
@@ -387,7 +518,7 @@ def test_i_known_irwin_change_inside_cooldown_drops(mem_db, no_photon):
         geocoder_city="Burley", daily_acres=3000.0, pct_contained=23,
         fire_discovery_dt_ms=(_base - 2 * 86400) * 1000)
     later = _base + 4 * 3600
-    out = handle_wfigs(cn.normalize(env_grown), env_grown,
+    out = handle_wfigs(_normalize_wfigs(env_grown), env_grown,
                         env_grown["subject"], now=later)
     assert out is None
 
@@ -407,7 +538,7 @@ def test_i_known_irwin_change_inside_cooldown_drops(mem_db, no_photon):
 def test_j_known_irwin_change_after_cooldown_broadcasts(mem_db, no_photon):
     env_initial = _make_active_envelope(geocoder_city="Burley")
     data_j0 = {}
-    handle_wfigs(cn.normalize(env_initial), env_initial,
+    handle_wfigs(_normalize_wfigs(env_initial), env_initial,
                   env_initial["subject"], data=data_j0, now=5_000_000)
     data_j0["_on_broadcast_committed"](float(5_000_000))
 
@@ -415,7 +546,7 @@ def test_j_known_irwin_change_after_cooldown_broadcasts(mem_db, no_photon):
                                         daily_acres=3000.0, pct_contained=35)
     later = 5_000_000 + WFIGS_BROADCAST_COOLDOWN_S
     data2 = {}
-    out = handle_wfigs(cn.normalize(env_grown), env_grown,
+    out = handle_wfigs(_normalize_wfigs(env_grown), env_grown,
                         env_grown["subject"], data=data2, now=later)
     assert out is not None
     assert out.startswith("🔥 Cache Peak Fire — Update")
@@ -439,7 +570,7 @@ def test_k_anchor_geocoder_city_wins(mem_db, no_photon):
     env = _make_active_envelope(geocoder_city="Twin Falls",
                                   landclass="Sawtooth NF",
                                   county="Cassia")
-    wire = handle_wfigs(cn.normalize(env), env, env["subject"], now=1)
+    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"], now=1)
     assert "Twin Falls" in wire
     assert "Sawtooth NF" not in wire
     assert "Cassia Co" not in wire
@@ -449,38 +580,38 @@ def test_k_anchor_falls_to_nearest_town(monkeypatch, mem_db):
     """When city missing, nearest_town(distance, bearing) feeds the anchor."""
     fake = {"name": "Boise", "distance_mi": 47.0, "bearing": "S"}
     monkeypatch.setattr(
-        "meshai.central_normalizer.nearest_town",
+        "meshai.geo.nearest_town",
         lambda lat, lon, max_distance_mi=50.0: fake,
     )
     env = _make_active_envelope(geocoder_city=None,
                                   landclass="Sawtooth NF",
                                   county="Cassia")
-    wire = handle_wfigs(cn.normalize(env), env, env["subject"], now=1)
+    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"], now=1)
     # Handler now resolves anchor via town_anchors table (Burley @ 42.536, -113.793)
     assert "Burley" in wire
 
 
 def test_k_anchor_falls_to_landclass(monkeypatch, mem_db):
     monkeypatch.setattr(
-        "meshai.central_normalizer.nearest_town",
+        "meshai.geo.nearest_town",
         lambda lat, lon, max_distance_mi=50.0: None,
     )
     env = _make_active_envelope(geocoder_city=None,
                                   landclass="Sawtooth National Forest",
                                   county="Cassia")
-    wire = handle_wfigs(cn.normalize(env), env, env["subject"], now=1)
+    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"], now=1)
     # Handler resolves nearest town from town_anchors table, overriding landclass
     assert "Burley" in wire
 
 
 def test_k_anchor_falls_to_county(monkeypatch, mem_db):
     monkeypatch.setattr(
-        "meshai.central_normalizer.nearest_town",
+        "meshai.geo.nearest_town",
         lambda lat, lon, max_distance_mi=50.0: None,
     )
     env = _make_active_envelope(geocoder_city=None, landclass=None,
                                   county="Cassia", state="ID")
-    wire = handle_wfigs(cn.normalize(env), env, env["subject"], now=1)
+    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"], now=1)
     # Handler resolves nearest town from town_anchors table
     assert "Burley" in wire
 
@@ -488,11 +619,11 @@ def test_k_anchor_falls_to_county(monkeypatch, mem_db):
 def test_k_anchor_nearest_town_under_one_mile_says_near(monkeypatch, mem_db):
     fake = {"name": "Burley", "distance_mi": 0.3, "bearing": "N"}
     monkeypatch.setattr(
-        "meshai.central_normalizer.nearest_town",
+        "meshai.geo.nearest_town",
         lambda lat, lon, max_distance_mi=50.0: fake,
     )
     env = _make_active_envelope(geocoder_city=None)
-    wire = handle_wfigs(cn.normalize(env), env, env["subject"], now=1)
+    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"], now=1)
     # Handler resolves anchor via town_anchors; exact format depends on distance
     assert "Burley" in wire
 
@@ -506,7 +637,7 @@ def _run_handler_only(env, data=None, now=None):
     """Run normalize + handler WITHOUT invoking any commit callback.
     Simulates the dispatcher dropping the broadcast (grace/cooldown/stale)
     after the handler has already written persistence rows."""
-    n = cn.normalize(env)
+    n = _normalize_wfigs(env)
     if data is None:
         data = {}
     wire = handle_wfigs(n, env, env["subject"], data=data, now=now)
@@ -613,7 +744,7 @@ def test_h_handler_attaches_audit_descriptor_and_callback(mem_db, no_photon):
     dispatcher hooks attached."""
     env = _make_active_envelope(geocoder_city="Burley", irwin_id=_IRWIN_B)
     data = {}
-    wire = handle_wfigs(cn.normalize(env), env, env["subject"],
+    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"],
                           data=data, now=50_000)
     assert wire is not None
     assert callable(data["_on_broadcast_committed"])
@@ -677,7 +808,7 @@ def test_wfigs_discovery_is_date_only():
 def test_per_fire_wfigs_broadcasts_new_fire(mem_db, no_photon):
     env = _make_active_envelope(geocoder_city="Burley")
     data = {}
-    wire = handle_wfigs(cn.normalize(env), env, env["subject"],
+    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"],
                         data=data, now=6_000_000)
     assert wire is not None
     assert wire.startswith("🔥 Cache Peak Fire — New")

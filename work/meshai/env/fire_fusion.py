@@ -968,7 +968,7 @@ def _render_growth_wire(*, incident_name, direction, speed_mph,
     """
     near_part = ""
     try:
-        from meshai.central_normalizer import nearest_town
+        from meshai.geo import nearest_town
         nt = nearest_town(lat, lon, max_distance_mi=100.0)
         if nt and nt.get("name"):
             town = nt["name"]
