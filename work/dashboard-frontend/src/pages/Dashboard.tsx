@@ -32,6 +32,7 @@ import {
   Construction,
   Satellite,
   Sun,
+  Siren,
 } from 'lucide-react'
 
 
@@ -357,6 +358,7 @@ const SOURCE_ICONS: Record<string, { icon: typeof Cloud; color: string; label: s
   usgs: { icon: Droplets, color: 'text-sky-400', label: 'USGS' },
   traffic: { icon: Car, color: 'text-[#777]', label: 'Traffic' },
   roads: { icon: Construction, color: 'text-accent-dim', label: '511' },
+  ipaws: { icon: Siren, color: 'text-red-500', label: 'IPAWS' },
 }
 
 // Severity badge colors (3-level system + legacy support)

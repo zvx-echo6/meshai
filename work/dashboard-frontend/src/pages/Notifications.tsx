@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Save, RotateCcw, RefreshCw, Check,
   Eye as EyeIcon, EyeOff, Plus, X, Radio,
-  Activity, Cloud, Flame, Car, Snowflake, Mountain, MapPin, Satellite, Layers,
+  Activity, Cloud, Flame, Car, Snowflake, Mountain, MapPin, Satellite, Layers, Siren,
 } from 'lucide-react'
 import { useDirty } from '@/context/DirtyContext'
 
@@ -395,6 +395,7 @@ export const TOGGLE_FAMILY_META: FamilyMeta[] = [
   { key: 'mesh_health', label: 'Mesh Health', Icon: Activity },
   { key: 'weather', label: 'Weather', Icon: Cloud },
   { key: 'fire', label: 'Fire', Icon: Flame },
+  { key: 'emergency', label: 'Emergency', Icon: Siren },
   { key: 'rf_propagation', label: 'RF Propagation', Icon: Radio },
   { key: 'roads', label: 'Roads', Icon: Car },
   { key: 'avalanche', label: 'Avalanche', Icon: Snowflake },
