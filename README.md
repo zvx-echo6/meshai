@@ -241,7 +241,7 @@ The curated channel chatter your bot observes is used only as short-term *contex
 llm:
   backend: "google"          # google | openai | anthropic
   api_key: "your-api-key"
-  model: "gemini-2.5-flash"
+  model: "gemini-3.1-flash-lite"
 ```
 
 Any OpenAI-compatible endpoint works for local models — point `base_url` at Ollama (`http://localhost:11434/v1`), LiteLLM (`http://localhost:4000/v1`), or Open WebUI.
