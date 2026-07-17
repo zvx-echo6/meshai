@@ -99,9 +99,11 @@ def _ingest_envelope(norad_id=25544, observer="Boise", max_el=72.5,
 # ── schema / migration ───────────────────────────────────────────────
 
 def test_schema_version_is_current():
-    # Bumped to 26 by the generic-source migration (v26 generic_events); v24
-    # avalanche_events, v25 ducting_events; was 23 at native-satpass (v23).
-    assert SCHEMA_VERSION == 26
+    # SCHEMA_VERSION is derived from the highest vN.sql in migrations/, so
+    # this just guards against the derivation returning something bogus
+    # (e.g. 0, which would mean the migrations dir wasn't found). The v22
+    # migration (this file's focus) must always be <= the current version.
+    assert SCHEMA_VERSION >= 22
 
 
 def test_v22_migration_applies_and_adds_due_at_column(tmp_path, monkeypatch):
@@ -114,7 +116,7 @@ def test_v22_migration_applies_and_adds_due_at_column(tmp_path, monkeypatch):
     close_thread_connection()
     conn = init_db()
     row = conn.execute("SELECT value FROM schema_meta WHERE key='version'").fetchone()
-    assert int(row["value"]) == 26
+    assert int(row["value"]) == SCHEMA_VERSION
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(satpass_pending)")}
     assert "due_at" in cols
     close_thread_connection()

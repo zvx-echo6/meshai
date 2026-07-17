@@ -90,6 +90,23 @@ def test_schema_version_recorded(tmp_db):
     assert int(row["value"]) == SCHEMA_VERSION
 
 
+def test_schema_version_matches_highest_migration_file():
+    """SCHEMA_VERSION is derived from migrations/ at import time (see
+    db._derive_schema_version); this test independently re-derives the
+    expected value straight off the filenames so a future regression
+    (e.g. someone re-hardcoding the constant) is caught even if the
+    derivation logic itself is what breaks."""
+    import re
+
+    versions = []
+    for p in persistence_db.MIGRATIONS_DIR.iterdir():
+        m = re.match(r"^v(\d+)", p.stem)
+        if p.suffix.lower() == ".sql" and m:
+            versions.append(int(m.group(1)))
+    assert versions, "no vN.sql migration files found"
+    assert SCHEMA_VERSION == max(versions)
+
+
 def test_migration_idempotent_rerun(tmp_db):
     init_db()
     # Force a "second startup" by closing the connection and clearing the

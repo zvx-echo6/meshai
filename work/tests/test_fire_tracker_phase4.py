@@ -70,7 +70,7 @@ def test_router_scope_type_defined_before_env_check():
 # ===========================================================================
 
 
-def test_natural_language_fire_question_routes_to_llm():
+def test_natural_language_fire_question_routes_to_llm(tmp_path):
     """The LLM DM path is the sole interface for natural-language fire
     questions. Pre-revised commit there was a `?status` intent that
     rewrote the query in-router; this test confirms the rewrite is gone
@@ -81,7 +81,16 @@ def test_natural_language_fire_question_routes_to_llm():
     from meshai.history import ConversationHistory
     from meshai.commands.dispatcher import create_dispatcher
 
-    cfg = load_config()
+    # load_config() defaults HistoryConfig.database to the relative path
+    # "conversations.db", resolved against the process CWD. Left alone,
+    # every test in the suite that calls load_config() with no override
+    # shares that one file for the whole pytest session, so conversation
+    # rows written by an unrelated, earlier-running test file can leak
+    # into this test's routing decision. Point both the config dir and
+    # the history database at this test's own tmp_path to make it
+    # hermetic regardless of run order.
+    cfg = load_config(tmp_path / "config")
+    cfg.history.database = str(tmp_path / "conversations.db")
     history = ConversationHistory(cfg.history)
 
     async def _run():
