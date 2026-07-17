@@ -411,8 +411,10 @@ def _refresh_mesh_context(app, new_ctx_cfg) -> bool:
 
 @router.post("/notifications/refresh-toggles")
 async def refresh_toggles(request: Request):
-    """Explicit refresh endpoint (kept for backwards-compat with the
-    dashboard's manual ping path)."""
+    """Explicit refresh endpoint. Not called by the dashboard frontend --
+    the _auto_refresh_toggle_filter middleware below already refreshes the
+    ToggleFilter automatically on every successful notifications config PUT.
+    Kept for ops/debug use (manually forcing a refresh outside that path)."""
     bus = getattr(request.app.state, "bus", None)
     config = getattr(request.app.state, "config", None)
     if bus is None or config is None:

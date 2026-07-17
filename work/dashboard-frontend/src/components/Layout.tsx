@@ -3,19 +3,14 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useDirty } from '@/context/DirtyContext'
 import {
   LayoutDashboard,
-  Radio,
   Cloud,
   BellRing,
   BookOpen,
-  Sliders,
-  Droplets,
   MapPin,
   Map,
   Wifi,
-  Layers,
   Network,
   Users,
-  Bot,
   Settings,
   Calendar,
   Activity,
@@ -85,14 +80,7 @@ const navGroups: NavGroup[] = [
 
 // Flattened view of every nav item for title lookup.
 // Also include de-navved routes so they still resolve a title.
-const extraTitleItems: NavItem[] = [
-  { path: '/adapter-config', label: 'Adapter Config', icon: Sliders },
-  { path: '/gauge-sites', label: 'Gauge Sites', icon: Droplets },
-  { path: '/town-anchors', label: 'Town Anchors', icon: MapPin },
-  { path: '/mesh', label: 'Mesh', icon: Radio },
-  { path: '/meshtastic/sources', label: 'Sources', icon: Layers },
-  { path: '/meshcore/companion', label: 'Companion', icon: Bot },
-]
+const extraTitleItems: NavItem[] = []
 
 const allNavItems: NavItem[] = [
   ...navGroups.flatMap((g) => g.items),
@@ -108,7 +96,6 @@ const pathTitles: Record<string, string> = {
   '/meshtastic/danger-zones': 'Danger Zones',
   '/meshcore/danger-zones': 'Danger Zones',
   '/meshcore/contacts': 'Contacts & Companion',
-  '/meshcore/companion': 'Contacts & Companion',
 }
 
 function formatUptime(seconds: number): string {
