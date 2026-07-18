@@ -1,41 +1,41 @@
-"""Tests for env/fire_render.py's handle_wfigs() -- WFIGS persistence wire-up.
+"""Tests for env/fire_render.py's shared WFIGS wire-render + anchor helpers.
 
-Covers:
-  (a) parse clean active-incident envelope (all fields populated)
-  (b) acres fallback chain: top-null -> raw.DiscoveryAcres used
-  (c) acres absent at every level -> renders "N/A"
-  (d) IncidentName="IA 1" placeholder passes through verbatim
-  (e) tombstone subject -> handler returns None + event_log row handled=0
-  (f) perimeter subject -> handler returns None + event_log row handled=0
-  (g) NEW IRWIN -> "New:" prefix + fires INSERT + mesh_broadcasts_out audit row
-  (h) known IRWIN no change -> drop silently, last_broadcast_* unchanged
-  (i) known IRWIN acres up but <8h elapsed -> drop, last_broadcast_* unchanged
-  (j) known IRWIN acres up + >=8h elapsed -> "Update:" prefix + audit row
+chore/ripout-2dii: `handle_wfigs` (the dead Central NATS-envelope entrypoint)
+has been REMOVED from `meshai.env.fire_render` -- it had zero live production
+callers (Central's consumer that drove it is gone). Tests that ONLY exercised
+`handle_wfigs`'s own envelope-parsing / New-Update-cooldown decision / audit-row
+contract (with no live equivalent -- that decision now lives in the LIVE
+`gating.fire.decide`, already covered end-to-end via the real native adapter in
+`tests/test_fire_native_growth.py`) were deleted alongside it.
+
+What remains here:
   (k) location anchor priority: geocoder.city > nearest_town > landclass > county
+      -- `_location_anchor` is shared, LIVE code (used by `_render`, which is
+      called directly on the FIRMS `wildfire_growth` path). Rewritten to call
+      `_render` directly instead of routing through the dead handler.
+  - "size unknown" / "containment unknown" missing-acres rendering -- same
+    live-`_render` rationale, rewritten to call `_render` directly.
+  - budget-fit worst case / date-only discovery -- already called `_render`
+    directly (never used handle_wfigs); unchanged.
 
-handle_wfigs (env/fire_render.py) has no live production caller -- Central's
-NATS consumer that drove it is gone -- but it remains the parity-tested
-legacy contract for the WFIGS wire format (see that module's docstring), and
-`_location_anchor`, which it shares with the LIVE `_render` (used on the
-FIRMS fire-growth path), is real regression-tested surface here. It expects
-its input pre-shaped into a flat "normalized" dict; that shaping used to be
-done by the WFIGS dispatch branch of the deleted Central-envelope adapter-
-normalizer module's `normalize()` + its `_parse_wfigs_incidents` helper.
-`_normalize_wfigs()` below is a verbatim-logic local replica of that
-dispatch, scoped to the wfigs_incidents/wfigs_perimeters envelope shapes the
-fixtures in this file build -- it exists so this test file has no dependency
-on that (now fully removed) module.
+The envelope builders (`_make_active_envelope`, `_make_tombstone`,
+`_make_perimeter`, `_normalize_wfigs`) are KEPT: they are shared fixture
+infrastructure imported by other test files (test_fire_refactor.py,
+test_fire_tracker_phase1.py, test_fire_age_gate.py) to build canonical dicts
+for the LIVE `gating.fire.decide` / `notifications.formatters.fire.format`.
+`_normalize_wfigs` is a verbatim-logic local replica of the WFIGS dispatch
+branch of the deleted Central-envelope adapter-normalizer module's
+`normalize()` + `_parse_wfigs_incidents` helper (that module is already gone
+from production; this replica exists purely so fixture-building has no
+dependency on it).
 """
 
-import os
 import time
 from typing import Any, Optional
 
 import pytest
 
 from meshai.env.fire_render import (
-    WFIGS_BROADCAST_COOLDOWN_S,
-    handle_wfigs,
     _render as _wfigs_render,
 )
 from meshai.persistence import close_thread_connection, init_db
@@ -302,275 +302,44 @@ def _make_perimeter(irwin_id=_IRWIN_A, state="ID", county="Cassia",
 
 
 # ============================================================================
-# (a) parse a clean active-incident envelope with all fields
+# Missing-acres rendering -- LIVE `_render` behavior, called directly
+# (formerly driven through the dead handle_wfigs).
 # ============================================================================
-def test_a_parse_clean_active_envelope(mem_db, no_photon):
-    env = _make_active_envelope()
-    n = _normalize_wfigs(env)
-    assert n is not None
-    assert n["_kind"] == "wfigs_incident"
-    assert n["irwin_id"] == _IRWIN_A
-    assert n["incident_name"] == "Cache Peak Fire"
-    assert n["incident_type"] == "wildfire"
-    assert n["acres"] == 1847.0
-    assert n["contained_pct"] == 23
-    assert n["county"] == "Cassia"
-    assert n["state"] == "ID"
-    # FireDiscoveryDateTime epoch-ms -> epoch-s conversion
-    assert n["declared_at_epoch"] == 1780529163
 
 
-# ============================================================================
-# (b) null top-level acres -> raw.DiscoveryAcres fallback used
-# ============================================================================
-def test_b_acres_fallback_to_raw_discovery_acres(mem_db, no_photon):
-    env = _make_active_envelope(daily_acres=None, pct_contained=None,
-                                  raw_discovery_acres=0.1,
-                                  raw_pct_contained=0)
-    n = _normalize_wfigs(env)
-    assert n["acres"] == 0.1
-    assert n["contained_pct"] == 0
-
-
-# ============================================================================
-# (c) no acres anywhere -> renders "N/A"
-# ============================================================================
-def test_c_acres_missing_renders_na(mem_db, no_photon):
+def test_acres_missing_renders_na(mem_db, no_photon):
     env = _make_active_envelope(name="IA 7", daily_acres=None,
                                   pct_contained=None,
                                   irwin_id=_IRWIN_C,
                                   landclass="Sawtooth National Forest")
-    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"], now=1_000_000)
+    n = _normalize_wfigs(env)
+    wire = _wfigs_render(n, prefix="New")
     assert wire is not None
     assert "size unknown" in wire
     assert "containment unknown" in wire
 
 
-# ============================================================================
-# (d) "IA 1" placeholder name passes through verbatim
-# ============================================================================
-def test_d_ia_placeholder_passthrough(mem_db, no_photon):
+def test_ia_placeholder_passthrough(mem_db, no_photon):
     env = _make_active_envelope(name="IA 1", county="Elmore",
                                   daily_acres=None, pct_contained=None,
                                   landclass="Sawtooth National Forest",
                                   irwin_id=_IRWIN_B)
-    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"], now=1_000_000)
+    n = _normalize_wfigs(env)
+    wire = _wfigs_render(n, prefix="New")
     assert wire is not None
     assert "IA 1" in wire
 
 
 # ============================================================================
-# (e) tombstone subject -> handler returns None + event_log handled=0
-# ============================================================================
-def test_e_tombstone_returns_none_and_logs(mem_db, no_photon):
-    env = _make_tombstone()
-    n = _normalize_wfigs(env)
-    assert n["_kind"] == "wfigs_tombstone"
-    out = handle_wfigs(n, env, env["subject"], now=2_000_000)
-    assert out is None
-    row = mem_db.execute(
-        "SELECT source, category, handled, table_name, table_pk, nats_subject "
-        "FROM event_log WHERE event_id_external=?", (_IRWIN_A,)).fetchone()
-    assert row is not None
-    assert row["source"] == "wfigs_incidents"
-    assert row["category"] == "fire.incident.removed"
-    assert row["handled"] == 0
-    assert row["table_name"] is None
-    assert row["table_pk"] == _IRWIN_A
-    assert row["nats_subject"] == "central.fire.incident.removed.id"
-    # No row in fires.
-    n_fires = mem_db.execute("SELECT COUNT(*) AS n FROM fires").fetchone()["n"]
-    assert n_fires == 0
-
-
-# ============================================================================
-# (f) perimeter subject -> same as tombstone
-# ============================================================================
-def test_f_perimeter_returns_none_and_logs(mem_db, no_photon):
-    env = _make_perimeter()
-    n = _normalize_wfigs(env)
-    assert n["_kind"] == "wfigs_perimeter"
-    out = handle_wfigs(n, env, env["subject"], now=3_000_000)
-    assert out is None
-    row = mem_db.execute(
-        "SELECT source, handled FROM event_log WHERE event_id_external=?",
-        (_IRWIN_A,)).fetchone()
-    assert row is not None
-    assert row["source"] == "wfigs_perimeters"
-    assert row["handled"] == 0
-    n_fires = mem_db.execute("SELECT COUNT(*) AS n FROM fires").fetchone()["n"]
-    assert n_fires == 0
-
-
-# ============================================================================
-# (g) NEW IRWIN -> "New:" prefix + fires INSERT + mesh_broadcasts_out audit
-# ============================================================================
-def test_g_new_irwin_inserts_and_broadcasts(mem_db, no_photon):
-    env = _make_active_envelope(geocoder_city="Burley")  # avoids Photon path
-    now = 5_000_000
-    data = {}
-    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"],
-                         data=data, now=now)
-    assert wire is not None
-    assert wire.startswith("🔥 Cache Peak Fire — New")
-    assert "Burley" in wire
-    assert "1,847 ac" in wire
-    assert "containment 23%" in wire
-    # Budget-fit rework: no unique-fire-id line, no bold markdown.
-    assert "ID:" not in wire
-    assert "**" not in wire
-
-    # v0.5.8b: handler INSERTs the fires row with last_broadcast_*=NULL,
-    # then attaches a commit callback. The dispatcher fires the callback
-    # on successful broadcast; we simulate that here.
-    fr_pre = mem_db.execute(
-        "SELECT last_broadcast_at FROM fires WHERE irwin_id=?",
-        (_IRWIN_A,)).fetchone()
-    assert fr_pre["last_broadcast_at"] is None
-    data["_on_broadcast_committed"](float(now))
-    fr = mem_db.execute(
-        "SELECT current_acres, last_broadcast_at, last_broadcast_acres, "
-        "last_broadcast_contained, last_event_at "
-        "FROM fires WHERE irwin_id=?", (_IRWIN_A,)).fetchone()
-    assert fr is not None
-    assert fr["current_acres"] == 1847.0
-    assert fr["last_broadcast_at"] == now
-    assert fr["last_broadcast_acres"] == 1847.0
-    assert fr["last_broadcast_contained"] == 23
-    assert fr["last_event_at"] == now
-
-    # event_log row logged with handled=1.
-    el = mem_db.execute(
-        "SELECT handled, table_name, table_pk FROM event_log "
-        "WHERE event_id_external=?", (_IRWIN_A,)).fetchone()
-    assert el["handled"] == 1
-    assert el["table_name"] == "fires"
-    assert el["table_pk"] == _IRWIN_A
-
-    # v0.5.8b: mesh_broadcasts_out is inserted by the dispatcher
-    # (test_cold_start_grace covers that path). The handler only signals
-    # via data["_broadcast_audit"] that an audit row is wanted.
-    assert data["_broadcast_audit"] == {"table": "fires", "pk": _IRWIN_A}
-
-
-# ============================================================================
-# (h) known IRWIN no-change -> drop silently, last_broadcast_* unchanged
-# ============================================================================
-def test_h_known_irwin_no_change_drops(mem_db, no_photon):
-    # Use wall-clock-adjacent timestamps so _cleanup_stale_fires doesn't
-    # delete the row (it uses real time.time() with a 7d cutoff internally).
-    # Anchor the fire's discovery date 2d before that `now` so it stays
-    # inside the 14d fire age-gate -- otherwise the static fixture date
-    # (2026-06-03) is now stale vs wall-clock and the first-sight "New"
-    # broadcast this test depends on would be (correctly) suppressed.
-    first_now = int(time.time())
-    env = _make_active_envelope(geocoder_city="Burley",
-                                 fire_discovery_dt_ms=(first_now - 2 * 86400) * 1000)
-    data0 = {}
-    handle_wfigs(_normalize_wfigs(env), env, env["subject"],
-                  data=data0, now=first_now)
-    # v0.5.8b: dispatcher commit closes the broadcast.
-    data0["_on_broadcast_committed"](float(first_now))
-
-    # Re-publish the same incident exactly 30 min later: same acres + contained.
-    later = first_now + 1800
-    out = handle_wfigs(_normalize_wfigs(env), env, env["subject"], now=later)
-    assert out is None
-
-    fr = mem_db.execute(
-        "SELECT last_broadcast_at, last_broadcast_acres, last_broadcast_contained, "
-        "last_event_at FROM fires WHERE irwin_id=?", (_IRWIN_A,)).fetchone()
-    # last_broadcast_* unchanged from the original.
-    assert fr["last_broadcast_at"] == first_now
-    assert fr["last_broadcast_acres"] == 1847.0
-    assert fr["last_broadcast_contained"] == 23
-    # last_event_at was refreshed.
-    assert fr["last_event_at"] == later
-
-    # v0.5.8b: mesh_broadcasts_out is inserted by the dispatcher, not the
-    # handler -- this test never invokes a real dispatcher, so count is 0.
-    cnt = mem_db.execute(
-        "SELECT COUNT(*) AS n FROM mesh_broadcasts_out WHERE source_event_pk=?",
-        (_IRWIN_A,)).fetchone()["n"]
-    assert cnt == 0
-
-
-# ============================================================================
-# (i) known IRWIN acres up but <8h elapsed -> drop, last_broadcast_* unchanged
-# ============================================================================
-def test_i_known_irwin_change_inside_cooldown_drops(mem_db, no_photon):
-    # Wall-clock `now` so _cleanup_stale_fires (real time.time(), 7d cutoff)
-    # keeps the row; anchor discovery 2d earlier so the fire stays inside
-    # the 14d fire age-gate (the static fixture date is now stale vs
-    # wall-clock and would suppress the first-sight "New" broadcast).
-    _base = int(time.time())
-    env_initial = _make_active_envelope(
-        geocoder_city="Burley",
-        fire_discovery_dt_ms=(_base - 2 * 86400) * 1000)
-    data0 = {}
-    handle_wfigs(_normalize_wfigs(env_initial), env_initial,
-                  env_initial["subject"], data=data0, now=_base)
-    data0["_on_broadcast_committed"](float(_base))
-
-    # Bigger fire, but only 4h later -- inside cooldown. Same discovery
-    # date as the initial envelope (same fire, still inside the age-gate).
-    env_grown = _make_active_envelope(
-        geocoder_city="Burley", daily_acres=3000.0, pct_contained=23,
-        fire_discovery_dt_ms=(_base - 2 * 86400) * 1000)
-    later = _base + 4 * 3600
-    out = handle_wfigs(_normalize_wfigs(env_grown), env_grown,
-                        env_grown["subject"], now=later)
-    assert out is None
-
-    fr = mem_db.execute(
-        "SELECT last_broadcast_at, last_broadcast_acres, last_broadcast_contained, "
-        "current_acres FROM fires WHERE irwin_id=?", (_IRWIN_A,)).fetchone()
-    assert fr["last_broadcast_at"] == _base
-    assert fr["last_broadcast_acres"] == 1847.0
-    assert fr["last_broadcast_contained"] == 23
-    # current_acres was refreshed to the new value.
-    assert fr["current_acres"] == 3000.0
-
-
-# ============================================================================
-# (j) known IRWIN acres up AND >=8h elapsed -> "Update:" + audit row
-# ============================================================================
-def test_j_known_irwin_change_after_cooldown_broadcasts(mem_db, no_photon):
-    env_initial = _make_active_envelope(geocoder_city="Burley")
-    data_j0 = {}
-    handle_wfigs(_normalize_wfigs(env_initial), env_initial,
-                  env_initial["subject"], data=data_j0, now=5_000_000)
-    data_j0["_on_broadcast_committed"](float(5_000_000))
-
-    env_grown = _make_active_envelope(geocoder_city="Burley",
-                                        daily_acres=3000.0, pct_contained=35)
-    later = 5_000_000 + WFIGS_BROADCAST_COOLDOWN_S
-    data2 = {}
-    out = handle_wfigs(_normalize_wfigs(env_grown), env_grown,
-                        env_grown["subject"], data=data2, now=later)
-    assert out is not None
-    assert out.startswith("🔥 Cache Peak Fire — Update")
-    assert "3,000 ac" in out
-    assert "containment 35%" in out
-
-    # Simulate dispatcher commit.
-    data2["_on_broadcast_committed"](float(later))
-    fr = mem_db.execute(
-        "SELECT last_broadcast_at, last_broadcast_acres, last_broadcast_contained "
-        "FROM fires WHERE irwin_id=?", (_IRWIN_A,)).fetchone()
-    assert fr["last_broadcast_at"] == later
-    assert fr["last_broadcast_acres"] == 3000.0
-    assert fr["last_broadcast_contained"] == 35
-
-
-# ============================================================================
-# (k) location anchor priority -- city > nearest_town > landclass > county
+# location anchor priority -- city > nearest_town > landclass > county
+# `_location_anchor` is shared LIVE code (used by `_render`).
 # ============================================================================
 def test_k_anchor_geocoder_city_wins(mem_db, no_photon):
     env = _make_active_envelope(geocoder_city="Twin Falls",
                                   landclass="Sawtooth NF",
                                   county="Cassia")
-    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"], now=1)
+    n = _normalize_wfigs(env)
+    wire = _wfigs_render(n, prefix="New")
     assert "Twin Falls" in wire
     assert "Sawtooth NF" not in wire
     assert "Cassia Co" not in wire
@@ -586,8 +355,9 @@ def test_k_anchor_falls_to_nearest_town(monkeypatch, mem_db):
     env = _make_active_envelope(geocoder_city=None,
                                   landclass="Sawtooth NF",
                                   county="Cassia")
-    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"], now=1)
-    # Handler now resolves anchor via town_anchors table (Burley @ 42.536, -113.793)
+    n = _normalize_wfigs(env)
+    wire = _wfigs_render(n, prefix="New")
+    # Resolves anchor via town_anchors table (Burley @ 42.536, -113.793)
     assert "Burley" in wire
 
 
@@ -599,8 +369,9 @@ def test_k_anchor_falls_to_landclass(monkeypatch, mem_db):
     env = _make_active_envelope(geocoder_city=None,
                                   landclass="Sawtooth National Forest",
                                   county="Cassia")
-    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"], now=1)
-    # Handler resolves nearest town from town_anchors table, overriding landclass
+    n = _normalize_wfigs(env)
+    wire = _wfigs_render(n, prefix="New")
+    # Resolves nearest town from town_anchors table, overriding landclass
     assert "Burley" in wire
 
 
@@ -611,8 +382,9 @@ def test_k_anchor_falls_to_county(monkeypatch, mem_db):
     )
     env = _make_active_envelope(geocoder_city=None, landclass=None,
                                   county="Cassia", state="ID")
-    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"], now=1)
-    # Handler resolves nearest town from town_anchors table
+    n = _normalize_wfigs(env)
+    wire = _wfigs_render(n, prefix="New")
+    # Resolves nearest town from town_anchors table
     assert "Burley" in wire
 
 
@@ -623,138 +395,16 @@ def test_k_anchor_nearest_town_under_one_mile_says_near(monkeypatch, mem_db):
         lambda lat, lon, max_distance_mi=50.0: fake,
     )
     env = _make_active_envelope(geocoder_city=None)
-    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"], now=1)
-    # Handler resolves anchor via town_anchors; exact format depends on distance
-    assert "Burley" in wire
-
-
-# ============================================================================
-# v0.5.8b refactor -- New:/Update: prefix survives cold-start drops
-# ============================================================================
-
-
-def _run_handler_only(env, data=None, now=None):
-    """Run normalize + handler WITHOUT invoking any commit callback.
-    Simulates the dispatcher dropping the broadcast (grace/cooldown/stale)
-    after the handler has already written persistence rows."""
     n = _normalize_wfigs(env)
-    if data is None:
-        data = {}
-    wire = handle_wfigs(n, env, env["subject"], data=data, now=now)
-    return wire, data
-
-
-def _commit(data, committed_at):
-    """Simulate the dispatcher invoking the handler's post-commit callback."""
-    cb = data.get("_on_broadcast_committed")
-    assert callable(cb), "handler must attach _on_broadcast_committed"
-    cb(committed_at)
-
-
-def test_e_cold_start_then_resume_still_new(mem_db, no_photon):
-    """Cold-start drop scenario: first pass writes fires + event_log but
-    dispatcher drops the broadcast (we skip the callback). Second pass on
-    the SAME IRWIN must still produce "New:" because last_broadcast_at is
-    still NULL -- it really is the first delivery for that fire.
-    """
-    env = _make_active_envelope(geocoder_city="Burley")
-
-    # Pass 1: handler runs, but the dispatcher drops the broadcast (we
-    # mimic that by not calling the commit callback).
-    wire1, data1 = _run_handler_only(env, now=10_000)
-    assert wire1.startswith("🔥 Cache Peak Fire — New")
-    fr = mem_db.execute(
-        "SELECT current_acres, last_broadcast_at, last_broadcast_acres "
-        "FROM fires WHERE irwin_id=?", (_IRWIN_A,)).fetchone()
-    assert fr is not None
-    assert fr["current_acres"] == 1847.0
-    assert fr["last_broadcast_at"] is None
-    assert fr["last_broadcast_acres"] is None
-
-    # Pass 2: same envelope 5 minutes later (still pre-broadcast).
-    wire2, data2 = _run_handler_only(env, now=10_300)
-    assert wire2.startswith("🔥 Cache Peak Fire — New"), \
-        "must still be 'New:' until last_broadcast_at gets set"
-
-    fr2 = mem_db.execute(
-        "SELECT current_acres, last_broadcast_at, last_event_at "
-        "FROM fires WHERE irwin_id=?", (_IRWIN_A,)).fetchone()
-    # last_event_at advanced; last_broadcast_at still NULL.
-    assert fr2["last_event_at"] == 10_300
-    assert fr2["last_broadcast_at"] is None
-
-
-def test_f_commit_callback_updates_last_broadcast(mem_db, no_photon):
-    """After the dispatcher calls the callback, last_broadcast_* reflect
-    the committed timestamp + the acres/containment of THIS broadcast."""
-    env = _make_active_envelope(geocoder_city="Burley")
-    wire, data = _run_handler_only(env, now=20_000)
-    assert wire is not None
-
-    _commit(data, committed_at=20_005.0)
-
-    fr = mem_db.execute(
-        "SELECT last_broadcast_at, last_broadcast_acres, last_broadcast_contained "
-        "FROM fires WHERE irwin_id=?", (_IRWIN_A,)).fetchone()
-    assert fr["last_broadcast_at"] == 20_005
-    assert fr["last_broadcast_acres"] == 1847.0
-    assert fr["last_broadcast_contained"] == 23
-
-    # Third pass: same IRWIN, no growth, no callback (cooldown applies).
-    # Handler must return None this time because last_broadcast_at IS NOT NULL
-    # and the change-detection gates report no change.
-    env_same = _make_active_envelope(geocoder_city="Burley")
-    wire3, _ = _run_handler_only(env_same, now=20_010)
-    assert wire3 is None
-
-
-def test_g_callback_not_called_means_last_broadcast_stays_null(mem_db, no_photon):
-    """If dispatcher drops for any reason (grace, staleness, cooldown,
-    dedup) the callback is not invoked -- last_broadcast_* stays NULL and
-    the next successful broadcast emits 'New:' (not 'Update:'). This is
-    the inverse of test_e from the persistence-row side."""
-    env = _make_active_envelope(geocoder_city="Burley")
-    wire, data = _run_handler_only(env, now=30_000)
-    assert wire is not None
-    # No _commit() call.
-    fr = mem_db.execute(
-        "SELECT last_broadcast_at FROM fires WHERE irwin_id=?",
-        (_IRWIN_A,)).fetchone()
-    assert fr["last_broadcast_at"] is None
-
-
-def test_h_no_audit_row_inserted_when_handler_skips_commit(mem_db, no_photon):
-    """The handler no longer writes mesh_broadcasts_out -- the dispatcher
-    inserts it via `_broadcast_audit`. Until the dispatcher calls _commit,
-    there should be zero rows in mesh_broadcasts_out even though fires
-    has the new row."""
-    env = _make_active_envelope(geocoder_city="Burley")
-    wire, data = _run_handler_only(env, now=40_000)
-    assert wire is not None
-    n = mem_db.execute(
-        "SELECT COUNT(*) AS n FROM mesh_broadcasts_out").fetchone()["n"]
-    assert n == 0
-    # The handler signalled the dispatcher SHOULD insert an audit row.
-    audit = data["_broadcast_audit"]
-    assert audit == {"table": "fires", "pk": _IRWIN_A}
-
-
-def test_h_handler_attaches_audit_descriptor_and_callback(mem_db, no_photon):
-    """Sanity: every active wire-string return must come with the two
-    dispatcher hooks attached."""
-    env = _make_active_envelope(geocoder_city="Burley", irwin_id=_IRWIN_B)
-    data = {}
-    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"],
-                          data=data, now=50_000)
-    assert wire is not None
-    assert callable(data["_on_broadcast_committed"])
-    assert data["_broadcast_audit"]["table"] == "fires"
-    assert data["_broadcast_audit"]["pk"] == _IRWIN_B
+    wire = _wfigs_render(n, prefix="New")
+    # Anchor resolved via town_anchors; exact format depends on distance
+    assert "Burley" in wire
 
 
 # ============================================================================
 # Budget-fit worst case: longest plausible fire payload fits 140 chars, with
 # no `ID:` line, no `**` markdown, and discovery rendered DATE-ONLY.
+# (LIVE `_render`, called directly -- never used handle_wfigs.)
 # ============================================================================
 
 
@@ -798,17 +448,3 @@ def test_wfigs_discovery_is_date_only():
     # no time-of-day (colon in an H:MM would appear as ":3" etc.)
     assert "2:30" not in wire and "PM" not in wire and "AM" not in wire
     assert "ID:" not in wire
-
-
-# ============================================================================
-# A new-fire envelope produces a per-fire wfigs broadcast.
-# ============================================================================
-
-
-def test_per_fire_wfigs_broadcasts_new_fire(mem_db, no_photon):
-    env = _make_active_envelope(geocoder_city="Burley")
-    data = {}
-    wire = handle_wfigs(_normalize_wfigs(env), env, env["subject"],
-                        data=data, now=6_000_000)
-    assert wire is not None
-    assert wire.startswith("🔥 Cache Peak Fire — New")

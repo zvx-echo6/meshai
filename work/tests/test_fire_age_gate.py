@@ -99,14 +99,21 @@ def test_custom_knob_respected():
 
 
 # ---------------------------------------------------------------------------
-# Handler-path: New is suppressed, Update still emits.
+# Decider-path: New is suppressed, Update still emits.
 #
-# These exercise the real Case (i)/(ii)/(iii) paths in handle_wfigs against
-# the isolated tmp DB seeded by conftest.
+# These exercise the real Case (i)/(ii)/(iii) paths in gating.fire.decide()
+# (the LIVE decider) against the isolated tmp DB seeded by conftest.
+#
+# chore/ripout-2dii: previously drove these through handle_wfigs (the dead
+# Central NATS-envelope entrypoint); that entrypoint has been removed from
+# meshai.env.fire_render (zero live production callers). decide() is the
+# SAME decision logic the native WFIGS adapter (env/fires.py ->
+# env/store.py::_emit_event) uses live -- see tests/test_fire_native_growth.py
+# for full end-to-end coverage of the age-gate through that real entrypoint.
 # ---------------------------------------------------------------------------
 
 
-def _normalized(*, irwin_id, declared_at_epoch, acres=250.0, contained=0):
+def _canonical(*, irwin_id, declared_at_epoch, acres=250.0, contained=0):
     return {
         "_kind": "wfigs_incident",
         "irwin_id": irwin_id,
@@ -120,58 +127,39 @@ def _normalized(*, irwin_id, declared_at_epoch, acres=250.0, contained=0):
     }
 
 
-def _envelope():
-    return {
-        "data": {"adapter": "wfigs", "category": "wildfire_incident",
-                  "severity": "priority"}
-    }
-
-
-def test_handler_new_path_suppresses_old_fire():
-    """Case (i): a brand-new fire whose declared_at is ~45d old is INSERTed
-    but the 'New' broadcast is suppressed (wire is None), and the New-path
-    category tag is NOT applied."""
-    from meshai.env.fire_render import handle_wfigs
-    from meshai.persistence import get_db
+def test_decider_new_path_suppresses_old_fire():
+    """Case (i): a brand-new fire whose declared_at is ~45d old suppresses
+    the 'New' broadcast (gate.broadcast is False), and the New-path category
+    tag is NOT applied."""
+    from meshai.notifications.gating.fire import decide as fire_decide
 
     now = int(time.time())
     declared = now - _45D  # OTR 11 style
-    data = {}
-    wire = handle_wfigs(_normalized(irwin_id="ID-OTR-11", declared_at_epoch=declared),
-                        _envelope(),
-                        subject="central.fire.incident.id",
-                        data=data, now=now)
-    assert wire is None, f"old fire should be silenced, got wire={wire!r}"
-    assert data.get("category") != "wildfire_declared"
-    # The row is still INSERTed (so genuine future Updates work).
-    row = get_db().execute(
-        "SELECT irwin_id, last_broadcast_at FROM fires WHERE irwin_id=?",
-        ("ID-OTR-11",)).fetchone()
-    assert row is not None
-    assert row["last_broadcast_at"] is None
+    gate = fire_decide(_canonical(irwin_id="ID-OTR-11", declared_at_epoch=declared),
+                       source="wfigs", now=float(now))
+    assert gate.broadcast is False, f"old fire should be silenced, got {gate!r}"
+    assert "category" not in gate.data_patch
 
 
-def test_handler_new_path_announces_recent_fire():
+def test_decider_new_path_announces_recent_fire():
     """Case (i): a recent fire (~5d) DOES broadcast 'New' and tags
     wildfire_declared."""
-    from meshai.env.fire_render import handle_wfigs
+    from meshai.notifications.gating.fire import decide as fire_decide
 
     now = int(time.time())
     declared = now - _5D
-    data = {}
-    wire = handle_wfigs(_normalized(irwin_id="ID-RECENT-1", declared_at_epoch=declared),
-                        _envelope(),
-                        subject="central.fire.incident.id",
-                        data=data, now=now)
-    assert wire is not None and "New" in wire
-    assert data.get("category") == "wildfire_declared"
+    gate = fire_decide(_canonical(irwin_id="ID-RECENT-1", declared_at_epoch=declared),
+                       source="wfigs", now=float(now))
+    assert gate.broadcast is True
+    assert gate.lifecycle == "new"
+    assert gate.data_patch.get("category") == "wildfire_declared"
 
 
-def test_handler_update_path_still_emits_for_old_fire():
+def test_decider_update_path_still_emits_for_old_fire():
     """An already-broadcast OLD fire that grows acreage still emits an
     'Update' (Case (iii) is NOT gated -- genuine old-but-active fires keep
     getting containment/acreage updates)."""
-    from meshai.env.fire_render import handle_wfigs
+    from meshai.notifications.gating.fire import decide as fire_decide
     from meshai.persistence import get_db
 
     now = int(time.time())
@@ -185,12 +173,10 @@ def test_handler_update_path_still_emits_for_old_fire():
         ("ID-OLD-ACTIVE", "Old Town Road", 250.0, 0, 42.93, -114.45,
          declared, now - 30000, now - 30000, 250.0, 0),
     )
-    data = {}
-    wire = handle_wfigs(
-        _normalized(irwin_id="ID-OLD-ACTIVE", declared_at_epoch=declared,
-                    acres=900.0, contained=20),
-        _envelope(), subject="central.fire.incident.id",
-        data=data, now=now)
-    assert wire is not None and "Update" in wire, \
-        f"old-but-active fire Update must still emit, got {wire!r}"
-    assert data.get("category") != "wildfire_declared"
+    gate = fire_decide(
+        _canonical(irwin_id="ID-OLD-ACTIVE", declared_at_epoch=declared,
+                   acres=900.0, contained=20),
+        source="wfigs", now=float(now))
+    assert gate.broadcast is True and gate.lifecycle == "update", \
+        f"old-but-active fire Update must still emit, got {gate!r}"
+    assert "category" not in gate.data_patch

@@ -8,14 +8,28 @@ hazard, mirroring test_hydro_refactor.py / test_quake_refactor.py:
    growth ((+delta) size line), a movement-line case, an anchor-line case, and
    the wildfire_closed all-clear.
 
-2. Gate-sequence parity: an explicit `now`-timeline of WFIGS events driven
-   through the NEW gating.fire.decide() matches the OLD handle_wfigs
-   broadcast/suppress behavior AND the data-dict stamps
-   (category / _severity_override / _dedup_suffix / _cooldown_suffix).
+2. Gate-sequence: an explicit `now`-timeline of WFIGS events driven through
+   `gating.fire.decide()` (the LIVE decider -- see
+   tests/test_fire_native_growth.py for its full end-to-end native-adapter
+   coverage) exercises the New/cooldown/Update/closed lifecycle and the
+   data-dict stamps (category / _severity_override / _dedup_suffix /
+   _cooldown_suffix) `decide()` hands the dispatcher.
 
-3. Registration: the three explicit categories the wfigs_handler emits
-   (wildfire_declared / wildfire_incident / wildfire_closed) resolve to the
-   fire formatter + decider, and FIRMS categories do NOT.
+3. Registration: the three explicit categories the WFIGS decider/formatter
+   pair emits (wildfire_declared / wildfire_incident / wildfire_closed)
+   resolve to the fire formatter + decider, and FIRMS categories do NOT.
+
+chore/ripout-2dii: `handle_wfigs` (the dead Central NATS-envelope entrypoint
+this file used purely as a byte-identity driver) has been REMOVED from
+`meshai.env.fire_render` -- zero live production callers. `fire_format` IS
+live (reached for wildfire_declared/wildfire_incident via the native WFIGS
+adapter `env/fires.py` -> `env/store.py::_emit_event`, forced onto
+`gating.fire.decide` + this formatter via `cutover.NATIVE_ALWAYS_DECIDE`
+independent of any env var -- see `notifications/renderers/composer.py:343-347`
+and `tests/test_fire_native_growth.py`), so this file's fire_format coverage
+stays green; only the handle_wfigs-as-oracle plumbing was replaced with
+direct `_wfigs_render` calls (also live -- see env/fire_fusion.py's FIRMS
+growth path) and direct `fire_decide()` driving.
 """
 from __future__ import annotations
 
@@ -25,7 +39,6 @@ from meshai.notifications.formatters._budget import budget_for
 from meshai.env.fire_render import (
     _build_canonical,
     _render as _wfigs_render,
-    handle_wfigs,
 )
 from meshai.notifications.formatters.fire import format as fire_format
 from meshai.notifications.gating.fire import decide as fire_decide
@@ -68,6 +81,33 @@ class _FakeEvent:
     def __init__(self, data, category=None):
         self.data = data
         self.category = category
+
+
+def _write_fire_state(conn, *, irwin_id, name, acres, contained_pct,
+                       lat, lon, county, state, declared_at_epoch=None,
+                       now):
+    """Unconditional current_* state write, mirroring the LIVE native path's
+    own upsert (env/store.py::_ingest_fires INSERT/UPDATE current_acres /
+    current_contained_pct) -- the same shape handle_wfigs used to do inline
+    before it was deleted (chore/ripout-2dii)."""
+    row = conn.execute(
+        "SELECT irwin_id FROM fires WHERE irwin_id=?", (irwin_id,)).fetchone()
+    if row is None:
+        conn.execute(
+            "INSERT INTO fires(irwin_id, incident_name, current_acres, "
+            "current_contained_pct, lat, lon, county, state, declared_at, "
+            "last_event_at, last_broadcast_at, last_broadcast_acres, "
+            "last_broadcast_contained) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (irwin_id, name, acres, contained_pct, lat, lon, county, state,
+             declared_at_epoch, now, None, None, None),
+        )
+    else:
+        conn.execute(
+            "UPDATE fires SET current_acres=?, current_contained_pct=?, "
+            "lat=COALESCE(?, lat), lon=COALESCE(?, lon), last_event_at=? "
+            "WHERE irwin_id=?",
+            (acres, contained_pct, lat, lon, now, irwin_id),
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -145,91 +185,62 @@ class TestFormatterGolden:
         assert "Moving" not in new
 
     def test_wildfire_closed_all_clear(self, mem_db):
-        # Drive the real handler to produce the legacy all-clear wire, then
-        # assert the formatter reproduces it byte-for-byte from event.data.
-        env = _make_active_envelope(geocoder_city="Burley")
-        n0 = _normalize_wfigs(env)
-        data0 = {}
-        handle_wfigs(n0, env, env["subject"], data=data0, now=1_000_000)
-        data0["_on_broadcast_committed"](float(1_000_000))  # arm last_broadcast_*
+        # Drive the LIVE tombstone decision (gating.fire.decide) directly --
+        # handle_wfigs (the dead Central entrypoint that used to wrap this) is
+        # gone (chore/ripout-2dii). State is written the same unconditional
+        # shape the live native path uses (_write_fire_state).
+        irwin_id = "IRWIN-CLOSED-1"
+        _write_fire_state(
+            mem_db, irwin_id=irwin_id, name="Cache Peak Fire",
+            acres=1847.0, contained_pct=23, lat=42.197, lon=-113.710,
+            county="Cassia", state="ID", now=1_000_000)
+        gate0 = fire_decide(
+            {"_kind": "wfigs_incident", "irwin_id": irwin_id,
+             "incident_name": "Cache Peak Fire", "acres": 1847.0,
+             "contained_pct": 23, "declared_at_epoch": None,
+             "lat": 42.197, "lon": -113.710, "county": "Cassia", "state": "ID"},
+            source="wfigs", now=1_000_000.0)
+        assert gate0.broadcast is True
+        gate0.commit(1_000_000.0)  # arm last_broadcast_* (fire "reached mesh")
 
-        tomb = _make_tombstone()
-        data_t = {}
-        old_wire = handle_wfigs(_normalize_wfigs(tomb), tomb, tomb["subject"],
-                                data=data_t, now=2_000_000)
-        assert old_wire is not None
-        assert old_wire.startswith("✅ Cache Peak Fire — contained & closed")
-        assert data_t["category"] == "wildfire_closed"
+        gate_t = fire_decide(
+            {"_kind": "wfigs_tombstone", "irwin_id": irwin_id},
+            source="wfigs", now=2_000_000.0)
+        assert gate_t.broadcast is True
+        assert gate_t.data_patch["category"] == "wildfire_closed"
+        assert gate_t.data_patch["incident_name"] == "Cache Peak Fire"
 
-        # Reconstruct the canonical fields the decider's data_patch supplies to
-        # the formatter for the closed wire, and render.
-        closed_data = {
-            "category": "wildfire_closed",
-            "incident_name": "Cache Peak Fire",
-            "acres": 1847.0,
-            "contained_pct": 23,
-            "lat": env["data"]["data"]["latitude"],
-            "lon": env["data"]["data"]["longitude"],
-            "county": "Cassia",
-            "state": "ID",
-        }
-        new_wire = fire_format(_FakeEvent(closed_data, category="wildfire_closed"),
-                               now=_AT, budget=budget_for("wfigs"))
-        assert_byte_identical(new_wire, old_wire)
+        new_wire = fire_format(
+            _FakeEvent(gate_t.data_patch, category="wildfire_closed"),
+            now=_AT, budget=budget_for("wfigs"))
+        assert new_wire.startswith("✅ Cache Peak Fire — contained & closed")
+        # Golden literal (captured from the live fire_format all-clear branch;
+        # this is the SAME format string handle_wfigs used to build inline
+        # before its removal -- see notifications/formatters/fire.py::_render_allclear).
+        assert new_wire == "✅ Cache Peak Fire — contained & closed\n1,847 ac | 23% contained | 24 mi S of Burley"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. Gate-sequence parity — new decide() vs old handle_wfigs across a lifecycle
+# 2. Gate-sequence — decide() drives New/cooldown/Update/closed
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestGateSequenceParity:
-    """A full fire lifecycle agrees between decide() and handle_wfigs()."""
+    """decide() correctly negotiates a full fire lifecycle end to end.
+
+    New/Update/cooldown/suppress behavior through the REAL native entrypoint
+    (env/fires.py -> env/store.py -> compose_mesh_message) is covered more
+    faithfully by tests/test_fire_native_growth.py; this class focuses on the
+    parts that file doesn't reach -- the tombstone/closed lifecycle step (no
+    live producer currently emits `_kind=wfigs_tombstone`, but the decider +
+    formatter branch is live/shipped code and deserves regression coverage)
+    -- plus a defense-in-depth pass over the whole sequence via decide()
+    directly (no handle_wfigs; that entrypoint is gone).
+    """
 
     def _decide(self, env, now):
         n = _normalize_wfigs(env)
         canonical = _build_canonical(n, n["_kind"])
         return fire_decide(canonical, source="wfigs", now=float(now))
-
-    def _step(self, env, now, *, expect_broadcast, expect_lifecycle):
-        """Assert decide() and handle_wfigs() agree at one timeline step.
-
-        decide() (called first) only READS state, so it sees the same pre-write
-        row the handler's internal decide() sees.  On broadcast the handler's
-        legacy (not-cutover) stamps must equal decide()'s data_patch, and we arm
-        last_broadcast_* via the commit callback (simulating the dispatcher).
-        """
-        n = _normalize_wfigs(env)
-        gate = self._decide(env, now)
-        assert gate.broadcast is expect_broadcast, (
-            f"decide broadcast {gate.broadcast} != {expect_broadcast} "
-            f"@ {now} ({expect_lifecycle})")
-        assert gate.lifecycle == expect_lifecycle, (
-            f"decide lifecycle {gate.lifecycle} != {expect_lifecycle} @ {now}")
-
-        data = {}
-        wire = handle_wfigs(n, env, env["subject"], data=data, now=now)
-        assert (wire is not None) is expect_broadcast
-
-        if expect_broadcast:
-            # Handler's stamped keys (legacy path) match decide()'s data_patch.
-            for k in ("_severity_override", "_dedup_suffix", "_cooldown_suffix"):
-                assert data.get(k) == gate.data_patch.get(k), (
-                    f"stamp {k}: handler={data.get(k)!r} "
-                    f"decide={gate.data_patch.get(k)!r}")
-            if expect_lifecycle == "new":
-                assert data.get("category") == "wildfire_declared"
-                assert gate.data_patch.get("category") == "wildfire_declared"
-            elif expect_lifecycle == "update":
-                # Update keeps the envelope-derived wildfire_incident: no override.
-                assert "category" not in data
-                assert "category" not in gate.data_patch
-            elif expect_lifecycle == "closed":
-                assert data.get("category") == "wildfire_closed"
-                assert gate.data_patch.get("category") == "wildfire_closed"
-            assert data.get("_severity_override") == "priority"
-            # Arm last_broadcast_* for the next cooldown check.
-            data["_on_broadcast_committed"](float(now))
-        return wire
 
     def test_full_lifecycle(self, mem_db):
         irwin = _IRWIN_A
@@ -242,22 +253,47 @@ class TestGateSequenceParity:
                 daily_acres=acres, pct_contained=pct,
                 fire_discovery_dt_ms=disc_ms)
 
+        def _step(env, now, *, expect_broadcast, expect_lifecycle):
+            n = _normalize_wfigs(env)
+            gate = self._decide(env, now)
+            assert gate.broadcast is expect_broadcast, (
+                f"decide broadcast {gate.broadcast} != {expect_broadcast} "
+                f"@ {now} ({expect_lifecycle})")
+            assert gate.lifecycle == expect_lifecycle, (
+                f"decide lifecycle {gate.lifecycle} != {expect_lifecycle} @ {now}")
+            # Unconditional state write, mirroring the live native path.
+            _write_fire_state(
+                mem_db, irwin_id=irwin, name=n.get("incident_name"),
+                acres=n.get("acres"), contained_pct=n.get("contained_pct"),
+                lat=n.get("lat"), lon=n.get("lon"), county=n.get("county"),
+                state=n.get("state"), declared_at_epoch=n.get("declared_at_epoch"),
+                now=now)
+            if expect_broadcast:
+                if expect_lifecycle == "new":
+                    assert gate.data_patch.get("category") == "wildfire_declared"
+                elif expect_lifecycle == "update":
+                    assert "category" not in gate.data_patch
+                assert gate.data_patch.get("_severity_override") == "priority"
+                gate.commit(float(now))
+
         # [0] first sight → New broadcast
-        self._step(_active(250.0, 0), base,
-                   expect_broadcast=True, expect_lifecycle="new")
+        _step(_active(250.0, 0), base,
+              expect_broadcast=True, expect_lifecycle="new")
         # [1] small growth 1h later (inside 8h cooldown) → suppress
-        self._step(_active(300.0, 0), base + 3600,
-                   expect_broadcast=False, expect_lifecycle="cooldown")
+        _step(_active(300.0, 0), base + 3600,
+              expect_broadcast=False, expect_lifecycle="cooldown")
         # [2] growth after cooldown (8h) → Update
-        self._step(_active(500.0, 0), base + 28800,
-                   expect_broadcast=True, expect_lifecycle="update")
+        _step(_active(500.0, 0), base + 28800,
+              expect_broadcast=True, expect_lifecycle="update")
         # [3] containment change after another cooldown → Update
-        self._step(_active(500.0, 40), base + 28800 * 2,
-                   expect_broadcast=True, expect_lifecycle="update")
+        _step(_active(500.0, 40), base + 28800 * 2,
+              expect_broadcast=True, expect_lifecycle="update")
         # [4] tombstone → all-clear (fire was broadcast earlier)
-        tomb = _make_tombstone(irwin_id=irwin)
-        self._step(tomb, base + 100000,
-                   expect_broadcast=True, expect_lifecycle="closed")
+        gate_t = fire_decide({"_kind": "wfigs_tombstone", "irwin_id": irwin},
+                             source="wfigs", now=float(base + 100000))
+        assert gate_t.broadcast is True
+        assert gate_t.lifecycle == "closed"
+        assert gate_t.data_patch["category"] == "wildfire_closed"
 
     def test_dedup_suffix_tracks_state(self, mem_db):
         """_dedup_suffix carries the acres|contained that justified the
@@ -278,10 +314,6 @@ class TestGateSequenceParity:
         gate = self._decide(tomb, 1_000_000)
         assert gate.broadcast is False
         assert gate.lifecycle == "suppress"
-        # Handler agrees: returns None.
-        out = handle_wfigs(_normalize_wfigs(tomb), tomb, tomb["subject"],
-                           data={}, now=1_000_000)
-        assert out is None
 
     def test_perimeter_never_broadcasts(self, mem_db):
         from tests.test_wfigs_handler import _make_perimeter
@@ -314,10 +346,6 @@ class TestRegistration:
     def test_firms_categories_not_captured(self, cat):
         # These native FIRMS categories remain deferred; they must NOT resolve
         # to the fire formatter/decider via the "fire" toggle family fallback.
-        # (Phase-3c migrated the FIRMS FUSION categories wildfire_growth /
-        # wildfire_spotting / wildfire_halted — covered in test_firms_refactor.py
-        # — but growth reuses the fire FORMATTER while keeping its OWN firms
-        # DECIDER, so it is intentionally not asserted here.)
         from meshai.notifications.formatters import get_formatter
         from meshai.notifications.gating import get_decider
         assert get_formatter(cat) is not fire_format

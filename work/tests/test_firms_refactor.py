@@ -5,24 +5,42 @@ fusion broadcast categories — wildfire_growth / wildfire_spotting /
 wildfire_halted — mirroring test_fire_refactor.py (WFIGS) and
 test_hydro_refactor.py:
 
-1. Registration: the three categories resolve to the right formatter/decider;
-   wildfire_growth reuses the FIRE formatter but keeps its OWN firms decider;
+1. Registration: wildfire_spotting/wildfire_halted resolve to the firms
+   formatter+decider; wildfire_growth is NOT formatter-registered (its wire
+   is always precomposed -- see below) but DOES keep its own firms decider;
    still-deferred native FIRMS categories do NOT resolve.
 
 2. Gate-sequence + deferred-latch (the tier-b validation): a `now`-timeline
-   driven through the NEW gating.firms.decide() reproduces the OLD handle_firms
-   broadcast/suppress + stamp behavior, AND the latch is now DEFERRED — a
-   decision does NOT burn the latch until commit() fires (simulating delivery),
-   after which the next decision suppresses.
+   driven through gating.firms.decide() exercises broadcast/suppress + stamp
+   behavior, AND the latch is DEFERRED — a decision does NOT burn the latch
+   until commit() fires (simulating delivery), after which the next decision
+   suppresses.
 
-3. Golden byte-identity: the cutover formatter path reproduces the legacy inline
-   wire byte-for-byte for growth (via fire.py), spotting, and halt (via firms.py).
-
-4. Not-cutover parity: with no category cut over, handle_firms keeps the legacy
-   eager-latch + stamps VERBATIM (byte-identical live behavior).
+3. Golden byte-identity: the cutover formatter path reproduces the legacy
+   inline wire byte-for-byte for spotting and halt (via firms.py).
 
 5. The unattributed_hotspot_cluster path is curated: below cluster_min_pixels
    it stays silent (returns None) -- F3 enabled the real broadcast path.
+
+chore/ripout-2dii:
+  - `handle_firms` (the dead Central NATS-envelope entrypoint this file used
+    as a driver) has been REMOVED from `meshai.env.fire_fusion` -- zero live
+    production callers. Driver helpers now call `ingest_hotspot_pixel`
+    directly (the LIVE native entrypoint -- same underlying
+    `_ingest_pixel_core` engine, so behavior is identical; see
+    `tests/test_firms_native_fusion.py` for the primary native-path coverage).
+  - The dead `is_cutover("wildfire_growth")` NEW-PATH in
+    `env.fire_fusion._handle_pass_boundary` has been removed (it stamped
+    hints for a formatter that was never invoked live for this category --
+    wildfire_growth events are always fully precomposed, and the category is
+    not in `cutover.NATIVE_ALWAYS_DECIDE`). `test_growth_wire_reuses_fire_formatter`
+    and the whole `TestNotCutoverLegacyVerbatim` class (fully redundant with
+    `tests/test_firms_native_fusion.py`'s `TestIngestGrowth` / `TestIngestSpotting`
+    / `TestIngestHalt`, which already assert the same not-cutover stamps +
+    eager-latch behavior through the live `ingest_hotspot_pixel` entrypoint)
+    were removed accordingly. `wildfire_growth`'s formatter registration was
+    also removed (dead -- never reachable live); `TestRegistration` below now
+    asserts it resolves to `None`.
 """
 from __future__ import annotations
 
@@ -32,7 +50,6 @@ import uuid
 import pytest
 
 from meshai.notifications.formatters._budget import budget_for
-from meshai.notifications.formatters.fire import format as fire_format
 from meshai.notifications.formatters.firms import format as firms_format
 from meshai.notifications.gating.firms import decide as firms_decide
 from tests.harness.goldens import assert_byte_identical
@@ -57,16 +74,6 @@ def _isolate_db(tmp_path, monkeypatch):
     yield db_path
     pdb.close_thread_connection()
     pdb._initialised.discard(db_path)
-
-
-@pytest.fixture
-def _no_cutover(monkeypatch):
-    """Default deploy state: nothing cut over → handler runs legacy verbatim."""
-    monkeypatch.delenv("MESHAI_CUTOVER_CATEGORIES", raising=False)
-    from meshai.notifications.cutover import _clear_cache
-    _clear_cache()
-    yield
-    _clear_cache()
 
 
 def _cutover(monkeypatch, *cats):
@@ -95,56 +102,39 @@ def _seed_fire(*, irwin_id, lat, lon, name="Stub Fire", **cols):
     conn.execute(f"INSERT INTO fires({keys}) VALUES ({ph})", tuple(base.values()))
 
 
-def _envelope(*, lat, lon, acq_date="2026-06-06", acq_time="1200",
-              frp=20.0, satellite="N20"):
-    return {
-        "data": {
-            "adapter": "firms",
-            "category": "wildfire_hotspot",
-            "severity": "routine",
-            "data": {
-                "latitude": lat, "longitude": lon, "frp": frp,
-                "bright_ti4": 320.0, "satellite": satellite,
-                "instrument": "VIIRS", "confidence": "high",
-                "acq_date": acq_date, "acq_time": acq_time,
-                "daynight": "D", "version": "2.0NRT",
-            },
-        }
-    }
+def _pixel(*, lat, lon, acq_date="2026-06-06", acq_time="1200",
+           frp=20.0, satellite="N20", confidence="high", brightness=320.0):
+    """Build a canonical FIRMS pixel dict for the LIVE ingest_hotspot_pixel
+    entrypoint (mirrors tests/test_firms_native_fusion.py's `_pixel`)."""
+    import datetime as _dt
+    acq_epoch = int(_dt.datetime.strptime(
+        f"{acq_date} {str(acq_time).zfill(4)}", "%Y-%m-%d %H%M"
+    ).replace(tzinfo=_dt.timezone.utc).timestamp())
+    return {"lat": lat, "lon": lon, "frp": frp, "confidence": confidence,
+            "brightness": brightness, "satellite": satellite,
+            "acq_epoch": acq_epoch}
 
 
-_SUBJECT = "central.fire.hotspot.N20.high.us.id"
-
-
-def _drive_two_pass_growth(irwin_id, center_lat, center_lon):
-    """Seed a fire + pass A (5 px) + first pass-B pixel 1 mi N. Returns the
-    (wire, data) from the boundary pixel that fires wildfire_growth."""
-    from meshai.env.fire_fusion import handle_firms
-    _seed_fire(irwin_id=irwin_id, lat=center_lat, lon=center_lon, name="Pine Gulch")
-    for i in range(5):
-        env = _envelope(lat=center_lat + 0.0001 * i,
-                        lon=center_lon + 0.0001 * (i - 2),
-                        acq_date="2026-06-06", acq_time=f"12{i:02d}",
-                        frp=20.0 + i)
-        handle_firms(env, subject=_SUBJECT, data={}, now=1780747200 + i)
-    pass_b_lat = center_lat + (1.0 / _MI_PER_DEG_LAT)
-    env_b = _envelope(lat=pass_b_lat, lon=center_lon, acq_time="1800", frp=22.0)
-    data = {}
-    wire = handle_firms(env_b, subject=_SUBJECT, data=data, now=1780768800)
-    return wire, data
+def _ingest(pixel, *, now):
+    """Feed one pixel through the LIVE native entrypoint and return the
+    (wire, data) of the first broadcast it produced (or (None, {}))."""
+    from meshai.env.fire_fusion import ingest_hotspot_pixel
+    broadcasts = ingest_hotspot_pixel(pixel, now=now)
+    if broadcasts:
+        return broadcasts[0]
+    return None, {}
 
 
 def _seed_pass_a_hex_then_close(irwin_id, center_lat, center_lon,
                                 start_now=1780747200):
-    from meshai.env.fire_fusion import handle_firms
     _seed_fire(irwin_id=irwin_id, lat=center_lat, lon=center_lon, name=irwin_id)
     for i in range(6):
         angle = i * math.pi / 3
         la = center_lat + (0.5 / _MI_PER_DEG_LAT) * math.sin(angle)
         cos_lat = math.cos(math.radians(center_lat))
         lo = center_lon + (0.5 / (_MI_PER_DEG_LAT * cos_lat)) * math.cos(angle)
-        env = _envelope(lat=la, lon=lo, acq_time=f"12{i * 2:02d}")
-        handle_firms(env, subject=_SUBJECT, data={}, now=start_now + i)
+        _ingest(_pixel(lat=la, lon=lo, acq_time=f"12{i * 2:02d}"),
+                now=start_now + i)
 
 
 def _offset_mi(lat, lon, north_mi, east_mi):
@@ -156,15 +146,11 @@ def _offset_mi(lat, lon, north_mi, east_mi):
 def _drive_spotting(irwin_id, center_lat, center_lon, now=1780768800):
     """Seed hex pass A + closed perimeter, then a pass-B pixel 2 mi NE that
     fires wildfire_spotting. Returns (wire, data)."""
-    from meshai.env.fire_fusion import handle_firms
     _seed_pass_a_hex_then_close(irwin_id, center_lat, center_lon)
     sp_lat, sp_lon = _offset_mi(center_lat, center_lon,
                                 north_mi=2.0 / math.sqrt(2),
                                 east_mi=2.0 / math.sqrt(2))
-    env_b = _envelope(lat=sp_lat, lon=sp_lon, acq_time="1800")
-    data = {}
-    wire = handle_firms(env_b, subject=_SUBJECT, data=data, now=now)
-    return wire, data
+    return _ingest(_pixel(lat=sp_lat, lon=sp_lon, acq_time="1800"), now=now)
 
 
 def _seed_stale_fire(irwin_id, *, now_epoch, idle_hours=14, name="Cold Fire"):
@@ -183,9 +169,17 @@ def _seed_stale_fire(irwin_id, *, now_epoch, idle_hours=14, name="Cold Fire"):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestRegistration:
-    def test_growth_formatter_is_fire(self):
+    def test_growth_formatter_not_registered(self):
+        """wildfire_growth is intentionally UNREGISTERED (chore/ripout-2dii):
+        its wire is always precomposed by env.fire_fusion._handle_pass_boundary
+        -> env.fire_render._render, and the category is excluded from
+        cutover.NATIVE_ALWAYS_DECIDE, so compose_mesh_message's
+        formatter-invocation branch can never reach a registered formatter
+        for it live -- the precomposed-title bypass always wins first. A
+        registration reappearing here would be dead weight (or worse, a sign
+        the precomposed bypass stopped covering this category); guard it."""
         from meshai.notifications.formatters import get_formatter
-        assert get_formatter("wildfire_growth") is fire_format
+        assert get_formatter("wildfire_growth") is None
 
     @pytest.mark.parametrize("cat", ["wildfire_spotting", "wildfire_halted"])
     def test_spotting_halt_formatter_is_firms(self, cat):
@@ -327,20 +321,6 @@ class TestHaltDecideSequence:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestFormatterGolden:
-    def test_growth_wire_reuses_fire_formatter(self, monkeypatch):
-        # Drive the real growth broadcast under cutover: handle_firms returns the
-        # inline _render() wire AND populates data with the fire formatter hints.
-        _cutover(monkeypatch, "wildfire_growth")
-        try:
-            wire, data = _drive_two_pass_growth("ID-GG", 42.0, -114.0)
-            assert wire is not None and wire.startswith("🔥 Pine Gulch")
-            rendered = fire_format(_FakeEvent(data, category="wildfire_growth"),
-                                   now=0.0, budget=budget_for("wfigs"))
-            assert_byte_identical(rendered, wire)
-        finally:
-            from meshai.notifications.cutover import _clear_cache
-            _clear_cache()
-
     def test_spotting_wire_golden(self, monkeypatch):
         _cutover(monkeypatch, "wildfire_spotting")
         try:
@@ -388,48 +368,12 @@ class TestFormatterGolden:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. Not-cutover parity — legacy eager-latch + stamps preserved VERBATIM
+# 4. Not-cutover parity (legacy eager-latch + stamps) — REMOVED chore/ripout-2dii:
+# fully redundant with tests/test_firms_native_fusion.py's TestIngestGrowth /
+# TestIngestSpotting / TestIngestHalt, which already assert the same
+# category/_severity_override/_cooldown_suffix stamps + eager-latch behavior
+# through the LIVE ingest_hotspot_pixel entrypoint directly.
 # ─────────────────────────────────────────────────────────────────────────────
-
-class TestNotCutoverLegacyVerbatim:
-    def test_growth_stamps_and_no_latch(self, _no_cutover):
-        wire, data = _drive_two_pass_growth("ID-GN", 42.0, -114.0)
-        assert wire is not None and wire.startswith("🔥 Pine Gulch")
-        assert "Moving N" in wire
-        assert data["category"] == "wildfire_growth"
-        assert data["_severity_override"] == "immediate"
-        assert data["_cooldown_suffix"] == "ID-GN"
-        # Legacy growth never attached a deferred commit.
-        assert "_on_broadcast_committed" not in data
-
-    def test_spotting_eager_latch_stamped(self, _no_cutover):
-        from meshai.persistence import get_db
-        wire, data = _drive_spotting("ID-SN", 43.0, -115.0, now=1780768800)
-        assert wire is not None and "spotting" in wire
-        assert data["category"] == "wildfire_spotting"
-        assert data["_severity_override"] == "immediate"
-        # Legacy path stamps the latch EAGERLY with the handler `now`.
-        latch = get_db().execute(
-            "SELECT last_spotting_broadcast_at FROM fires WHERE irwin_id=?",
-            ("ID-SN",)).fetchone()[0]
-        assert latch == 1780768800.0
-        assert "_on_broadcast_committed" not in data
-
-    def test_halt_eager_latch_stamped(self, _no_cutover):
-        from meshai.env.fire_fusion import _maybe_emit_halt
-        from meshai.persistence import get_db
-        now = 1780768800
-        _seed_stale_fire("ID-HN", now_epoch=now, idle_hours=14)
-        data = {}
-        wire = _maybe_emit_halt(get_db(), data=data, now=now)
-        assert wire == "🔥 Cold Fire no growth in 14h"
-        assert data["category"] == "wildfire_halted"
-        assert data["_severity_override"] == "routine"
-        latch = get_db().execute(
-            "SELECT halt_broadcast_at FROM fires WHERE irwin_id=?",
-            ("ID-HN",)).fetchone()[0]
-        assert latch == float(now)
-        assert "_on_broadcast_committed" not in data
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -50,29 +50,28 @@ def _seed_fire(*, irwin_id, lat, lon, name="Stub Fire", state="ID"):
     )
 
 
-def _envelope(*, lat, lon, acq_date="2026-06-06", acq_time="1200",
-              frp=15.0, satellite="N20", conf="high"):
-    """Build a Central FIRMS envelope shaped like the real Central feed."""
-    return {
-        "data": {
-            "adapter": "firms",
-            "category": "wildfire_hotspot",
-            "severity": "routine",
-            "data": {
-                "latitude": lat,
-                "longitude": lon,
-                "frp": frp,
-                "bright_ti4": 320.5,
-                "satellite": satellite,
-                "instrument": "VIIRS",
-                "confidence": conf,
-                "acq_date": acq_date,
-                "acq_time": acq_time,
-                "daynight": "D",
-                "version": "2.0NRT",
-            },
-        }
-    }
+def _pixel(*, lat, lon, acq_date="2026-06-06", acq_time="1200",
+           frp=15.0, satellite="N20", conf="high"):
+    """Build a canonical FIRMS pixel dict for the LIVE ingest_hotspot_pixel
+    entrypoint (mirrors tests/test_firms_native_fusion.py's `_pixel`)."""
+    import datetime as _dt
+    acq_epoch = int(_dt.datetime.strptime(
+        f"{acq_date} {str(acq_time).zfill(4)}", "%Y-%m-%d %H%M"
+    ).replace(tzinfo=_dt.timezone.utc).timestamp())
+    return {"lat": lat, "lon": lon, "frp": frp, "confidence": conf,
+            "brightness": 320.5, "satellite": satellite, "acq_epoch": acq_epoch}
+
+
+def _ingest(pixel, *, now):
+    """Feed one pixel through the LIVE native entrypoint (chore/ripout-2dii:
+    the dead Central handle_firms wrapper this file used to drive through is
+    gone) and return the (wire, data) of the first broadcast it produced (or
+    (None, {}))."""
+    from meshai.env.fire_fusion import ingest_hotspot_pixel
+    broadcasts = ingest_hotspot_pixel(pixel, now=now)
+    if broadcasts:
+        return broadcasts[0]
+    return None, {}
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +80,6 @@ def _envelope(*, lat, lon, acq_date="2026-06-06", acq_time="1200",
 
 
 def test_pixel_within_radius_attributes_to_fire():
-    from meshai.env.fire_fusion import handle_firms
     from meshai.persistence import get_db
 
     # Cache Peak Fire stub @ 42.118, -113.643.
@@ -89,9 +87,8 @@ def test_pixel_within_radius_attributes_to_fire():
                  lat=42.118, lon=-113.643)
 
     # FIRMS pixel ~0.2 mi NE of the anchor -- well inside default 5 mi.
-    env = _envelope(lat=42.121, lon=-113.640, frp=18.0)
-    wire = handle_firms(env, subject="central.fire.hotspot.N20.high.us.id",
-                        data={}, now=1780728000)
+    wire, _data = _ingest(_pixel(lat=42.121, lon=-113.640, frp=18.0),
+                          now=1780728000)
     # Attribution is silent (return None); the wire only fires on cluster.
     assert wire is None
 
@@ -120,7 +117,6 @@ def test_pixel_within_radius_attributes_to_fire():
 def test_centroid_recomputes_as_median_across_passes():
     """A second attributed pixel updates the centroid to the median, not
     just the latest pixel's coords."""
-    from meshai.env.fire_fusion import handle_firms
     from meshai.persistence import get_db
 
     _seed_fire(irwin_id="ID-TEST-002",
@@ -135,12 +131,9 @@ def test_centroid_recomputes_as_median_across_passes():
     # arithmetic mean) survives the Phase 2 semantic shift.
     coords = [(42.001, -113.001), (42.002, -113.002), (42.003, -113.003)]
     for i, (la, lo) in enumerate(coords):
-        env = _envelope(lat=la, lon=lo,
-                        acq_date="2026-06-06",
-                        acq_time=f"12{i * 10:02d}")  # 12:00, 12:10, 12:20
-        handle_firms(env,
-                     subject="central.fire.hotspot.N20.high.us.id",
-                     data={}, now=1780728000 + i * 600)
+        _ingest(_pixel(lat=la, lon=lo, acq_date="2026-06-06",
+                       acq_time=f"12{i * 10:02d}"),  # 12:00, 12:10, 12:20
+                now=1780728000 + i * 600)
 
     fire = get_db().execute(
         "SELECT current_centroid_lat, current_centroid_lon "
@@ -157,16 +150,14 @@ def test_centroid_recomputes_as_median_across_passes():
 
 
 def test_pixel_outside_radius_stays_unattributed():
-    from meshai.env.fire_fusion import handle_firms
     from meshai.persistence import get_db
 
     _seed_fire(irwin_id="ID-TEST-003",
                  lat=42.000, lon=-113.000)
 
     # Pixel ~50 mi away -- comfortably outside the 5 mi default.
-    env = _envelope(lat=42.700, lon=-113.000, frp=10.0)
-    wire = handle_firms(env, subject="central.fire.hotspot.N20.high.us.id",
-                        data={}, now=1780728000)
+    wire, _data = _ingest(_pixel(lat=42.700, lon=-113.000, frp=10.0),
+                          now=1780728000)
     # No attribution AND below the 3-pixel cluster threshold -> no wire.
     assert wire is None
 
@@ -196,7 +187,6 @@ def _hhmm(h, m=0):
 
 
 def test_three_unattributed_pixels_fire_cluster_once():
-    from meshai.env.fire_fusion import handle_firms
     from meshai.persistence import get_db
 
     # No fires seeded -- everything is unattributed.
@@ -209,12 +199,9 @@ def test_three_unattributed_pixels_fire_cluster_once():
     ]
     wires: list[str | None] = []
     for la, lo, t, frp in pixels:
-        env = _envelope(lat=la, lon=lo, acq_time=t, frp=frp)
-        data = {}
-        wires.append(handle_firms(
-            env, subject="central.fire.hotspot.N20.high.unknown",
-            data=data, now=1780728000,
-        ))
+        wire, data = _ingest(_pixel(lat=la, lon=lo, acq_time=t, frp=frp),
+                             now=1780728000)
+        wires.append(wire)
         if wires[-1] is not None:
             # The handler must have tagged data with the cluster category.
             assert data.get("category") == "unattributed_hotspot_cluster"
@@ -235,7 +222,6 @@ def test_three_unattributed_pixels_fire_cluster_once():
 
 
 def test_fourth_pixel_in_same_cluster_does_not_refire():
-    from meshai.env.fire_fusion import handle_firms
     from meshai.persistence import get_db
 
     base_lat, base_lon = 43.500, -114.500
@@ -245,18 +231,12 @@ def test_fourth_pixel_in_same_cluster_does_not_refire():
         (base_lat + 0.001, base_lon + 0.001, "1210"),
         (base_lat - 0.001, base_lon - 0.002, "1220"),
     ]):
-        env = _envelope(lat=la, lon=lo, acq_time=t)
-        handle_firms(env,
-                     subject="central.fire.hotspot.N20.high.unknown",
-                     data={}, now=1780728000 + i)
+        _ingest(_pixel(lat=la, lon=lo, acq_time=t), now=1780728000 + i)
 
     # A 4th pixel inside the same cluster footprint.
-    env = _envelope(lat=base_lat + 0.0005, lon=base_lon - 0.0005,
-                    acq_time="1230")
-    data4 = {}
-    wire = handle_firms(env,
-                         subject="central.fire.hotspot.N20.high.unknown",
-                         data=data4, now=1780728100)
+    wire, data4 = _ingest(
+        _pixel(lat=base_lat + 0.0005, lon=base_lon - 0.0005, acq_time="1230"),
+        now=1780728100)
     # The existing 3 members already have cluster_broadcast_at stamped,
     # so they don't count toward the new cluster query (the SQL filter
     # is `cluster_broadcast_at IS NULL`). The 4th pixel alone fails
@@ -279,8 +259,6 @@ def test_fifth_pixel_after_time_window_can_form_new_cluster():
     no nearby unstamped pixels to count, so it stays silent -- but if
     we then ingest TWO more nearby pixels (also outside the original
     window), we should fire a NEW cluster."""
-    from meshai.env.fire_fusion import handle_firms
-
     base_lat, base_lon = 43.500, -114.500
     # First cluster at 12:00..12:20 -> fires + stamps all 3.
     for i, (la, lo, t) in enumerate([
@@ -288,10 +266,7 @@ def test_fifth_pixel_after_time_window_can_form_new_cluster():
         (base_lat + 0.001, base_lon + 0.001, "1210"),
         (base_lat - 0.001, base_lon - 0.002, "1220"),
     ]):
-        env = _envelope(lat=la, lon=lo, acq_time=t)
-        handle_firms(env,
-                     subject="central.fire.hotspot.N20.high.unknown",
-                     data={}, now=1780728000 + i)
+        _ingest(_pixel(lat=la, lon=lo, acq_time=t), now=1780728000 + i)
 
     # Three NEW pixels at 14:00..14:20 -- well past the 60 min window
     # from the first cluster (which ended at 12:20 acq time).
@@ -302,11 +277,9 @@ def test_fifth_pixel_after_time_window_can_form_new_cluster():
         (base2_lat + 0.001, base2_lon + 0.001, "1410"),
         (base2_lat - 0.001, base2_lon - 0.002, "1420"),
     ]):
-        env = _envelope(lat=la, lon=lo, acq_time=t)
-        wires2.append(handle_firms(
-            env, subject="central.fire.hotspot.N20.high.unknown",
-            data={}, now=1780728000 + 7200 + i,
-        ))
+        wire, _data = _ingest(_pixel(lat=la, lon=lo, acq_time=t),
+                              now=1780728000 + 7200 + i)
+        wires2.append(wire)
     # F3: the first cluster's 3 members are stamped (excluded from the query),
     # so the second batch forms an independent NEW cluster -- one wire on its
     # 3rd pixel.
@@ -321,9 +294,12 @@ def test_fifth_pixel_after_time_window_can_form_new_cluster():
 
 
 def test_wfigs_first_sight_tags_wildfire_declared():
-    from meshai.env.fire_render import handle_wfigs
+    # chore/ripout-2dii: drives the LIVE decider (gating.fire.decide) directly
+    # -- handle_wfigs (the dead Central entrypoint this used to route through)
+    # is gone. Same canonical schema env/fires.py::to_event builds.
+    from meshai.notifications.gating.fire import decide as fire_decide
 
-    normalized = {
+    canonical = {
         "_kind": "wfigs_incident",
         "irwin_id": "ID-NEW-001",
         "incident_name": "Pine Gulch",
@@ -334,24 +310,17 @@ def test_wfigs_first_sight_tags_wildfire_declared():
         "county": "Twin Falls", "state": "ID",
         "declared_at_epoch": 1780728000,
     }
-    envelope = {
-        "data": {"adapter": "wfigs", "category": "wildfire_incident",
-                  "severity": "priority"}
-    }
-    data = {}
-    wire = handle_wfigs(normalized, envelope,
-                         subject="central.fire.incident.id",
-                         data=data, now=1780728000)
-    assert wire is not None
-    assert "New" in wire
-    assert data.get("category") == "wildfire_declared", \
-        f"expected wildfire_declared, got data={data!r}"
+    gate = fire_decide(canonical, source="wfigs", now=1780728000.0)
+    assert gate.broadcast is True
+    assert gate.lifecycle == "new"
+    assert gate.data_patch.get("category") == "wildfire_declared", \
+        f"expected wildfire_declared, got data_patch={gate.data_patch!r}"
 
 
 def test_wfigs_update_does_not_retag_wildfire_declared():
     """After a row exists AND has been broadcast, an acres-grew Update
     must NOT carry the wildfire_declared category."""
-    from meshai.env.fire_render import handle_wfigs
+    from meshai.notifications.gating.fire import decide as fire_decide
     from meshai.persistence import get_db
 
     # Pre-existing row that has already been broadcast.
@@ -364,7 +333,7 @@ def test_wfigs_update_does_not_retag_wildfire_declared():
         ("ID-UPD-001", "Pine Gulch", 250.0, 0, 42.93, -114.45,
          1780728000, 1780728000, 250.0, 0),
     )
-    normalized = {
+    canonical = {
         "_kind": "wfigs_incident",
         "irwin_id": "ID-UPD-001",
         "incident_name": "Pine Gulch",
@@ -374,19 +343,12 @@ def test_wfigs_update_does_not_retag_wildfire_declared():
         "lat": 42.93, "lon": -114.45,
         "county": "Twin Falls", "state": "ID",
     }
-    envelope = {
-        "data": {"adapter": "wfigs", "category": "wildfire_incident",
-                  "severity": "priority"}
-    }
-    data = {}
     # 8h cooldown clear: now > 28800s after last_broadcast_at.
-    wire = handle_wfigs(normalized, envelope,
-                         subject="central.fire.incident.id",
-                         data=data, now=1780728000 + 30000)
-    assert wire is not None
-    assert "Update" in wire
+    gate = fire_decide(canonical, source="wfigs", now=1780728000.0 + 30000)
+    assert gate.broadcast is True
+    assert gate.lifecycle == "update"
     # Update branch must NOT re-tag with wildfire_declared.
-    assert data.get("category") != "wildfire_declared"
+    assert "category" not in gate.data_patch
 
 
 # ---------------------------------------------------------------------------

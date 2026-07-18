@@ -16,6 +16,14 @@ broadcasts back through the normal pipeline guards (Grouper, cooldown).
 This file's expectations were written before that downgrade and never
 updated -- "immediate" here would be reverting a deliberate, documented
 incident fix.
+
+chore/ripout-2dii: `handle_wfigs` (the dead Central NATS-envelope entrypoint
+T1/T2 used to drive) has been REMOVED from `meshai.env.fire_render` -- zero
+live production callers. T1/T2 now drive `gating.fire.decide` directly (the
+LIVE, shared decider -- `_kind="wfigs_tombstone"` is its all-clear branch,
+reused by the shared fire formatter). `test_commit_callback_flips_handled`
+(which asserted handle_wfigs's OWN event_log-row flip on commit -- a
+Central-only concept the native path never used) was deleted with it.
 """
 from __future__ import annotations
 
@@ -23,7 +31,7 @@ import time
 
 import pytest
 
-from meshai.env.fire_render import handle_wfigs
+from meshai.notifications.gating.fire import decide as fire_decide
 from meshai.notifications.env_reporter import EnvReporter
 from meshai.persistence import get_db
 
@@ -49,7 +57,12 @@ def _seed_fire(conn, *, irwin_id, name, acres, contained=None,
 
 
 class TestTombstoneSeverityAndCommitHandles:
-    """T1: tombstone branch sets priority severity and attaches commit handles."""
+    """T1: tombstone branch sets priority severity and attaches commit handles.
+
+    Drives gating.fire.decide() directly (chore/ripout-2dii: handle_wfigs, the
+    dead entrypoint this used to wrap, is gone). decide()'s data_patch carries
+    the same stamps the dispatcher reads off event.data.
+    """
 
     def test_severity_is_priority(self):
         conn = get_db()
@@ -58,20 +71,14 @@ class TestTombstoneSeverityAndCommitHandles:
                    acres=500, contained=80,
                    last_broadcast_at=now - 3600)
 
-        data = {}
-        wire = handle_wfigs(
-            normalized={"_kind": "wfigs_tombstone", "irwin_id": "FIRE-001"},
-            envelope={"data": {"category": "wildfire", "severity": "immediate"}},
-            subject="wfigs.tombstone",
-            data=data,
-            now=now,
-        )
-        assert wire is not None, "tombstone should produce wire for previously-broadcast fire"
+        gate = fire_decide({"_kind": "wfigs_tombstone", "irwin_id": "FIRE-001"},
+                           source="wfigs", now=float(now))
+        assert gate.broadcast is True, "tombstone should broadcast for previously-broadcast fire"
         # See module docstring: fire severity was deliberately downgraded
         # from "immediate" to "priority" (commit 2f677e85) so fire
         # broadcasts flow through the normal Grouper/cooldown guards.
-        assert data.get("_severity_override") == "priority", (
-            f"expected priority, got {data.get('_severity_override')}")
+        assert gate.data_patch.get("_severity_override") == "priority", (
+            f"expected priority, got {gate.data_patch.get('_severity_override')}")
 
     def test_commit_handles_attached(self):
         conn = get_db()
@@ -80,19 +87,11 @@ class TestTombstoneSeverityAndCommitHandles:
                    acres=1000, contained=95,
                    last_broadcast_at=now - 7200)
 
-        data = {}
-        wire = handle_wfigs(
-            normalized={"_kind": "wfigs_tombstone", "irwin_id": "FIRE-002"},
-            envelope={"data": {"category": "wildfire", "severity": "immediate"}},
-            subject="wfigs.tombstone",
-            data=data,
-            now=now,
-        )
-        assert wire is not None
-        assert "_on_broadcast_committed" in data, "commit callback missing"
-        assert "_broadcast_audit" in data, "broadcast audit descriptor missing"
-        assert "_cooldown_suffix" in data, "cooldown suffix missing"
-        assert data["_cooldown_suffix"] == "FIRE-002"
+        gate = fire_decide({"_kind": "wfigs_tombstone", "irwin_id": "FIRE-002"},
+                           source="wfigs", now=float(now))
+        assert gate.broadcast is True
+        assert callable(gate.commit), "commit callback missing"
+        assert gate.data_patch.get("_cooldown_suffix") == "FIRE-002"
 
     def test_dedup_suffix_is_closed(self):
         conn = get_db()
@@ -101,61 +100,32 @@ class TestTombstoneSeverityAndCommitHandles:
                    acres=200, contained=100,
                    last_broadcast_at=now - 600)
 
-        data = {}
-        wire = handle_wfigs(
-            normalized={"_kind": "wfigs_tombstone", "irwin_id": "FIRE-003"},
-            envelope={"data": {"category": "wildfire", "severity": "immediate"}},
-            subject="wfigs.tombstone",
-            data=data,
-            now=now,
-        )
-        assert wire is not None
-        assert data.get("_dedup_suffix") == "closed", (
-            f"expected 'closed', got {data.get('_dedup_suffix')}")
-
-    def test_commit_callback_flips_handled(self):
-        """The commit callback should flip event_log.handled to 1."""
-        conn = get_db()
-        now = int(time.time())
-        _seed_fire(conn, irwin_id="FIRE-004", name="Callback Fire",
-                   acres=300, contained=50,
-                   last_broadcast_at=now - 1800)
-
-        data = {}
-        wire = handle_wfigs(
-            normalized={"_kind": "wfigs_tombstone", "irwin_id": "FIRE-004"},
-            envelope={"data": {"category": "wildfire", "severity": "immediate"}},
-            subject="wfigs.tombstone",
-            data=data,
-            now=now,
-        )
-        assert wire is not None
-        assert "_on_broadcast_committed" in data
-
-        # Before commit: event_log row should have handled=0
-        row_before = conn.execute(
-            "SELECT id, handled FROM event_log WHERE event_id_external='FIRE-004' "
-            "ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        assert row_before is not None, "event_log row should exist"
-        assert row_before["handled"] == 0, "should be unhandled before commit"
-
-        # Fire the commit callback
-        data["_on_broadcast_committed"](float(now))
-
-        # After commit: handled should be 1
-        row_after = conn.execute(
-            "SELECT handled FROM event_log WHERE id=?",
-            (row_before["id"],)
-        ).fetchone()
-        assert row_after["handled"] == 1, "should be handled=1 after commit callback"
+        gate = fire_decide({"_kind": "wfigs_tombstone", "irwin_id": "FIRE-003"},
+                           source="wfigs", now=float(now))
+        assert gate.broadcast is True
+        assert gate.data_patch.get("_dedup_suffix") == "closed", (
+            f"expected 'closed', got {gate.data_patch.get('_dedup_suffix')}")
 
 
 class TestTombstoneAfterNewBroadcast:
-    """T2: closure dispatches when a New broadcast went out earlier."""
+    """T2: closure dispatches when a New broadcast went out earlier.
+
+    Drives gating.fire.decide() directly (chore/ripout-2dii: handle_wfigs is
+    gone). The wire itself is rendered by the shared, LIVE fire formatter
+    (notifications/formatters/fire.py::format) from decide()'s data_patch --
+    the same contract the native WFIGS path uses.
+    """
 
     def test_closure_wire_after_prior_broadcast(self):
         """Fire that was broadcast 10 min ago gets a closure wire on tombstone."""
+        from meshai.notifications.formatters.fire import format as fire_format
+        from meshai.notifications.formatters._budget import budget_for
+
+        class _FakeEvent:
+            def __init__(self, data, category=None):
+                self.data = data
+                self.category = category
+
         conn = get_db()
         now = int(time.time())
         _seed_fire(conn, irwin_id="IA-1", name="IA 1",
@@ -163,22 +133,19 @@ class TestTombstoneAfterNewBroadcast:
                    last_broadcast_at=now - 600,  # 10 min ago
                    last_event_at=now - 600)
 
-        data = {}
-        wire = handle_wfigs(
-            normalized={"_kind": "wfigs_tombstone", "irwin_id": "IA-1"},
-            envelope={"data": {"category": "wildfire", "severity": "immediate"}},
-            subject="wfigs.tombstone",
-            data=data,
-            now=now,
-        )
-        assert wire is not None, "tombstone should produce wire"
-        assert "✅" in wire, "closure wire should contain checkmark"
-        assert "IA 1" in wire, "closure wire should name the fire"
-        assert data["category"] == "wildfire_closed"
+        gate = fire_decide({"_kind": "wfigs_tombstone", "irwin_id": "IA-1"},
+                           source="wfigs", now=float(now))
+        assert gate.broadcast is True, "tombstone should broadcast"
+        assert gate.data_patch["category"] == "wildfire_closed"
         # See module docstring: downgraded from "immediate" to "priority"
         # by commit 2f677e85 to prevent Grouper/cooldown bypass.
-        assert data["_severity_override"] == "priority"
-        assert callable(data.get("_on_broadcast_committed"))
+        assert gate.data_patch["_severity_override"] == "priority"
+        assert callable(gate.commit)
+
+        wire = fire_format(_FakeEvent(gate.data_patch, category="wildfire_closed"),
+                           now=0.0, budget=budget_for("wfigs"))
+        assert "✅" in wire, "closure wire should contain checkmark"
+        assert "IA 1" in wire, "closure wire should name the fire"
 
     def test_no_wire_when_never_broadcast(self):
         """Fire that was never broadcast should NOT get a closure wire."""
@@ -189,36 +156,9 @@ class TestTombstoneAfterNewBroadcast:
                    last_broadcast_at=None,  # never broadcast
                    last_event_at=now - 600)
 
-        data = {}
-        wire = handle_wfigs(
-            normalized={"_kind": "wfigs_tombstone", "irwin_id": "SILENT-1"},
-            envelope={"data": {"category": "wildfire", "severity": "immediate"}},
-            subject="wfigs.tombstone",
-            data=data,
-            now=now,
-        )
-        assert wire is None, "no closure wire for never-broadcast fire"
-
-    def test_tombstoned_at_stamped(self):
-        """Tombstone should stamp tombstoned_at on the fires row."""
-        conn = get_db()
-        now = int(time.time())
-        _seed_fire(conn, irwin_id="STAMP-1", name="Stamp Fire",
-                   acres=10, contained=50,
-                   last_broadcast_at=now - 3600)
-
-        handle_wfigs(
-            normalized={"_kind": "wfigs_tombstone", "irwin_id": "STAMP-1"},
-            envelope={"data": {"category": "wildfire", "severity": "immediate"}},
-            subject="wfigs.tombstone",
-            data={},
-            now=now,
-        )
-        row = conn.execute(
-            "SELECT tombstoned_at FROM fires WHERE irwin_id='STAMP-1'"
-        ).fetchone()
-        assert row is not None
-        assert row["tombstoned_at"] == now
+        gate = fire_decide({"_kind": "wfigs_tombstone", "irwin_id": "SILENT-1"},
+                           source="wfigs", now=float(now))
+        assert gate.broadcast is False, "no closure wire for never-broadcast fire"
 
 
 class TestEnvSummaryExcludesContainedTombstoned:
