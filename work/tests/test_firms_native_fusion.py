@@ -380,68 +380,10 @@ class TestAdapterTickFusion:
         fusion = [e for e in a.get_events() if e.get("source") == "firms_fusion"]
         assert fusion == []
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-# 3. Central-path guard — extraction did not change handle_firms
-# ═════════════════════════════════════════════════════════════════════════════
-
-def _envelope(*, lat, lon, acq_date="2026-06-06", acq_time="1200",
-              frp=20.0, satellite="N20"):
-    return {
-        "data": {
-            "adapter": "firms", "category": "wildfire_hotspot",
-            "severity": "routine",
-            "data": {
-                "latitude": lat, "longitude": lon, "frp": frp,
-                "bright_ti4": 320.0, "satellite": satellite,
-                "instrument": "VIIRS", "confidence": "high",
-                "acq_date": acq_date, "acq_time": acq_time,
-                "daynight": "D", "version": "2.0NRT",
-            },
-        }
-    }
-
-
-_SUBJECT = "central.fire.hotspot.N20.high.us.id"
-
-
-class TestCentralPathUnchanged:
-    def test_storage_only_pixel_still_stores_and_returns_none(self):
-        from meshai.env.fire_fusion import handle_firms
-        from meshai.persistence import get_db
-        env = _envelope(lat=42.19664, lon=-113.70981)
-        out = handle_firms(env, subject=_SUBJECT, data={}, now=1780660000)
-        assert out is None  # no fire seeded -> storage only, no broadcast
-        n = get_db().execute(
-            "SELECT COUNT(*) AS n FROM firms_pixels").fetchone()["n"]
-        assert n == 1
-        log = get_db().execute(
-            "SELECT table_name, table_pk, handled FROM event_log "
-            "ORDER BY id DESC LIMIT 1").fetchone()
-        assert log["handled"] == 1
-        assert log["table_name"] == "firms_pixels"
-        row_id = get_db().execute(
-            "SELECT id FROM firms_pixels").fetchone()["id"]
-        assert log["table_pk"] == str(row_id)
-
-    def test_central_growth_wire_and_stamps_identical(self):
-        """The extracted core produces the SAME growth wire/stamps on the
-        Central envelope path that the inline handler did."""
-        from meshai.env.fire_fusion import handle_firms
-        center_lat, center_lon = 42.0, -114.0
-        _seed_fire(irwin_id="ID-CG", lat=center_lat, lon=center_lon,
-                   name="Pine Gulch")
-        for i in range(5):
-            handle_firms(_envelope(lat=center_lat + 0.0001 * i,
-                                   lon=center_lon + 0.0001 * (i - 2),
-                                   acq_time=f"12{i:02d}", frp=20.0 + i),
-                         subject=_SUBJECT, data={}, now=1780747200 + i)
-        data = {}
-        wire = handle_firms(_envelope(lat=center_lat + 1.0 / _MI_PER_DEG_LAT,
-                                      lon=center_lon, acq_time="1800", frp=22.0),
-                            subject=_SUBJECT, data=data, now=1780768800)
-        assert wire is not None and wire.startswith("🔥 Pine Gulch")
-        assert "Moving N" in wire
-        assert data["category"] == "wildfire_growth"
-        assert data["_severity_override"] == "immediate"
-        assert data["_cooldown_suffix"] == "ID-CG"
+# chore/ripout-2dii: section 3 ("Central-path guard — extraction did not
+# change handle_firms") REMOVED. `handle_firms` (the dead Central
+# NATS-envelope entrypoint it drove) has been deleted from
+# `meshai.env.fire_fusion` -- zero live production callers, and this section
+# existed purely to prove that entrypoint was unchanged by the extraction.
+# The shared core it guarded (_ingest_pixel_core) is exercised directly by
+# every test above via `ingest_hotspot_pixel` (the live native entrypoint).

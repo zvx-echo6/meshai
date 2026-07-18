@@ -47,22 +47,28 @@ def _seed_fire(*, irwin_id, lat, lon, name="Stub Fire"):
     )
 
 
-def _envelope(*, lat, lon, acq_date="2026-06-06", acq_time="1200",
-              frp=20.0, satellite="N20"):
-    return {
-        "data": {
-            "adapter": "firms",
-            "category": "wildfire_hotspot",
-            "severity": "routine",
-            "data": {
-                "latitude": lat, "longitude": lon, "frp": frp,
-                "bright_ti4": 320.0, "satellite": satellite,
-                "instrument": "VIIRS", "confidence": "high",
-                "acq_date": acq_date, "acq_time": acq_time,
-                "daynight": "D", "version": "2.0NRT",
-            },
-        }
-    }
+def _pixel(*, lat, lon, acq_date="2026-06-06", acq_time="1200",
+           frp=20.0, satellite="N20"):
+    """Build a canonical FIRMS pixel dict for the LIVE ingest_hotspot_pixel
+    entrypoint (mirrors tests/test_firms_native_fusion.py's `_pixel`)."""
+    import datetime as _dt
+    acq_epoch = int(_dt.datetime.strptime(
+        f"{acq_date} {str(acq_time).zfill(4)}", "%Y-%m-%d %H%M"
+    ).replace(tzinfo=_dt.timezone.utc).timestamp())
+    return {"lat": lat, "lon": lon, "frp": frp, "confidence": "high",
+            "brightness": 320.0, "satellite": satellite, "acq_epoch": acq_epoch}
+
+
+def _ingest(pixel, *, now):
+    """Feed one pixel through the LIVE native entrypoint (chore/ripout-2dii:
+    the dead Central handle_firms wrapper this file used to drive through is
+    gone) and return the (wire, data) of the first broadcast it produced (or
+    (None, {}))."""
+    from meshai.env.fire_fusion import ingest_hotspot_pixel
+    broadcasts = ingest_hotspot_pixel(pixel, now=now)
+    if broadcasts:
+        return broadcasts[0]
+    return None, {}
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +79,6 @@ def _envelope(*, lat, lon, acq_date="2026-06-06", acq_time="1200",
 def test_two_pass_drift_emits_growth_with_direction_and_speed():
     """Pass 1 (N20 bucket A), pass 2 (N20 bucket B, ~6h later, centroid
     1.0 mi N of pass 1). Drift should be ~1.0 mi N, broadcast must fire."""
-    from meshai.env.fire_fusion import handle_firms
     from meshai.persistence import get_db
 
     _seed_fire(irwin_id="ID-GROWTH-001",
@@ -87,26 +92,19 @@ def test_two_pass_drift_emits_growth_with_direction_and_speed():
 
     # Pass A pixels (5 pixels tightly clustered around (42.000, -114.000)).
     for i in range(5):
-        env = _envelope(
+        _ingest(_pixel(
             lat=pass_a_lat + 0.0001 * i,
             lon=-114.000 + 0.0001 * (i - 2),
             acq_date="2026-06-06", acq_time=f"{12:02d}{0 + i:02d}",
             frp=20.0 + i, satellite="N20",
-        )
-        handle_firms(env, subject="central.fire.hotspot.N20.high.us.id",
-                     data={}, now=1780747200 + i)
+        ), now=1780747200 + i)
 
     # First pixel of pass B fires the growth broadcast.
-    env_b_first = _envelope(
+    wire, data_b = _ingest(_pixel(
         lat=pass_b_lat, lon=-114.000,
         acq_date="2026-06-06", acq_time="1800",
         frp=22.0, satellite="N20",
-    )
-    data_b = {}
-    wire = handle_firms(
-        env_b_first, subject="central.fire.hotspot.N20.high.us.id",
-        data=data_b, now=1780768800,
-    )
+    ), now=1780768800)
     assert wire is not None, "pass-B boundary should fire growth broadcast"
     assert "Moving N" in wire, f"expected N direction, got: {wire}"
     assert data_b.get("category") == "wildfire_growth"
@@ -139,7 +137,6 @@ def test_two_pass_drift_emits_growth_with_direction_and_speed():
 def test_drift_below_threshold_does_not_emit_growth():
     """0.3 mi drift between consecutive passes -- below the 0.5 mi
     default -- must NOT broadcast wildfire_growth."""
-    from meshai.env.fire_fusion import handle_firms
     from meshai.persistence import get_db
 
     _seed_fire(irwin_id="ID-DRIFT-001",
@@ -148,19 +145,15 @@ def test_drift_below_threshold_does_not_emit_growth():
 
     # Pass A: 3 pixels.
     for i in range(3):
-        env = _envelope(lat=43.000 + 0.0001 * i, lon=-115.000,
-                        acq_time=f"{12:02d}{i:02d}",
-                        frp=15.0, satellite="N20")
-        handle_firms(env, subject="central.fire.hotspot.N20.high.us.id",
-                     data={}, now=1780747200 + i)
+        _ingest(_pixel(lat=43.000 + 0.0001 * i, lon=-115.000,
+                       acq_time=f"{12:02d}{i:02d}",
+                       frp=15.0, satellite="N20"), now=1780747200 + i)
 
     # Pass B: 0.3 mi N (below threshold).
     pass_b_lat = 43.000 + (0.3 / 69.0)
-    env_b = _envelope(lat=pass_b_lat, lon=-115.000,
-                      acq_time="1800", frp=15.0, satellite="N20")
-    data_b = {}
-    wire = handle_firms(env_b, subject="central.fire.hotspot.N20.high.us.id",
-                        data=data_b, now=1780768800)
+    wire, data_b = _ingest(_pixel(lat=pass_b_lat, lon=-115.000,
+                                  acq_time="1800", frp=15.0, satellite="N20"),
+                           now=1780768800)
     assert wire is None, f"sub-threshold drift should NOT broadcast: {wire}"
     assert data_b.get("category") != "wildfire_growth"
     # The pass row still exists with the (sub-threshold) drift recorded.
@@ -181,7 +174,7 @@ def test_drift_below_threshold_does_not_emit_growth():
 def test_halt_detector_fires_once_after_12h_idle():
     """Fire with last_pass_at 14h ago + no new pixels in that fire
     triggers halt on the next FIRMS pixel arrival (for any fire)."""
-    from meshai.env.fire_fusion import handle_firms, _maybe_emit_halt
+    from meshai.env.fire_fusion import _maybe_emit_halt
     from meshai.persistence import get_db
 
     now_epoch = 1780768800   # 2026-06-06 18:00 UTC
@@ -339,7 +332,6 @@ def test_pass_row_aggregates_match_member_pixels():
     """5 pixels attributed in the same pass yield ONE fire_passes row
     with pixel_count=5, total_frp = sum, pass_started_at = min(acq),
     pass_ended_at = max(acq), centroid = median."""
-    from meshai.env.fire_fusion import handle_firms
     from meshai.persistence import get_db
 
     _seed_fire(irwin_id="ID-AGG-001",
@@ -354,10 +346,8 @@ def test_pass_row_aggregates_match_member_pixels():
         (42.004, -114.004, "1220", 50.0),
     ]
     for la, lo, t, frp in pixels:
-        env = _envelope(lat=la, lon=lo, acq_time=t, frp=frp,
-                        satellite="N20")
-        handle_firms(env, subject="central.fire.hotspot.N20.high.us.id",
-                     data={}, now=1780747200)
+        _ingest(_pixel(lat=la, lon=lo, acq_time=t, frp=frp, satellite="N20"),
+                now=1780747200)
 
     row = get_db().execute(
         "SELECT pixel_count, total_frp, pass_centroid_lat, "

@@ -277,28 +277,13 @@ def test_fires_has_tombstoned_at_column():
     assert "tombstoned_at" in cols
 
 
-def test_wfigs_tombstone_stamps_column():
-    """A tombstone envelope sets fires.tombstoned_at."""
-    from meshai.env.fire_render import handle_wfigs
-    conn = get_db()
-    # Seed an active fire row.
-    irwin = "TOMB-1"
-    now = int(time.time())
-    conn.execute(
-        "INSERT INTO fires(irwin_id, incident_name, incident_type, "
-        "current_acres, current_contained_pct, lat, lon, county, state, "
-        "declared_at, last_event_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        (irwin, "Test", "WF", 100, 10, 43.6, -116.2, "Ada", "ID", now - 3600, now),
-    )
-    n = {"_kind": "wfigs_tombstone", "irwin_id": irwin}
-    envelope = {"data": {"adapter": "fires", "category": "fire.incident.removed",
-                          "id": irwin}}
-    handle_wfigs(n, envelope, "central.fire.incident.removed.id",
-                  data=None, now=now)
-    row = conn.execute("SELECT tombstoned_at FROM fires WHERE irwin_id=?",
-                        (irwin,)).fetchone()
-    assert row["tombstoned_at"] is not None
+# chore/ripout-2dii: test_wfigs_tombstone_stamps_column REMOVED. It asserted
+# handle_wfigs's OWN inline `UPDATE fires SET tombstoned_at=...` write -- a
+# dead-entrypoint-only side effect (handle_wfigs is gone, zero live
+# production callers; the native WFIGS path -- env/fires.py -- never emits a
+# `_kind=wfigs_tombstone` event, so nothing in the live system currently
+# stamps tombstoned_at). The column itself remains covered by
+# test_fires_has_tombstoned_at_column above.
 
 
 def _enable_wfigs_reminders():

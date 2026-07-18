@@ -122,19 +122,19 @@ register("wildfire_declared", _fire_fmt_mod.format)
 register("wildfire_incident", _fire_fmt_mod.format)
 register("wildfire_closed",   _fire_fmt_mod.format)
 
-# Phase-3c: FIRMS fusion broadcasts. Three categories the firms_handler emits,
-# all under toggle "fire". `wildfire_growth` REUSES the fire formatter — its
-# wire is the WFIGS incident render with a movement dict, and feeding the fire
-# formatter only {incident_name, is_update, movement, lat, lon} reproduces the
-# legacy _render() call byte-for-byte (the growth SELECT's current_* / declared_at
-# columns are NOT read by _render, so size/containment/date render as unknown/
-# absent — matched here by omitting those fields). `wildfire_spotting` and
-# `wildfire_halted` have their own terse wires -> formatters/firms.py. Registered
-# under the explicit strings (not the "fire" toggle) so the still-deferred FIRMS
-# native categories (wildfire_hotspot / new_ignition / unattributed_hotspot_cluster)
-# are NOT captured by the family fallback. NOT cut over this phase.
-register("wildfire_growth", _fire_fmt_mod.format)
-
+# Phase-3c: FIRMS fusion broadcasts. `wildfire_spotting` / `wildfire_halted`
+# have their own terse wires -> formatters/firms.py, registered below.
+# `wildfire_growth` is NOT registered here (chore/ripout-2dii): its events are
+# always fully precomposed (env/firms.py sets `_meshai_precomposed=True` +
+# `title=<wire>`), and it is not in `cutover.NATIVE_ALWAYS_DECIDE`, so
+# compose_mesh_message's formatter-invocation branch
+# (notifications/renderers/composer.py:343-347) can never reach a registered
+# formatter for this category live -- the precomposed-title bypass always wins
+# first. wildfire_growth's live wire comes from `env.fire_render._render`,
+# called directly by `env.fire_fusion._handle_pass_boundary`. A prior
+# registration here (reusing the fire formatter) was dead code kept from the
+# Phase-3c migration bake and has been removed; see TestRegistration in
+# tests/test_firms_refactor.py for the regression guard.
 from meshai.notifications.formatters import firms as _firms_fmt_mod  # noqa: E402,F401
 register("wildfire_spotting", _firms_fmt_mod.format)
 register("wildfire_halted",   _firms_fmt_mod.format)
