@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import concurrent.futures
 import logging
 import os
 import signal
@@ -153,13 +154,46 @@ class MeshAI:
         while self._running:
             await asyncio.sleep(1)
 
-            # Periodic MeshMonitor refresh
-            if self.meshmonitor_sync:
-                self.meshmonitor_sync.maybe_refresh()
-
-            # Periodic data store refresh and health computation
+            # Run the mesh/env/meshmonitor pollers concurrently so blocking
+            # network I/O (tick() fetches) never starves this loop — and
+            # therefore never starves the dashboard, which shares this same
+            # asyncio loop. Each refresh() internally awaits its own due
+            # ticks in worker threads; meshmonitor_sync.maybe_refresh is
+            # synchronous, so it is offloaded to a thread here directly.
+            # We await the WHOLE cycle before the next iteration, so no
+            # tick() thread ever overlaps the next cycle's bookkeeping.
+            _refresh_tasks = {}
             if self.data_store:
-                refreshed = self.data_store.refresh()
+                _refresh_tasks['data'] = self.data_store.refresh()
+            if self.env_store:
+                _refresh_tasks['env'] = self.env_store.refresh()
+            if self.meshmonitor_sync:
+                _refresh_tasks['mm'] = asyncio.to_thread(self.meshmonitor_sync.maybe_refresh)
+
+            if _refresh_tasks:
+                _refresh_results = dict(zip(
+                    _refresh_tasks.keys(),
+                    await asyncio.gather(*_refresh_tasks.values(), return_exceptions=True),
+                ))
+            else:
+                _refresh_results = {}
+
+            refreshed = _refresh_results.get('data')
+            if isinstance(refreshed, Exception):
+                logger.warning("Data store refresh error: %s", refreshed)
+                refreshed = False
+
+            env_changed = _refresh_results.get('env')
+            if isinstance(env_changed, Exception):
+                logger.debug("Env refresh error: %s", env_changed)
+                env_changed = False
+
+            _mm_result = _refresh_results.get('mm')
+            if isinstance(_mm_result, Exception):
+                logger.warning("MeshMonitor sync refresh error: %s", _mm_result)
+
+            # Periodic data store health computation
+            if self.data_store:
                 # Recompute health after refresh
                 if refreshed and self.health_engine:
                     self.health_engine.compute(self.data_store)
@@ -210,10 +244,9 @@ class MeshAI:
                                 except Exception:
                                     pass
 
-            # Environmental feed refresh
+            # Environmental feed alerting/broadcast (refresh already ran above)
             if self.env_store:
                 try:
-                    env_changed = self.env_store.refresh()
                     if env_changed and self.alert_engine:
                         env_alerts = self.alert_engine.check_environmental(self.env_store)
                         if env_alerts:
@@ -1005,6 +1038,14 @@ def main() -> None:
     # Handle signals
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+
+    # Size the default executor generously: mesh sources + env adapters
+    # (~7 sources, ~15 env adapters) now fetch concurrently via
+    # asyncio.to_thread() every tick, so they need thread headroom to avoid
+    # queuing behind each other on the default executor's small pool.
+    loop.set_default_executor(
+        concurrent.futures.ThreadPoolExecutor(max_workers=24, thread_name_prefix="meshai-io")
+    )
 
     def signal_handler(sig, frame):
         logger.info(f"Received signal {sig}")

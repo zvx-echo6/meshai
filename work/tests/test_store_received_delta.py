@@ -14,6 +14,7 @@ These tests drive the real EnvironmentalStore + EventBus with a fake adapter
 whose per-poll batch we control, and assert exactly which events reach the bus.
 """
 from __future__ import annotations
+import asyncio
 
 from meshai.env.store import EnvironmentalStore, _key_ext
 from meshai.config import EnvironmentalConfig
@@ -79,7 +80,7 @@ def test_first_poll_seeds_and_broadcasts_nothing():
     store, adapter, captured = _make_store()
     adapter.set_batch(["A", "B", "C"])
 
-    store.refresh()  # poll 1 — the backlog
+    asyncio.run(store.refresh())  # poll 1 — the backlog
 
     assert captured == [], "first poll must broadcast NOTHING (backlog seed)"
 
@@ -88,11 +89,11 @@ def test_second_poll_emits_only_newly_received():
     store, adapter, captured = _make_store()
 
     adapter.set_batch(["A", "B", "C"])
-    store.refresh()                       # poll 1: seed
+    asyncio.run(store.refresh())                       # poll 1: seed
     assert _emitted_ids(captured) == []
 
     adapter.set_batch(["A", "B", "C", "D"])
-    store.refresh()                       # poll 2: only D is new
+    asyncio.run(store.refresh())                       # poll 2: only D is new
     assert _emitted_ids(captured) == ["D"]
 
 
@@ -100,11 +101,11 @@ def test_unchanged_poll_emits_nothing():
     store, adapter, captured = _make_store()
 
     adapter.set_batch(["A", "B", "C"])
-    store.refresh()                       # poll 1: seed
+    asyncio.run(store.refresh())                       # poll 1: seed
     adapter.set_batch(["A", "B", "C", "D"])
-    store.refresh()                       # poll 2: D
+    asyncio.run(store.refresh())                       # poll 2: D
     adapter.set_batch(["A", "B", "C", "D"])
-    store.refresh()                       # poll 3: nothing new
+    asyncio.run(store.refresh())                       # poll 3: nothing new
 
     assert _emitted_ids(captured) == ["D"], "poll 3 has no new items"
 
@@ -113,21 +114,21 @@ def test_restart_reseeds_and_never_rebroadcasts_backlog():
     # Process 1 sees A,B,C,D and broadcasts D.
     store1, adapter1, cap1 = _make_store()
     adapter1.set_batch(["A", "B", "C"])
-    store1.refresh()
+    asyncio.run(store1.refresh())
     adapter1.set_batch(["A", "B", "C", "D"])
-    store1.refresh()
+    asyncio.run(store1.refresh())
     assert _emitted_ids(cap1) == ["D"]
 
     # RESTART: a fresh store has an empty seen-set. The SAME backlog [A,B,C,D]
     # arriving on its first poll must be re-seeded silently, not re-broadcast.
     store2, adapter2, cap2 = _make_store()
     adapter2.set_batch(["A", "B", "C", "D"])
-    store2.refresh()
+    asyncio.run(store2.refresh())
     assert cap2 == [], "restart must NEVER re-broadcast the existing backlog"
 
     # And a genuinely new item after the restart still broadcasts once.
     adapter2.set_batch(["A", "B", "C", "D", "E"])
-    store2.refresh()
+    asyncio.run(store2.refresh())
     assert _emitted_ids(cap2) == ["E"]
 
 
@@ -135,9 +136,9 @@ def test_stable_key_prevents_reemit_when_batch_reorders():
     # The same real-world items in a different order are NOT "newly received".
     store, adapter, captured = _make_store()
     adapter.set_batch(["A", "B", "C"])
-    store.refresh()                       # seed
+    asyncio.run(store.refresh())                       # seed
     adapter.set_batch(["C", "A", "B"])    # reordered, same items
-    store.refresh()
+    asyncio.run(store.refresh())
     assert captured == [], "reordering the same items emits nothing"
 
 
@@ -147,12 +148,12 @@ def test_disabled_for_days_then_backlog_is_not_broadcast():
     store, adapter, captured = _make_store()
     backlog = [f"evt{i}" for i in range(200)]
     adapter.set_batch(backlog)
-    store.refresh()                       # first poll after re-enable
+    asyncio.run(store.refresh())                       # first poll after re-enable
     assert captured == [], "a days-old backlog is seeded silently, never sent"
 
     # Only a truly new arrival afterward is announced.
     adapter.set_batch(backlog + ["fresh"])
-    store.refresh()
+    asyncio.run(store.refresh())
     assert _emitted_ids(captured) == ["fresh"]
 
 
@@ -290,11 +291,11 @@ def test_persistent_preseed_known_suppressed_new_emitted():
     assert len(store._seen["wzdx"]) == 5
 
     adapter.set_batch(known)
-    store.refresh()
+    asyncio.run(store.refresh())
     assert captured == [], "all 5 are durably-known → zero broadcast"
 
     adapter.set_batch(known + ["z_new"])
-    store.refresh()
+    asyncio.run(store.refresh())
     assert _emitted_ids(captured) == ["z_new"], "only the not-in-table id broadcasts"
 
 
@@ -307,9 +308,9 @@ def test_persistent_preseed_cross_tick_staging_no_leak():
     store, captured = _build_store(_GENERIC_NAME, adapter)
 
     adapter.set_batch(["A"])
-    store.refresh()                       # tick 1: only A present
+    asyncio.run(store.refresh())                       # tick 1: only A present
     adapter.set_batch(["A", "B"])
-    store.refresh()                       # tick 2: B appears (backlog)
+    asyncio.run(store.refresh())                       # tick 2: B appears (backlog)
     assert captured == [], "B is durably-known — must NOT leak on a later tick"
 
     # CONTROL: identical staging but NO durable rows → B leaks (proves the
@@ -325,11 +326,11 @@ def test_persistent_preseed_cross_tick_staging_no_leak():
     # Re-point ctrl events to a fresh source with no durable rows.
     for e in ctrl._batch:
         e["source"] = "wzdx_ctrl"
-    store2.refresh()
+    asyncio.run(store2.refresh())
     ctrl.set_batch(["A", "B"])
     for e in ctrl._batch:
         e["source"] = "wzdx_ctrl"
-    store2.refresh()
+    asyncio.run(store2.refresh())
     assert [e.title for e in cap2] == ["B"], "without a durable record, B leaks"
 
 
@@ -343,11 +344,11 @@ def test_incremental_empty_first_tick_then_only_new_broadcasts():
     store, captured = _build_store(_GENERIC_NAME, adapter)
 
     adapter.set_batch([])                 # empty first tick
-    store.refresh()
+    asyncio.run(store.refresh())
     assert captured == [], "empty tick emits nothing"
 
     adapter.set_batch(["A", "B", "C"])    # backlog A,B + new C
-    store.refresh()
+    asyncio.run(store.refresh())
     assert _emitted_ids(captured) == ["C"], "only the never-received C broadcasts"
 
 
@@ -360,18 +361,18 @@ def test_restart_against_same_persistent_db_never_rebroadcasts():
     a1 = _FakeWZDx()
     store1, cap1 = _build_store(_GENERIC_NAME, a1)
     a1.set_batch(backlog)
-    store1.refresh()
+    asyncio.run(store1.refresh())
     assert cap1 == [], "process 1: durable backlog is silent"
 
     # RESTART: brand-new store, same persistent DB → pre-seed reloads.
     a2 = _FakeWZDx()
     store2, cap2 = _build_store(_GENERIC_NAME, a2)
     a2.set_batch(backlog)
-    store2.refresh()
+    asyncio.run(store2.refresh())
     assert cap2 == [], "restart must NEVER re-broadcast the durable backlog"
 
     a2.set_batch(backlog + ["E"])
-    store2.refresh()
+    asyncio.run(store2.refresh())
     assert _emitted_ids(cap2) == ["E"], "a genuinely-new item still broadcasts once"
 
 
@@ -385,11 +386,11 @@ def test_persistent_preseed_quake_by_event_id():
     assert len(store._seen["usgs_quake"]) == 2
 
     adapter.set_batch(["us1000aaaa", "us1000bbbb"])
-    store.refresh()
+    asyncio.run(store.refresh())
     assert captured == [], "both quakes already received → zero broadcast"
 
     adapter.set_batch(["us1000aaaa", "us1000bbbb", "us1000cccc"])
-    store.refresh()
+    asyncio.run(store.refresh())
     assert _emitted_ids(captured) == ["us1000cccc"], "only the new quake broadcasts"
 
 
@@ -402,11 +403,11 @@ def test_no_durable_rows_falls_back_to_silent_first_poll():
     assert "wzdx" not in store._seeded, "0 durable rows → not pre-marked seeded"
 
     adapter.set_batch(["A", "B"])
-    store.refresh()
+    asyncio.run(store.refresh())
     assert captured == [], "first non-empty poll on a fresh DB is silent"
 
     adapter.set_batch(["A", "B", "C"])
-    store.refresh()
+    asyncio.run(store.refresh())
     assert _emitted_ids(captured) == ["C"]
 
 
@@ -486,9 +487,9 @@ def test_persistent_preseed_roads511_by_external_id():
     assert len(store._seen["511"]) == 4
 
     adapter.set_batch(known)
-    store.refresh()
+    asyncio.run(store.refresh())
     assert captured == [], "all 4 durably-known 511 rows → zero broadcast"
 
     adapter.set_batch(known + ["511_99"])
-    store.refresh()
+    asyncio.run(store.refresh())
     assert _emitted_ids(captured) == ["511_99"], "only the not-in-table id broadcasts"

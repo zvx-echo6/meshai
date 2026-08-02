@@ -6,6 +6,7 @@ This module replaces mesh_sources.py with a clean three-layer architecture:
 - Layer 3: Consumers read unified model (no field guessing)
 """
 
+import asyncio
 import json
 import logging
 import sqlite3
@@ -441,12 +442,16 @@ class MeshDataStore:
         if stale_nums:
             logger.info(f"Purged {len(stale_nums)} stale nodes (not heard in {STALE_NODE_THRESHOLD_DAYS} days)")
 
-    def refresh(self) -> bool:
+    async def refresh(self) -> bool:
         """Tick-based refresh. Called every second from the main loop.
 
-        Delegates to source tick() for sources that support it.
-        Only does a full rebuild when nodes/edges/topology change.
-        Only does a lightweight update when only packets change.
+        Delegates to source tick() for sources that support it. Due sources'
+        tick() calls (blocking network I/O) run concurrently in worker
+        threads and are AWAITED to completion before any bookkeeping, so the
+        event loop (and therefore the dashboard) stays responsive while
+        fetches are in flight. Only does a full rebuild when nodes/edges/
+        topology change. Only does a lightweight update when only packets
+        change.
 
         Returns:
             True if any data changed
@@ -456,25 +461,37 @@ class MeshDataStore:
         needs_rebuild = False
         needs_packet_update = False
 
+        due: list[tuple[str, object]] = []
         for name, source in self._sources.items():
             # Check if this source supports tick-based polling
             if hasattr(source, 'tick') and hasattr(source, '_tick_interval'):
                 if now - source._last_tick >= source._tick_interval:
-                    endpoint = source.tick()
-                    if endpoint:
-                        any_changed = True
-                        # Major changes require full rebuild
-                        if endpoint in ("nodes", "edges", "traceroutes", "topology", "telemetry"):
-                            needs_rebuild = True
-                        # Packet-only changes are lightweight
-                        elif endpoint in ("packets",):
-                            needs_packet_update = True
-                        # stats, counts, channels, solar, network just update cached data
+                    due.append((name, source))
             else:
                 # Legacy fallback for sources without tick support
                 if source.maybe_refresh():
                     any_changed = True
                     needs_rebuild = True
+
+        if due:
+            results = await asyncio.gather(
+                *(asyncio.to_thread(source.tick) for _, source in due),
+                return_exceptions=True,
+            )
+            for (name, source), result in zip(due, results):
+                if isinstance(result, Exception):
+                    logger.warning(f"Source {name} tick failed: {result}")
+                    continue
+                endpoint = result
+                if endpoint:
+                    any_changed = True
+                    # Major changes require full rebuild
+                    if endpoint in ("nodes", "edges", "traceroutes", "topology", "telemetry"):
+                        needs_rebuild = True
+                    # Packet-only changes are lightweight
+                    elif endpoint in ("packets",):
+                        needs_packet_update = True
+                    # stats, counts, channels, solar, network just update cached data
 
         if needs_rebuild:
             self._rebuild()

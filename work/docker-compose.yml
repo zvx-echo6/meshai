@@ -68,11 +68,11 @@ services:
           memory: 64M
 
     healthcheck:
-      test: ["CMD-SHELL", "test -f /tmp/meshai.pid && kill -0 $(cat /tmp/meshai.pid) 2>/dev/null && [ \"$(cat /tmp/meshai.link 2>/dev/null)\" = up ] || exit 1"]
+      test: ["CMD-SHELL", "curl -f -s -o /dev/null http://localhost:8080/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 15s
+      start_period: 240s
 
     logging:
       driver: "json-file"

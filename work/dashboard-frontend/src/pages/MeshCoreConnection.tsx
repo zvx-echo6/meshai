@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { Save, RotateCcw, RefreshCw, Check, ChevronRight, Trash2, Eye, EyeOff, Copy } from 'lucide-react'
+import { Save, RotateCcw, RefreshCw, Check, ChevronRight, Trash2, Eye, EyeOff, Copy, X } from 'lucide-react'
 import { TextInput, NumberInput, Toggle, ListInput, SelectInput } from './Config'
 import SerialPortPicker from '@/components/SerialPortPicker'
 import { notifyRestartRequired } from '@/components/RestartBanner'
@@ -58,6 +58,9 @@ export default function MeshCoreConnection() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [hasChanges, setHasChanges] = useState(false)
+  // Set when one or both config fetches fail; the form still renders (using
+  // safe defaults for whatever didn't load) instead of blanking the page.
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   // Test send state
   const [channelsActive, setChannelsActive] = useState(false)
@@ -81,22 +84,41 @@ export default function MeshCoreConnection() {
 
   const fetchConfig = useCallback(async () => {
     setLoading(true)
-    try {
-      const [data, mcCtx] = await Promise.all([
-        apiFetchConfig('connection') as Promise<ConnectionConfig>,
-        apiFetchConfig('meshcore_context') as Promise<MeshcoreContextCfg>,
-      ])
-      setConfig(data)
-      setOriginalConfig(JSON.parse(JSON.stringify(data)))
-      setMcContext(mcCtx)
-      setOriginalMcContext(JSON.parse(JSON.stringify(mcCtx)))
-      setHasChanges(false)
-      setError(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error')
-    } finally {
-      setLoading(false)
+    // Promise.allSettled so one section failing to load can't blank the
+    // whole page — each section is set independently from its own result,
+    // and any failure(s) are surfaced as a dismissible banner alongside the
+    // still-usable form (see the `!config` dead-end this replaces).
+    const [connResult, mcResult] = await Promise.allSettled([
+      apiFetchConfig('connection') as Promise<ConnectionConfig>,
+      apiFetchConfig('meshcore_context') as Promise<MeshcoreContextCfg>,
+    ])
+
+    const errors: string[] = []
+
+    if (connResult.status === 'fulfilled') {
+      setConfig(connResult.value)
+      setOriginalConfig(JSON.parse(JSON.stringify(connResult.value)))
+    } else {
+      errors.push(`connection (${connResult.reason instanceof Error ? connResult.reason.message : String(connResult.reason)})`)
+      // Fall back to an empty object (never null) so the form below always
+      // has something to render safe defaults from, and so the dirty-check
+      // diff below still has a baseline to compare edits against.
+      setConfig((c) => c ?? {})
+      setOriginalConfig((c) => c ?? {})
     }
+
+    if (mcResult.status === 'fulfilled') {
+      setMcContext(mcResult.value)
+      setOriginalMcContext(JSON.parse(JSON.stringify(mcResult.value)))
+    } else {
+      errors.push(`bot behavior (${mcResult.reason instanceof Error ? mcResult.reason.message : String(mcResult.reason)})`)
+      // Leave mcContext null — the "Bot behavior" card only renders when it
+      // is present, so a null value just hides that card cleanly.
+    }
+
+    setLoadError(errors.length ? `Couldn't load ${errors.join(' and ')}. Showing defaults — edits below are still safe to make and save.` : null)
+    setHasChanges(false)
+    setLoading(false)
   }, [])
 
   useEffect(() => {
@@ -207,10 +229,13 @@ export default function MeshCoreConnection() {
   }
 
   useEffect(() => {
-    if (config && originalConfig && mcContext && originalMcContext) {
+    // mcContext may be null (its fetch failed) — don't let that block
+    // detecting changes to the connection fields, which always load or
+    // fall back to an empty-object baseline in fetchConfig.
+    if (config && originalConfig) {
       const changed =
         JSON.stringify(config) !== JSON.stringify(originalConfig) ||
-        JSON.stringify(mcContext) !== JSON.stringify(originalMcContext)
+        (!!mcContext && !!originalMcContext && JSON.stringify(mcContext) !== JSON.stringify(originalMcContext))
       setHasChanges(changed)
     }
   }, [config, originalConfig, mcContext, originalMcContext])
@@ -221,22 +246,24 @@ export default function MeshCoreConnection() {
   }, [hasChanges, setDirty])
 
   const upd = (patch: Partial<ConnectionConfig>) =>
-    setConfig((c) => (c ? { ...c, ...patch } : c))
+    // Build off an empty object rather than bailing when config is still
+    // null (e.g. mid-retry) — edits should never be silently dropped.
+    setConfig((c) => ({ ...(c ?? {}), ...patch }))
 
   const saveConfig = async () => {
-    if (!config || !mcContext) return
+    if (!config) return
     setSaving(true)
     setError(null)
     setSuccess(null)
     try {
       // PUT the whole objects so sibling fields (Meshtastic connection fields,
-      // any other meshcore_context keys) are preserved.
-      const results = await Promise.all([
-        apiUpdateConfig('connection', config),
-        apiUpdateConfig('meshcore_context', mcContext),
-      ])
+      // any other meshcore_context keys) are preserved. Only PUT
+      // meshcore_context if it actually loaded — its fetch may have failed.
+      const puts: Promise<{ restart_required?: boolean }>[] = [apiUpdateConfig('connection', config)]
+      if (mcContext) puts.push(apiUpdateConfig('meshcore_context', mcContext))
+      const results = await Promise.all(puts)
       setOriginalConfig(JSON.parse(JSON.stringify(config)))
-      setOriginalMcContext(JSON.parse(JSON.stringify(mcContext)))
+      if (mcContext) setOriginalMcContext(JSON.parse(JSON.stringify(mcContext)))
       setHasChanges(false)
       setDirty(false)
       setSuccess('MeshCore connection saved successfully')
@@ -276,13 +303,10 @@ export default function MeshCoreConnection() {
     )
   }
 
-  if (!config) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-red-400">Failed to load connection config</div>
-      </div>
-    )
-  }
+  // Always render the form below, even if the fetch failed — `cfg` supplies
+  // safe defaults so the connection-type/host/port fields and Save/Discard
+  // stay usable. The failure itself is surfaced by the loadError banner.
+  const cfg: ConnectionConfig = config ?? {}
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
@@ -320,6 +344,30 @@ export default function MeshCoreConnection() {
         </div>
       </div>
 
+      {/* Load-error banner — dismissible, with its own Retry so the page
+          never dead-ends when a config section fails to fetch. The form
+          below stays fully editable regardless. */}
+      {loadError && (
+        <div className="p-3 text-sm bg-red-500/10 text-red-400 border border-red-500/20 flex items-start gap-3">
+          <div className="flex-1">{loadError}</div>
+          <button
+            onClick={fetchConfig}
+            className="flex items-center gap-1 px-2 py-1 bg-red-500/20 hover:bg-red-500/30 rounded text-red-300 text-xs shrink-0"
+          >
+            <RefreshCw size={12} />
+            Retry
+          </button>
+          <button
+            onClick={() => setLoadError(null)}
+            title="Dismiss"
+            aria-label="Dismiss load error"
+            className="text-red-400 hover:text-red-200 shrink-0"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       {/* Status messages */}
       {error && (
         <div className="p-3 text-sm bg-red-500/10 text-red-400 border border-red-500/20">{error}</div>
@@ -341,7 +389,7 @@ export default function MeshCoreConnection() {
         </p>
         <SelectInput
           label="Connection Type"
-          value={config.meshcore_conn_type ?? 'tcp'}
+          value={cfg.meshcore_conn_type ?? 'tcp'}
           onChange={(v) => upd({ meshcore_conn_type: v })}
           options={[
             { value: 'tcp', label: 'TCP (companion)' },
@@ -350,11 +398,11 @@ export default function MeshCoreConnection() {
           ]}
           helper="TCP for a companion frame server, Serial for a USB node, BLE for Bluetooth"
         />
-        {(config.meshcore_conn_type ?? 'tcp') === 'tcp' && (
+        {(cfg.meshcore_conn_type ?? 'tcp') === 'tcp' && (
           <div className="grid grid-cols-2 gap-4">
             <TextInput
               label="MeshCore Host"
-              value={config.meshcore_host ?? ''}
+              value={cfg.meshcore_host ?? ''}
               onChange={(v) => upd({ meshcore_host: v })}
               placeholder="192.168.1.100"
               helper="IP or hostname of the companion frame server"
@@ -362,7 +410,7 @@ export default function MeshCoreConnection() {
             />
             <NumberInput
               label="MeshCore Port"
-              value={config.meshcore_port ?? 5525}
+              value={cfg.meshcore_port ?? 5525}
               onChange={(v) => upd({ meshcore_port: v })}
               min={1}
               max={65535}
@@ -370,27 +418,27 @@ export default function MeshCoreConnection() {
             />
           </div>
         )}
-        {(config.meshcore_conn_type ?? 'tcp') === 'serial' && (
+        {(cfg.meshcore_conn_type ?? 'tcp') === 'serial' && (
           <>
             <SerialPortPicker
               label="MeshCore Serial Port"
-              value={config.meshcore_serial_port ?? ''}
+              value={cfg.meshcore_serial_port ?? ''}
               onChange={(v) => upd({ meshcore_serial_port: v })}
               helper="USB-attached MeshCore node — Detect fills a stable by-id path"
             />
             <NumberInput
               label="Baud Rate"
-              value={config.meshcore_baud ?? 115200}
+              value={cfg.meshcore_baud ?? 115200}
               onChange={(v) => upd({ meshcore_baud: v })}
               min={1200}
               helper="Serial baud rate (default 115200)"
             />
           </>
         )}
-        {(config.meshcore_conn_type ?? 'tcp') === 'ble' && (
+        {(cfg.meshcore_conn_type ?? 'tcp') === 'ble' && (
           <TextInput
             label="BLE Address"
-            value={config.meshcore_ble_address ?? ''}
+            value={cfg.meshcore_ble_address ?? ''}
             onChange={(v) => upd({ meshcore_ble_address: v })}
             placeholder="AA:BB:CC:DD:EE:FF"
             helper="Leave blank to scan/pair the first available device"
@@ -406,7 +454,7 @@ export default function MeshCoreConnection() {
         </div>
         <Toggle
           label="Auto-add contacts (AIDA adds any node it hears — required to DM anyone)"
-          checked={config.meshcore_auto_add_contacts ?? true}
+          checked={cfg.meshcore_auto_add_contacts ?? true}
           onChange={(v) => upd({ meshcore_auto_add_contacts: v })}
           helper="Enables firmware CMD 58 (set_autoadd_config) at connect so AIDA automatically adds every node it hears an advert from as a contact, enabling DM send/decrypt without manual contact exchange"
         />
@@ -418,13 +466,13 @@ export default function MeshCoreConnection() {
           <div className="mt-4 space-y-4 pl-6 border-l border-[#1e2a3a]">
             <Toggle
               label="Auto-reconnect (MeshCore)"
-              checked={config.meshcore_auto_reconnect ?? true}
+              checked={cfg.meshcore_auto_reconnect ?? true}
               onChange={(v) => upd({ meshcore_auto_reconnect: v })}
               helper="Automatically reconnect to the MeshCore companion if the link drops"
             />
             <NumberInput
               label="Max Reconnect Attempts"
-              value={config.meshcore_max_reconnect_attempts ?? 5}
+              value={cfg.meshcore_max_reconnect_attempts ?? 5}
               onChange={(v) => upd({ meshcore_max_reconnect_attempts: v })}
               min={0}
               helper="Maximum reconnect attempts before giving up (0 = unlimited)"

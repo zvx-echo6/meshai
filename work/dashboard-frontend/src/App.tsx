@@ -24,12 +24,14 @@ import MeshCoreDangerZones from './pages/MeshCoreDangerZones'
 import Coverage from './pages/Coverage'
 import { ToastProvider } from './components/ToastProvider'
 import { DirtyProvider } from './context/DirtyContext'
+import ErrorBoundary from './components/ErrorBoundary'
 
 function App() {
   return (
     <DirtyProvider>
     <ToastProvider>
       <Layout>
+        <ErrorBoundary>
         <Routes>
           {/* Core routes */}
           <Route path="/" element={<Dashboard />} />
@@ -69,6 +71,7 @@ function App() {
           <Route path="/meshcore/companion" element={<MeshCoreCompanion />} />
           <Route path="/meshcore/danger-zones" element={<MeshCoreDangerZones />} />
         </Routes>
+        </ErrorBoundary>
       </Layout>
     </ToastProvider>
     </DirtyProvider>
