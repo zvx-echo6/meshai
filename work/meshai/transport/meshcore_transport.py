@@ -43,6 +43,29 @@ _TELEMETRY_MAX_FAILURES = 3
 # inside the 300s reaper window with margin to spare.
 _KEEPALIVE_INTERVAL_SECONDS = 120
 
+# --- Reconnect persistence ("0 = unlimited" sentinel) ----------------------
+# config.py documents meshcore_max_reconnect_attempts as "0 = unlimited", but
+# that sentinel was never implemented here — the value was passed straight
+# through to the meshcore lib's ConnectionManager, whose retry loop is
+# `while self._reconnect_attempts < self.max_reconnect_attempts`. Taken
+# literally, 0 means ZERO attempts (immediate give-up), the opposite of
+# "unlimited", and any small bounded value (the shipped default is 5, at the
+# lib's flat 1s-per-attempt cadence) exhausts after ~5 seconds and then the
+# link stays down PERMANENTLY — there is no external supervisor for MeshCore
+# (see main.py's watchdog guard: "MeshCoreTransport manages its own
+# reconnect via the meshcore lib's auto_reconnect parameter"), so nothing
+# ever notices and retries again after that. A radio/vnode bounce longer
+# than ~5s (e.g. the 2026-08-02 device-perm heal test) killed MeshCore for
+# good until a manual container restart.
+#
+# Fix: honor the documented sentinel for real. connect() below translates a
+# configured 0 into this effectively-unbounded count, so the lib's own
+# proven-safe retry loop (still local TCP only, still ~1 attempt/sec, still
+# WITHOUT re-sending the connect-time self-advert — see
+# _post_reconnect_setup_async) just keeps going until the vnode/radio comes
+# back, no matter how long the outage lasts.
+_MC_RECONNECT_ATTEMPTS_UNLIMITED = 2_147_483_647
+
 # Numeric Cayenne-LPP type id → decoded field name.  Ids not in this map are
 # passed through as ``lpp_<id>`` so nothing is silently dropped.
 _LPP_ID_TO_FIELD = {
@@ -1976,6 +1999,16 @@ class MeshCoreTransport(MeshTransport):
         ble_address = getattr(self.config, "meshcore_ble_address", "")
         auto_reconnect = getattr(self.config, "meshcore_auto_reconnect", True)
         max_attempts = getattr(self.config, "meshcore_max_reconnect_attempts", 5)
+        if max_attempts <= 0:
+            # Documented sentinel (config.py: "0 = unlimited") — see
+            # _MC_RECONNECT_ATTEMPTS_UNLIMITED's docstring for why this was
+            # never actually unlimited before and why translating it here is
+            # the fix.
+            logger.info(
+                "MeshCoreTransport: meshcore_max_reconnect_attempts=%s (unlimited) -> %d",
+                max_attempts, _MC_RECONNECT_ATTEMPTS_UNLIMITED,
+            )
+            max_attempts = _MC_RECONNECT_ATTEMPTS_UNLIMITED
 
         # Human-readable target for logging — from the same descriptor that
         # self_info() reports, so the log and the API never disagree.

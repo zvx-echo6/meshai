@@ -51,7 +51,7 @@ class ConnectionConfig:
     meshcore_host: str = ""                     # pyMC companion frame server host
     meshcore_port: int = 5050                   # pyMC companion frame server port
     meshcore_auto_reconnect: bool = True        # enable meshcore lib auto-reconnect
-    meshcore_max_reconnect_attempts: int = 5    # max reconnect attempts (0 = unlimited)
+    meshcore_max_reconnect_attempts: int = 0    # max reconnect attempts (0 = unlimited)
     meshcore_advert_interval_seconds: int = 86400  # periodic self-advert interval, 24h (0 = disabled)
     # MeshCore connection type: tcp | serial | ble (default tcp for back-compat)
     meshcore_conn_type: str = "tcp"
