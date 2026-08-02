@@ -20,6 +20,7 @@ adapter whose per-poll coalesced set we control, then assert directly against
 traffic_events AND against the bus (nothing must ever be dispatched).
 """
 from __future__ import annotations
+import asyncio
 
 from meshai.env.store import EnvironmentalStore
 from meshai.config import EnvironmentalConfig
@@ -147,7 +148,7 @@ def test_first_poll_persists_current_set_and_broadcasts_nothing():
     store, captured = _build_store(adapter)
     adapter.set_zones(ZONES3)
 
-    store.refresh()  # first (cold-start) poll
+    asyncio.run(store.refresh())  # first (cold-start) poll
 
     rows = _wzdx_rows()
     exts = {r["external_id"] for r in rows}
@@ -171,7 +172,7 @@ def test_columns_match_summary_and_dm_queries():
     adapter = _FakeWZDx()
     store, _ = _build_store(adapter)
     adapter.set_zones([ZONES3[1]])  # the full_closure I-84 zone
-    store.refresh()
+    asyncio.run(store.refresh())
 
     r = _wzdx_rows()[0]
     assert r["road"] == "I-84"
@@ -188,12 +189,12 @@ def test_subsequent_poll_reconciles_removed_zone():
     adapter = _FakeWZDx()
     store, captured = _build_store(adapter)
     adapter.set_zones(ZONES3)
-    store.refresh()
+    asyncio.run(store.refresh())
     assert len(_wzdx_rows()) == 3
 
     # Next poll: US-20 dropped out; I-84 + ID-55 remain.
     adapter.set_zones([ZONES3[1], ZONES3[2]])
-    store.refresh()
+    asyncio.run(store.refresh())
 
     exts = {r["external_id"] for r in _wzdx_rows()}
     assert exts == {ZONES3[1]["ext"], ZONES3[2]["ext"]}, (
@@ -207,11 +208,11 @@ def test_empty_or_failed_fetch_does_not_wipe_existing_rows():
     adapter = _FakeWZDx()
     store, _ = _build_store(adapter)
     adapter.set_zones(ZONES3)
-    store.refresh()
+    asyncio.run(store.refresh())
     assert len(_wzdx_rows()) == 3
 
     adapter.set_raw([])          # empty/failed poll
-    store.refresh()
+    asyncio.run(store.refresh())
     assert len(_wzdx_rows()) == 3, (
         "an empty fetch must NEVER wipe the existing active set")
 
@@ -225,7 +226,7 @@ def test_upsert_preserves_first_seen_at_and_refreshes_end_at():
 
     z = dict(ZONES3[0]); z["end_at"] = 1000
     adapter.set_zones([z])
-    store.refresh()
+    asyncio.run(store.refresh())
     r1 = _wzdx_rows()[0]
     first_seen = r1["first_seen_at"]
     assert r1["end_at"] == 1000
@@ -233,7 +234,7 @@ def test_upsert_preserves_first_seen_at_and_refreshes_end_at():
     # Same zone reappears with a LATER end_at.
     z2 = dict(ZONES3[0]); z2["end_at"] = 5000
     adapter.set_zones([z2])
-    store.refresh()
+    asyncio.run(store.refresh())
     r2 = _wzdx_rows()[0]
     assert r2["first_seen_at"] == first_seen, "first_seen_at must be preserved"
     assert r2["end_at"] == 5000, "end_at must refresh from the feed"
@@ -254,7 +255,7 @@ def test_expiry_end_at_preserved_for_not_expired_filter():
          "sub_type": "x", "impact": "partial", "end_at": now - 10_000},  # expired
     ]
     adapter.set_zones(zones)
-    store.refresh()
+    asyncio.run(store.refresh())
 
     # All 3 persisted (ingest does not itself drop expired rows) ...
     assert len(_wzdx_rows()) == 3
@@ -269,7 +270,7 @@ def test_id_less_zone_is_skipped_not_fatal():
     store, _ = _build_store(adapter)
     good = ZONES3[0]
     adapter.set_zones([good])
-    store.refresh()
+    asyncio.run(store.refresh())
     assert len(_wzdx_rows()) == 1
 
     # Poll with the good zone plus an id-less junk event.
@@ -277,7 +278,7 @@ def test_id_less_zone_is_skipped_not_fatal():
     junk = {"source": "wzdx", "event_id": None, "external_id": None,
             "lat": 5.0, "lon": 5.0, "normalized": {}, "fetched_at": 0}
     adapter._batch.append(junk)
-    store.refresh()
+    asyncio.run(store.refresh())
 
     rows = _wzdx_rows()
     assert {r["external_id"] for r in rows} == {good["ext"]}, (
@@ -296,7 +297,7 @@ def test_bulk_current_set_persists_all_like_the_real_127():
         for i in range(127)
     ]
     adapter.set_zones(zones)
-    store.refresh()
+    asyncio.run(store.refresh())
 
     assert len(_wzdx_rows()) == 127
     assert _summary_visible_count(now=0) == 127, (

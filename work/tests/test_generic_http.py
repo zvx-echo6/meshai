@@ -8,6 +8,7 @@ Ported-behavior coverage:
   * geometry-path Point -> centroid extraction
 """
 from __future__ import annotations
+import asyncio
 
 import json
 
@@ -203,7 +204,7 @@ def test_cold_start_silent_first_poll_seeds_persists_no_emit():
     # Stub the network fetch with one active outage.
     adapter._fetch = lambda url, extra_headers=None: _payload([IDAHO_POWER_ITEM])
 
-    store.refresh()  # poll 1 == pre-existing backlog
+    asyncio.run(store.refresh())  # poll 1 == pre-existing backlog
 
     # Nothing broadcast on the cold-start poll...
     assert captured == [], "first poll must broadcast NOTHING (cold-start seed)"
@@ -220,14 +221,14 @@ def test_cold_start_silent_first_poll_seeds_persists_no_emit():
 def test_later_poll_broadcasts_newly_received_item():
     store, adapter, captured = _make_store_with_generic()
     adapter._fetch = lambda url, extra_headers=None: _payload([IDAHO_POWER_ITEM])
-    store.refresh()  # poll 1 — seed silently
+    asyncio.run(store.refresh())  # poll 1 — seed silently
     assert captured == []
 
     # A genuinely NEW outage appears on a later poll -> it must broadcast.
     new_item = dict(IDAHO_POWER_ITEM, omsOutageId="456", omsCustomerCount=99)
     adapter._fetch = lambda url, extra_headers=None: _payload([IDAHO_POWER_ITEM, new_item])
     adapter._last_poll.clear()  # force cadence to elapse
-    store.refresh()  # poll 2
+    asyncio.run(store.refresh())  # poll 2
 
     assert len(captured) == 1, "only the newly-received outage broadcasts"
     assert captured[0].category == "power_outage"
@@ -367,7 +368,7 @@ def test_build_generic_detail_reader():
     from meshai.notifications.env_reporter import EnvReporter
     store, adapter, captured = _make_store_with_generic()
     adapter._fetch = lambda url, extra_headers=None: _payload([IDAHO_POWER_ITEM])
-    store.refresh()
+    asyncio.run(store.refresh())
 
     text = EnvReporter().build_generic_detail()
     assert "idaho_power" in text

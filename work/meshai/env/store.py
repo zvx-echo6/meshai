@@ -1,5 +1,6 @@
 """Environmental data store with tick-based adapter polling."""
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -438,20 +439,38 @@ class EnvironmentalStore:
         from meshai import coverage as _cov
         return _cov.resolve_adapter_coverage(adapter, self._coverage_bbox, "native")
 
-    def refresh(self) -> bool:
+    async def refresh(self) -> bool:
         """Called every second from main loop. Ticks each adapter.
+
+        Adapter tick() calls (blocking network I/O) run concurrently in
+        worker threads and are AWAITED to completion before ingest, so the
+        event loop stays responsive while fetches are in flight. Ingest
+        (DB/EventBus work) then runs on the loop thread once all ticks are
+        done, exactly as before, so no thread ever overlaps ingest.
 
         Returns:
             True if any data changed
         """
         changed = False
-        for name, adapter in self._adapters.items():
-            try:
-                if adapter.tick():
-                    changed = True
+        adapters = list(self._adapters.items())
+        if not adapters:
+            self._purge_expired()
+            return changed
+
+        results = await asyncio.gather(
+            *(asyncio.to_thread(adapter.tick) for _, adapter in adapters),
+            return_exceptions=True,
+        )
+        for (name, adapter), result in zip(adapters, results):
+            if isinstance(result, Exception):
+                logger.warning("Env adapter %s error: %s", name, result)
+                continue
+            if result:
+                changed = True
+                try:
                     self._ingest(name, adapter)
-            except Exception as e:
-                logger.warning("Env adapter %s error: %s", name, e)
+                except Exception as e:
+                    logger.warning("Env adapter %s error: %s", name, e)
 
         self._purge_expired()
         return changed

@@ -36,6 +36,13 @@ _TELEMETRY_MIN_INTERVAL_SECONDS = 300
 # dropped from the auto-poll rotation (a manual "Poll now" un-sticks it).
 _TELEMETRY_MAX_FAILURES = 3
 
+# --- Companion-link keepalive tuning --------------------------------------
+# MeshMonitor's MeshCore vnode (the shared companion-link server meshai
+# attaches to) reaps any client idle >5 min, where "idle" means no bytes seen
+# FROM the client — a periodic LOCAL query resets that clock. 120s is well
+# inside the 300s reaper window with margin to spare.
+_KEEPALIVE_INTERVAL_SECONDS = 120
+
 # Numeric Cayenne-LPP type id → decoded field name.  Ids not in this map are
 # passed through as ``lpp_<id>`` so nothing is silently dropped.
 _LPP_ID_TO_FIELD = {
@@ -132,6 +139,8 @@ class MeshCoreTransport(MeshTransport):
         self._advert_task = None
         # asyncio.Task handle for the telemetry auto-poll loop; None when inactive.
         self._telemetry_task = None
+        # asyncio.Task handle for the companion-link keepalive loop; None when inactive.
+        self._keepalive_task = None
         # Telemetry availability/bookkeeping (shared by poller + on-demand):
         #   _telemetry_cache: contact-id -> {contact, data, polled_at, available}
         #   _telemetry_failures: contact-id -> consecutive-timeout count
@@ -577,15 +586,37 @@ class MeshCoreTransport(MeshTransport):
         )
         return acked or (not result.is_error())
 
+    def _resolve_mc_channel_idx(self, meshcore_channel: str) -> Optional[int]:
+        """Resolve a config channel name to the companion's channel slot.
+
+        Tries an exact match first (fast path, preserves existing behavior
+        for e.g. ``#bot``). Falls back to a match that ignores a single
+        leading ``#`` and case, since after the radio moved to MeshMonitor's
+        vnode the companion enumerates region channels WITHOUT the leading
+        ``#`` that meshai's region_routes config still carries (e.g. config
+        ``#sc-id-aida`` vs. companion ``sc-id-aida``) — same channel/key,
+        just a display-name difference upstream.
+        """
+        idx = self._chan_name_to_idx.get(meshcore_channel)
+        if idx is not None:
+            return idx
+        canon = meshcore_channel[1:] if meshcore_channel.startswith("#") else meshcore_channel
+        canon = canon.casefold()
+        for name, slot in self._chan_name_to_idx.items():
+            name_canon = name[1:] if name.startswith("#") else name
+            if name_canon.casefold() == canon:
+                return slot
+        return None
+
     async def _do_mc_broadcast_async(self, text: str, meshcore_channel: str) -> bool:
         """Channel broadcast on the MC loop (replaces send_message() broadcast branch)."""
         if self._mc is None:
             return False
-        idx = self._chan_name_to_idx.get(meshcore_channel)
+        idx = self._resolve_mc_channel_idx(meshcore_channel)
         if idx is None:
             # Lazy async re-enumeration (no _run_coro deadlock risk).
             await self._enumerate_channels_async()
-            idx = self._chan_name_to_idx.get(meshcore_channel)
+            idx = self._resolve_mc_channel_idx(meshcore_channel)
         if idx is None:
             logger.warning("MC channel '%s' not on companion; skipping", meshcore_channel)
             return False
@@ -1777,6 +1808,66 @@ class MeshCoreTransport(MeshTransport):
             self._loop.call_soon_threadsafe(task.cancel)
 
     # ------------------------------------------------------------------
+    # Companion-link keepalive (Task on the dedicated loop)
+    # ------------------------------------------------------------------
+
+    async def _keepalive_loop(self) -> None:
+        """Quiet LOCAL companion-link keepalive (Task on the dedicated loop).
+
+        MeshMonitor's MeshCore vnode disconnects any client idle >5 min,
+        where "idle" means no bytes seen FROM the client — its
+        ``lastActivity`` only updates on data we send it, never on data it
+        sends us.  The self-advert (every 24h by default) and telemetry poll
+        (30 min default, and only when contacts are configured) are both far
+        too infrequent to keep that clock fresh, so the link was silently
+        reaped and never recovered (``meshcore_auto_reconnect`` is the
+        recovery safety net; this loop is the prevention).
+
+        Every ``_KEEPALIVE_INTERVAL_SECONDS`` (while connected), issues
+        ``commands.get_time()`` — a single-byte companion opcode (CMD 0x05)
+        that reads the node's own onboard clock and returns CURRENT_TIME.
+        It carries no destination/contact and has no mesh-routing semantics
+        (unlike send_advert/send_msg/send_chan_msg), so the firmware answers
+        it purely locally over the companion link — it does not key the
+        radio or emit an RF packet. Runs directly on the MC loop (NOT
+        through the send queue/pacing — it is a device-info query, not a
+        mesh send, so it should never wait behind or delay a real send).
+
+        Stops on CancelledError (disconnect). A transient query failure is
+        logged and ignored — the loop keeps ticking every interval either
+        way, since the point is resetting the vnode's clock on our next
+        successful frame, not the query result itself.
+        """
+        try:
+            while True:
+                await asyncio.sleep(_KEEPALIVE_INTERVAL_SECONDS)
+                if not self._connected or self._mc is None:
+                    return
+                try:
+                    await self._mc.commands.get_time()
+                    logger.debug("MC: companion-link keepalive query sent")
+                except Exception as exc:
+                    logger.debug("MC: keepalive get_time failed (non-fatal): %s", exc)
+        except asyncio.CancelledError:
+            logger.debug("MC: keepalive task cancelled")
+            raise
+
+    def _schedule_keepalive(self) -> None:
+        """Create the keepalive asyncio.Task on the dedicated loop (thread-safe)."""
+        def _arm() -> None:
+            self._keepalive_task = asyncio.get_event_loop().create_task(
+                self._keepalive_loop()
+            )
+        self._loop.call_soon_threadsafe(_arm)
+
+    def _cancel_keepalive(self) -> None:
+        """Cancel the keepalive task (thread-safe).  Called at disconnect."""
+        task = self._keepalive_task
+        self._keepalive_task = None
+        if task is not None and self._loop is not None and self._loop.is_running():
+            self._loop.call_soon_threadsafe(task.cancel)
+
+    # ------------------------------------------------------------------
     # Internal coroutines (run on the dedicated loop)
     # ------------------------------------------------------------------
 
@@ -1963,6 +2054,12 @@ class MeshCoreTransport(MeshTransport):
         if telem_interval > 0:
             self._schedule_telemetry_poll()
 
+        # Arm the quiet local companion-link keepalive — unconditional (not
+        # a mesh operation, no config gate): protects against the
+        # MeshMonitor vnode's 5-min idle reaper regardless of advert/
+        # telemetry cadence.
+        self._schedule_keepalive()
+
         logger.info(
             "MeshCoreTransport: connected as %s (pubkey %s)",
             self._self_info.get("name", "unknown"),
@@ -1971,9 +2068,10 @@ class MeshCoreTransport(MeshTransport):
 
     def disconnect(self) -> None:
         """Disconnect and stop the event loop thread."""
-        # Cancel periodic advert + telemetry poll before tearing down the loop.
+        # Cancel periodic advert + telemetry poll + keepalive before tearing down the loop.
         self._cancel_periodic_advert()
         self._cancel_telemetry_poll()
+        self._cancel_keepalive()
         if self._mc is not None:
             try:
                 self._run_coro(self._do_disconnect(), timeout=10.0)
@@ -2078,12 +2176,12 @@ class MeshCoreTransport(MeshTransport):
                     )
                     return True
                 # Resolve NAME → slot against the live companion channel table.
-                idx = self._chan_name_to_idx.get(meshcore_channel)
+                idx = self._resolve_mc_channel_idx(meshcore_channel)
                 if idx is None:
                     # One lazy re-enumeration in case the table changed since
                     # connect (e.g. a channel was provisioned after startup).
                     self._enumerate_channels()
-                    idx = self._chan_name_to_idx.get(meshcore_channel)
+                    idx = self._resolve_mc_channel_idx(meshcore_channel)
                 if idx is None:
                     # Never blind-send to a guessed slot.
                     logger.warning(
@@ -2263,10 +2361,65 @@ class MeshCoreTransport(MeshTransport):
         self._connected = False
         logger.warning("MeshCoreTransport: DISCONNECTED event received")
 
+    async def _post_reconnect_setup_async(self) -> None:
+        """Redo connect()'s LOCAL post-connect setup after an auto-reconnect.
+
+        connect() does this setup once, on the initial connect: rebuild
+        ``_chan_name_to_idx`` (so channel-name broadcasts can resolve a
+        slot) and arm the companion-link keepalive (so MeshMonitor's vnode
+        doesn't reap the link again at 5 min idle). The meshcore lib's
+        auto-reconnect only re-establishes the socket and fires CONNECTED
+        (-> ``_on_connect_event``) — it does not repeat that setup, so a
+        reconnected link was left with an empty channel table and no
+        keepalive until the reaper cut it again.
+
+        Both steps here are local companion queries/timers only —
+        ``_enumerate_channels_async`` calls ``get_channel()`` and the
+        keepalive calls ``get_time()`` (see their docstrings); neither
+        keys the radio or emits an RF packet. This deliberately excludes
+        connect()'s ``send_advert()`` — that IS a transmission, and must
+        stay confined to the initial connect() path, never replayed on
+        reconnect.
+
+        Keepalive re-arm is cancel-then-schedule (idempotent) so it never
+        double-schedules the task.
+
+        Runs as a fire-and-forget task on the dedicated MC loop (see
+        ``_on_connect_event``) rather than being awaited inline via
+        ``_run_coro``: the meshcore lib invokes ``_on_connect_event`` from
+        within that same loop (like ``_on_new_contact``), so a blocking
+        ``_run_coro().result()`` call here would deadlock it.
+        """
+        try:
+            await self._enumerate_channels_async()
+        except Exception:
+            logger.warning(
+                "MeshCore: post-reconnect channel re-enumeration failed", exc_info=True
+            )
+        try:
+            self._cancel_keepalive()
+            self._schedule_keepalive()
+        except Exception:
+            logger.warning(
+                "MeshCore: post-reconnect keepalive re-arm failed", exc_info=True
+            )
+
     def _on_connect_event(self, event=None) -> None:
-        """Track link state: CONNECTED (auto-reconnect succeeded)."""
+        """Track link state: CONNECTED (auto-reconnect succeeded).
+
+        Schedules ``_post_reconnect_setup_async`` fire-and-forget on the
+        dedicated MC loop — see that method's docstring for why this must
+        not block (``_run_coro`` would deadlock from inside this callback,
+        exactly as noted in ``_on_new_contact``).
+        """
         self._connected = True
         logger.info("MeshCoreTransport: CONNECTED event received")
+        try:
+            loop = getattr(self, "_loop", None)
+            if loop is not None and loop.is_running():
+                asyncio.run_coroutine_threadsafe(self._post_reconnect_setup_async(), loop)
+        except Exception:
+            logger.debug("MeshCore: scheduling post-reconnect setup failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # Node identity / topology (MeshTransport abstract methods)

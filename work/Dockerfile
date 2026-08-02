@@ -91,8 +91,8 @@ VOLUME ["/data"]
 EXPOSE 8080
 
 # Health check - verify bot process is alive via PID file
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD test -f /tmp/meshai.pid && kill -0 $(cat /tmp/meshai.pid) 2>/dev/null && [ "$(cat /tmp/meshai.link 2>/dev/null)" = up ] || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=240s --retries=3 \
+    CMD curl -f -s -o /dev/null http://localhost:8080/ || exit 1
 
 # Entrypoint writes default config on first run, then starts the bot
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
