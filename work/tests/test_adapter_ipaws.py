@@ -349,6 +349,12 @@ def test_decider_uses_own_table_not_nws(_isolate_meshai_db):
 # ============================================================
 
 def test_formatter_renders_civil_alert():
+    """Idaho CEM headline ("Wildfire Immediate Evacuation Alert") names the GO
+    phase explicitly ("Immediate Evacuation"), so line 1 leads with GO instead
+    of the raw CAP event string — the whole point of this feature. Category
+    is emergency_civil (normally ⚠️), but a detected GO forces the alarm
+    emoji regardless of category — a confirmed "leave now" must never render
+    with the softer warning icon."""
     from meshai.notifications.formatters.ipaws import format as ipaws_format
     a = IPAWSAlertsAdapter(_config())
     raw = a._parse_cap(_fx("eas_idaho_cem.xml"), "16")
@@ -357,20 +363,73 @@ def test_formatter_renders_civil_alert():
     wire = ipaws_format(ev, now=1000.0, budget=200)
     assert len(wire) <= 200
     lines = wire.split("\n")
-    assert lines[0].startswith("⚠️")                 # civil -> warning emoji
-    assert "Civil Emergency Message" in lines[0]
+    assert lines[0].startswith("🚨")                 # GO overrides civil's ⚠️ -> alarm emoji
+    assert "GO" in lines[0] and "Leave now" in lines[0]
     assert "Boundary County" in wire
     assert "evacuation" in wire.lower()             # headline carried the signal
 
 
 def test_formatter_evacuation_emoji():
+    """Oregon EVI has no phase language in its headline, but its CMAMtext
+    parameter ("Level 3 GO NOW evacuation notice...") does, and that text is
+    now parsed and preferred for line 3 — so GO must win here too."""
     from meshai.notifications.formatters.ipaws import format as ipaws_format
     a = IPAWSAlertsAdapter(_config())
     raw = a._parse_cap(_fx("eas_oregon_evi.xml"), "41")
     ev = a.to_event(raw)
     wire = ipaws_format(ev, now=1000.0, budget=200)
     assert wire.startswith("🚨")                     # evacuation -> alarm emoji
-    assert "Evacuation Immediate" in wire
+    lines = wire.split("\n")
+    assert "GO" in lines[0] and "Leave now" in lines[0]
+    assert "Level 3 GO NOW" in wire                  # CMAMtext carried into line 3
+
+
+def test_formatter_full_three_line_go_rendering():
+    """Full 3-line render for a real GO alert (Oregon EVI): phase-led line 1,
+    area+expiry line 2, CMAMtext line 3 — exact text, not just substrings."""
+    from meshai.notifications.formatters.ipaws import format as ipaws_format
+    a = IPAWSAlertsAdapter(_config())
+    raw = a._parse_cap(_fx("eas_oregon_evi.xml"), "41")
+    ev = a.to_event(raw)
+    ev.data["_ipaws_prefix"] = ""
+    wire = ipaws_format(ev, now=1000.0, budget=200)
+    lines = wire.split("\n")
+    assert lines[0] == "🚨 GO — Leave now"
+    assert lines[1] == "Jackson County · Until 8:50 AM MDT"
+    assert lines[2] == (
+        "Wildfire Alert- Level 3 GO NOW evacuation notice is UPGRADED for JAC-126"
+    )
+
+
+def test_formatter_no_phase_fallback_unchanged():
+    """When no READY/SET/GO language is present anywhere in headline/CMAMtext/
+    description, line 1 keeps the CURRENT raw-event-string behaviour exactly —
+    the safe fallback this feature must never break."""
+    from meshai.notifications.formatters.ipaws import format as ipaws_format
+    from meshai.notifications.events import make_event
+
+    canonical = _canonical(
+        event="Civil Emergency Message",
+        headline="Boil water advisory issued for the district",
+        description="A water main break has contaminated the supply.",
+        parameters={},
+        expires_at=None,
+    )
+    ev = make_event(
+        source="ipaws",
+        category="emergency_civil",
+        severity="priority",
+        title=canonical["headline"],
+        summary=canonical["headline"],
+        body=canonical["description"],
+        data=canonical,
+    )
+    ev.data["_ipaws_prefix"] = ""
+    wire = ipaws_format(ev, now=1000.0, budget=200)
+    lines = wire.split("\n")
+    assert lines[0] == "⚠️ Civil Emergency Message"    # unchanged fallback (no phase)
+    assert lines[1] == "Boundary County"
+    assert lines[2] == "Boil water advisory issued for the district"
 
 
 # ============================================================
@@ -386,3 +445,36 @@ def test_coverage_state_fips_for_bbox():
     resolved = resolve_adapter_coverage("ipaws", idaho_bbox, "native")
     assert "16" in resolved["state_fips"]
     assert resolved["bbox"] == [round(c, 6) for c in idaho_bbox]
+
+
+# ============================================================
+# stage-2 failure negative cache (no re-hammering FEMA)
+# ============================================================
+
+def test_stage2_forbidden_is_negative_cached():
+    """A 403 on a stage-2 detail URL is remembered so the next poll tick does
+    NOT re-fetch it, while a sibling URL that succeeds is fetched every pass."""
+    from urllib.error import HTTPError
+
+    counts: dict[str, int] = {}
+
+    def _urlopen(req, timeout=None):
+        url = req.full_url
+        counts[url] = counts.get(url, 0) + 1
+        if url.endswith("/feed"):
+            return _FakeResp(_fx("feed.xml"))
+        if url.endswith("/eas/300130859542"):        # Idaho CEM -> forbidden
+            raise HTTPError(url, 403, "Forbidden", {}, None)
+        if url.endswith("/eas/300130856756"):        # Oregon EVI -> ok
+            return _FakeResp(_fx("eas_oregon_evi.xml"))
+        raise AssertionError(f"unexpected fetch: {url}")
+
+    a = IPAWSAlertsAdapter(_config())
+    with patch("meshai.env.ipaws.urlopen", _urlopen):
+        a._fetch()
+        a._fetch()
+
+    cem = next(u for u in counts if u.endswith("/eas/300130859542"))
+    evi = next(u for u in counts if u.endswith("/eas/300130856756"))
+    assert counts[cem] == 1     # 403 -> negative-cached, not re-fetched
+    assert counts[evi] == 2     # success -> fetched on each pass

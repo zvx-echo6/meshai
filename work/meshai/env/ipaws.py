@@ -104,6 +104,13 @@ def _norm_fips(value) -> str:
 class IPAWSAlertsAdapter:
     """FEMA IPAWS-OPEN EAS civil alerts — two-stage CAP poller."""
 
+    # Stage-2 retry suppression. 401/403/404/410 are treated as durable (the
+    # alert body will not become fetchable), so we wait out the feed's rolling
+    # window; everything else (timeout, 5xx, 429, connection) is transient.
+    _STAGE2_FORBIDDEN_COOLDOWN = 21600   # 6h
+    _STAGE2_TRANSIENT_COOLDOWN = 300     # 5m
+    _STAGE2_FORBIDDEN_CODES = (401, 403, 404, 410)
+
     def __init__(self, config: "IPAWSConfig", coverage: dict = None):
         self._base_url = _cfg_str(config, "base_url", DEFAULT_BASE_URL).rstrip("/")
         self._user_agent = getattr(config, "user_agent", "") or "meshai-ipaws/1.0"
@@ -133,6 +140,11 @@ class IPAWSAlertsAdapter:
         self._last_error = None
         self._backoff_until = 0.0
         self._is_loaded = False
+        # Negative cache: stage-2 CAP URL -> epoch after which a retry is
+        # allowed. Stops re-hammering FEMA for an alert listed in the feed whose
+        # detail endpoint keeps failing (e.g. a durable 403 on a COG-restricted
+        # alert). Pruned to the current feed each pass so it can't grow unbounded.
+        self._stage2_cooldown = {}
 
     # ── Polling ──────────────────────────────────────────────────────────────
 
@@ -205,6 +217,8 @@ class IPAWSAlertsAdapter:
             self._consecutive_errors += 1
             return False
 
+        now = time.time()
+        seen_urls = set()
         new_events = []
         for entry in feed.findall(f"{{{_ATOM_NS}}}entry"):
             statefips = None
@@ -221,17 +235,42 @@ class IPAWSAlertsAdapter:
             cap_url = self._stage2_url(href)
             if not cap_url:
                 continue
+            seen_urls.add(cap_url)
+
+            # ── Negative cache: skip URLs still within their failure cooldown ─
+            retry_after = self._stage2_cooldown.get(cap_url)
+            if retry_after is not None and now < retry_after:
+                continue
 
             # ── Stage 2: full CAP document ───────────────────────────────────
             try:
                 cap_raw = self._get(cap_url)
-            except Exception as e:  # noqa: BLE001
-                logger.debug("IPAWS stage-2 fetch failed for %s: %s", cap_url, e)
+            except HTTPError as e:
+                cooldown = (self._STAGE2_FORBIDDEN_COOLDOWN
+                            if e.code in self._STAGE2_FORBIDDEN_CODES
+                            else self._STAGE2_TRANSIENT_COOLDOWN)
+                self._stage2_cooldown[cap_url] = now + cooldown
+                logger.debug("IPAWS stage-2 fetch failed for %s: HTTP %s "
+                             "(cooldown %ds)", cap_url, e.code, cooldown)
                 continue
+            except Exception as e:  # noqa: BLE001
+                self._stage2_cooldown[cap_url] = now + self._STAGE2_TRANSIENT_COOLDOWN
+                logger.debug("IPAWS stage-2 fetch failed for %s: %s (cooldown %ds)",
+                             cap_url, e, self._STAGE2_TRANSIENT_COOLDOWN)
+                continue
+
+            # Success — clear any stale cooldown for this URL.
+            self._stage2_cooldown.pop(cap_url, None)
 
             parsed = self._parse_cap(cap_raw, statefips)
             if parsed:
                 new_events.append(parsed)
+
+        # Prune the negative cache to URLs still present in the feed, so it
+        # tracks the rolling window and never grows without bound.
+        self._stage2_cooldown = {
+            u: t for u, t in self._stage2_cooldown.items() if u in seen_urls
+        }
 
         # Change detection on the active identifier set.
         old_ids = {e["event_id"] for e in self._events}
@@ -297,6 +336,30 @@ class IPAWSAlertsAdapter:
         certainty = _t(info, "certainty")
         headline = _t(info, "headline")
         description = _t(info, "description")
+        instruction = _t(info, "instruction")
+
+        # ── <parameter> blocks: valueName -> value ────────────────────────────
+        # Civil alerts carry their real public-facing text here (CMAMtext /
+        # CMAMlongtext are the agency's own purpose-written WEA copy) — this was
+        # previously discarded entirely. A repeated valueName (e.g. multiple
+        # BLOCKCHANNEL entries) becomes a list; defensive against malformed/
+        # missing valueName or value children (skipped, never raises).
+        parameters: dict = {}
+        for param in info.findall(f"{{{_CAP_NS}}}parameter"):
+            vn = param.find(f"{{{_CAP_NS}}}valueName")
+            vv = param.find(f"{{{_CAP_NS}}}value")
+            name = vn.text.strip() if vn is not None and vn.text else ""
+            if not name:
+                continue
+            value = vv.text.strip() if vv is not None and vv.text else ""
+            if name in parameters:
+                existing = parameters[name]
+                if isinstance(existing, list):
+                    existing.append(value)
+                else:
+                    parameters[name] = [existing, value]
+            else:
+                parameters[name] = value
 
         # eventCode SAME value
         same_value = ""
@@ -377,6 +440,8 @@ class IPAWSAlertsAdapter:
             "msgType": msg_type,
             "headline": headline,
             "description": description,
+            "instruction": instruction,
+            "parameters": parameters,
             "same_code": same_value,
             "area_desc": area_desc,
             "area_same_codes": area_same_codes,
@@ -491,7 +556,8 @@ class IPAWSAlertsAdapter:
             "area_desc": area_desc,
             "geocoder": {"city": None, "county": area_desc, "state": None},
             "description": raw.get("description", ""),
-            "parameters": {},
+            "instruction": raw.get("instruction", ""),
+            "parameters": raw.get("parameters") or {},
             "msgType": raw.get("msgType", "Alert"),
             "references": [],
             "category": category,
