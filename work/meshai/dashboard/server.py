@@ -61,6 +61,7 @@ def create_app() -> FastAPI:
     from .api.debug_routes import router as debug_router
     from .api.serial_ports_routes import router as serial_ports_router
     from .api.gauge_sites_import import router as gauge_sites_import_router
+    from .api.announcement_routes import router as announcement_router
 
     app.include_router(system_router, prefix="/api")
     app.include_router(serial_ports_router, prefix="/api")
@@ -77,6 +78,7 @@ def create_app() -> FastAPI:
     app.include_router(notification_router, prefix="/api")
     app.include_router(secrets_router, prefix="/api")
     app.include_router(debug_router, prefix="/api")
+    app.include_router(announcement_router, prefix="/api")
     # WebSocket router (no prefix, path is /ws/live)
     app.include_router(ws_router)
 

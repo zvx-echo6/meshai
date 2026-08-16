@@ -469,7 +469,8 @@ class MeshAI:
         # MUST match the adapter_config section each handler reads its budget from
         # (see meshai.central.budget.budget_for calls in the handlers).
         from meshai.adapter_config import set_runtime_override
-        for _adapter in ("nws", "incident", "wfigs", "avalanche", "satpass", "usgs_quake"):
+        for _adapter in ("nws", "incident", "wfigs", "avalanche", "satpass", "usgs_quake",
+                          "custom_announcements"):
             set_runtime_override(_adapter, "single_packet_max_chars", self.connector.max_chars)
 
         # Passive mesh context buffer

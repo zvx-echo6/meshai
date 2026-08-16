@@ -925,3 +925,120 @@ export async function sendTestMessage(body: {
   }
   return response.json()
 }
+
+// ---- Meshtastic channel list (radio-polled, for channel pickers) ------
+
+export interface MeshtasticChannel {
+  index: number
+  name: string
+  role: 'DISABLED' | 'PRIMARY' | 'SECONDARY' | 'UNKNOWN' | string
+  enabled: boolean
+}
+
+// Returns [] when the radio is unreachable or reports nothing -- there is
+// no separate "active" flag on this endpoint (unlike the MeshCore one).
+export async function fetchMeshtasticChannels(): Promise<MeshtasticChannel[]> {
+  return fetchJson<MeshtasticChannel[]>('/api/channels')
+}
+
+// ---- Custom scheduled announcements (owner-authored broadcasts) -------
+//
+// Backend: work/meshai/dashboard/api/announcement_routes.py. New rows
+// always start disabled (create never accepts `enabled`); PUT is the only
+// place that can arm one. There is deliberately no send-now endpoint.
+
+// A single delivery target on an announcement. `channel` is a Meshtastic
+// channel index (int) or a MeshCore channel name (str); `name` is a
+// display label captured at save time so the target stays readable even
+// if the radio is later unreachable or the channel is renamed/removed.
+export interface AnnouncementChannelRef {
+  transport: 'meshtastic' | 'meshcore'
+  channel: number | string
+  name?: string
+}
+
+export interface Announcement {
+  announcement_id: number
+  name: string
+  message: string
+  schedule_kind: 'daily' | 'interval_days' | 'weekly' | 'monthly'
+  time_of_day: string
+  interval_days: number | null
+  dow_mask: boolean[] | null
+  day_of_month: number | null
+  timezone: string
+  channels: AnnouncementChannelRef[]
+  enabled: boolean
+  last_sent_at: number | null
+  created_at: number
+  updated_at: number
+}
+
+// Fields the create/edit form fills in. Shared by POST (as-is) and PUT
+// (merged as a partial update by the backend).
+export interface AnnouncementDraft {
+  name: string
+  message: string
+  schedule_kind: 'daily' | 'interval_days' | 'weekly' | 'monthly'
+  time_of_day: string
+  interval_days?: number | null
+  dow_mask?: boolean[] | null
+  day_of_month?: number | null
+  timezone: string
+  channels: AnnouncementChannelRef[]
+}
+
+export interface AnnouncementPreview {
+  wire_text: string
+  char_count: number
+  byte_count: number
+  budget: number
+  truncated: boolean
+}
+
+async function announcementError(response: Response): Promise<never> {
+  const body = await response.json().catch(() => null)
+  throw new Error(body?.detail || `API error: ${response.status} ${response.statusText}`)
+}
+
+export async function fetchAnnouncements(): Promise<Announcement[]> {
+  return fetchJson<Announcement[]>('/api/announcements')
+}
+
+// Always creates disabled -- there is no `enabled` field in the request body.
+export async function createAnnouncement(draft: AnnouncementDraft): Promise<Announcement> {
+  const response = await fetch('/api/announcements', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(draft),
+  })
+  if (!response.ok) return announcementError(response)
+  return response.json()
+}
+
+// Partial update. Pass only the fields that changed; include `enabled` to
+// arm/disarm -- this is the only endpoint that can flip it.
+export async function updateAnnouncement(
+  id: number,
+  changes: Partial<AnnouncementDraft> & { enabled?: boolean }
+): Promise<Announcement> {
+  const response = await fetch(`/api/announcements/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(changes),
+  })
+  if (!response.ok) return announcementError(response)
+  return response.json()
+}
+
+export async function deleteAnnouncement(id: number): Promise<void> {
+  const response = await fetch(`/api/announcements/${id}`, { method: 'DELETE' })
+  if (!response.ok) return announcementError(response)
+}
+
+// Returns the exact wire text plus size-vs-budget info. Never sends.
+export async function previewAnnouncement(id: number): Promise<AnnouncementPreview> {
+  const response = await fetch(`/api/announcements/${id}/preview`, { method: 'POST' })
+  if (!response.ok) return announcementError(response)
+  return response.json()
+}
