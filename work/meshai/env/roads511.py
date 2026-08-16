@@ -21,6 +21,53 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Explicit full-road-closure language, matched case-insensitively. Used
+# ONLY by to_event()'s sub_type mapping (branch a) to decide "road_closed"
+# vs. "road_works" — distinct from (and stricter than) the adapter's
+# existing `is_closure` property, which loosely matches any "closed"
+# substring and therefore also flags partial-restriction wording (e.g.
+# "All Shoulders Closed") that the upstream owner explicitly does not want
+# broadcast as a closure.
+_FULL_CLOSURE_PHRASES = (
+    "all lanes closed",
+    "road closed",
+    "highway closed",
+    "fully closed",
+    "closed in both directions",
+)
+
+# Partial-restriction phrases that must NEVER be counted as a full closure.
+# Checked first so one of these vetoes a match even if closure wording
+# happens to appear elsewhere in the same description — e.g. "all
+# shoulders closed" must not fall through to a naive "closed" test, and
+# "one/right/left lane closed" must not be confused with "all lanes
+# closed" (note the singular "lane closed" vs. plural "lanes closed").
+_PARTIAL_RESTRICTION_PHRASES = (
+    "shoulder closed",
+    "shoulders closed",
+    "lane closed",
+    "ramp closed",
+    "alternating",
+    "lane restriction",
+)
+
+
+def _has_full_closure_language(description: str) -> bool:
+    """True if `description` contains explicit full-closure phrasing.
+
+    Case-insensitive. Partial-restriction phrases (shoulder/lane/ramp
+    closures, alternating traffic) are checked first and veto a match, so
+    they never register as a full closure regardless of other wording
+    present.
+    """
+    text = (description or "").lower()
+
+    if any(phrase in text for phrase in _PARTIAL_RESTRICTION_PHRASES):
+        return False
+
+    return any(phrase in text for phrase in _FULL_CLOSURE_PHRASES)
+
+
 class Roads511Adapter:
     """511 road conditions polling adapter."""
 
@@ -284,12 +331,21 @@ class Roads511Adapter:
                     lat = loc.get("latitude") or loc.get("lat")
                     lon = loc.get("longitude") or loc.get("lon") or loc.get("lng")
 
-            # Check closure status
-            is_closure = (
+            # Raw upstream full-closure signal, captured on its own (no
+            # description heuristic mixed in) so to_event() can build a
+            # stricter full-closure determination for sub_type mapping
+            # without touching is_closure below, which severity/summary
+            # logic elsewhere already depends on.
+            is_full_closure_flag = bool(
                 item.get("IsFullClosure") or
                 item.get("is_full_closure") or
                 item.get("fullClosure") or
-                item.get("closed") or
+                item.get("closed")
+            )
+
+            # Check closure status
+            is_closure = (
+                is_full_closure_flag or
                 "closure" in str(event_type).lower() or
                 "closed" in str(description).lower()
             )
@@ -323,6 +379,19 @@ class Roads511Adapter:
                 None
             )
 
+            # Granular ITD 511 v2 fields (roadwork vs. crash vs. closure
+            # discrimination). Defensive: absent on other states' 511 feeds.
+            event_sub_type = (
+                item.get("EventSubType") or
+                item.get("event_sub_type") or
+                ""
+            )
+            cause = (
+                item.get("Cause") or
+                item.get("cause") or
+                None
+            )
+
             # Default 6 hour TTL, refreshed every tick
             expires = now + 21600
 
@@ -346,7 +415,10 @@ class Roads511Adapter:
                 "properties": {
                     "roadway": roadway,
                     "is_closure": bool(is_closure),
+                    "is_full_closure_flag": is_full_closure_flag,
                     "last_updated": last_updated,
+                    "event_sub_type": event_sub_type,
+                    "cause": cause,
                 },
             }
 
@@ -411,10 +483,49 @@ class Roads511Adapter:
             # NOTE: Central-era rows used source 'itd_511' with 'idaho_511:event:*'
             # ids — a different keyspace the pre-seed intentionally does not cover.
             _external_id = evt.get("external_id") or event_id
+
+            # sub_type mapping: distinguish routine roadwork (suppressed by
+            # gating/incident.py's work-zone rule) from genuine news (crashes,
+            # closures, hazards). A construction-caused FULL closure is still
+            # real news and must broadcast, so a full closure wins regardless
+            # of EventType. Precedence:
+            #   1. full closure (raw flag OR explicit closure wording,
+            #      see _has_full_closure_language) -> road_closed (always)
+            #   2. EventType roadwork /
+            #      EventSubType has "construction" -> road_works (suppressed)
+            #   3. EventType accidentsAndIncidents -> incident
+            #   4. EventType closures              -> road_closed
+            #   5. else (specialEvents, unknown)   -> incident (fail open)
+            #
+            # NOTE: branch 1 deliberately does NOT reuse `_is_closure` above.
+            # `_is_closure` is a loose OR-chain (also used for severity and
+            # the summary text) that matches any "closed" substring in the
+            # description, including partial-restriction wording like "All
+            # Shoulders Closed" — routine construction the owner explicitly
+            # does not want broadcast. `_full_closure_for_mapping` is a
+            # stricter, mapping-only determination.
+            _event_type_val = str(evt.get("event_type") or "").strip().lower()
+            _event_sub_type_val = str(props.get("event_sub_type") or "").strip().lower()
+            _cause = props.get("cause")
+            _full_closure_for_mapping = bool(
+                props.get("is_full_closure_flag")
+            ) or _has_full_closure_language(_desc)
+
+            if _full_closure_for_mapping:
+                _sub_type = "road_closed"
+            elif _event_type_val == "roadwork" or "construction" in _event_sub_type_val:
+                _sub_type = "road_works"
+            elif _event_type_val == "accidentsandincidents":
+                _sub_type = "incident"
+            elif _event_type_val == "closures":
+                _sub_type = "road_closed"
+            else:
+                _sub_type = "incident"
+
             canonical_data = {
                 "external_id":    _external_id,   # 511_{itd_id}; enables durable pre-seed
                 "source":         "511",
-                "sub_type":       "road_closed" if _is_closure else "incident",
+                "sub_type":       _sub_type,
                 "road":           _roadway or None,
                 "direction":      None,   # not structured in native 511 feed
                 "from_loc":       None,
@@ -423,7 +534,7 @@ class Roads511Adapter:
                 "mile_end":       None,
                 "mile_marker":    None,
                 "lanes_affected": None,
-                "cause":          None,
+                "cause":          _cause,
                 "comment":        _desc[:200] if _desc else title,
                 "impact":         "all lanes closed" if _is_closure else None,
                 "county":         None,
