@@ -229,3 +229,94 @@ def test_work_zone_reminder_skipped_outside_slot(mock_dispatcher):
     sch = ReminderScheduler(mock_dispatcher, clock=lambda: now, tick_seconds=60)
     fired = asyncio.run(sch.tick_once())
     assert fired == 0
+
+
+# ============================================================================
+# Anchor resolution in the wfigs "Active:" reminder wire (_fire_anchor)
+# ============================================================================
+
+
+def test_wfigs_reminder_uses_anchor_not_county(mock_dispatcher):
+    """A fire near a known curated town_anchors entry (Bliss, ID) renders the
+    anchor phrase ('mi <bearing> of Bliss'), not the bare county/state join
+    the old renderer produced."""
+    now = 1_780_000_000
+    conn = get_db()
+    _enable_wfigs_reminders()
+    # Coordinates ~4 mi NW of Bliss, ID (see _TOWN_ANCHORS_SEED in
+    # meshai/persistence/curation.py) -- county/state deliberately different
+    # from "Bliss" so the assertion can't pass by accident via the county.
+    conn.execute(
+        "INSERT OR REPLACE INTO fires(irwin_id, incident_name, incident_type, "
+        "current_acres, current_contained_pct, lat, lon, county, state, "
+        "declared_at, last_event_at, first_broadcast_at, last_broadcast_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ("F-ANCHOR", "Jackalope", "WF", 15, 0,
+         42.98, -114.99, "Gooding", "ID",
+         now - 9 * 3600, now, now - 9 * 3600, now - 9 * 3600),
+    )
+
+    sch = ReminderScheduler(mock_dispatcher, clock=lambda: now)
+    fired = asyncio.run(sch.tick_once())
+    assert fired == 1
+    args = mock_dispatcher.dispatch_scheduled_fire_broadcast.call_args.kwargs
+    text = args["text"]
+    assert "Bliss" in text
+    assert "of Bliss" in text
+    # Old format ("Gooding / ID") must be gone.
+    assert "Gooding / ID" not in text
+
+
+def test_wfigs_reminder_falls_back_when_no_anchor_nearby(mock_dispatcher):
+    """A fire with no lat/lon at all still renders sensibly via
+    _fire_anchor's fallback chain (county -> state -> "location unknown"),
+    and never raises."""
+    now = 1_780_000_000
+    conn = get_db()
+    _enable_wfigs_reminders()
+    conn.execute(
+        "INSERT OR REPLACE INTO fires(irwin_id, incident_name, incident_type, "
+        "current_acres, current_contained_pct, lat, lon, county, state, "
+        "declared_at, last_event_at, first_broadcast_at, last_broadcast_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ("F-NOANCHOR", "Remote Fire", "WF", 42, 5,
+         None, None, "Owyhee", "ID",
+         now - 9 * 3600, now, now - 9 * 3600, now - 9 * 3600),
+    )
+
+    sch = ReminderScheduler(mock_dispatcher, clock=lambda: now)
+    fired = asyncio.run(sch.tick_once())
+    assert fired == 1
+    args = mock_dispatcher.dispatch_scheduled_fire_broadcast.call_args.kwargs
+    text = args["text"]
+    # Falls through landclass (absent) to the "{county} Co {state}" tier.
+    assert "Owyhee Co ID" in text
+    assert "Active" in text
+
+
+def test_wfigs_reminder_truncates_to_budget(mock_dispatcher):
+    """A very long incident name + anchor is truncated to the wfigs budget
+    (fit_to_budget) rather than exceeding the mesh packet limit."""
+    now = 1_780_000_000
+    conn = get_db()
+    _enable_wfigs_reminders()
+    long_name = ("The Extremely Long Wildfire Incident Name That Keeps Going "
+                 "And Going And Going Well Past Any Reasonable Mesh Packet Budget")
+    conn.execute(
+        "INSERT OR REPLACE INTO fires(irwin_id, incident_name, incident_type, "
+        "current_acres, current_contained_pct, lat, lon, county, state, "
+        "declared_at, last_event_at, first_broadcast_at, last_broadcast_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ("F-LONG", long_name, "WF", 123456, 3,
+         42.98, -114.99, "Gooding", "ID",
+         now - 9 * 3600, now, now - 9 * 3600, now - 9 * 3600),
+    )
+
+    from meshai.notifications.formatters._budget import budget_for
+    sch = ReminderScheduler(mock_dispatcher, clock=lambda: now)
+    fired = asyncio.run(sch.tick_once())
+    assert fired == 1
+    args = mock_dispatcher.dispatch_scheduled_fire_broadcast.call_args.kwargs
+    text = args["text"]
+    assert len(text) <= budget_for("wfigs")
+    assert text.endswith("…")

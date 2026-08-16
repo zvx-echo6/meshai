@@ -59,6 +59,9 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from meshai.notifications.formatters._budget import budget_for, fit_to_budget
+from meshai.notifications.formatters.fire import _fire_anchor
+
 logger = logging.getLogger(__name__)
 
 
@@ -370,8 +373,9 @@ class ReminderScheduler:
             cont = row["current_contained_pct"]
             acres_s = "N/A" if acres is None else f"{int(acres):,} ac"
             cont_s  = "?" if cont  is None else f"{int(cont)}%"
-            anchor = " / ".join(p for p in (row["county"], row["state"]) if p) or "?"
-            return f"🔥 {prefix}: {name}, {anchor}: {acres_s}, {cont_s} contained"
+            anchor = _fire_anchor(dict(row))
+            wire = f"🔥 {prefix}: {name}, {anchor}: {acres_s}, {cont_s} contained"
+            return fit_to_budget(wire, budget_for("wfigs"))
         if adapter == "swpc":
             return f"🌌 {prefix}: ongoing space weather event ({row['event_type']})"
         if adapter == "itd_511_work_zone":
