@@ -86,6 +86,7 @@ def test_per_adapter_list(client):
         "regional_centroid", "regional_radius_mi",
         "broadcast_pager_alerts", "global_mag_floor",
         "regional_mag_floor", "escalate_mag_floor",
+        "freshness_seconds",
     }
 
 

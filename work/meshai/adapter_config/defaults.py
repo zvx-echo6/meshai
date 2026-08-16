@@ -85,7 +85,8 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     },
 
     # =================================================================
-    # USGS_QUAKE -- 6 settings (regional geography + 3 mag floors + PAGER set)
+    # USGS_QUAKE -- 7 settings (regional geography + 3 mag floors + PAGER set
+    # + freshness gate)
     # =================================================================
     ("usgs_quake", "regional_centroid"): {
         "default": [44.36, -114.61],        # quake_handler.py:36-37 (Idaho centroid)
@@ -116,6 +117,11 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "default": 5.0,                     # quake_handler.py:76
         "type": "float",
         "description": "Magnitude floor for the visual escalation emoji.",
+    },
+    ("usgs_quake", "freshness_seconds"): {
+        "default": 3600,
+        "type": "int",
+        "description": "Staleness gate for earthquake_event broadcasts (age = now - quake origin time), read by the dispatcher instead of the generic per-toggle freshness. The upstream feed is a rolling PAST-DAY feed, so quakes are routinely detected 10min-20h after origin; 1 hour keeps quakes broadcast-worthy (still situationally relevant) while excluding the day-feed's stale backlog. 0 = disabled (not recommended -- would readmit day-old quakes).",
     },
 
     # =================================================================

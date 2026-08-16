@@ -359,6 +359,18 @@ class Dispatcher:
         # v0.6-3b: fire toggle uses wfigs adapter_config freshness (0 = disabled)
         if fam == "fire":
             freshness_s = int(adapter_config.wfigs.freshness_seconds)
+        elif event.category == "earthquake_event":
+            # The upstream USGS feed is a rolling PAST-DAY feed
+            # (2.5_day.geojson), so a quake's age-at-ingest routinely exceeds
+            # the generic 600s toggle window even for a genuinely first-seen
+            # event -- every native quake was being silently dropped here
+            # (measured age-at-ingest 548s-72169s across 12 sampled quakes,
+            # confirmed against quake_events: 12/12 first-sighted rows with
+            # last_broadcast_at=NULL). Scoped to the earthquake_event
+            # CATEGORY, not the "seismic" family/toggle, because that family
+            # also carries stream_flood_warning/stream_high_water (hydro),
+            # which must keep using the generic per-toggle freshness_seconds.
+            freshness_s = int(adapter_config.usgs_quake.freshness_seconds)
         else:
             freshness_s = int(getattr(tog, "freshness_seconds", 600) or 600)
         if event.timestamp and freshness_s > 0:

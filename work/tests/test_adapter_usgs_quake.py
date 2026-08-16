@@ -200,10 +200,30 @@ def test_populates_core_fields(adapter):
     assert event.source == "usgs_quake"
     assert event.lat == 42.61
     assert event.lon == -114.48
-    assert event.region == "magic_valley"
+    # to_event() deliberately does NOT propagate the raw dict's "region"
+    # (a fixed config default that never matches region_routes cell keys)
+    # onto the Event -- Event.region is left unset so CoverageFilter's
+    # geometry-based tagger (lat/lon vs named coverage areas) can set the
+    # real region name downstream. See test_region_left_unset_for_tagger
+    # and tests/test_coverage_area.py for the tagging behavior itself.
+    assert event.region is None
     assert event.expires == evt["expires"]
     assert event.timestamp == evt["quake_time"]
     assert event.id
+
+
+def test_region_left_unset_for_tagger(adapter):
+    """Regression: to_event() must never propagate the adapter's fixed
+    config region (e.g. "magic_valley") onto the Event. That value never
+    matches a region_routes cell key ("East Idaho"/"SC Idaho"/"SW Idaho"),
+    so pre-setting it would silently break region-routed delivery. Leaving
+    event.region/regions unset lets CoverageFilter's geometry tagger (which
+    only fires when `not event.regions`) stamp the real area name from the
+    quake's actual lat/lon."""
+    evt = make_quake_event(lat=44.2, lon=-114.0, region="magic_valley")
+    event = adapter.to_event(evt)
+    assert event.region is None
+    assert event.regions == []
 
 
 # ============================================================

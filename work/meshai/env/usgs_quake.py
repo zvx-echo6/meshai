@@ -246,7 +246,14 @@ class USGSQuakeAdapter:
                 expires=evt.get("expires"),
                 lat=lat,
                 lon=lon,
-                region=evt.get("region"),
+                # Deliberately NOT passing region=evt.get("region") here: the
+                # raw dict's region is a fixed config default (self._region,
+                # "magic_valley"), which doesn't match any region_routes cell
+                # key. Event.region is documented as "set by region tagger"
+                # (notifications/events.py) -- leaving it unset lets
+                # CoverageFilter's geometry-based tagging (event.lat/lon vs
+                # the named coverage areas) populate the real region name
+                # from the quake's actual coordinates instead.
                 group_key=event_id,
                 inhibit_keys=[event_id],
                 data=canonical_data,
