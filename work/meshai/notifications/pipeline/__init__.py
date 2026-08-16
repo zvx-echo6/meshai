@@ -43,6 +43,12 @@ try:
     from meshai.notifications.reminders import ReminderScheduler
 except ImportError:
     ReminderScheduler = None
+try:
+    from meshai.notifications.scheduled.custom_announcements import (
+        CustomAnnouncementScheduler,
+    )
+except ImportError:
+    CustomAnnouncementScheduler = None
 from meshai.notifications.pipeline.inhibitor import Inhibitor
 from meshai.notifications.pipeline.grouper import Grouper
 from meshai.notifications.pipeline.toggle_filter import ToggleFilter
@@ -288,6 +294,22 @@ async def start_pipeline(bus: EventBus, config) -> DigestScheduler:
             _lg.getLogger("meshai.pipeline").exception(
                 "reminder scheduler failed to start")
 
+    # Custom announcements scheduler -- runs alongside the reminder
+    # scheduler. Best-effort: failures must NOT break notifications
+    # pipeline startup.
+    if CustomAnnouncementScheduler is not None:
+        try:
+            comps = getattr(bus, "_pipeline_components", {}) or {}
+            disp = comps.get("dispatcher")
+            if disp is not None:
+                ca_sched = CustomAnnouncementScheduler(disp)
+                await ca_sched.start()
+                comps["custom_announcement_scheduler"] = ca_sched
+                bus._pipeline_components = comps
+        except Exception:
+            import logging as _lg
+            _lg.getLogger("meshai.pipeline").exception(
+                "custom announcement scheduler failed to start")
 
     # Phase 2.16.1: periodically flush the grouper so coalesced events are
     # delivered within the window even when poll cadence is sparse.

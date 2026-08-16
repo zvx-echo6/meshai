@@ -1330,6 +1330,150 @@ class Dispatcher:
                     ch_type)
         return delivered_any
 
+    async def dispatch_scheduled_custom_broadcast(
+        self, text: str, *,
+        announcement_id: int,
+        slot_key: str,
+        channels: list,
+    ) -> bool:
+        """Scheduled broadcast for a user-authored custom announcement.
+
+        Unlike dispatch_scheduled_fire_broadcast / dispatch_scheduled_roads_
+        broadcast (which resolve channels via a toggle + region_routes
+        matrix), a custom announcement carries its OWN explicit destination
+        list -- set by the owner in the GUI, never derived from a toggle or
+        a region. Every entry in `channels` is delivered independently and
+        gets its OWN mesh_broadcasts_out audit row: an announcement with N
+        mixed Meshtastic/MeshCore targets produces N delivery attempts and N
+        audit rows. There is no cap on N and no "primary channel" concept.
+
+        channels: list of {"transport": "meshtastic"|"meshcore",
+                            "channel": <int index>|<str name>,
+                            "name": <optional display name, ignored here>}.
+        A target with an unrecognised transport is logged and skipped. A
+        target whose channel is valid in SHAPE but no longer configured on
+        the live radio is NOT a hard failure -- create_channel()/deliver()
+        already logs a warning and returns False for that case (missing
+        connector, unset meshcore_channel, no meshcore transport, etc.); this
+        method adds its own warning on top and moves on to the next target,
+        so one stale MeshCore channel never aborts the rest of the
+        announcement.
+
+        Fan-out pacing: sends are issued one target at a time, same as
+        dispatch_scheduled_fire_broadcast's `plan` loop. Each send goes
+        through create_channel() -> connector.send_message_async() ->
+        RadioSendQueue, which already applies that transport's inter-packet
+        jitter -- so multi-target announcements are naturally paced without
+        a second spacing mechanism here.
+
+        source_event_table is always "custom_announcements";
+        source_event_pk is f"{announcement_id}:{slot_key}" so the audit
+        trail carries a key unique per (announcement, fired slot) rather
+        than colliding across sends of the same announcement on different
+        days.
+
+        Cold-start grace still applies (consistent with the other scheduled
+        broadcasts). Returns True on at least one successful mesh delivery.
+        """
+        grace_s = int(getattr(self._config.notifications,
+                              "cold_start_grace_seconds", 60) or 0)
+        if grace_s > 0:
+            now_anchor = time.time()
+            if self._first_event_at is None:
+                self._first_event_at = now_anchor
+                self._persist_state()
+            if (now_anchor - self._first_event_at) < grace_s:
+                self._cold_start_dropped += 1
+                self._persist_state()
+                self._logger.info(
+                    "cold-start grace: dropping scheduled custom broadcast "
+                    "id=%s slot=%s", announcement_id, slot_key)
+                return False
+
+        if not channels:
+            self._logger.info(
+                "scheduled-custom-broadcast: no channels for id=%s; dropping",
+                announcement_id)
+            return False
+
+        from meshai.notifications.events import make_event, make_payload_from_event
+        from types import SimpleNamespace
+        ev = make_event(
+            source="custom_announcement", category="custom_announcement",
+            severity="routine", title=text,
+        )
+        ev.data["_meshai_precomposed"] = True
+        # Minimal stand-in for a toggle object -- _toggle_to_rule() only
+        # reads .name off it when mt_override/mc_override are both supplied
+        # (which they always are here, one or the other per target).
+        fake_tog = SimpleNamespace(name=f"custom_announcement:{announcement_id}")
+
+        source_event_pk = f"{announcement_id}:{slot_key}"
+        delivered_any = False
+        for target in channels:
+            target = target or {}
+            transport = target.get("transport")
+            chan = target.get("channel")
+            if transport == "meshtastic":
+                ch_type = "mesh_broadcast"
+            elif transport == "meshcore":
+                ch_type = "meshcore_broadcast"
+            else:
+                self._logger.warning(
+                    "scheduled-custom-broadcast: unknown transport %r for "
+                    "id=%s; skipping target", transport, announcement_id)
+                continue
+
+            rule = self._toggle_to_rule(
+                fake_tog, ch_type, ev,
+                mt_override=(chan if ch_type == "mesh_broadcast" else None),
+                mc_override=(chan if ch_type == "meshcore_broadcast" else None),
+            )
+            try:
+                channel = self._channel_factory(rule, self._connector)
+                payload = make_payload_from_event(ev, message=text)
+                success = await channel.deliver(payload, rule)
+            except Exception:
+                self._logger.exception(
+                    "scheduled-custom-broadcast: delivery raised for id=%s "
+                    "transport=%s channel=%r",
+                    announcement_id, transport, chan)
+                success = False
+
+            if success:
+                delivered_any = True
+                self._logger.info(
+                    "scheduled-custom-broadcast: dispatched id=%s slot=%s "
+                    "via %s ch=%r", announcement_id, slot_key, ch_type, chan)
+            else:
+                self._logger.warning(
+                    "scheduled-custom-broadcast: delivery failed/skipped "
+                    "for id=%s transport=%s channel=%r (channel may not be "
+                    "currently configured on the radio)",
+                    announcement_id, transport, chan)
+
+            # One audit row PER TARGET, mirroring the fire/roads scheduled
+            # broadcasts' per-channel audit insert.
+            try:
+                from meshai.persistence import get_db
+                conn = get_db()
+                bytes_sent = len(text.encode("utf-8")) if text else 0
+                audit_transport, channel_id, recipient = self._audit_route(rule, ch_type)
+                conn.execute(
+                    "INSERT INTO mesh_broadcasts_out(sent_at, recipient, "
+                    "channel, text, source_event_table, source_event_pk, "
+                    "bytes_sent, ack_received, transport, success) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (int(time.time()), recipient, channel_id, text,
+                     "custom_announcements", source_event_pk, bytes_sent, 0,
+                     audit_transport, 1 if success else 0),
+                )
+            except Exception:
+                self._logger.exception(
+                    "scheduled-custom-broadcast: audit row insert failed "
+                    "for id=%s transport=%s", announcement_id, transport)
+        return delivered_any
+
     @staticmethod
     def _audit_route(rule, ch_type: str):
         """Resolve (transport, channel_id, recipient) for a mesh delivery.
