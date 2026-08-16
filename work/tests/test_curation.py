@@ -183,13 +183,16 @@ def test_api_list_towns(client):
 
 
 def test_api_post_add_town(client):
+    # A clearly-fictitious name, not a real Idaho town -- avoids colliding
+    # with the town_anchors seed (real curated Idaho/neighbor towns; a
+    # UNIQUE(name) constraint 400s on a duplicate insert).
     r = client.post("/api/town-anchors", json={
-        "name": "Bellevue", "lat": 43.4670, "lon": -114.2557, "state": "ID",
+        "name": "Testopolis", "lat": 43.4670, "lon": -114.2557, "state": "ID",
     })
     assert r.status_code == 200
-    assert r.json()["name"] == "bellevue"
+    assert r.json()["name"] == "testopolis"
     invalidate_curation_cache()
-    coord = lookup_town_anchor("bellevue")
+    coord = lookup_town_anchor("testopolis")
     assert coord is not None
 
 

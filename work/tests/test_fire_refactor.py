@@ -217,7 +217,10 @@ class TestFormatterGolden:
         # Golden literal (captured from the live fire_format all-clear branch;
         # this is the SAME format string handle_wfigs used to build inline
         # before its removal -- see notifications/formatters/fire.py::_render_allclear).
-        assert new_wire == "✅ Cache Peak Fire — contained & closed\n1,847 ac | 23% contained | 24 mi S of Burley"
+        # "oakley" is nearer to 42.197,-113.710 than "burley" and is now in
+        # the town_anchors seed after the seed-list sync (Fix 2), so it wins
+        # the anchor resolution instead of the previously-nearest seeded town.
+        assert new_wire == "✅ Cache Peak Fire — contained & closed\n1,847 ac | 23% contained | 9 mi E of Oakley"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

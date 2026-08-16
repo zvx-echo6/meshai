@@ -357,8 +357,10 @@ def test_k_anchor_falls_to_nearest_town(monkeypatch, mem_db):
                                   county="Cassia")
     n = _normalize_wfigs(env)
     wire = _wfigs_render(n, prefix="New")
-    # Resolves anchor via town_anchors table (Burley @ 42.536, -113.793)
-    assert "Burley" in wire
+    # Resolves anchor via town_anchors table (Oakley @ 42.24206, -113.883058
+    # -- now the nearest seeded anchor to the incident's 42.197,-113.710
+    # after the full-list seed sync; Burley is farther away)
+    assert "Oakley" in wire
 
 
 def test_k_anchor_falls_to_landclass(monkeypatch, mem_db):
@@ -372,7 +374,8 @@ def test_k_anchor_falls_to_landclass(monkeypatch, mem_db):
     n = _normalize_wfigs(env)
     wire = _wfigs_render(n, prefix="New")
     # Resolves nearest town from town_anchors table, overriding landclass
-    assert "Burley" in wire
+    # (Oakley is nearest to 42.197,-113.710 after the full-list seed sync)
+    assert "Oakley" in wire
 
 
 def test_k_anchor_falls_to_county(monkeypatch, mem_db):
@@ -385,7 +388,8 @@ def test_k_anchor_falls_to_county(monkeypatch, mem_db):
     n = _normalize_wfigs(env)
     wire = _wfigs_render(n, prefix="New")
     # Resolves nearest town from town_anchors table
-    assert "Burley" in wire
+    # (Oakley is nearest to 42.197,-113.710 after the full-list seed sync)
+    assert "Oakley" in wire
 
 
 def test_k_anchor_nearest_town_under_one_mile_says_near(monkeypatch, mem_db):
@@ -398,7 +402,8 @@ def test_k_anchor_nearest_town_under_one_mile_says_near(monkeypatch, mem_db):
     n = _normalize_wfigs(env)
     wire = _wfigs_render(n, prefix="New")
     # Anchor resolved via town_anchors; exact format depends on distance
-    assert "Burley" in wire
+    # (Oakley is nearest to 42.197,-113.710 after the full-list seed sync)
+    assert "Oakley" in wire
 
 
 # ============================================================================
