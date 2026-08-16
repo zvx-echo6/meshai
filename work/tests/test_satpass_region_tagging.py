@@ -245,3 +245,111 @@ class TestSatpassToggle:
     def test_categories_for_toggle_satpass_returns_sat_pass(self):
         result = categories_for_toggle("satpass")
         assert result == ["sat_pass"]
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: a satpass Event built through the REAL native-adapter path
+# (predict -> consolidate -> gate_consolidated_pass -> to_event) must
+# region-tag via event_region_names(), using the two production observers.
+# This is the regression test for the observer_list wiring bug: before the
+# fix, gate_consolidated_pass()'s data dict never carried observer_list, so
+# this resolved to [] no matter how the areas were configured.
+# ---------------------------------------------------------------------------
+
+# Production ground stations (see adapter_config observers): Treasure Valley
+# (Boise area) and Magic Valley (Twin Falls area).
+_TREASURE_VALLEY = {"slug": "treasure_valley", "name": "Treasure Valley",
+                     "lat": 43.6, "lon": -116.2, "alt_m": 0.0}
+_MAGIC_VALLEY = {"slug": "magic_valley", "name": "Magic Valley",
+                  "lat": 42.5558, "lon": -114.4701, "alt_m": 0.0}
+
+# Coarse named boxes that cover each observer, standing in for the real
+# region_routes cells ("SW Idaho" covers the Treasure Valley/Boise area,
+# "SC Idaho" covers the Magic Valley/Twin Falls area).
+_SW_IDAHO = MonitoringArea(north=44.5, south=42.8, east=-115.0, west=-117.5,
+                           name="SW Idaho")
+_SC_IDAHO_PROD = MonitoringArea(north=43.2, south=42.0, east=-113.0, west=-115.2,
+                                name="SC Idaho")
+_PROD_AREAS = [_SW_IDAHO, _SC_IDAHO_PROD]
+
+
+class TestSatpassEndToEndRegionTagging:
+    def test_real_gate_path_region_tags_nonempty(self, monkeypatch):
+        """Drive the actual SatpassAdapter tick -> gate -> to_event path
+        (no shortcuts through gate_consolidated_pass or make_event) with the
+        two production observer coordinates, then confirm event_region_names
+        returns a non-empty list built from event.data['observer_list']."""
+        import json as _json
+        from datetime import datetime, timezone
+
+        from meshai.adapter_config import invalidate_cache
+        from meshai.config import SatpassConfig
+        from meshai.env.satellite.pass_predictor import PassInfo
+        from meshai.env.satellite.tle_store import upsert_tle
+        from meshai.env.satpass import SatpassAdapter
+        from meshai.persistence import get_db
+
+        # -- seed a fresh ISS TLE --------------------------------------------------
+        conn = get_db()
+        fresh = datetime.now(timezone.utc).isoformat()
+        iss_l1 = "1 25544U 98067A   26182.50000000  .00016717  00000-0  10270-3 0  9008"
+        iss_l2 = "2 25544  51.6400 208.9163 0007417  17.6777  85.6621 15.54225995 12345"
+        upsert_tle(conn, 25544, "ISS (ZARYA)", iss_l1, iss_l2, fresh)
+
+        # -- enable satpass, dry_run off so the gate actually returns data --------
+        conn.execute("UPDATE adapter_config SET value_json='true' "
+                     "WHERE adapter='satpass' AND key='enabled'")
+        conn.execute("UPDATE adapter_config SET value_json='false' "
+                     "WHERE adapter='satpass' AND key='dry_run'")
+        conn.execute("UPDATE adapter_config SET value_json=? "
+                     "WHERE adapter='satpass' AND key='max_broadcasts_per_hour'",
+                     (_json.dumps(100),))
+        invalidate_cache()
+
+        # -- patch observers + predictor -------------------------------------------
+        monkeypatch.setattr(
+            "meshai.persistence.observer_locations.get_observers",
+            lambda *a, **k: [_TREASURE_VALLEY, _MAGIC_VALLEY])
+
+        t0 = (1783000000 // 3600) * 3600 + 100
+
+        def _fake_compute_passes(l1, l2, lat, lon, alt, window_h, min_el, now):
+            def _pi(aos, los, max_el, az_aos, az_los, az_peak):
+                peak = (aos + los) // 2
+                return PassInfo(
+                    aos_time=datetime.fromtimestamp(aos, tz=timezone.utc),
+                    los_time=datetime.fromtimestamp(los, tz=timezone.utc),
+                    peak_time=datetime.fromtimestamp(peak, tz=timezone.utc),
+                    max_elevation=max_el,
+                    azimuth_at_aos=az_aos, azimuth_at_los=az_los,
+                    azimuth_at_peak=az_peak)
+            if abs(lat - _TREASURE_VALLEY["lat"]) < 0.1:
+                return [_pi(t0, t0 + 300, 40.0, 225, 300, 90)]
+            if abs(lat - _MAGIC_VALLEY["lat"]) < 0.1:
+                return [_pi(t0 + 60, t0 + 400, 70.0, 270, 45, 180)]
+            return []
+
+        monkeypatch.setattr(
+            "meshai.env.satellite.pass_predictor.compute_passes",
+            _fake_compute_passes)
+
+        cfg = SatpassConfig(enabled=True, feed_source="native",
+                            norad_ids=[25544], min_elevation_deg=10.0,
+                            window_hours=24)
+        adapter = SatpassAdapter(cfg)
+        assert adapter.tick(now=t0 - 1800) is True  # AOS 30 min out -> imminent
+
+        staged = adapter.get_events()
+        assert len(staged) == 1
+        event = adapter.to_event(staged[0])
+        assert event is not None
+
+        # The bug: before the fix, data["observer_list"] was never set, so
+        # this was always [] regardless of area config.
+        assert event.data.get("observer_list"), (
+            "gate_consolidated_pass() did not populate observer_list on the "
+            "event data dict")
+
+        names = event_region_names(event, _PROD_AREAS)
+        assert names, "satpass event failed to region-tag via observer_list"
+        assert set(names) == {"SW Idaho", "SC Idaho"}

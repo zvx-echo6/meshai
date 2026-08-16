@@ -354,3 +354,76 @@ def test_parse_norad_ids_handles_comma_string():
     assert SatpassAdapter._parse_norad_ids("25544, 33591") == [25544, 33591]
     assert SatpassAdapter._parse_norad_ids([25544, "33591"]) == [25544, 33591]
     assert SatpassAdapter._parse_norad_ids([]) == []
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 8. observer_list FLOWS INTO THE GATE'S data DICT (region-tagging fix)
+# ══════════════════════════════════════════════════════════════════════
+#
+# gate_consolidated_pass() builds the event `data` dict that rides all the
+# way to the dispatcher via to_event(). Satpass events carry no lat/lon/
+# geometry, so coverage_area.observer_region_names() reading
+# event.data["observer_list"] is the ONLY path that can region-tag a
+# satpass event for the region_routes matrix. These tests pin that the
+# gate actually populates it (and stays safe when it can't).
+
+def test_gate_consolidated_pass_data_contains_observer_list():
+    """The (wire, data) tuple returned by gate_consolidated_pass() must
+    carry the same comma-joined observer_list already written to the
+    satpass_events audit column."""
+    _enable_satpass_db(dry_run=False)
+    from meshai.env.satellite import pass_format as sh
+
+    consolidated = {
+        "consolidated_id": "25544:900000",
+        "norad_id": 25544,
+        "sat_name": "ISS (ZARYA)",
+        "max_elevation": 70.0,
+        "aos_epoch": 1_000_000,
+        "los_epoch": 1_000_300,
+        "aos_compass": "SW",
+        "los_compass": "NE",
+        "peak_compass": "S",
+        "entry_observer": "Boise",
+        "exit_observer": "Twin Falls",
+        "observer_list": "boise,twin",
+    }
+    result = sh.gate_consolidated_pass(consolidated, now=0)
+    assert result is not None
+    _, data = result
+    assert data["observer_list"] == "boise,twin"
+
+
+def test_gate_consolidated_pass_missing_observer_list_is_defensive():
+    """A `consolidated` dict with no observer_list must not raise, and the
+    resulting data["observer_list"] must be falsy (never a garbage value
+    that would resolve to a bogus region)."""
+    _enable_satpass_db(dry_run=False)
+    from meshai.env.satellite import pass_format as sh
+
+    consolidated = {
+        "consolidated_id": "25544:900001",
+        "norad_id": 25544,
+        "sat_name": "ISS (ZARYA)",
+        "max_elevation": 40.0,
+        "aos_epoch": 2_000_000,
+        "los_epoch": 2_000_300,
+        "aos_compass": "SW",
+        "los_compass": "NE",
+        "peak_compass": "S",
+        # entry_observer / exit_observer / observer_list all deliberately absent
+    }
+    result = sh.gate_consolidated_pass(consolidated, now=0)
+    assert result is not None
+    _, data = result
+    assert not data.get("observer_list")
+
+    # And observer_region_names() must treat that as "no region", not raise.
+    from meshai.coverage_area import MonitoringArea, observer_region_names
+    from meshai.notifications.events import make_event
+
+    event = make_event(source="satpass", category="sat_pass", severity="routine",
+                        title="Pass", data=data)
+    areas = [MonitoringArea(north=44.0, south=42.0, east=-113.0, west=-117.0,
+                            name="SW Idaho")]
+    assert observer_region_names(event, areas) == []

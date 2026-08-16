@@ -373,7 +373,20 @@ def gate_consolidated_pass(consolidated: dict, *,
 
     # Prepare data dict with callbacks
     severity_word = _map_severity(max_el)
-    data = {"_meshai_precomposed": True, "_severity_override": severity_word}
+    data = {
+        "_meshai_precomposed": True,
+        "_severity_override": severity_word,
+        # Region tagging: coverage_area.observer_region_names() reads
+        # event.data["observer_list"] as a comma-joined string of observer
+        # slugs (the same shape already computed above for the audit
+        # column). Satpass events carry no lat/lon/geometry, so this is the
+        # ONLY path that lets CoverageFilter region-tag a satpass event for
+        # region_routes matching. `observer_list` is already defensive
+        # (falls back to entry_obs, or "") so this never raises; an empty
+        # string is fail-open in observer_region_names() (-> no region tag,
+        # not an exception).
+        "observer_list": observer_list,
+    }
     _attach_commit(data, event_id=consolidated_id, event_log_row_id=None)
 
     return wire, data
