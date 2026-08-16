@@ -151,10 +151,38 @@ def decide(data: dict, *, source: str, now: float) -> GateResult:
     contained_pct = data.get("contained_pct")
     declared_at_epoch = data.get("declared_at_epoch")
 
-    row = conn.execute(
-        "SELECT current_acres, current_contained_pct, last_broadcast_at, "
-        "last_broadcast_acres, last_broadcast_contained "
-        "FROM fires WHERE irwin_id = ?", (irwin_id,)).fetchone()
+    try:
+        row = conn.execute(
+            "SELECT current_acres, current_contained_pct, last_broadcast_at, "
+            "last_broadcast_acres, last_broadcast_contained, tombstoned_at "
+            "FROM fires WHERE irwin_id = ?", (irwin_id,)).fetchone()
+    except Exception:
+        # Defensive: an un-migrated schema without the tombstoned_at column
+        # (pre-v12) must not crash the decider. Fall back to the narrower
+        # column set; the tombstone gate below then reads as "not tombstoned"
+        # for this row rather than raising.
+        row = conn.execute(
+            "SELECT current_acres, current_contained_pct, last_broadcast_at, "
+            "last_broadcast_acres, last_broadcast_contained "
+            "FROM fires WHERE irwin_id = ?", (irwin_id,)).fetchone()
+
+    # ── Tombstone mute — durable operator kill-switch ───────────────────────
+    # A non-null fires.tombstoned_at (the SAME column the dashboard's active
+    # views already filter on -- /api/env/active WHERE tombstoned_at IS NULL)
+    # means this incident is closed out / muted. It must never broadcast
+    # again through ANY path below (new, update, or cooldown-suppress is a
+    # no-op here anyway), so this check runs BEFORE the row-missing / growth
+    # / cooldown branches. Defensive: a row without the column, or missing
+    # the key for any other reason, reads as "not tombstoned" rather than
+    # raising -- it must never crash the decider.
+    if row is not None:
+        try:
+            tombstoned_at = row["tombstoned_at"]
+        except (IndexError, KeyError, TypeError):
+            tombstoned_at = None
+        if tombstoned_at is not None:
+            return GateResult(broadcast=False, lifecycle="suppress",
+                              reason=f"incident tombstoned irwin={irwin_id}")
 
     # Stamps every active broadcast (New + Update) carries. category override
     # is added only for New (Update keeps the envelope-derived wildfire_incident).

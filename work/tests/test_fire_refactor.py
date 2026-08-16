@@ -324,6 +324,102 @@ class TestGateSequenceParity:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 2b. Tombstone mute — decide() must honor fires.tombstoned_at
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestTombstoneMute:
+    """A non-null fires.tombstoned_at is a durable operator kill-switch: an
+    incident row stamped tombstoned must never broadcast again through
+    decide() -- new, update, or otherwise -- regardless of forward
+    acreage/containment growth or the 8h cooldown. This is the SAME column
+    the dashboard's /api/env/active view already filters on
+    (WHERE tombstoned_at IS NULL); decide() previously never read it."""
+
+    _IRWIN = "IRWIN-TOMBSTONE-1"
+
+    def _seed(self, conn, *, acres, contained, last_bcast_at, tombstoned_at=None):
+        _write_fire_state(
+            conn, irwin_id=self._IRWIN, name="Lake Channel Fire",
+            acres=acres, contained_pct=contained, lat=42.0, lon=-114.0,
+            county="Twin Falls", state="ID", now=int(last_bcast_at or 1_000_000))
+        conn.execute(
+            "UPDATE fires SET last_broadcast_at=?, last_broadcast_acres=?, "
+            "last_broadcast_contained=?, tombstoned_at=? WHERE irwin_id=?",
+            (last_bcast_at, acres, contained, tombstoned_at, self._IRWIN),
+        )
+
+    def _incident(self, *, acres, contained):
+        return {
+            "_kind": "wfigs_incident", "irwin_id": self._IRWIN,
+            "incident_name": "Lake Channel Fire", "acres": acres,
+            "contained_pct": contained, "declared_at_epoch": None,
+            "lat": 42.0, "lon": -114.0, "county": "Twin Falls", "state": "ID",
+        }
+
+    # (a) non-tombstoned row, forward growth past cooldown -> still broadcasts.
+    def test_non_tombstoned_growth_still_broadcasts(self, mem_db):
+        self._seed(mem_db, acres=100, contained=10,
+                   last_bcast_at=1_000_000 - 9 * 3600, tombstoned_at=None)
+        gate = fire_decide(self._incident(acres=200, contained=10),
+                           source="wfigs", now=1_000_000.0)
+        assert gate.broadcast is True
+        assert gate.lifecycle == "update"
+
+    # (b) same row, tombstoned_at set -> suppressed regardless of growth/cooldown.
+    def test_tombstoned_row_suppressed_despite_growth(self, mem_db):
+        self._seed(mem_db, acres=100, contained=10,
+                   last_bcast_at=1_000_000 - 9 * 3600, tombstoned_at=999_000)
+        gate = fire_decide(self._incident(acres=9999, contained=99),
+                           source="wfigs", now=1_000_000.0)
+        assert gate.broadcast is False
+        assert gate.lifecycle == "suppress"
+        assert "tombston" in gate.reason.lower()
+
+    # (c) brand-new incident, not tombstoned (no row at all) -> broadcasts new.
+    def test_brand_new_incident_not_tombstoned_broadcasts(self, mem_db):
+        gate = fire_decide(self._incident(acres=50, contained=0),
+                           source="wfigs", now=1_000_000.0)
+        assert gate.broadcast is True
+        assert gate.lifecycle == "new"
+
+    # (d) defensive: a row lacking the tombstoned_at column must not raise.
+    def test_missing_tombstoned_at_column_does_not_raise(self, mem_db, monkeypatch):
+        self._seed(mem_db, acres=100, contained=10,
+                   last_bcast_at=1_000_000 - 9 * 3600, tombstoned_at=None)
+
+        import sqlite3
+
+        import meshai.notifications.gating.fire as fire_mod
+
+        class _NoTombstoneColConn:
+            """Proxies the real connection but simulates a pre-v12 schema:
+            any SELECT naming tombstoned_at raises OperationalError, exactly
+            as a real un-migrated `fires` table would."""
+
+            def __init__(self, real):
+                self._real = real
+
+            def execute(self, sql, *args, **kwargs):
+                if "tombstoned_at" in sql and "SELECT" in sql.upper():
+                    raise sqlite3.OperationalError(
+                        "no such column: tombstoned_at")
+                return self._real.execute(sql, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        monkeypatch.setattr(
+            fire_mod, "get_db", lambda: _NoTombstoneColConn(mem_db))
+
+        gate = fire_decide(self._incident(acres=200, contained=10),
+                           source="wfigs", now=1_000_000.0)
+        # Falls back to "not tombstoned" and proceeds with normal gating --
+        # must not raise, and growth past cooldown still broadcasts.
+        assert gate.broadcast is True
+        assert gate.lifecycle == "update"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 3. Registration — the three explicit categories resolve; FIRMS does not
 # ─────────────────────────────────────────────────────────────────────────────
 
