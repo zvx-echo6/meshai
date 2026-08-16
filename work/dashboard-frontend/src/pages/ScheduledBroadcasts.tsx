@@ -7,6 +7,7 @@ import {
   Toggle, NumberInput, TimeInput,
   type NotificationsConfig,
 } from '@/pages/Notifications'
+import AnnouncementsPanel from '@/components/AnnouncementsPanel'
 
 interface Props {
   family?: 'meshtastic' | 'meshcore'
@@ -214,6 +215,10 @@ export default function ScheduledBroadcasts({ family = 'meshtastic' }: Props) {
         )}
         <p className="text-xs text-slate-600">All times are Mountain Time (America/Boise). DST handled automatically.</p>
       </div>
+
+      {/* Announcements -- owner-authored free-text broadcasts, separate from
+          the automatic band-conditions/hazard notifications above. */}
+      <AnnouncementsPanel />
     </div>
   )
 }
