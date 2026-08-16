@@ -188,7 +188,11 @@ class TestWorkZoneGolden:
 
     _GOLDEN = {
         "0002.json": "🚧 US-91, near Chubbuck: southbound, road construction, ends Aug 17",
-        "0003.json": "🚧 US-95, near Wilder: southbound, ends Jul 19",
+        # "wilder" was added to the town_anchors seed by the seed-list sync
+        # (Fix 2), so the DB-anchor step now wins over the live Photon
+        # geocode this golden was originally captured against; the DB row's
+        # coords round to 1 mi S instead of Photon's sub-mile "near".
+        "0003.json": "🚧 US-95, 1 mi S of Wilder: southbound, ends Jul 19",
     }
 
     # Captured from the deleted normalizer's normalize() + _n_to_canonical_workzone()
@@ -433,6 +437,35 @@ class TestAnchorResolve:
         from meshai.notifications.formatters._anchor import resolve_anchor
         assert resolve_anchor(None, -116.2, max_mi=50.0) is None
         assert resolve_anchor(43.6, None, max_mi=50.0) is None
+
+    def test_disabled_anchor_excluded(self, monkeypatch):
+        """A disabled=0 town_anchors row must not be selected, even when it is
+        the closest row within max_mi — the enabled flag is a hard exclude."""
+        import time as _time
+        from meshai.persistence import get_db
+        from meshai.notifications.formatters._anchor import resolve_anchor
+        from meshai import geo
+
+        # Force the Photon fallback to a known miss so a non-None result can
+        # only come from the (wrongly-included) disabled DB row.
+        monkeypatch.setattr(
+            geo, "nearest_town",
+            lambda lat, lon, max_distance_mi=50.0: None,
+        )
+
+        conn = get_db()
+        # Clear seeded anchors so only our controlled (disabled) row exists.
+        conn.execute("DELETE FROM town_anchors")
+        conn.execute(
+            "INSERT INTO town_anchors(name, lat, lon, state, enabled, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("disabledville", -33.8688, 151.2093, "NSW", 0, _time.time()),  # Sydney
+        )
+
+        # Event right next to the disabled row; Photon fallback is forced to
+        # miss → None confirms the DB step excluded the disabled row.
+        result = resolve_anchor(-33.870, 151.210, max_mi=50.0)
+        assert result is None
 
 
 # ── 4. Schema conformance ────────────────────────────────────────────────────

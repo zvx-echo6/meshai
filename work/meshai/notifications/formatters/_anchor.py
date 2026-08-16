@@ -96,7 +96,7 @@ def resolve_anchor(
         from meshai.persistence import get_db
         rows = get_db().execute(
             "SELECT name, lat, lon FROM town_anchors "
-            "WHERE lat IS NOT NULL AND lon IS NOT NULL"
+            "WHERE lat IS NOT NULL AND lon IS NOT NULL AND enabled = 1"
         ).fetchall()
         best = None
         best_d = float("inf")
