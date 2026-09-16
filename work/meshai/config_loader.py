@@ -86,6 +86,7 @@ SECRET_FIELDS: set[str] = {
     "environmental.roads511.api_key",
     "notifications.rules.*.smtp_password",
     "notifications.toggles.*.smtp_password",
+    "notifications.destinations.*.smtp_password",
     "danger_zones.webhook_url",
 }
 

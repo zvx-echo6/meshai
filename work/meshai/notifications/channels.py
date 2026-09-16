@@ -1,6 +1,7 @@
 """Notification channel implementations with connectivity testing."""
 
 import asyncio
+import email.utils
 import logging
 import smtplib
 import ssl
@@ -659,12 +660,24 @@ class EmailChannel(NotificationChannel):
             logger.error("Failed to send email: %s", e)
             return False
 
-    def _send_email(self, subject: str, body: str):
+    def _build_message(self, subject: str, body: str) -> MIMEMultipart:
+        """Build the outgoing MIME message with the headers every email
+        meshai sends needs. Our Postfix does NOT fill in missing
+        Message-ID/Date headers, so we set them here rather than relying
+        on the relay.
+        """
         msg = MIMEMultipart()
         msg["From"] = self._from
         msg["To"] = ", ".join(self._recipients)
         msg["Subject"] = subject
+        msg["Date"] = email.utils.formatdate(localtime=False)
+        domain = self._from.split("@", 1)[1] if "@" in self._from else None
+        msg["Message-ID"] = email.utils.make_msgid(domain=domain)
         msg.attach(MIMEText(body, "plain"))
+        return msg
+
+    def _send_email(self, subject: str, body: str):
+        msg = self._build_message(subject, body)
 
         if self._tls:
             context = ssl.create_default_context()
@@ -672,12 +685,15 @@ class EmailChannel(NotificationChannel):
                 server.starttls(context=context)
                 if self._user and self._password:
                     server.login(self._user, self._password)
-                server.sendmail(self._from, self._recipients, msg.as_string())
+                # Explicit from_addr/to_addrs so the envelope sender is
+                # always the bare from_address, never whatever parsing the
+                # "From" header might otherwise yield.
+                server.send_message(msg, from_addr=self._from, to_addrs=self._recipients)
         else:
             with smtplib.SMTP(self._host, self._port, timeout=15) as server:
                 if self._user and self._password:
                     server.login(self._user, self._password)
-                server.sendmail(self._from, self._recipients, msg.as_string())
+                server.send_message(msg, from_addr=self._from, to_addrs=self._recipients)
 
     async def test_connection(self) -> dict:
         """Test SMTP connectivity and authentication."""
@@ -728,35 +744,27 @@ class EmailChannel(NotificationChannel):
                         server.login(self._user, self._password)
 
                     # Send actual test email
-                    msg = MIMEMultipart()
-                    msg["From"] = self._from
-                    msg["To"] = ", ".join(self._recipients)
-                    msg["Subject"] = "[MeshAI] Channel connectivity test"
-                    msg.attach(MIMEText(
+                    msg = self._build_message(
+                        "[MeshAI] Channel connectivity test",
                         "This is a test message from MeshAI to verify email delivery is working.\n\n"
                         f"Sent: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
                         f"SMTP: {self._host}:{self._port} (TLS)\n\n"
                         "If you received this, email delivery is working correctly.",
-                        "plain"
-                    ))
-                    server.sendmail(self._from, self._recipients, msg.as_string())
+                    )
+                    server.send_message(msg, from_addr=self._from, to_addrs=self._recipients)
             else:
                 with smtplib.SMTP(self._host, self._port, timeout=15) as server:
                     if self._user and self._password:
                         server.login(self._user, self._password)
 
-                    msg = MIMEMultipart()
-                    msg["From"] = self._from
-                    msg["To"] = ", ".join(self._recipients)
-                    msg["Subject"] = "[MeshAI] Channel connectivity test"
-                    msg.attach(MIMEText(
+                    msg = self._build_message(
+                        "[MeshAI] Channel connectivity test",
                         "This is a test message from MeshAI to verify email delivery is working.\n\n"
                         f"Sent: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
                         f"SMTP: {self._host}:{self._port}\n\n"
                         "If you received this, email delivery is working correctly.",
-                        "plain"
-                    ))
-                    server.sendmail(self._from, self._recipients, msg.as_string())
+                    )
+                    server.send_message(msg, from_addr=self._from, to_addrs=self._recipients)
 
             recipient_str = self._recipients[0]
             if len(self._recipients) > 1:

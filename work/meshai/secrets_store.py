@@ -26,6 +26,7 @@ SECRET_FIELD_TO_ENV: dict[str, str] = {
     "environmental.roads511.api_key": "ROADS511_API_KEY",
     "notifications.toggles.*.smtp_password": "SMTP_PASSWORD",
     "notifications.rules.*.smtp_password": "SMTP_PASSWORD",
+    "notifications.destinations.*.smtp_password": "SMTP_PASSWORD",
     "mesh_sources.*.api_token": "MESHMONITOR_API_TOKEN",
 }
 

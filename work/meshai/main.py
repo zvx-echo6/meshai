@@ -51,6 +51,7 @@ class MeshAI:
         self._pipeline_scheduler = None  # DigestScheduler from start_pipeline()
         self.env_store = None  # Environmental feeds store
         self._fire_pacer = None  # FirePacer for rate-limited fire broadcasts
+        self._radio_outage_monitor = None  # RadioOutageMonitor ("all radios down" ops email)
         self.router: Optional[MessageRouter] = None
         self.responder: Optional[Responder] = None
         self._running = False
@@ -140,6 +141,10 @@ class MeshAI:
             # back-to-back. See env/store.py's _FIRE_PACER_SOURCES gate.
             if self.env_store is not None:
                 self.env_store._fire_pacer = self._fire_pacer
+
+        # Radio outage monitor: emails ops when every configured mesh radio
+        # is down at once (see notifications/radio_outage.py).
+        await self._start_radio_outage_monitor()
 
         logger.info("MeshAI started successfully")
 
@@ -264,6 +269,24 @@ class MeshAI:
                     self.context.prune()
                 self._last_cleanup = time.time()
 
+    async def _start_radio_outage_monitor(self) -> None:
+        """Start the "all radios down" ops email monitor.
+
+        Split out from start() (rather than inlined like the fire pacer)
+        so it can be exercised on a minimally-constructed MeshAI in tests
+        without running the rest of start()'s I/O.
+        """
+        from .notifications.radio_outage import RadioOutageMonitor
+        self._radio_outage_monitor = RadioOutageMonitor(
+            connector=self.connector, config=self.config,
+        )
+        await self._radio_outage_monitor.start()
+
+    async def _stop_radio_outage_monitor(self) -> None:
+        if self._radio_outage_monitor is not None:
+            await self._radio_outage_monitor.stop()
+            self._radio_outage_monitor = None
+
     async def _connection_supervisor(self, c=None) -> None:
         """Watchdog: SINGLE source of truth for /tmp/meshai.link and the ONLY
         reconnect driver. Woken by connector._wake (connection.lost) or a
@@ -330,6 +353,8 @@ class MeshAI:
 
         if self._fire_pacer is not None:
             await self._fire_pacer.stop()
+
+        await self._stop_radio_outage_monitor()
 
         if self._supervisor_task is not None:
             self._supervisor_task.cancel()
