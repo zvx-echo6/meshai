@@ -609,13 +609,15 @@ class EnvironmentalStore:
             # the table always equals the current active set the summary reads.
             self._ingest_wzdx(adapter)
         elif name == "watchduty":
-            # Group B: evacuation readings DELIBERATELY bypass the generic
-            # received-delta `_delta_emit` gate -- the DECIDER
-            # (gating.watchduty.decide_evac, backed by the fires table's
-            # watchduty_evac_* columns) owns the "is it new" decision,
-            # exactly like native WFIGS fires above. get_events() drains
-            # (and clears) the adapter's pending reading snapshot -- this is
-            # the only call site that does so.
+            # Group B evac readings and Group C report readings BOTH
+            # DELIBERATELY bypass the generic received-delta `_delta_emit`
+            # gate -- their DECIDERS (gating.watchduty.decide_evac / fires
+            # table watchduty_evac_* columns; gating.watchduty.decide_report
+            # / the watchduty_reports_sent table) own the "is it new"
+            # decision, exactly like native WFIGS fires above. get_events()
+            # drains (and clears) BOTH pending reading lists together -- this
+            # is the only call site that does so; `adapter.to_event()`
+            # branches per-reading on its "type" key ("evac" vs "report").
             for reading in adapter.get_events():
                 self._emit_event(adapter, reading)
         elif name == "avalanche":

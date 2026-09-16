@@ -153,3 +153,7 @@ register("emergency_hazmat",     _ipaws_fmt_mod.format)
 # downgraded/lifted/updated headers) -- see formatters/watchduty.py.
 from meshai.notifications.formatters import watchduty as _watchduty_fmt_mod  # noqa: E402,F401
 register("wildfire_evac", _watchduty_fmt_mod.format_evac)
+
+# Group C: Watch Duty report-message alerts. Terse "{name} update:\n{text}"
+# wire -- see formatters/watchduty.py::format_report.
+register("wildfire_report", _watchduty_fmt_mod.format_report)

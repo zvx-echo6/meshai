@@ -479,6 +479,18 @@ ALERT_CATEGORIES = {
         "example_message": "EVACUATION ORDER: Buckhorn Fire\nLevel 3 (Go Now) for the area in red on the county evacuation map\nhttps://app.watchduty.org/i/119989",
         "toggle": "fire",
     },
+    # Group C: Watch Duty report-message alerts (env/watchduty.py). Own
+    # dedup ledger (watchduty_reports_sent, migration v31); own decider
+    # (gating/watchduty.py::decide_report) and formatter
+    # (formatters/watchduty.py::format_report). Routine severity -- a report
+    # is informational, never evacuation-grade.
+    "wildfire_report": {
+        "name": "Wildfire Report (Watch Duty)",
+        "description": "Watch Duty report message for a fire meshai already matched — one qualifying human report per fire per poll, automated (WildCAD) and NIFC-acreage noise filtered out",
+        "default_severity": "routine",
+        "example_message": "Buckhorn Fire update:\nCrews have mopped up deep into the timber stringer on the north ridge.\nhttps://app.watchduty.org/i/119989",
+        "toggle": "fire",
+    },
 
     # Environmental - Seismic (Geohazards family)
     # v0.5.7-seismic audit (test_alert_categories_seismic_complete enforces parity):

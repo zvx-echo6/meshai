@@ -60,6 +60,11 @@ NATIVE_ALWAYS_DECIDE = frozenset(
         # the native fire categories above it cannot be left to the
         # shadow-bake env var. Emitted only by the native watchduty adapter.
         "wildfire_evac",
+        # Group C: Watch Duty report-message alerts (env/watchduty.py). The
+        # decider IS the report dedup gate (watchduty_reports_sent table),
+        # same reasoning as wildfire_evac above. Emitted only by the native
+        # watchduty adapter.
+        "wildfire_report",
     }
 )
 

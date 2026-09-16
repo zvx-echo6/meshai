@@ -1,4 +1,5 @@
-"""Watch Duty evacuation-alert formatter — Group B.
+"""Watch Duty evacuation-alert (Group B) and report-message (Group C)
+formatters.
 
 Renders the wire string for a "wildfire_evac" Event, reading the canonical
 schema ``gating/watchduty.py::decide_evac`` writes into ``event.data``
@@ -84,3 +85,28 @@ def format_evac(event: "Event", *, now: float, budget: int) -> str:
         from meshai.notifications.formatters._budget import fit_to_budget
         return fit_to_budget(body, budget)
     return fit_to_budget_with_suffix(body, suffix, budget)
+
+
+def format_report(event: "Event", *, now: float, budget: int) -> str:
+    """Render the Watch Duty report-message wire string from canonical
+    event.data (see ``env/watchduty.py::_poll_one_fire_reports`` for the
+    reading schema and ``gating/watchduty.py::decide_report`` for the
+    ``kind="report"`` stamp -- unused here, there is only one shape).
+
+    Args:
+        event:  Pipeline Event -- reads from event.data.
+        now:    Frozen-clock epoch (seam; not used in current rendering).
+        budget: Mesh-packet character budget (from budget_for("watchduty")).
+
+    Returns:
+        UTF-8 string fitting within *budget* characters. Watch Duty's own
+        incident link is fit via ``fit_to_budget_with_suffix`` so it always
+        survives intact on its own trailing line -- the link is never cut.
+    """
+    d = event.data or {}
+    name = d.get("name") or "(unnamed fire)"
+    text = d.get("text") or ""
+    wd_event_id = d.get("wd_event_id")
+
+    body = f"{name} update:\n{text}"
+    return fit_to_budget_with_suffix(body, incident_url(wd_event_id), budget)

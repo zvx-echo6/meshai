@@ -14,9 +14,11 @@ broadcast about (``last_broadcast_at IS NOT NULL`` and recent) -- that is
 what keeps matching inside meshai's own coverage area without a separate
 geographic filter of its own.
 
-Groups B (evacuation alerts) and C (report alerts) build on the columns and
-stub methods this module ships now; ``get_events()``/``to_event()`` are
-intentionally no-ops until then.
+Group B (evacuation alerts, ``_build_evac_readings``/``decide_evac``) and
+Group C (report-message alerts, ``_poll_reports``/``decide_report``) both
+build on the columns this module's migration (v31) ships. ``get_events()``
+drains and clears the pending evac + report readings together; ``to_event()``
+branches on each reading's ``"type"`` key ("evac" or "report").
 """
 
 import hashlib
@@ -25,6 +27,7 @@ import json
 import logging
 import re
 import time
+from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -125,6 +128,78 @@ def normalize_evac_field(raw) -> str:
 def incident_url(event_id) -> str:
     """Watch Duty's own app link for a geo_event."""
     return f"https://app.watchduty.org/i/{event_id}"
+
+
+# ── Report helpers (Group C, pure, module-level) ────────────────────────────
+
+_WILDCAD_TEXT_RE = re.compile(r"\breported by wildcad\b", re.IGNORECASE)
+
+
+def is_automated_report(report) -> bool:
+    """True if a Watch Duty report was posted by an automated reporter
+    (WildCAD dispatch feed) rather than a human.
+
+    Defensive against a missing/null ``user_created``: treats it as NOT
+    automated (falls through to the message-text check only).
+    """
+    if not isinstance(report, dict):
+        return False
+    user = report.get("user_created")
+    if isinstance(user, dict):
+        if user.get("is_default_reporter"):
+            return True
+        display_name = user.get("display_name") or ""
+        username = user.get("username") or ""
+        if "wildcad" in str(display_name).lower() or "wildcad" in str(username).lower():
+            return True
+    message = strip_html(report.get("message"))
+    return bool(_WILDCAD_TEXT_RE.search(message))
+
+
+def is_filtered_report(text: str, patterns) -> bool:
+    """True if ``text`` matches any of ``patterns`` (case-insensitive
+    regexes). An invalid pattern is logged and skipped, never raised."""
+    if not text:
+        return False
+    for pattern in patterns or ():
+        try:
+            if re.search(pattern, text, re.IGNORECASE):
+                return True
+        except re.error:
+            logger.warning("watchduty: invalid report_filter_patterns regex: %r", pattern)
+    return False
+
+
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _report_epoch(report: dict) -> float:
+    """Best-effort epoch (seconds) from a report's ``date_created``, for
+    newest-first ordering. Falls back to 0.0 (oldest) on anything
+    unparseable or missing -- never raises."""
+    raw = report.get("date_created") if isinstance(report, dict) else None
+    if not raw:
+        return 0.0
+    try:
+        s = str(raw).strip()
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        return datetime.fromisoformat(s).timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def first_sentences(text: str, n: int = 2) -> str:
+    """The first ``n`` sentences of ``text``, split on [.!?] followed by
+    whitespace, punctuation kept. Falls back to the whole text if there is
+    no such split (e.g. no terminal punctuation)."""
+    if not text:
+        return ""
+    parts = _SENTENCE_SPLIT_RE.split(text.strip())
+    parts = [p for p in parts if p]
+    if not parts:
+        return text
+    return " ".join(parts[:n]).strip()
 
 
 # ── Evacuation level (Group B, pure, module-level) ──────────────────────────
@@ -267,21 +342,27 @@ class WatchDutyAdapter:
         self._backoff_until = 0.0
         self._is_loaded = False
         # Group B: evacuation readings built by match_and_store(), drained
-        # (and cleared) by get_events().
+        # (and cleared) by get_events(). Each match_and_store() call
+        # OVERWRITES this with the complete current snapshot (see
+        # _build_evac_readings).
         self._readings: list = []
+        # Group C: report readings built by _poll_reports() (called from
+        # tick(), after a successful match_and_store()), drained (and
+        # cleared) by get_events() alongside _readings. Kept as a SEPARATE
+        # list (appended to, not overwritten) because a report poll only
+        # evaluates the reports fetched THAT tick -- there is no complete
+        # current-snapshot to recompute the way evac readings have, so an
+        # overwrite here would drop readings if get_events() were ever
+        # drained less often than a report poll runs.
+        self._report_readings: list = []
 
     # ── HTTP ─────────────────────────────────────────────────────────────
 
-    def fetch_geo_events(self) -> list:
-        """GET the Watch Duty geo_events endpoint. Returns the flat JSON
-        list. Raises on a non-list / non-JSON (e.g. HTML) response."""
+    def _headers(self) -> dict:
+        """Shared request headers -- same spoofed-client headers for every
+        Watch Duty endpoint (geo_events, reports)."""
         app_version = adapter_config.watchduty.app_version  # read hot, every call
-        params = {
-            "geo_event_types": "wildfire,location",
-            "ts": int(time.time() * 1000),
-        }
-        url = f"{self._geo_events_url}?{urlencode(params)}"
-        headers = {
+        return {
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": "en",
             "Origin": "https://app.watchduty.org",
@@ -291,7 +372,16 @@ class WatchDutyAdapter:
             "X-App-Version": app_version,
             "X-Git-Tag": app_version,
         }
-        req = Request(url, headers=headers)
+
+    def fetch_geo_events(self) -> list:
+        """GET the Watch Duty geo_events endpoint. Returns the flat JSON
+        list. Raises on a non-list / non-JSON (e.g. HTML) response."""
+        params = {
+            "geo_event_types": "wildfire,location",
+            "ts": int(time.time() * 1000),
+        }
+        url = f"{self._geo_events_url}?{urlencode(params)}"
+        req = Request(url, headers=self._headers())
         with urlopen(req, timeout=30) as resp:
             raw = resp.read().decode("utf-8")
         data = json.loads(raw)
@@ -299,6 +389,34 @@ class WatchDutyAdapter:
             raise ValueError(
                 f"watchduty: expected a JSON list from geo_events, got {type(data).__name__}")
         return data
+
+    def fetch_reports(self, wd_event_id: str, limit: int) -> list:
+        """GET the Watch Duty reports endpoint for one geo_event. Accepts a
+        dict with a "results" list (the live paginated shape) or a bare
+        list; raises on anything else (e.g. an HTML error page)."""
+        params = {
+            "geo_event_id": wd_event_id,
+            "status": "approved",
+            "limit": limit,
+            "offset": 0,
+            "ts": int(time.time() * 1000),
+        }
+        url = f"{self._reports_url}?{urlencode(params)}"
+        req = Request(url, headers=self._headers())
+        with urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8")
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            results = data.get("results")
+            if isinstance(results, list):
+                return results
+            raise ValueError(
+                "watchduty: expected a 'results' list from reports, got "
+                f"{type(results).__name__}")
+        if isinstance(data, list):
+            return data
+        raise ValueError(
+            f"watchduty: expected a JSON list or dict from reports, got {type(data).__name__}")
 
     # ── Candidate query ──────────────────────────────────────────────────
 
@@ -414,11 +532,6 @@ class WatchDutyAdapter:
                 (wd_id, evt.get("name"), now,
                  1 if evt.get("is_active") else 0, cand_irwin),
             )
-            try:
-                self._seed_existing_reports(cand_irwin, wd_id)
-            except Exception:
-                logger.exception(
-                    "watchduty: _seed_existing_reports failed for %s", cand_irwin)
             new_count += 1
 
         self._build_evac_readings(conn, by_id)
@@ -467,6 +580,7 @@ class WatchDutyAdapter:
                 continue
             level, zone_text = evac_level(wd_evt)
             self._readings.append({
+                "type": "evac",
                 "irwin_id": row["irwin_id"],
                 "wd_event_id": row["watchduty_event_id"],
                 "name": wd_evt.get("name"),
@@ -479,12 +593,163 @@ class WatchDutyAdapter:
                 "state": row["state"],
             })
 
-    def _seed_existing_reports(self, irwin_id: str, wd_event_id: str) -> None:
-        """No-op stub. Group C fills this in: on first match, seed
-        ``watchduty_reports_sent`` with every report Watch Duty has already
-        published for this geo_event (seeded=1, sent_at=NULL) so historical
-        reports never broadcast the moment a fire is matched."""
-        return None
+    # ── Report polling (Group C) ────────────────────────────────────────
+
+    _SEED_PREFIX = "seed:"
+
+    def _report_seed_sentinel_present(self, conn, irwin_id: str) -> bool:
+        row = conn.execute(
+            "SELECT 1 FROM watchduty_reports_sent WHERE report_id=?",
+            (f"{self._SEED_PREFIX}{irwin_id}",),
+        ).fetchone()
+        return row is not None
+
+    def _seed_reports(self, conn, irwin_id: str, wd_event_id: str,
+                       reports: list, now: float) -> None:
+        """Lazy, sentinel-based first-poll seed (Group C, replaces the
+        Group A ``_seed_existing_reports`` stub): mark every report Watch
+        Duty currently has for this fire's geo_event as already-seen
+        (``seeded=1``, ``sent_at`` NULL), plus a sentinel row
+        ``report_id="seed:<irwin_id>"``, so a fire's pre-existing report
+        backlog is never broadcast the moment report polling first reaches
+        it. Runs lazily from ``_poll_reports`` (NOT from ``match_and_store``)
+        so a seeding fetch failure just leaves the sentinel absent -- the
+        very next poll retries the seed instead of dumping the backlog.
+        """
+        for report in reports:
+            if not isinstance(report, dict):
+                continue
+            rid = report.get("id")
+            if rid is None:
+                continue
+            conn.execute(
+                "INSERT OR IGNORE INTO watchduty_reports_sent"
+                "(report_id, irwin_id, geo_event_id, sent_at, seeded, created_at) "
+                "VALUES (?,?,?,?,1,?)",
+                (str(rid), irwin_id, wd_event_id, None, now),
+            )
+        conn.execute(
+            "INSERT OR IGNORE INTO watchduty_reports_sent"
+            "(report_id, irwin_id, geo_event_id, sent_at, seeded, created_at) "
+            "VALUES (?,?,?,?,1,?)",
+            (f"{self._SEED_PREFIX}{irwin_id}", irwin_id, wd_event_id, None, now),
+        )
+
+    def _mark_report_seeded(self, conn, irwin_id: str, wd_event_id: str,
+                             report_id: str, now: float) -> None:
+        """INSERT OR IGNORE one report as seeded=1 (deliberately skipped:
+        automated, filtered, empty text, or simply not this poll's pick) so
+        it is never re-evaluated on a later poll."""
+        conn.execute(
+            "INSERT OR IGNORE INTO watchduty_reports_sent"
+            "(report_id, irwin_id, geo_event_id, sent_at, seeded, created_at) "
+            "VALUES (?,?,?,?,1,?)",
+            (report_id, irwin_id, wd_event_id, None, now),
+        )
+
+    def _poll_one_fire_reports(self, conn, irwin_id: str, wd_event_id: str,
+                                name: str, lat, lon, county, state,
+                                limit: int, patterns: list) -> None:
+        """Fetch + evaluate reports for ONE matched fire, appending at most
+        one new reading to ``self._report_readings``. Raises on a fetch
+        failure -- the caller (``_poll_reports``) logs and continues with
+        the other fires so one bad fire never aborts the whole tick.
+        """
+        reports = self.fetch_reports(wd_event_id, limit)
+        now = time.time()
+
+        if not self._report_seed_sentinel_present(conn, irwin_id):
+            self._seed_reports(conn, irwin_id, wd_event_id, reports, now)
+            return
+
+        existing_ids = {
+            r["report_id"] for r in conn.execute(
+                "SELECT report_id FROM watchduty_reports_sent WHERE irwin_id=?",
+                (irwin_id,),
+            ).fetchall()
+        }
+
+        qualifying = []
+        for report in reports:
+            if not isinstance(report, dict):
+                continue
+            rid = report.get("id")
+            if rid is None:
+                continue
+            rid = str(rid)
+            if rid in existing_ids:
+                continue
+            text = strip_html(report.get("message"))
+            if is_automated_report(report) or is_filtered_report(text, patterns) or not text:
+                self._mark_report_seeded(conn, irwin_id, wd_event_id, rid, now)
+                continue
+            qualifying.append((rid, report, text))
+
+        if not qualifying:
+            return
+
+        # Newest first; the newest becomes the reading, every OTHER
+        # qualifying report is marked seeded (deliberately skipped) -- one
+        # report per fire per poll.
+        qualifying.sort(key=lambda item: _report_epoch(item[1]), reverse=True)
+        newest_id, newest_report, newest_text = qualifying[0]
+        for rid, _report, _text in qualifying[1:]:
+            self._mark_report_seeded(conn, irwin_id, wd_event_id, rid, now)
+
+        self._report_readings.append({
+            "type": "report",
+            "irwin_id": irwin_id,
+            "wd_event_id": wd_event_id,
+            "name": name,
+            "report_id": newest_id,
+            "text": first_sentences(newest_text, 2),
+            "date_created": newest_report.get("date_created"),
+            "lat": lat,
+            "lon": lon,
+            "county": county,
+            "state": state,
+        })
+
+    def _poll_reports(self) -> None:
+        """Group C: for every matched, still-active, non-tombstoned fire,
+        fetch its reports and turn at most one new qualifying report into a
+        pending reading (see ``_poll_one_fire_reports``). Called from
+        ``tick()`` after a successful ``match_and_store()``, only when
+        ``report_alerts_enabled`` is true. A single fire's fetch error is
+        logged and skipped -- it must not fail the whole tick or trigger
+        the adapter's HTTP backoff (the geo_events list fetch already
+        succeeded this tick).
+        """
+        from meshai.persistence import get_db
+        conn = get_db()
+
+        rows = conn.execute(
+            "SELECT irwin_id, watchduty_event_id, watchduty_name, lat, lon, "
+            "county, state FROM fires WHERE watchduty_event_id IS NOT NULL "
+            "AND watchduty_is_active=1 AND tombstoned_at IS NULL"
+        ).fetchall()
+
+        limit = adapter_config.watchduty.reports_per_fire_limit
+        patterns = adapter_config.watchduty.report_filter_patterns
+
+        first = True
+        for row in rows:
+            if not first:
+                time.sleep(1.0)
+            first = False
+            irwin_id = row["irwin_id"]
+            wd_event_id = row["watchduty_event_id"]
+            try:
+                self._poll_one_fire_reports(
+                    conn, irwin_id, wd_event_id, row["watchduty_name"],
+                    row["lat"], row["lon"], row["county"], row["state"],
+                    limit, patterns,
+                )
+            except Exception:
+                logger.warning(
+                    "watchduty: report poll failed for irwin=%s wd_event_id=%s",
+                    irwin_id, wd_event_id, exc_info=True)
+                continue
 
     # ── Polling gate ─────────────────────────────────────────────────────
 
@@ -517,7 +782,15 @@ class WatchDutyAdapter:
         """Interval-gated poll (same gate shape as NICFFiresAdapter.tick).
         Zero HTTP requests when disabled or nothing to poll for. On error:
         never raises -- logs, backs off (doubling up to 1h, reset on
-        success), and records the failure for health_status."""
+        success), and records the failure for health_status.
+
+        Group C: after a successful ``match_and_store()``, also polls Watch
+        Duty's reports endpoint (``_poll_reports``) for every matched fire,
+        when ``report_alerts_enabled`` is true. A report-poll failure for
+        ONE fire is caught and logged inside ``_poll_reports`` itself -- it
+        never reaches here, so it can't trigger this method's backoff (the
+        list fetch above already succeeded this tick).
+        """
         now = time.time()
         if now < self._backoff_until:
             return False
@@ -543,6 +816,9 @@ class WatchDutyAdapter:
             logger.warning("watchduty: tick failed: %s", e)
             return False
 
+        if adapter_config.watchduty.report_alerts_enabled:
+            self._poll_reports()
+
         self._consecutive_errors = 0
         self._last_error = None
         self._backoff_seconds = 0.0
@@ -553,14 +829,24 @@ class WatchDutyAdapter:
     # ── Event pipeline ───────────────────────────────────────────────────
 
     def get_events(self) -> list:
-        """Drain the pending evacuation readings built by the most recent
-        ``match_and_store`` call(s). Returns the current snapshot and
-        clears it -- a reading is handed to the store exactly once."""
-        readings = self._readings
+        """Drain the pending readings built by the most recent
+        ``match_and_store`` (evac) and ``_poll_reports`` (report) calls.
+        Returns BOTH the evac snapshot and the report readings, concatenated,
+        and clears both -- a reading is handed to the store exactly once."""
+        readings = self._readings + self._report_readings
         self._readings = []
+        self._report_readings = []
         return readings
 
     def to_event(self, evt: dict) -> Optional["Event"]:
+        """Translate a pending reading into a pipeline Event. Branches on
+        ``evt["type"]`` -- "evac" (see ``_build_evac_readings``) or "report"
+        (see ``_poll_one_fire_reports``)."""
+        if evt.get("type") == "report":
+            return self._report_to_event(evt)
+        return self._evac_to_event(evt)
+
+    def _evac_to_event(self, evt: dict) -> Optional["Event"]:
         """Translate an evacuation reading (see ``_build_evac_readings``)
         into a pipeline Event. Mirrors ``NICFFiresAdapter.to_event`` for
         lat/lon placement (so region routing / CoverageFilter treat this
@@ -604,6 +890,48 @@ class WatchDutyAdapter:
         except Exception:
             logger.exception(
                 "watchduty evac to_event failed for irwin=%s", evt.get("irwin_id"))
+            return None
+
+    def _report_to_event(self, evt: dict) -> Optional["Event"]:
+        """Translate a report reading (see ``_poll_one_fire_reports``) into
+        a pipeline Event. Same lat/lon placement as evac; source is
+        "watchduty", category "wildfire_report", severity always "routine"
+        (a report message is informational, never an evacuation-grade
+        alert). The event id is the report_id itself -- WD report ids are
+        already unique and stable, no hashing needed.
+        """
+        try:
+            from meshai.notifications.events import make_event
+
+            irwin_id = evt.get("irwin_id")
+            report_id = evt.get("report_id")
+            if not irwin_id or not report_id:
+                return None
+
+            lat = evt.get("lat")
+            lon = evt.get("lon")
+            if lat is None or lon is None:
+                return None  # no centroid -- can't make a useful Event
+
+            name = evt.get("name") or "Wildfire"
+            event_id = f"watchduty_report_{report_id}"
+
+            return make_event(
+                source="watchduty",
+                category="wildfire_report",
+                severity="routine",
+                title=name,
+                summary=f"{name} report",
+                lat=lat,
+                lon=lon,
+                group_key=event_id,
+                inhibit_keys=[event_id],
+                id=event_id,
+                data=dict(evt),
+            )
+        except Exception:
+            logger.exception(
+                "watchduty report to_event failed for irwin=%s", evt.get("irwin_id"))
             return None
 
     @property

@@ -1,4 +1,5 @@
-"""Watch Duty evacuation-alert gating decider — Group B.
+"""Watch Duty evacuation-alert (Group B) and report-message (Group C)
+gating deciders.
 
 Modeled on ``gating/fire.py::decide`` (same ``GateResult`` type, same
 ``get_db`` + defensive-row read pattern), but the state machine is its own:
@@ -236,3 +237,128 @@ def decide_evac(data: dict, *, source: str, now: float) -> GateResult:
     # latest text broadcasts once the cooldown passes.
     return GateResult(broadcast=False, lifecycle="suppress",
                       reason="evac text changed inside cooldown")
+
+
+# ── Report-message gating decider (Group C) ─────────────────────────────────
+#
+# Modeled on decide_evac above, but the dedup ledger is its own table
+# (``watchduty_reports_sent``, migration v31) rather than columns on the
+# fires row: a report either has already been sent (row present, any
+# ``seeded`` value) or it hasn't. Unlike decide_evac's UPSERT-on-fires
+# commit, this decider's deferred commit is an INSERT OR IGNORE into
+# watchduty_reports_sent -- safe to call more than once for the same
+# report_id (multi-channel delivery), and a no-op if the row somehow
+# already exists (e.g. a lazy seed raced ahead of an in-flight commit).
+#
+# Canonical ``data`` dict consumed (built by
+# ``env/watchduty.py::WatchDutyAdapter.to_event`` from a reading -- see
+# ``_poll_one_fire_reports``):
+#     irwin_id, wd_event_id, name, report_id, text, date_created,
+#     lat, lon, county, state
+
+
+def _make_report_commit(report_id: str, irwin_id: str, wd_event_id):
+    """Deferred commit closure: INSERT OR IGNORE the report as sent
+    (seeded=0) on confirmed delivery. Never raises out of the closure."""
+
+    def _commit(committed_at: float) -> None:
+        try:
+            conn = get_db()
+        except Exception:
+            logger.exception(
+                "watchduty report commit: persistence unavailable; report "
+                "not recorded report_id=%s", report_id)
+            return
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO watchduty_reports_sent"
+                "(report_id, irwin_id, geo_event_id, sent_at, seeded, created_at) "
+                "VALUES (?,?,?,?,0,?)",
+                (report_id, irwin_id, wd_event_id, committed_at, committed_at),
+            )
+        except Exception:
+            logger.exception(
+                "watchduty report commit: INSERT failed report_id=%s", report_id)
+
+    return _commit
+
+
+def decide_report(data: dict, *, source: str, now: float) -> GateResult:
+    """Broadcast decision for a Watch Duty report-message reading.
+
+    Parameters
+    ----------
+    data:
+        Canonical reading dict (see module comment above for schema).
+    source:
+        Adapter source name, e.g. "watchduty".
+    now:
+        Current epoch (from clock.now()) -- determinism seam (unused here;
+        the decision is purely dedup-by-report_id, not time-based).
+    """
+    irwin_id = data.get("irwin_id")
+    report_id = data.get("report_id")
+    wd_event_id = data.get("wd_event_id")
+
+    if not irwin_id or not report_id:
+        return GateResult(broadcast=False, lifecycle="suppress",
+                          reason="report reading without irwin_id/report_id")
+
+    try:
+        enabled = bool(adapter_config.watchduty.report_alerts_enabled)
+    except Exception:
+        enabled = True
+    if not enabled:
+        return GateResult(broadcast=False, lifecycle="suppress",
+                          reason="watchduty report alerts disabled")
+
+    try:
+        conn = get_db()
+    except Exception:
+        logger.exception("watchduty report decide: persistence unavailable")
+        return GateResult(broadcast=False, lifecycle="suppress",
+                          reason="persistence unavailable")
+
+    try:
+        fire_row = conn.execute(
+            "SELECT tombstoned_at FROM fires WHERE irwin_id = ?",
+            (irwin_id,)).fetchone()
+    except Exception:
+        logger.exception(
+            "watchduty report decide: fires read failed irwin=%s", irwin_id)
+        return GateResult(broadcast=False, lifecycle="suppress",
+                          reason="fires row read failed")
+
+    if fire_row is None:
+        return GateResult(broadcast=False, lifecycle="suppress",
+                          reason=f"no fires row for irwin={irwin_id}")
+
+    try:
+        tombstoned_at = fire_row["tombstoned_at"]
+    except (IndexError, KeyError, TypeError):
+        tombstoned_at = None
+    if tombstoned_at is not None:
+        return GateResult(broadcast=False, lifecycle="suppress",
+                          reason=f"incident tombstoned irwin={irwin_id}")
+
+    try:
+        sent_row = conn.execute(
+            "SELECT 1 FROM watchduty_reports_sent WHERE report_id = ?",
+            (report_id,)).fetchone()
+    except Exception:
+        logger.exception(
+            "watchduty report decide: watchduty_reports_sent read failed "
+            "report_id=%s", report_id)
+        return GateResult(broadcast=False, lifecycle="suppress",
+                          reason="watchduty_reports_sent read failed")
+
+    if sent_row is not None:
+        return GateResult(broadcast=False, lifecycle="suppress",
+                          reason=f"report already sent report_id={report_id}")
+
+    return GateResult(
+        broadcast=True, lifecycle="report",
+        reason=f"new report report_id={report_id} irwin={irwin_id}",
+        data_patch={"kind": "report"},
+        commit=_make_report_commit(report_id, irwin_id, wd_event_id),
+    )
