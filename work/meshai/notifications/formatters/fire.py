@@ -1,30 +1,37 @@
 """WFIGS wildfire formatter — Phase-3b migration.
 
-Reproduces BOTH legacy WFIGS wire shapes byte-identically, reading the canonical
-schema the Central path writes into event.data on broadcast:
+Reproduces BOTH legacy WFIGS wire shapes, reading the canonical schema the
+Central path writes into event.data on broadcast:
 
-  (a) Active incident / growth — mirrors ``wfigs_handler._render`` exactly:
+  (a) Active incident / growth — mirrors ``wfigs_handler._render``:
         Line 1: 🔥 {name} — {New|Update}
         Line 2: {acres} ac{ (+delta)} · containment {pct}%
         Line 3: {movement line}  OR  {anchor}
-        Line 4: Cause: {cause} · Discovered {Mon D}   (either/both/neither)
+        (Cause/Discovered line removed unconditionally -- not useful in an alert)
 
-  (b) All-clear ("contained & closed") — mirrors the tombstone branch exactly:
+  (b) All-clear ("contained & closed") — mirrors the tombstone branch:
         Line 1: ✅ {name} — contained & closed
         Line 2: {acres} ac | {pct}% contained | {anchor}   (only present parts)
+
+Watch Duty enrichment (both shapes): ``watchduty_info(irwin_id)`` does a
+fresh DB read of the fire's Watch Duty match. When matched, the header name
+is Watch Duty's own name (falling back to ``incident_name``) and the wire
+ends with Watch Duty's incident link on its own line, fit via
+``fit_to_budget_with_suffix`` so the link is never truncated. An unmatched
+fire renders unchanged (aside from the Cause/Discovered removal above).
 
 Branch selection (event.data):
     category == "wildfire_closed"  OR  _kind == "wfigs_tombstone"  -> all-clear
     otherwise                                                      -> incident
 
 Canonical schema consumed (active incident):
-    incident_name, acres, contained_pct, fire_cause, declared_at_epoch,
-    unique_fire_id, lat, lon, county, state, landclass, geocoder_city,
+    incident_name, irwin_id, acres, contained_pct, lat, lon, county, state,
+    landclass, geocoder_city,
     movement (FIRMS-injected {direction, speed_mph}, else absent/None),
     is_update, last_bcast_acres, last_bcast_contained  (decider render hints)
 
 Canonical schema consumed (all-clear):
-    incident_name, acres, contained_pct, lat, lon, county, state
+    incident_name, irwin_id, acres, contained_pct, lat, lon, county, state
 
 Anchor resolution (``_fire_anchor``) reproduces ``wfigs_handler._location_anchor``
 tier-for-tier: geocoder_city → curated town_anchors / Photon nearest_town (via
@@ -33,19 +40,18 @@ landclass → "{county} Co {state}" → state → "(location unknown)".  The ext
 fallback tiers around ``resolve_anchor`` are required for byte-identity because
 ``resolve_anchor`` covers only the town step.
 
-Time contract: ``now`` is accepted but unused (the discovery date is rendered
-from ``declared_at_epoch`` in a fixed UTC-6 offset, exactly as ``_render``).
-``budget`` is injected — the caller supplies ``budget_for("wfigs")``.
+Time contract: ``now`` is accepted but unused. ``budget`` is injected — the
+caller supplies ``budget_for("wfigs")``.
 """
 from __future__ import annotations
 
-import datetime as _dt
 import logging
 from typing import TYPE_CHECKING, Optional
 
 from meshai.adapter_config import adapter_config
+from meshai.env.watchduty import incident_url
 from meshai.notifications.formatters._anchor import resolve_anchor
-from meshai.notifications.formatters._budget import fit_to_budget
+from meshai.notifications.formatters._budget import fit_to_budget, fit_to_budget_with_suffix
 
 if TYPE_CHECKING:
     from meshai.notifications.events import Event
@@ -101,13 +107,43 @@ def _fire_anchor(d: dict) -> str:
     return "(location unknown)"
 
 
+def watchduty_info(irwin_id: Optional[str]) -> Optional[dict]:
+    """Fresh DB read of a fire's Watch Duty match, for rendering.
+
+    Returns ``{"id": watchduty_event_id, "name": watchduty_name}`` when the
+    fire is matched. Returns None on a missing/falsy ``irwin_id``, an
+    unknown irwin_id, a fire that isn't matched yet, a pre-v31 DB missing
+    the watchduty_* columns, or ANY other exception -- this must never break
+    rendering. Never raises.
+    """
+    if not irwin_id:
+        return None
+    try:
+        from meshai.persistence import get_db
+        conn = get_db()
+        row = conn.execute(
+            "SELECT watchduty_event_id, watchduty_name FROM fires WHERE irwin_id=?",
+            (irwin_id,),
+        ).fetchone()
+    except Exception:
+        return None
+    if row is None:
+        return None
+    event_id = row["watchduty_event_id"]
+    if not event_id:
+        return None
+    return {"id": event_id, "name": row["watchduty_name"]}
+
+
 def _render_incident(d: dict, budget: int) -> str:
-    """Byte-identical replica of ``wfigs_handler._render`` (active incident)."""
-    name = d.get("incident_name") or "(unnamed)"
+    """Byte-identical replica of ``wfigs_handler._render`` (active incident),
+    minus the Cause/Discovered line (dropped unconditionally -- it isn't
+    useful in an alert), plus a Watch Duty name override + trailing
+    incident-link line when the fire is matched."""
+    wd = watchduty_info(d.get("irwin_id"))
+    name = (wd.get("name") if wd else None) or d.get("incident_name") or "(unnamed)"
     acres = d.get("acres")
     contained_pct = d.get("contained_pct")
-    cause = d.get("fire_cause")
-    declared_at_epoch = d.get("declared_at_epoch")
     movement = d.get("movement")
     is_update = bool(d.get("is_update"))
     last_bcast_acres = d.get("last_bcast_acres")
@@ -136,30 +172,18 @@ def _render_incident(d: dict, budget: int) -> str:
     else:
         lines.append(f"{anchor}")
 
-    # Line 4: cause / discovered (DATE ONLY — no time-of-day).
-    cause_part = cause if cause else None
-    disc_part = None
-    if declared_at_epoch is not None:
-        try:
-            dt = _dt.datetime.fromtimestamp(
-                declared_at_epoch,
-                tz=_dt.timezone(_dt.timedelta(hours=-6)))
-            disc_part = dt.strftime("%b %-d")
-        except Exception:
-            pass
-    if cause_part and disc_part:
-        lines.append(f"Cause: {cause_part} · Discovered {disc_part}")
-    elif cause_part:
-        lines.append(f"Cause: {cause_part}")
-    elif disc_part:
-        lines.append(f"Discovered {disc_part}")
-
-    return fit_to_budget("\n".join(lines), budget)
+    body = "\n".join(lines)
+    if wd:
+        return fit_to_budget_with_suffix(body, incident_url(wd["id"]), budget)
+    return fit_to_budget(body, budget)
 
 
 def _render_allclear(d: dict, budget: int) -> str:
-    """Byte-identical replica of the ``wfigs_handler`` tombstone all-clear wire."""
-    name = d.get("incident_name") or "(unnamed fire)"
+    """Byte-identical replica of the ``wfigs_handler`` tombstone all-clear
+    wire, plus a Watch Duty name override + trailing incident-link line
+    when the fire is matched."""
+    wd = watchduty_info(d.get("irwin_id"))
+    name = (wd.get("name") if wd else None) or d.get("incident_name") or "(unnamed fire)"
     parts: list[str] = []
     acres = d.get("acres")
     contained_pct = d.get("contained_pct")
@@ -179,7 +203,10 @@ def _render_allclear(d: dict, budget: int) -> str:
     lines = [f"✅ {name} — contained & closed"]
     if parts:
         lines.append(" | ".join(parts))
-    return fit_to_budget("\n".join(lines), budget)
+    body = "\n".join(lines)
+    if wd:
+        return fit_to_budget_with_suffix(body, incident_url(wd["id"]), budget)
+    return fit_to_budget(body, budget)
 
 
 def format(event: "Event", *, now: float, budget: int) -> str:

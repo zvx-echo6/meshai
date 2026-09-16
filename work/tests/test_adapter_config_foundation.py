@@ -155,7 +155,9 @@ def test_registry_has_no_duplicate_keys():
 def test_adapter_meta_at_19(fresh_db):
     # Count sentinel — bump when an adapter row is added/removed. 24 -> 23
     # with the removal of ADAPTER_META["central"] (dead NATS consumer excised).
-    assert len(ADAPTER_META) == 23
+    # 23 -> 24 with the addition of ADAPTER_META["watchduty"] (Watch Duty
+    # enrichment adapter).
+    assert len(ADAPTER_META) == 24
 
 
 # ---------- seed ----------------------------------------------------------

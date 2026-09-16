@@ -24,8 +24,10 @@ inside that connection's autocommit mode.
 
 from __future__ import annotations
 from meshai.adapter_config import adapter_config
+from meshai.env.watchduty import incident_url
 from meshai.geo import haversine_distance, _bearing_compass
-from meshai.notifications.formatters._budget import budget_for, fit_to_budget
+from meshai.notifications.formatters._budget import budget_for, fit_to_budget, fit_to_budget_with_suffix
+from meshai.notifications.formatters.fire import watchduty_info
 
 import logging
 import time
@@ -181,15 +183,19 @@ def _attach_commit_handles(data: Optional[dict], *, irwin_id: str,
 def _render(n: dict, *, prefix: str = "",
             last_bcast_acres=None, last_bcast_contained=None,
             movement=None) -> str:
-    """MEDIUM-style mesh wire string with delta/bold logic for updates."""
-    import datetime as _dt
+    """MEDIUM-style mesh wire string with delta/bold logic for updates.
 
-    name = n.get("incident_name") or "(unnamed)"
+    Kept byte-identical to notifications/formatters/fire.py::_render_incident
+    for the same inputs (tests/test_fire_refactor.py asserts this): the
+    Cause/Discovered line is dropped unconditionally, and when the fire is
+    Watch Duty-matched (``watchduty_info(irwin_id)``) the header name is
+    Watch Duty's own name and the wire ends with its incident link, fit via
+    ``fit_to_budget_with_suffix`` so the link is never truncated.
+    """
+    wd = watchduty_info(n.get("irwin_id"))
+    name = (wd.get("name") if wd else None) or n.get("incident_name") or "(unnamed)"
     acres = n.get("acres")
     contained_pct = n.get("contained_pct")
-    cause = n.get("fire_cause")
-    unique_fire_id = n.get("unique_fire_id")
-    declared_at_epoch = n.get("declared_at_epoch")
     anchor = _location_anchor(n)
 
     lines: list[str] = []
@@ -212,27 +218,11 @@ def _render(n: dict, *, prefix: str = "",
     else:
         lines.append(f"{anchor}")
 
-    # Line 4: cause / discovered (DATE ONLY -- no time-of-day). "Discovered <date>".
-    cause_part = cause if cause else None
-    disc_part = None
-    if declared_at_epoch is not None:
-        try:
-            dt = _dt.datetime.fromtimestamp(declared_at_epoch,
-                                            tz=_dt.timezone(_dt.timedelta(hours=-6)))
-            disc_part = dt.strftime("%b %-d")
-        except Exception:
-            pass
-    if cause_part and disc_part:
-        lines.append(f"Cause: {cause_part} · Discovered {disc_part}")
-    elif cause_part:
-        lines.append(f"Cause: {cause_part}")
-    elif disc_part:
-        lines.append(f"Discovered {disc_part}")
-
-    # NOTE: the trailing `ID: {unique_fire_id}` line was dropped in the
-    # budget-fit rework -- the unique fire id is not mesh-actionable.
-
-    return fit_to_budget("\n".join(lines), budget_for("wfigs"))
+    body = "\n".join(lines)
+    budget = budget_for("wfigs")
+    if wd:
+        return fit_to_budget_with_suffix(body, incident_url(wd["id"]), budget)
+    return fit_to_budget(body, budget)
 
 
 def _location_anchor(n: dict) -> str:

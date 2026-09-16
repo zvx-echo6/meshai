@@ -411,6 +411,25 @@ class NICFFiresConfig(_SourcedFeed):
 
 
 @dataclass
+class WatchDutyConfig(_SourcedFeed):
+    """Watch Duty (WD) enrichment settings.
+
+    Watch Duty is an ENRICHMENT source for WFIGS fires meshai already
+    tracks in the ``fires`` table -- it never creates a fire. Subclasses
+    ``_SourcedFeed`` (feed_source native/central) solely because
+    ``EnvironmentalStore._register_adapter`` reads ``cfg.feed_source``
+    unconditionally for every registry entry; watchduty has no
+    coverage-bbox integration of its own (see ``env/store.py``
+    ``_adapter_registry``, watchduty entry).
+    """
+
+    enabled: bool = False
+    tick_seconds: int = 900
+    geo_events_url: str = "https://api.watchduty.org/api/v1/geo_events/"
+    reports_url: str = "https://api.watchduty.org/api/v1/reports/"
+
+
+@dataclass
 class AvalancheConfig(_SourcedFeed):
     """Avalanche advisory settings (Phase 2)."""
 
@@ -616,6 +635,7 @@ class EnvironmentalConfig:
     swpc: SWPCConfig = field(default_factory=SWPCConfig)
     ducting: DuctingConfig = field(default_factory=DuctingConfig)
     fires: NICFFiresConfig = field(default_factory=NICFFiresConfig)
+    watchduty: WatchDutyConfig = field(default_factory=WatchDutyConfig)
     avalanche: AvalancheConfig = field(default_factory=AvalancheConfig)
     usgs: USGSConfig = field(default_factory=USGSConfig)
     usgs_quake: USGSQuakeConfig = field(default_factory=USGSQuakeConfig)
@@ -1336,6 +1356,8 @@ def _dict_to_dataclass(cls, data: dict):
             kwargs[key] = _dict_to_dataclass(DuctingConfig, value)
         elif key == "fires" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(NICFFiresConfig, value)
+        elif key == "watchduty" and isinstance(value, dict):
+            kwargs[key] = _dict_to_dataclass(WatchDutyConfig, value)
         elif key == "avalanche" and isinstance(value, dict):
             kwargs[key] = _dict_to_dataclass(AvalancheConfig, value)
         elif key == "usgs" and isinstance(value, dict):
