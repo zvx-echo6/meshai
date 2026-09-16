@@ -606,6 +606,8 @@ def test_source_to_table_fallback_all_native_sources(db_path):
         "traffic": "traffic_events",
         "511":     "traffic_events",
         "ipaws":   "ipaws_alerts",
+        # Group B: Watch Duty evacuation alerts share the fires table.
+        "watchduty": "fires",
     }
     cfg = _build_config()
     factory, _ = _mk_channel_factory()
