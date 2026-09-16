@@ -1514,6 +1514,10 @@ class Dispatcher:
         # ipaws_alerts — so region-routed emergency sends land in the audit
         # feed labeled "Emergency" instead of NULL/unlabeled.
         "ipaws":   "ipaws_alerts",
+        # Group B: Watch Duty evacuation alerts share the "fires" table
+        # (watchduty_evac_* columns, migration v31) — same audit table as
+        # "nifc" above.
+        "watchduty": "fires",
     }
 
     def _post_broadcast_commit(self, event, payload, rule, ch_type: str,

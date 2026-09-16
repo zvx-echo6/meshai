@@ -465,6 +465,20 @@ ALERT_CATEGORIES = {
         "example_message": "🔥 Wildfire Incident: Rochelle 2 — 1,240 ac, 15% contained, Custer County ID. WF, Natural cause.",
         "toggle": "fire",
     },
+    # Group B: Watch Duty evacuation alerts (env/watchduty.py). Watch Duty is
+    # enrichment-only for the fire itself (never creates a fire — see
+    # env/watchduty.py module docstring) but IS the authoritative source for
+    # evacuation orders/warnings on a fire meshai already matched. Own state
+    # on the fires row (watchduty_evac_* columns, migration v31); own decider
+    # (gating/watchduty.py::decide_evac) and formatter
+    # (formatters/watchduty.py::format_evac).
+    "wildfire_evac": {
+        "name": "Wildfire Evacuation (Watch Duty)",
+        "description": "Watch Duty evacuation order/warning for a fire meshai already matched — order/warning level changes and cooldown-gated zone-text updates",
+        "default_severity": "priority",
+        "example_message": "EVACUATION ORDER: Buckhorn Fire\nLevel 3 (Go Now) for the area in red on the county evacuation map\nhttps://app.watchduty.org/i/119989",
+        "toggle": "fire",
+    },
 
     # Environmental - Seismic (Geohazards family)
     # v0.5.7-seismic audit (test_alert_categories_seismic_complete enforces parity):

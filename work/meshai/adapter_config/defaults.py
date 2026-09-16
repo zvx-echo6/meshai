@@ -409,10 +409,10 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     },
 
     # =================================================================
-    # Watch Duty -- 3 settings (match radius, candidate freshness window,
-    # spoofed client app version). Enrichment-only: matches an ALREADY-
-    # broadcast WFIGS fire to a Watch Duty geo_event by proximity; never
-    # creates a fire. See env/watchduty.py.
+    # Watch Duty -- 5 settings (match radius, candidate freshness window,
+    # spoofed client app version, + Group B evac-alert toggle/cooldown).
+    # Enrichment-only: matches an ALREADY-broadcast WFIGS fire to a Watch
+    # Duty geo_event by proximity; never creates a fire. See env/watchduty.py.
     # =================================================================
     ("watchduty", "match_radius_km"): {
         "default": 3.0,
@@ -428,6 +428,19 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "default": "2026.2.5",
         "type": "str",
         "description": "Watch Duty app version string sent as X-App-Version / X-Git-Tag on every request.",
+    },
+    # Group B: evacuation alerts (2 settings -- master toggle + text-update
+    # re-alert cooldown). See env/watchduty.py::evac_level and
+    # notifications/gating/watchduty.py::decide_evac.
+    ("watchduty", "evac_alerts_enabled"): {
+        "default": True,
+        "type": "bool",
+        "description": "Master toggle for Watch Duty evacuation order/warning alerts.",
+    },
+    ("watchduty", "evac_text_update_cooldown_seconds"): {
+        "default": 3600,
+        "type": "int",
+        "description": "Minimum seconds between consecutive evac zone-text-only update re-alerts for the same fire (level unchanged, description text changed).",
     },
 
     # =================================================================

@@ -19,6 +19,7 @@ stub methods this module ships now; ``get_events()``/``to_event()`` are
 intentionally no-ops until then.
 """
 
+import hashlib
 import html
 import json
 import logging
@@ -33,6 +34,7 @@ from meshai.adapter_config import adapter_config
 
 if TYPE_CHECKING:
     from ..config import WatchDutyConfig
+    from ..notifications.events import Event
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +125,46 @@ def normalize_evac_field(raw) -> str:
 def incident_url(event_id) -> str:
     """Watch Duty's own app link for a geo_event."""
     return f"https://app.watchduty.org/i/{event_id}"
+
+
+# ── Evacuation level (Group B, pure, module-level) ──────────────────────────
+
+def evac_level(wd_event) -> tuple:
+    """Evacuation level + zone text from a raw Watch Duty geo_event.
+
+    Reads the evacuation fields from the SAME nested ``data`` sub-object
+    ``_wd_eligible`` reads ``is_prescribed`` from. Advisories (Level 1) are
+    ignored entirely -- only "order" (Level 3 / shelter-in-place) and
+    "warning" (Level 2) are actionable evac tiers here.
+
+    Returns:
+        (level, zone_text) -- level is one of "order" / "warning" / "none".
+        zone_text is "" for "none". Embedded newlines (multi-paragraph WD
+        HTML) are collapsed to "; ".
+    """
+    data = wd_event.get("data") if isinstance(wd_event, dict) else None
+    if not isinstance(data, dict):
+        data = {}
+
+    order_text = normalize_evac_field(data.get("evacuation_orders"))
+    shelter_text = normalize_evac_field(data.get("evacuation_shelter_in_place"))
+    warning_text = normalize_evac_field(data.get("evacuation_warnings"))
+
+    if (order_text or shelter_text
+            or data.get("has_custom_evacuation_orders")
+            or data.get("has_custom_evacuation_shelter_in_place")):
+        parts = []
+        if order_text:
+            parts.append(order_text)
+        if shelter_text:
+            parts.append(f"Shelter in place: {shelter_text}")
+        zone_text = "; ".join(parts).replace("\n", "; ")
+        return "order", zone_text
+
+    if warning_text or data.get("has_custom_evacuation_warnings"):
+        return "warning", warning_text.replace("\n", "; ")
+
+    return "none", ""
 
 
 # ── Matching (pure, module-level) ───────────────────────────────────────────
@@ -224,6 +266,9 @@ class WatchDutyAdapter:
         self._backoff_seconds = 0.0
         self._backoff_until = 0.0
         self._is_loaded = False
+        # Group B: evacuation readings built by match_and_store(), drained
+        # (and cleared) by get_events().
+        self._readings: list = []
 
     # ── HTTP ─────────────────────────────────────────────────────────────
 
@@ -376,7 +421,63 @@ class WatchDutyAdapter:
                     "watchduty: _seed_existing_reports failed for %s", cand_irwin)
             new_count += 1
 
+        self._build_evac_readings(conn, by_id)
+
+        if irwin_id and new_count > 0:
+            # The post-emit single-fire lookup (env/store.py::_ingest_fires,
+            # fire-and-forget right after a WFIGS New/Update emit) just
+            # created a NEW match. That call never goes through tick() --
+            # it calls match_and_store() directly -- so it does not touch
+            # _last_tick, and the readings it just built above would
+            # otherwise sit undrained (get_events()/_ingest only run when
+            # tick() itself returns True) until the next regularly
+            # scheduled poll, up to _tick_interval (15 min default) later.
+            # Resetting _last_tick makes the very next refresh() cycle's
+            # tick() call run immediately (batch match_and_store + drain),
+            # so the new fire's evac state is evaluated within about a
+            # second instead.
+            self._last_tick = 0.0
+
         return new_count
+
+    def _build_evac_readings(self, conn, by_id: dict) -> None:
+        """(Re)build the pending evac-reading snapshot from ``by_id`` (the
+        full Watch Duty geo_events response keyed by id, just fetched by
+        this ``match_and_store`` call) for every currently-matched,
+        non-tombstoned fire whose Watch Duty event is present in it.
+
+        Overwrites (does not append to) ``self._readings`` -- each call
+        recomputes the complete current snapshot from the SAME fresh
+        response, so an overwrite from a later call can never lose data
+        the way an accumulate-then-drain design could double-process a
+        reading built by both the immediate single-fire lookup and the
+        batch tick that follows it (see the ``_last_tick`` reset above).
+        """
+        self._readings = []
+        if not adapter_config.watchduty.evac_alerts_enabled:
+            return
+        rows = conn.execute(
+            "SELECT irwin_id, watchduty_event_id, lat, lon, county, state "
+            "FROM fires WHERE watchduty_event_id IS NOT NULL "
+            "AND tombstoned_at IS NULL"
+        ).fetchall()
+        for row in rows:
+            wd_evt = by_id.get(row["watchduty_event_id"])
+            if wd_evt is None:
+                continue
+            level, zone_text = evac_level(wd_evt)
+            self._readings.append({
+                "irwin_id": row["irwin_id"],
+                "wd_event_id": row["watchduty_event_id"],
+                "name": wd_evt.get("name"),
+                "level": level,
+                "zone_text": zone_text,
+                "wd_modified": wd_evt.get("date_modified"),
+                "lat": row["lat"],
+                "lon": row["lon"],
+                "county": row["county"],
+                "state": row["state"],
+            })
 
     def _seed_existing_reports(self, irwin_id: str, wd_event_id: str) -> None:
         """No-op stub. Group C fills this in: on first match, seed
@@ -449,13 +550,61 @@ class WatchDutyAdapter:
         self._is_loaded = True
         return True
 
-    # ── Event pipeline (stubs; Groups B/C fill these in) ────────────────
+    # ── Event pipeline ───────────────────────────────────────────────────
 
     def get_events(self) -> list:
-        return []
+        """Drain the pending evacuation readings built by the most recent
+        ``match_and_store`` call(s). Returns the current snapshot and
+        clears it -- a reading is handed to the store exactly once."""
+        readings = self._readings
+        self._readings = []
+        return readings
 
-    def to_event(self, evt: dict):
-        return None
+    def to_event(self, evt: dict) -> Optional["Event"]:
+        """Translate an evacuation reading (see ``_build_evac_readings``)
+        into a pipeline Event. Mirrors ``NICFFiresAdapter.to_event`` for
+        lat/lon placement (so region routing / CoverageFilter treat this
+        exactly like a WFIGS fire event); source is "watchduty", category
+        "wildfire_evac", severity always "priority" (evacuation alerts are
+        never routine). The event id is deterministic per
+        (irwin_id, level, sha1(zone_text)[:10]) so the SAME evac state never
+        mints a new id, while a genuine level or text change does.
+        """
+        try:
+            from meshai.notifications.events import make_event
+
+            irwin_id = evt.get("irwin_id")
+            level = evt.get("level")
+            if not irwin_id or not level:
+                return None
+
+            lat = evt.get("lat")
+            lon = evt.get("lon")
+            if lat is None or lon is None:
+                return None  # no centroid -- can't make a useful Event
+
+            name = evt.get("name") or "Wildfire"
+            zone_text = evt.get("zone_text") or ""
+            zone_hash = hashlib.sha1(zone_text.encode("utf-8")).hexdigest()[:10]
+            event_id = f"watchduty_evac_{irwin_id}_{level}_{zone_hash}"
+
+            return make_event(
+                source="watchduty",
+                category="wildfire_evac",
+                severity="priority",
+                title=name,
+                summary=f"{name} evacuation {level}",
+                lat=lat,
+                lon=lon,
+                group_key=event_id,
+                inhibit_keys=[event_id],
+                id=event_id,
+                data=dict(evt),
+            )
+        except Exception:
+            logger.exception(
+                "watchduty evac to_event failed for irwin=%s", evt.get("irwin_id"))
+            return None
 
     @property
     def health_status(self) -> dict:

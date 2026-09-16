@@ -140,3 +140,12 @@ register("emergency_amber",      _ipaws_gate_mod.decide)
 register("emergency_law",        _ipaws_gate_mod.decide)
 register("emergency_911_outage", _ipaws_gate_mod.decide)
 register("emergency_hazmat",     _ipaws_gate_mod.decide)
+
+# Group B: Watch Duty evacuation alerts (env/watchduty.py, source="watchduty").
+# Own state on the fires row (watchduty_evac_* columns, migration v31) --
+# order/warning/none rank transitions + a cooldown-gated text-update re-alert.
+# Forced onto the live decider path unconditionally via
+# cutover.NATIVE_ALWAYS_DECIDE (mirrors the native fire categories above): the
+# decider IS the evac gate, so it cannot be left to the shadow-bake env var.
+from meshai.notifications.gating import watchduty as _watchduty_gate_mod  # noqa: E402,F401
+register("wildfire_evac", _watchduty_gate_mod.decide_evac)
