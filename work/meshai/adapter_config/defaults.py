@@ -409,8 +409,9 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     },
 
     # =================================================================
-    # Watch Duty -- 5 settings (match radius, candidate freshness window,
-    # spoofed client app version, + Group B evac-alert toggle/cooldown).
+    # Watch Duty -- 8 settings (match radius, candidate freshness window,
+    # spoofed client app version, Group B evac-alert toggle/cooldown, +
+    # Group C report-alert toggle/limit/filter-patterns).
     # Enrichment-only: matches an ALREADY-broadcast WFIGS fire to a Watch
     # Duty geo_event by proximity; never creates a fire. See env/watchduty.py.
     # =================================================================
@@ -441,6 +442,29 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
         "default": 3600,
         "type": "int",
         "description": "Minimum seconds between consecutive evac zone-text-only update re-alerts for the same fire (level unchanged, description text changed).",
+    },
+    # Group C: report-message alerts (3 settings -- master toggle, per-fire
+    # per-poll fetch cap, and the NIFC/automated-noise filter patterns). See
+    # env/watchduty.py (fetch_reports, is_automated_report, is_filtered_report)
+    # and notifications/gating/watchduty.py::decide_report.
+    ("watchduty", "report_alerts_enabled"): {
+        "default": True,
+        "type": "bool",
+        "description": "Master toggle for Watch Duty report-message alerts.",
+    },
+    ("watchduty", "reports_per_fire_limit"): {
+        "default": 20,
+        "type": "int",
+        "description": "Max reports fetched per fire per poll from the Watch Duty reports endpoint.",
+    },
+    ("watchduty", "report_filter_patterns"): {
+        "default": [
+            "national interagency fire center",
+            "\\bnifc\\b",
+            "perimeter (?:has been |was )?uploaded",
+        ],
+        "type": "json",
+        "description": "Case-insensitive regexes; a report whose text matches any of these is dropped as noise (re.IGNORECASE).",
     },
 
     # =================================================================

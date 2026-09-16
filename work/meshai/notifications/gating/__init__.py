@@ -149,3 +149,11 @@ register("emergency_hazmat",     _ipaws_gate_mod.decide)
 # decider IS the evac gate, so it cannot be left to the shadow-bake env var.
 from meshai.notifications.gating import watchduty as _watchduty_gate_mod  # noqa: E402,F401
 register("wildfire_evac", _watchduty_gate_mod.decide_evac)
+
+# Group C: Watch Duty report-message alerts (env/watchduty.py, source=
+# "watchduty"). Own dedup ledger (watchduty_reports_sent, migration v31) --
+# a report either has already been sent or it hasn't, no state machine.
+# Forced onto the live decider path unconditionally via
+# cutover.NATIVE_ALWAYS_DECIDE (mirrors wildfire_evac above): the decider IS
+# the report dedup gate, so it cannot be left to the shadow-bake env var.
+register("wildfire_report", _watchduty_gate_mod.decide_report)
