@@ -409,6 +409,28 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     },
 
     # =================================================================
+    # Watch Duty -- 3 settings (match radius, candidate freshness window,
+    # spoofed client app version). Enrichment-only: matches an ALREADY-
+    # broadcast WFIGS fire to a Watch Duty geo_event by proximity; never
+    # creates a fire. See env/watchduty.py.
+    # =================================================================
+    ("watchduty", "match_radius_km"): {
+        "default": 3.0,
+        "type": "float",
+        "description": "Max distance (km) between a WFIGS fire and a Watch Duty geo_event for a proximity match.",
+    },
+    ("watchduty", "recency_window_seconds"): {
+        "default": 604800,   # 7 days
+        "type": "int",
+        "description": "A fire is only a match candidate while its last_broadcast_at is within this many seconds -- restricts matching to fires meshai actually alerted on.",
+    },
+    ("watchduty", "app_version"): {
+        "default": "2026.2.5",
+        "type": "str",
+        "description": "Watch Duty app version string sent as X-App-Version / X-Git-Tag on every request.",
+    },
+
+    # =================================================================
     # FIRMS -- 7 settings (storage floors + dedup + 3 v0.7 cluster knobs)
     # =================================================================
     ("firms", "confidence_floor"): {
@@ -707,6 +729,11 @@ ADAPTER_META: dict[str, dict[str, Any]] = {
         "display_name": "FIRMS satellite hotspots",
         "include_in_llm_context": True,
         "description": "NASA VIIRS/MODIS heat-pixel feed. Storage-only (no broadcast).",
+    },
+    "watchduty": {
+        "display_name": "Watch Duty",
+        "include_in_llm_context": True,
+        "description": "Enrichment source for WFIGS fires meshai already tracks: adds Watch Duty's own name + app link (never creates a fire).",
     },
     "nws": {
         "display_name": "NWS weather alerts",

@@ -30,3 +30,20 @@ def fit_to_budget(s: str, limit: int) -> str:
     if not cut:
         cut = s[: max(0, limit - 1)]
     return cut.rstrip() + "…"
+
+
+def fit_to_budget_with_suffix(body: str, suffix: str, limit: int) -> str:
+    """Fit `body` to `limit`, reserving room for a `suffix` that must survive
+    intact on its own trailing line (e.g. a Watch Duty incident link).
+
+    Reserves len(suffix) + 1 (the "\\n" joiner) off the top, fits ONLY the
+    body into what remains via `fit_to_budget`, then joins body + "\\n" +
+    suffix. The suffix is NEVER truncated: if there isn't room for even an
+    empty body plus the suffix, returns the suffix alone (which may then
+    exceed `limit` -- that's preferred to cutting the link).
+    """
+    body_limit = limit - len(suffix) - 1
+    if body_limit <= 0:
+        return suffix
+    fitted_body = fit_to_budget(body, body_limit)
+    return f"{fitted_body}\n{suffix}"

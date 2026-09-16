@@ -432,7 +432,7 @@ def test_wfigs_worst_case_fits_140():
     assert "128,456 ac" in wire                                     # acreage
     assert "containment 42%" in wire                                # containment
     assert "Near Clayton, ID" in wire                              # location
-    assert "Cause: Lightning" in wire                              # cause
+    assert "Cause: Lightning" not in wire  # Cause/Discovered line dropped unconditionally
     # format rules
     assert "ID:" not in wire, "unique-fire-id line must be dropped"
     assert "**" not in wire, "no bold markdown"
@@ -449,7 +449,7 @@ def test_wfigs_discovery_is_date_only():
         "geocoder_city": "Boise",
     }
     wire = _wfigs_render(n, prefix="New")
-    assert "Discovered Jun 11" in wire
+    assert "Discovered Jun 11" not in wire  # Cause/Discovered line dropped unconditionally
     # no time-of-day (colon in an H:MM would appear as ":3" etc.)
     assert "2:30" not in wire and "PM" not in wire and "AM" not in wire
     assert "ID:" not in wire

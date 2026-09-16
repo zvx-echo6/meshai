@@ -184,7 +184,7 @@ class EnvironmentalStore:
         # import/config never takes the whole store down.
         self._construct_generic(self._generic_sources)
 
-        _central = [n for n in ("nws", "swpc", "ducting", "fires", "avalanche", "usgs", "usgs_quake", "traffic", "roads511", "wzdx", "firms", "satpass")
+        _central = [n for n in ("nws", "swpc", "ducting", "fires", "watchduty", "avalanche", "usgs", "usgs_quake", "traffic", "roads511", "wzdx", "firms", "satpass")
                     if getattr(getattr(config, n, None), "feed_source", "native") == "central"]
         if _central:
             logger.debug("Adapters sourced from Central (native skipped): %s", _central)
@@ -223,6 +223,11 @@ class EnvironmentalStore:
                 lambda cfg: (cfg, self._coverage_for("ducting"))),
             ("nifc", "fires", ".fires", "NICFFiresAdapter",
                 lambda cfg: (cfg, self._region_anchors, self._coverage_for("fires"))),
+            # Watch Duty: enrichment-only, no coverage bbox of its own --
+            # matching is restricted to fires meshai already broadcast about
+            # (see env/watchduty.py::_candidate_fires).
+            ("watchduty", "watchduty", ".watchduty", "WatchDutyAdapter",
+                lambda cfg: (cfg,)),
             ("avalanche", "avalanche", ".avalanche", "AvalancheAdapter",
                 lambda cfg: (cfg, self._coverage_for("avalanche"))),
             ("usgs", "usgs", ".usgs", "USGSStreamsAdapter",
@@ -776,7 +781,26 @@ class EnvironmentalStore:
 
                 # (3) Run the decider + emit (or suppress) via the shared path.
                 if self._event_bus is not None and hasattr(adapter, "to_event"):
-                    self._emit_event(adapter, evt)
+                    emitted = self._emit_event(adapter, evt)
+                    # A non-None emit here is always a WFIGS New or Update --
+                    # `_ingest_fires` never sees the tombstone/"closed" kind
+                    # (that lifecycle has no native emit path; Central, the
+                    # only caller that ever ran it, is retired/inert). Kick
+                    # off an immediate Watch Duty lookup, fire-and-forget, so
+                    # a brand-new fire doesn't wait for the next poll tick to
+                    # pick up its WD name/link.
+                    if emitted is not None:
+                        wd = self._adapters.get("watchduty")
+                        if wd is not None:
+                            try:
+                                asyncio.get_running_loop().create_task(
+                                    asyncio.to_thread(wd.match_and_store, irwin_id))
+                            except RuntimeError:
+                                pass  # no running loop (e.g. sync/test context)
+                            except Exception:
+                                logger.exception(
+                                    "watchduty: failed to schedule immediate "
+                                    "match_and_store for %s", irwin_id)
             except Exception:
                 logger.exception(
                     "nifc fire ingest failed for %s", evt.get("event_id", "?"))
@@ -1204,7 +1228,7 @@ class EnvironmentalStore:
                     "Queued %s event %s (%s) on FirePacer",
                     event.source, event.id, event.category,
                 )
-                return
+                return event
             self._event_bus.emit(event)
             logger.info(
                 "Emitted %s event %s (%s) to pipeline bus",
@@ -1212,8 +1236,10 @@ class EnvironmentalStore:
                 event.id,
                 event.category,
             )
+            return event
         except Exception as e:
             logger.warning("Failed to emit event to pipeline: %s", e)
+            return None
 
     def _purge_expired(self):
         """Remove expired events."""
