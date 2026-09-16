@@ -55,6 +55,11 @@ NATIVE_ALWAYS_DECIDE = frozenset(
     {
         "wildfire_incident", "wildfire_declared", "wildfire_closed",
         "stream_flood_warning", "stream_high_water",
+        # Group B: Watch Duty evacuation alerts (env/watchduty.py). The
+        # decider IS the evac gate (fires.watchduty_evac_* columns), so like
+        # the native fire categories above it cannot be left to the
+        # shadow-bake env var. Emitted only by the native watchduty adapter.
+        "wildfire_evac",
     }
 )
 

@@ -148,3 +148,8 @@ register("emergency_amber",      _ipaws_fmt_mod.format)
 register("emergency_law",        _ipaws_fmt_mod.format)
 register("emergency_911_outage", _ipaws_fmt_mod.format)
 register("emergency_hazmat",     _ipaws_fmt_mod.format)
+
+# Group B: Watch Duty evacuation alerts. Own terse wire (order/warning/
+# downgraded/lifted/updated headers) -- see formatters/watchduty.py.
+from meshai.notifications.formatters import watchduty as _watchduty_fmt_mod  # noqa: E402,F401
+register("wildfire_evac", _watchduty_fmt_mod.format_evac)

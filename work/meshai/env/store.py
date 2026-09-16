@@ -42,7 +42,10 @@ def _key_eid(source: str, event_id) -> str:
 # central/consumer.py:_handle applies to the Central path (issue #119) so a
 # native and a Central deployment throttle identically; "routine" fire events
 # (e.g. firms halt) are intentionally excluded, exactly as on the Central path.
-_FIRE_PACER_SOURCES = frozenset({"nifc", "firms"})
+# Group B: watchduty (evacuation alerts) is fire-family too -- a poll that
+# turns up evac changes on several already-matched fires at once must be
+# paced the same as a NIFC/FIRMS batch.
+_FIRE_PACER_SOURCES = frozenset({"nifc", "firms", "watchduty"})
 _FIRE_PACER_SEVERITIES = frozenset({"priority", "immediate"})
 
 
@@ -605,6 +608,16 @@ class EnvironmentalStore:
             # generic persist-every-item pattern), and reconciles removals, so
             # the table always equals the current active set the summary reads.
             self._ingest_wzdx(adapter)
+        elif name == "watchduty":
+            # Group B: evacuation readings DELIBERATELY bypass the generic
+            # received-delta `_delta_emit` gate -- the DECIDER
+            # (gating.watchduty.decide_evac, backed by the fires table's
+            # watchduty_evac_* columns) owns the "is it new" decision,
+            # exactly like native WFIGS fires above. get_events() drains
+            # (and clears) the adapter's pending reading snapshot -- this is
+            # the only call site that does so.
+            for reading in adapter.get_events():
+                self._emit_event(adapter, reading)
         elif name == "avalanche":
             # Avalanche: re-emit on danger_level rise (Update:) not just new
             # events. The rise is a legitimate CONTENT change, so it passes

@@ -167,6 +167,51 @@ def test_no_pacer_attached_falls_back_to_direct_emit():
     assert captured[0].source == "firms"
 
 
+def test_native_watchduty_evac_priority_event_routes_through_pacer():
+    """Group B: source=watchduty (evacuation order), severity=priority is
+    paced too -- same fire-family gate as nifc/firms above.
+
+    Unlike the other stub-driven tests in this file, "wildfire_evac" has a
+    LIVE decider registered (gating.watchduty.decide_evac) that is forced
+    onto the native path unconditionally via cutover.NATIVE_ALWAYS_DECIDE
+    (see notifications/cutover.py), so store._emit_event actually runs it
+    here -- a real fires row (irwin_id, no prior watchduty_evac_state) plus
+    the REAL WatchDutyAdapter.to_event() is used so the decider's first-
+    reading "order" broadcast fires for real, exactly as it would live.
+    """
+    import time
+
+    from meshai.config import WatchDutyConfig
+    from meshai.env.watchduty import WatchDutyAdapter
+    from meshai.persistence import get_db
+
+    conn = get_db()
+    irwin_id = "IRWIN-PACER-WD-1"
+    conn.execute(
+        "INSERT INTO fires(irwin_id, incident_name, lat, lon, last_event_at) "
+        "VALUES (?,?,?,?,?)",
+        (irwin_id, "Pacer Fire", 44.0, -114.0, int(time.time())),
+    )
+
+    store, bus, captured = _make_store()
+    pacer = _FakePacer()
+    store._fire_pacer = pacer
+    adapter = WatchDutyAdapter(WatchDutyConfig(enabled=True))
+    reading = {
+        "irwin_id": irwin_id, "wd_event_id": "wd_pacer_1", "name": "Pacer Fire",
+        "level": "order", "zone_text": "Evacuate now", "wd_modified": None,
+        "lat": 44.0, "lon": -114.0, "county": "Boise", "state": "ID",
+    }
+
+    store._emit_event(adapter, reading)
+
+    assert len(pacer.calls) == 1
+    assert pacer.calls[0].source == "watchduty"
+    assert pacer.calls[0].severity == "priority"
+    assert pacer.calls[0].category == "wildfire_evac"
+    assert captured == [], "must not ALSO be emitted straight to the bus"
+
+
 def test_native_immediate_event_jumps_ahead_of_already_queued_priority_events():
     """End-to-end through a REAL FirePacer: two native "priority" fires
     queued first must not block a later native "immediate" one (head-of-line,
