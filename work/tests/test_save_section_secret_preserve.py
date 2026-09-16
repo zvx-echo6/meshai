@@ -126,3 +126,61 @@ def test_notifications_rules_nested_list_preserves_secret_ref(tmp_path):
     written = yaml.safe_load((cfg / "notifications.yaml").read_text())
     assert written["rules"][0]["smtp_password"] == "${C55_SMTP_PASS}"
     assert "rules.0.smtp_password" not in res["rejected_secrets"]
+
+
+# F3: notifications.destinations is a DICT (name -> NotificationDestination),
+# not a list -- check_secrets's plain dict-recursion branch already produces
+# "destinations.<name>.smtp_password" paths with no dotted-index handling
+# needed, so the SECRET_FIELDS pattern is a plain "destinations.*.<field>"
+# (same shape as toggles.*, keyed by name rather than by list index).
+
+def test_notifications_destinations_dict_preserves_secret_ref(tmp_path):
+    """Object section with a nested DICT (notifications.destinations) --
+    same secret-ref semantics as toggles/rules; smtp_password placeholder
+    must survive a GUI round-trip that submits the resolved value."""
+    cfg = _setup(
+        tmp_path,
+        "",
+        "C56_SMTP_PASS=letmein\n",
+    )
+    (cfg / "notifications.yaml").write_text(
+        "enabled: true\n"
+        "destinations:\n"
+        "  ops_email:\n"
+        "    type: email\n"
+        "    smtp_password: ${C56_SMTP_PASS}\n"
+    )
+    res = save_section(
+        "notifications",
+        {
+            "enabled": True,
+            "destinations": {
+                "ops_email": {"type": "email", "smtp_password": "letmein"},
+            },
+        },
+        cfg,
+    )
+    written = yaml.safe_load((cfg / "notifications.yaml").read_text())
+    assert written["destinations"]["ops_email"]["smtp_password"] == "${C56_SMTP_PASS}"
+    assert "destinations.ops_email.smtp_password" not in res["rejected_secrets"]
+
+
+def test_notifications_destinations_rejects_raw_when_no_placeholder(tmp_path):
+    """Destinations dict: a raw secret with no on-disk ${VAR} placeholder
+    must be rejected, never written -- same negative case rules/toggles
+    already enforce."""
+    cfg = tmp_path / "config"
+    cfg.mkdir()
+    res = save_section(
+        "notifications",
+        {
+            "enabled": True,
+            "destinations": {
+                "ops_email": {"type": "email", "smtp_password": "RAW_LEAK"},
+            },
+        },
+        cfg,
+    )
+    written = yaml.safe_load((cfg / "notifications.yaml").read_text())
+    assert "smtp_password" not in written.get("destinations", {}).get("ops_email", {})
+    assert "destinations.ops_email.smtp_password" in res["rejected_secrets"]

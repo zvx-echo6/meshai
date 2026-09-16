@@ -64,6 +64,13 @@ class MeshtasticTransport(MeshTransport):
         self._link_suspect: bool = False
         self._wake: Optional[asyncio.Event] = None  # created by main once loop exists
         self._link_path = "/tmp/meshai.link"
+        # --- radio_outage monitor signal ---
+        # True until the supervisor writes its first "down". Kept in sync
+        # with the link-status file by write_link_status() below, so it
+        # reflects "can Meshtastic send right now" during an outage AND
+        # during the (possibly long) reconnect-in-progress window, unlike
+        # `_connected` which the supervisor never clears on link loss.
+        self._link_up: bool = True
         self._reconnect_lock = threading.Lock()
         # --- per-radio send queue (serialized + paced) ---
         self._mt_queue: Optional[RadioSendQueue] = None
@@ -283,12 +290,26 @@ class MeshtasticTransport(MeshTransport):
         self._link_suspect = False
 
     def write_link_status(self, status: str) -> None:
-        """SINGLE writer of the link-state file. Called ONLY by the watchdog."""
+        """SINGLE writer of the link-state file. Called ONLY by the watchdog.
+
+        Also keeps ``link_up`` in sync with the same up/down decision, at
+        the same moment -- this is the one place the watchdog declares link
+        state, so it is the correct place for any other consumer (e.g.
+        RadioOutageMonitor) to observe it too.
+        """
+        self._link_up = (status == "up")
         try:
             with open(self._link_path, "w") as f:
                 f.write(status)
         except Exception as e:
             logger.warning(f"Failed to write link status: {e}")
+
+    @property
+    def link_up(self) -> bool:
+        """True when the connection supervisor last declared the Meshtastic
+        link 'up'; False from the moment it declares 'down' until a
+        successful reconnect. Read-only; only write_link_status() sets it."""
+        return self._link_up
 
     # --- watchdog: socket-based liveness (getMyNodeInfo is NOT trusted; it
     # returns cached data on a dead link -> false-alive). Verified meshtastic 2.7.9.

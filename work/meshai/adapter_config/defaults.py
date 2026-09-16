@@ -727,6 +727,41 @@ REGISTRY: dict[tuple[str, str], dict[str, Any]] = {
     },
 
     # =================================================================
+    # RADIO_OUTAGE -- "both radios down" ops email alert (6 settings)
+    # See notifications/radio_outage.py::RadioOutageMonitor.
+    # =================================================================
+    ("radio_outage", "enabled"): {
+        "default": True,
+        "type": "bool",
+        "description": "Master switch for the all-radios-down ops email alert.",
+    },
+    ("radio_outage", "threshold_seconds"): {
+        "default": 300,
+        "type": "int",
+        "description": "How long every configured radio must be down before the alert email sends.",
+    },
+    ("radio_outage", "check_interval_seconds"): {
+        "default": 15,
+        "type": "int",
+        "description": "Seconds between radio-liveness checks.",
+    },
+    ("radio_outage", "startup_grace_seconds"): {
+        "default": 60,
+        "type": "int",
+        "description": "Seconds after process start with NO outage state transitions at all (absorbs normal boot-time connect delay). Must exceed the Meshtastic connection.reconnect_health_interval plus the active-probe wait (default 30 + 5 = 35s) -- write_link_status(\"up\") is set unconditionally right after connect(), so link_up can read stale 'up' for that whole window after every restart, including one mid-outage.",
+    },
+    ("radio_outage", "destination"): {
+        "default": "",
+        "type": "str",
+        "description": "Name of a notifications.destinations entry (type=email) to notify. Empty = outages are still recorded but no email is sent.",
+    },
+    ("radio_outage", "email_retry_seconds"): {
+        "default": 300,
+        "type": "int",
+        "description": "Minimum seconds between retry attempts after a failed alert/recovery email send.",
+    },
+
+    # =================================================================
     # DASHBOARD -- UI-only settings persisted for the operator
     # =================================================================
     ("dashboard", "tropo_region"): {
@@ -878,6 +913,11 @@ ADAPTER_META: dict[str, dict[str, Any]] = {
         "display_name": "Satellite passes",
         "include_in_llm_context": True,
         "description": "Regional satellite pass broadcasts (ISS, amateur radio sats).",
+    },
+    "radio_outage": {
+        "display_name": "Radio outage alert",
+        "include_in_llm_context": False,
+        "description": "Ops-only email alert when every configured mesh radio is down at once. Not mesh-facing data.",
     },
 }
 

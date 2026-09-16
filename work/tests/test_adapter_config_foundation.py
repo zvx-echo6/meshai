@@ -156,8 +156,9 @@ def test_adapter_meta_at_19(fresh_db):
     # Count sentinel — bump when an adapter row is added/removed. 24 -> 23
     # with the removal of ADAPTER_META["central"] (dead NATS consumer excised).
     # 23 -> 24 with the addition of ADAPTER_META["watchduty"] (Watch Duty
-    # enrichment adapter).
-    assert len(ADAPTER_META) == 24
+    # enrichment adapter). 24 -> 25 with the addition of
+    # ADAPTER_META["radio_outage"] (all-radios-down ops email alert).
+    assert len(ADAPTER_META) == 25
 
 
 # ---------- seed ----------------------------------------------------------
