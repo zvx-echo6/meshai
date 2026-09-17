@@ -11,9 +11,11 @@ The loader produces the same Config dataclass shape as config.py,
 ensuring backward compatibility with all existing consumers.
 """
 
+import dataclasses
 import logging
 import os
 import re
+import typing
 from pathlib import Path
 from typing import Any, Optional
 
@@ -23,6 +25,9 @@ from dotenv import dotenv_values
 # Import existing dataclasses - shape must NOT change
 from .config import (
     Config,
+    NotificationsConfig,
+    NotificationToggle,
+    NotificationDestination,
     _dict_to_dataclass,
     _dataclass_to_dict,
 )
@@ -592,6 +597,160 @@ def load_config(config_dir: Path = Path("/data/config")) -> Config:
 
 
 # =============================================================================
+# SCHEMA-AWARE PRESERVE-MERGE
+# =============================================================================
+#
+# v0.16-config-preserve fix: save_section used to treat "dedicated file"
+# sections (env_feeds.yaml, notifications.yaml, ...) as "the whole file IS
+# the section" and just wrote the serialized dataclass over the file
+# wholesale (config_loader.py, old save_section ~L819-821). That silently
+# dropped anything the dataclass schema doesn't know about: unknown/legacy
+# keys at any nesting level (e.g. a `central:` block, `wzdx.endpoints`) and
+# sibling top-level keys. The same one-level-down wholesale replace existed
+# for the meshtastic.yaml/config.yaml per-key path
+# (`existing[section_name] = domain_data`).
+#
+# The fix below merges the new section value onto the on-disk value,
+# schema-field by schema-field, instead of replacing wholesale. Fields the
+# schema doesn't know about ride through untouched; the merge only ever
+# touches fields the dataclass actually declares.
+
+# Real type hints for Config's own fields (section_name -> field type).
+# config.py has no `from __future__ import annotations`, so these are
+# already resolved classes, not strings.
+_CONFIG_FIELD_TYPES = typing.get_type_hints(Config)
+
+# dict[str, Dataclass] fields that MeshAI declares as a bare `dict` (no
+# generic args) -- e.g. NotificationsConfig.toggles/destinations. Real type
+# hints can't tell us the value type for these, so -- like
+# config.py::_dict_to_dataclass, which hardcodes the same keys -- we mirror
+# its key-based dispatch instead of inferring it from typing.
+_DICT_OF_DATACLASS_FIELDS: dict[tuple[type, str], type] = {
+    (NotificationsConfig, "toggles"): NotificationToggle,
+    (NotificationsConfig, "destinations"): NotificationDestination,
+}
+
+
+def _unwrap_optional(tp):
+    """Optional[X] (i.e. Union[X, None]) -> X; anything else -> unchanged."""
+    if typing.get_origin(tp) is typing.Union:
+        args = [a for a in typing.get_args(tp) if a is not type(None)]
+        if len(args) == 1:
+            return args[0]
+    return tp
+
+
+def _section_schema(section_name: str):
+    """The dataclass describing `section_name`'s value, or None when the
+    section is scalar/list-shaped (no per-field schema to preserve against --
+    e.g. `timezone` (str), `mesh_sources`/`generic_sources` (lists, handled
+    by save_section's own list branch before this is ever consulted))."""
+    tp = _unwrap_optional(_CONFIG_FIELD_TYPES.get(section_name))
+    return tp if dataclasses.is_dataclass(tp) else None
+
+
+def _preserve_var_ref(disk_val: str, new_val: str, resolve_var) -> str:
+    """Extend the secret-ref preserve behavior (v0.4 C.3.1) to ANY scalar
+    string field: if the on-disk value is a bare ``${VAR}`` reference and the
+    incoming value resolves to the same string, keep the ``${VAR}`` string on
+    disk instead of baking in the interpolated literal. A genuinely changed
+    value (or an unresolvable ref) still writes through as given.
+
+    This is a no-op for SECRET_FIELDS -- save_section's check_secrets() has
+    already turned those into their final on-disk form (ref, literal
+    change, or dropped-via-rejection) before this ever runs -- so calling it
+    unconditionally for every scalar string field is safe and idempotent.
+    """
+    m = _VAR_RE.match(disk_val)
+    if not m:
+        return new_val
+    resolved = resolve_var(m.group(1))
+    if resolved is not None and resolved == new_val:
+        return disk_val
+    return new_val
+
+
+# Matches a bare `${VAR_NAME}` reference and nothing else (no surrounding
+# text, no `:-default`) -- the GUI-managed secret/ref placeholder shape.
+# Shared by check_secrets (via save_section) and _preserve_var_ref.
+_VAR_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+
+
+def _merge_config_node(disk_node, new_node, schema, resolve_var=None):
+    """Merge `new_node` onto `disk_node`, allowing only what `schema` (a
+    dataclass) actually declares to change.
+
+    - Keys on disk that are NOT dataclass fields of `schema` (unknown/legacy
+      keys, comments aside) are copied into the result untouched.
+    - Fields declared by `schema` but ABSENT from `new_node` keep their
+      on-disk value -- a partial/legacy `new_node` never resets a field to
+      its dataclass default.
+    - Fields present in `new_node` win, including falsy/empty ones (''/0/
+      False/[]/{}), so intentional clearing still works.
+    - A field typed as a nested dataclass recurses (deep-merge), so unknown
+      keys nested arbitrarily deep survive too.
+    - A field that is a dict[str, Dataclass] (resolved via
+      `_DICT_OF_DATACLASS_FIELDS` -- see its docstring) is rebuilt to EXACTLY
+      `new_node`'s keys: entries missing from `new_node` are REMOVED on disk
+      (so e.g. deleting a `notifications.destinations` entry actually
+      deletes it), entries present on both sides are merged recursively
+      (preserving unknown keys inside a surviving entry), and new entries are
+      added as given.
+    - Every other field type -- scalars, lists (including lists of
+      dataclasses, e.g. `notifications.rules`, `mesh_intelligence.regions`),
+      and plain (non-dataclass-valued) dicts -- takes `new_node`'s value
+      whole when present. Lists are deliberately NOT index-aligned or
+      item-merged: a shortened/reordered list on save is exactly what lands
+      on disk. This matches the existing partial-PUT merge semantics in
+      dashboard/api/config_routes.py::_merge_over_current (list == REPLACE).
+    - When `resolve_var` is given, a scalar string field additionally goes
+      through `_preserve_var_ref` first (see its docstring).
+    """
+    if not dataclasses.is_dataclass(schema):
+        # Opaque scalar/list/plain-dict slice: no schema to preserve
+        # against, so the new value simply wins.
+        return new_node
+
+    disk = dict(disk_node) if isinstance(disk_node, dict) else {}
+    if not isinstance(new_node, dict):
+        # Defensive: shape mismatch (e.g. legacy list-shaped data where a
+        # dict is now expected) -- fall back to taking the new value as-is
+        # rather than guessing.
+        return new_node
+
+    result = dict(disk)  # unknown/legacy + untouched sibling keys ride along
+    hints = typing.get_type_hints(schema)
+
+    for f in dataclasses.fields(schema):
+        fname = f.name
+        if fname.startswith("_") or fname not in new_node:
+            continue  # not part of this request -> keep the on-disk value
+
+        field_type = _unwrap_optional(hints.get(fname, f.type))
+        new_val = new_node[fname]
+        disk_val = disk.get(fname)
+        dict_item_schema = _DICT_OF_DATACLASS_FIELDS.get((schema, fname))
+
+        if dataclasses.is_dataclass(field_type) and isinstance(new_val, dict):
+            result[fname] = _merge_config_node(disk_val, new_val, field_type, resolve_var)
+        elif dict_item_schema is not None and isinstance(new_val, dict):
+            disk_map = disk_val if isinstance(disk_val, dict) else {}
+            merged_map = {}
+            for k, v in new_val.items():
+                merged_map[k] = (
+                    _merge_config_node(disk_map.get(k), v, dict_item_schema, resolve_var)
+                    if isinstance(v, dict) else v
+                )
+            result[fname] = merged_map  # keys absent from new_val are dropped
+        elif resolve_var is not None and isinstance(new_val, str) and isinstance(disk_val, str):
+            result[fname] = _preserve_var_ref(disk_val, new_val, resolve_var)
+        else:
+            result[fname] = new_val
+
+    return result
+
+
+# =============================================================================
 # SECTION SAVER
 # =============================================================================
 
@@ -628,9 +787,32 @@ def _extract_local_fields(section: str, data: dict) -> tuple[dict, dict]:
             # Array field pattern - handle specially
             continue
 
-        if field_name in domain_data:
+        # v0.16-config-preserve fix: field_name can itself be a dotted path
+        # more than one level deep (e.g. "ducting.latitude" for
+        # "environmental.ducting.latitude") -- walk it through domain_data
+        # instead of treating it as one flat key. The flat `field_name in
+        # domain_data` check below only ever matched single-level fields
+        # (bot.name, connection.tcp_host, ...): a 2+-level LOCAL_FIELDS entry
+        # silently never matched, so its overlay value (from local.yaml)
+        # rode straight through into the domain file on every save instead
+        # of round-tripping to local.yaml like its siblings.
+        field_parts = field_name.split(".")
+        node = domain_data
+        found = True
+        for part in field_parts[:-1]:
+            if not isinstance(node, dict) or part not in node:
+                found = False
+                break
+            # Copy along the walked path so popping the leaf below can't
+            # mutate a dict object some other LOCAL_FIELDS entry (or the
+            # caller) still holds a reference to.
+            node[part] = dict(node[part]) if isinstance(node[part], dict) else node[part]
+            node = node[part]
+        leaf = field_parts[-1]
+
+        if found and isinstance(node, dict) and leaf in node:
             # Move to local_data using the local_path
-            value = domain_data.pop(field_name)
+            value = node.pop(leaf)
             # Build nested structure in local_data
             parts = local_path.split(".")
             current = local_data
@@ -719,7 +901,7 @@ def save_section(
         _secrets_path = Path("/data/secrets/.env")
     _env_file = dotenv_values(_secrets_path) if _secrets_path.exists() else {}
 
-    _VAR_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+    # _VAR_RE is defined at module scope (shared with _preserve_var_ref).
 
     def _resolve_var(name: str):
         v = os.environ.get(name)
@@ -811,15 +993,34 @@ def save_section(
     else:
         existing = {}
 
+    # Schema-aware preserve-merge (v0.16-config-preserve): only fields the
+    # section's dataclass actually declares are allowed to change. None for
+    # scalar/list-shaped sections (timezone, mesh_sources, generic_sources,
+    # ...), which fall back to the historical whole-value replace below --
+    # there's no per-field schema to preserve against for those.
+    section_schema = _section_schema(section_name)
+
     # Handle sections that share a file (meshtastic.yaml has both connection and commands)
     if target_file == "meshtastic.yaml":
-        existing[section_name] = domain_data
+        if isinstance(domain_data, dict) and section_schema is not None:
+            existing[section_name] = _merge_config_node(
+                existing.get(section_name), domain_data, section_schema, _resolve_var)
+        else:
+            existing[section_name] = domain_data
     elif target_file == "config.yaml":
         # For orchestrator, update the section in place
-        existing[section_name] = domain_data
+        if isinstance(domain_data, dict) and section_schema is not None:
+            existing[section_name] = _merge_config_node(
+                existing.get(section_name), domain_data, section_schema, _resolve_var)
+        else:
+            existing[section_name] = domain_data
     else:
-        # For dedicated files, the whole file IS the section
-        existing = domain_data
+        # For dedicated files, the whole file IS the section -- but "the
+        # section" now means "merged onto what's there", not "replaced by".
+        if isinstance(domain_data, dict) and section_schema is not None:
+            existing = _merge_config_node(existing, domain_data, section_schema, _resolve_var)
+        else:
+            existing = domain_data
 
     # Write domain file (v0.6-tail-4: preserve dumper re-emits Include()
     # placeholders as `!include path` so multi-file layouts survive the
