@@ -101,7 +101,7 @@ from meshai.router import MessageRouter
 # Helpers
 # ---------------------------------------------------------------------------
 
-# Small, test-friendly notice window. Real default is 15s (config.py).
+# Small, test-friendly notice window. Real default is 30s (config.py).
 _NOTICE_SECONDS = 0.05
 _SLOW_DELAY = 0.2  # comfortably past _NOTICE_SECONDS
 _FAST_DELAY = 0.0  # AsyncMock default -- resolves at the next await point

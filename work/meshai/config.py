@@ -159,7 +159,7 @@ class ResponseConfig:
     delay_max: float = 2.5
     max_length: int = 200
     max_messages: int = 3
-    thinking_notice_seconds: int = 15  # 0 disables the "still thinking" notice
+    thinking_notice_seconds: int = 30  # 0 disables the "still thinking" notice
     thinking_notice_text: str = "Thinking - one moment."
 
 
