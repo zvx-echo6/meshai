@@ -3,13 +3,14 @@
 import asyncio
 import logging
 import re
+import time
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Optional
 
-from .backends.base import LLMBackend
+from .backends.base import LLMBackend, LLMTruncatedError
 from .commands import CommandContext, CommandDispatcher
-from .config import Config
+from .config import Config, parse_mt_node_id, parse_mt_node_num
 from .connector import MeshConnector, MeshMessage
 from .context import MeshContext
 from .history import ConversationHistory
@@ -34,6 +35,15 @@ class RouteResult:
     response: Optional[str] = None  # For commands, the response
     query: Optional[str] = None  # For LLM, the cleaned query
 
+
+# Sent instead of a cut-off/empty answer when the LLM backend raises
+# LLMTruncatedError (output-token cap hit mid-answer, or nothing but a
+# stripped <think> block came back). Matt's rule: "I don't have that
+# information" beats confidently wrong -- never relay a partial reply.
+LLM_TRUNCATED_TEXT = (
+    "Sorry, I couldn't finish that answer. "
+    "Try asking a shorter or more specific question."
+)
 
 # advBBS protocol and notification prefixes to ignore
 ADVBBS_PREFIXES = (
@@ -214,6 +224,110 @@ QUESTION TYPES:
 IMPORTANT: Do NOT lump different regions together. Each is a distinct area.
 Do NOT recommend infrastructure for "Unlocated" nodes - they have no known position.
 """
+
+
+# aida-mesh (the Open WebUI-backed assistant) always ends its replies with a
+# trailing "Sources: <a>; <b>" or "Sources: none" line. That line must be
+# stored in conversation history (so a later "where did you get that?"
+# follow-up has the real citation to answer from) but must NEVER be relayed
+# to a mesh user -- it's not part of the answer and it eats LoRa airtime.
+_SOURCES_LINE_RE = re.compile(r"^[ \t]*sources:.*$", re.IGNORECASE)
+
+
+def _strip_sources_line(text: str) -> str:
+    """Strip a trailing "Sources: ..." line from text, if present.
+
+    Only the LAST line of the reply is checked (case-insensitive match on
+    "Sources:", tolerating leading whitespace). Any blank line(s) left
+    behind after removal are also trimmed. Text with no trailing Sources
+    line is returned unchanged.
+    """
+    if not text:
+        return text
+    lines = text.splitlines()
+    if not lines:
+        return text
+    if _SOURCES_LINE_RE.match(lines[-1]):
+        lines = lines[:-1]
+        while lines and lines[-1].strip() == "":
+            lines.pop()
+        return "\n".join(lines)
+    return text
+
+
+# ---------------------------------------------------------------------------
+# Channel-@mention detection (opt-in channel-reply feature; see
+# BotConfig.respond_to_channel_mentions / MeshCoreContextConfig.mention_channels)
+# ---------------------------------------------------------------------------
+
+
+def _build_mention_pattern(
+    names: list[str], transport: str, node_id: Optional[str] = None
+) -> Optional[re.Pattern]:
+    """Build the case-insensitive, word-boundary-aware @-mention regex.
+
+    Meshtastic: "@AIDA" (any configured name) or "@!a1daa1da" / "@a1daa1da"
+    (the bot's own node id, parsed from bot.mt_node — always accepted in
+    addition to the configured names).
+    MeshCore: "@AIDA" or the bracket form "@[AIDA]". No node-id form (MeshCore
+    identity is name-based, not a Meshtastic node id).
+
+    Word-boundary (\\b) after the matched token means "@AIDAN" does NOT match
+    a mention of "AIDA" — the boundary check fails because both 'A' and 'N'
+    are word characters.
+
+    Returns None if there is nothing to match against (no names/node id
+    configured for this transport).
+    """
+    name_alts = [re.escape(n.strip()) for n in (names or []) if n and n.strip()]
+
+    if transport == "meshcore":
+        if not name_alts:
+            return None
+        alt = "|".join(name_alts)
+        return re.compile(rf"@\[(?:{alt})\]|@(?:{alt})\b", re.IGNORECASE)
+
+    node_alts = []
+    if node_id:
+        node_alts.append(re.escape(node_id))
+        bare = node_id.lstrip("!")
+        if bare:
+            node_alts.append(re.escape(bare))
+
+    all_alts = name_alts + node_alts
+    if not all_alts:
+        return None
+    alt = "|".join(all_alts)
+    return re.compile(rf"@(?:{alt})\b", re.IGNORECASE)
+
+
+def mention_present(
+    text: str, names: list[str], transport: str, node_id: Optional[str] = None
+) -> bool:
+    """True if *text* @-mentions the bot (see _build_mention_pattern)."""
+    if not text:
+        return False
+    pattern = _build_mention_pattern(names, transport, node_id)
+    if pattern is None:
+        return False
+    return pattern.search(text) is not None
+
+
+def strip_mention(
+    text: str, names: list[str], transport: str, node_id: Optional[str] = None
+) -> str:
+    """Remove the first @-mention match from *text* and collapse whitespace.
+
+    Text with no mention match is returned unchanged (aside from whitespace
+    collapsing, which is a no-op for already-clean text).
+    """
+    if not text:
+        return text
+    pattern = _build_mention_pattern(names, transport, node_id)
+    if pattern is None:
+        return text
+    stripped = pattern.sub("", text, count=1)
+    return " ".join(stripped.split())
 
 
 def _build_region_abbreviations(region_names: list[str]) -> dict[str, str]:
@@ -541,6 +655,10 @@ class MessageRouter:
         # Maps user_id -> {"last_was_mesh": bool, "last_scope": (type, value), "non_mesh_count": int}
         self._user_mesh_context: dict[str, dict] = {}
 
+        # Channel-mention reply cooldown: (transport, sender_id, channel) ->
+        # time.monotonic() of the last reply. See _check_and_mark_channel_cooldown.
+        self._channel_cooldowns: dict[tuple, float] = {}
+
         # Build region abbreviation map
         self._region_abbrevs: dict[str, str] = {}
         if self.health_engine and self.health_engine.regions:
@@ -573,8 +691,11 @@ class MessageRouter:
     def should_respond(self, message: MeshMessage) -> bool:
         """Determine if we should respond to this message.
 
-        DM-only bot: ignores all public channel messages.
-        Commands and conversational LLM responses both work in DMs.
+        Two paths:
+          - DM (unchanged): always eligible, subject to the existing
+            respond_to_dms/filter_bbs_protocols/meshmonitor gates below.
+          - Channel (opt-in, OFF by default): see
+            _should_respond_to_channel_mention for the full gate.
 
         Args:
             message: Incoming message
@@ -586,9 +707,8 @@ class MessageRouter:
         if message.sender_id == self.connector.my_node_id:
             return False
 
-        # Only respond to DMs
         if not message.is_dm:
-            return False
+            return self._should_respond_to_channel_mention(message)
 
         # bot.respond_to_dms is the Meshtastic-only toggle; MeshCore DMs are
         # governed solely by meshcore_context.respond_to_dms, enforced at the
@@ -609,22 +729,182 @@ class MessageRouter:
 
         return True
 
+    def _should_respond_to_channel_mention(self, message: MeshMessage) -> bool:
+        """Opt-in channel-@mention reply gate (BotConfig.respond_to_channel_mentions).
+
+        All of the following must hold:
+          - respond_to_channel_mentions is enabled (default OFF).
+          - the channel is one of this transport's configured mention
+            channels (bot.mention_channels for Meshtastic, by index;
+            meshcore_context.mention_channels for MeshCore, by resolved
+            channel name).
+          - the message @-mentions the bot, OR (Meshtastic only) the
+            message's incoming decoded.replyId points at a packet id AIDA
+            itself sent (thread-reply counts as addressing AIDA even
+            without a literal @mention).
+          - the sender is not the bot itself, by name (the node-id
+            self-filter already ran in should_respond() above).
+          - the per-(sender, channel) cooldown is not active. This check
+            also MARKS the cooldown the moment it allows a reply through
+            (see _check_and_mark_channel_cooldown), so a burst of matching
+            messages before the LLM answer goes out doesn't all queue up.
+        """
+        if not self.config.bot.respond_to_channel_mentions:
+            return False
+
+        transport = message.transport
+
+        if transport == "meshcore":
+            allowed = self.config.meshcore_context.mention_channels or []
+            if message.channel_name not in allowed:
+                return False
+        else:
+            allowed = self.config.bot.mention_channels or []
+            if message.channel not in allowed:
+                return False
+
+        if self._is_own_meshcore_name(message):
+            return False
+
+        node_id = parse_mt_node_id(self.config.bot.mt_node)
+        mentioned = mention_present(message.text, self.config.bot.mention_names, transport, node_id)
+
+        replied_to_self = False
+        if not mentioned and transport != "meshcore":
+            decoded = (message.packet or {}).get("decoded", {}) or {}
+            incoming_reply_id = decoded.get("replyId")
+            replied_to_self = self._mt_owns_packet(incoming_reply_id)
+
+        if not (mentioned or replied_to_self):
+            return False
+
+        cooldown_key = (transport, message.sender_id, message.channel)
+        if not self._check_and_mark_channel_cooldown(cooldown_key):
+            logger.debug(
+                f"Channel-mention cooldown active for {cooldown_key}; not responding"
+            )
+            return False
+
+        return True
+
+    def _is_own_meshcore_name(self, message: MeshMessage) -> bool:
+        """True when a MeshCore channel message's parsed sender name is the
+        bot's own name (anti-loop; the node-id self-filter in should_respond
+        does not catch this since MeshCore channel senders are identified by
+        name, not by the bot's my_node_id pubkey)."""
+        if message.transport != "meshcore":
+            return False
+        name = (message.sender_name or "").strip().lower()
+        if not name:
+            return False
+        own_names = {n.strip().lower() for n in (self.config.bot.mention_names or []) if n}
+        try:
+            info = self.connector.self_info()
+            info_name = info.get("name") if isinstance(info, dict) else None
+            if info_name:
+                own_names.add(str(info_name).strip().lower())
+        except Exception:
+            pass
+        return name in own_names
+
+    def _mt_owns_packet(self, packet_id) -> bool:
+        """True if *packet_id* is one of AIDA's own recent outgoing
+        Meshtastic broadcast packet ids (see MeshtasticTransport.owns_packet_id)."""
+        if packet_id is None:
+            return False
+        mt = None
+        child_fn = getattr(self.connector, "meshtastic_child", None)
+        if callable(child_fn):
+            mt = child_fn()
+        if mt is None:
+            mt = self.connector
+        owns = getattr(mt, "owns_packet_id", None)
+        if not callable(owns):
+            return False
+        try:
+            return bool(owns(packet_id))
+        except Exception:
+            return False
+
+    def _check_and_mark_channel_cooldown(self, key: tuple) -> bool:
+        """Return True (and mark the cooldown NOW) if *key* is not currently
+        on cooldown; return False without marking if it is."""
+        now = time.monotonic()
+        seconds = self.config.bot.channel_reply_cooldown_seconds
+        last = self._channel_cooldowns.get(key)
+        if seconds and last is not None and (now - last) < seconds:
+            return False
+        self._channel_cooldowns[key] = now
+        return True
+
+    def history_key(self, message: MeshMessage) -> str:
+        """Conversation-history / per-user-state key for *message*.
+
+        DMs keep the existing raw sender_id key unchanged (no migration).
+        Channel turns are keyed by (sender, transport, channel) so a
+        person's DM history never leaks into a channel reply (and vice
+        versa), and two different people talking on the same channel never
+        share history.
+        """
+        if message.is_dm:
+            return message.sender_id
+        return f"{message.sender_id}@{message.transport}:{message.channel}"
+
+    def _channel_reply_prefix(self, message: MeshMessage) -> str:
+        """"@<asker name> " prefix for a channel-mention reply.
+
+        Meshtastic: the asker's long/short name as meshai knows it
+        (message.sender_name). MeshCore: the bracket form "@[<name>] "
+        (matching how MeshCore clients themselves write a mention).
+        """
+        name = message.sender_name or message.sender_id
+        if message.transport == "meshcore":
+            return f"@[{name}] "
+        return f"@{name} "
+
     def check_continuation(self, message) -> list[str] | None:
         """Check if this is a continuation request and return messages if so.
+
+        Every continuation -- DM or channel -- uses the same per-packet
+        budget and message cap as a normal reply:
+        effective_max = min(config.response.max_length, connector.max_chars)
+        and config.response.max_messages (see generate_llm_response). A
+        channel-mention continuation additionally gets the exact same
+        "@Name " / "@[Name] " prefix treatment as the first answer (see
+        _channel_reply_prefix): only the first chunk of this send is
+        prefixed, and the prefix's bytes are reserved from that same budget
+        up front so the prefixed first chunk still fits within max_chars.
+        DMs get no prefix, so their full budget goes to content. Threading
+        (Meshtastic reply_id) and channel routing are handled by main.py's
+        _send_reply() using this same *message* (the "more" request
+        itself), so no change is needed here for that.
 
         Returns:
             List of messages to send, or None if not a continuation
         """
-        user_id = message.sender_id
+        user_id = self.history_key(message)
         text = message.text.strip()
 
         logger.debug(f"check_continuation: user={user_id}, text='{text[:30]}', has_pending={self.continuations.has_pending(user_id)}")
 
         if self.continuations.has_pending(user_id):
             if self.continuations.is_continuation_request(text):
-                result = self.continuations.get_continuation(user_id)
+                reply_prefix = "" if message.is_dm else self._channel_reply_prefix(message)
+                effective_max = min(self.config.response.max_length, self.connector.max_chars)
+                chunk_budget = effective_max
+                if reply_prefix:
+                    reserved = len(reply_prefix.encode("utf-8"))
+                    if reserved < effective_max:
+                        chunk_budget = effective_max - reserved
+                result = self.continuations.get_continuation(
+                    user_id,
+                    max_chars=chunk_budget,
+                    max_messages=self.config.response.max_messages,
+                )
                 if result:
                     messages, _ = result
+                    if reply_prefix and messages:
+                        messages[0] = reply_prefix + messages[0]
                     return messages
                 # Max continuations reached, return None to fall through
             else:
@@ -652,6 +932,15 @@ class MessageRouter:
 
         # Clean up the message (remove @mention)
         query = self._clean_query(text)
+
+        # Channel-mention messages carry the @-mention token in the text
+        # (should_respond() already confirmed a mention was present, or that
+        # this is a reply-threaded turn) -- strip it before it reaches the LLM.
+        if not message.is_dm:
+            node_id = parse_mt_node_id(self.config.bot.mt_node)
+            query = strip_mention(
+                query, self.config.bot.mention_names, message.transport, node_id
+            )
 
         if not query:
             return RouteResult(RouteType.IGNORE)
@@ -843,8 +1132,11 @@ class MessageRouter:
                         if partial not in node_names:
                             node_names[partial] = node
 
-        # AIDA aliases
-        aida_node = health.nodes.get(0x27780c47)
+        # AIDA aliases -- node number derived from config (bot.mt_node),
+        # never hardcoded (the physical node behind that string changes
+        # when the radio is re-provisioned; see config.parse_mt_node_num).
+        bot_node_num = parse_mt_node_num(self.config.bot.mt_node)
+        aida_node = health.nodes.get(bot_node_num) if bot_node_num is not None else None
         if aida_node:
             for alias in ["aida", "aida-n2", "me", "my node", "yourself", "your position", "you"]:
                 node_names[alias] = aida_node
@@ -916,11 +1208,16 @@ class MessageRouter:
         Returns:
             Generated response
         """
+        # Conversation-history key: DMs keep the raw sender_id; channel turns
+        # are keyed by (sender, transport, channel) so DM and channel history
+        # never mix -- see history_key().
+        history_key = self.history_key(message)
+
         # Add user message to history
-        await self.history.add_message(message.sender_id, "user", query)
+        await self.history.add_message(history_key, "user", query)
 
         # Get conversation history
-        history = await self.history.get_history_for_llm(message.sender_id)
+        history = await self.history.get_history_for_llm(history_key)
 
         # Build system prompt in order: identity -> static -> meshmonitor -> context -> knowledge -> mesh
 
@@ -1071,7 +1368,7 @@ class MessageRouter:
                 )
 
         # 6. Mesh Intelligence (inject health data for mesh questions)
-        user_ctx = self._get_user_mesh_context(message.sender_id)
+        user_ctx = self._get_user_mesh_context(history_key)
         is_direct_mesh_question = self._is_mesh_question(query)
         is_followup = user_ctx["last_was_mesh"] and not is_direct_mesh_question
 
@@ -1199,13 +1496,13 @@ class MessageRouter:
 
             # Update mesh context tracking
             self._update_user_mesh_context(
-                message.sender_id,
+                history_key,
                 is_mesh=True,
                 scope=(scope_type, scope_value),
             )
         else:
             # Not a mesh question
-            self._update_user_mesh_context(message.sender_id, is_mesh=False)
+            self._update_user_mesh_context(history_key, is_mesh=False)
 
         # 7. Environmental context injection
         if self.env_store:
@@ -1235,32 +1532,60 @@ class MessageRouter:
                 system_prompt += f"\n\nDISTANCE CALCULATION:\n{distance_result}\n"
 
         try:
-            response = await self.llm.generate(
-                messages=history,
-                system_prompt=system_prompt,
-                max_tokens=self.config.llm.max_response_tokens,
+            llm_task = asyncio.ensure_future(
+                self.llm.generate(
+                    messages=history,
+                    system_prompt=system_prompt,
+                    max_tokens=self.config.llm.max_response_tokens,
+                )
             )
+            response = await self._await_llm_with_thinking_notice(llm_task, message)
         except asyncio.TimeoutError:
             logger.error("LLM request timed out")
             response = "Sorry, request timed out. Try again."
+        except LLMTruncatedError as e:
+            logger.error(f"LLM generation truncated: {e}")
+            response = LLM_TRUNCATED_TEXT
         except Exception as e:
             logger.error(f"LLM generation error: {e}")
             response = "Sorry, I encountered an error. Please try again."
 
-        # Add assistant response to history
-        await self.history.add_message(message.sender_id, "assistant", response)
+        # Store the full response -- including any trailing "Sources:" line
+        # -- in conversation history so a later "where did you get that?"
+        # follow-up can be answered from what was actually cited.
+        await self.history.add_message(history_key, "assistant", response)
 
         # Persist summary if one was created/updated
-        await self._persist_summary(message.sender_id)
+        await self._persist_summary(history_key)
+
+        # The Sources line is for history only -- never relay it to the mesh.
+        response = _strip_sources_line(response)
 
         # Strip any markdown the LLM ignored instructions about
         from .chunker import strip_markdown
         response = strip_markdown(response)
 
+        # Channel-mention replies are prefixed "@<asker name> " (MeshCore:
+        # bracket form "@[<name>] "; see _channel_reply_prefix) so the reply
+        # reads as addressed to whoever asked. Only the FIRST chunk gets the
+        # prefix, but its bytes still have to fit inside the same per-packet
+        # budget as every other chunk -- so the prefix is reserved from the
+        # chunk budget up front (applied uniformly to every chunk) rather
+        # than appended after chunking, which could push the first chunk
+        # over max_chars. DMs (message.is_dm) get no prefix and are
+        # byte-for-byte unaffected by this.
+        reply_prefix = "" if message.is_dm else self._channel_reply_prefix(message)
+        effective_max = min(self.config.response.max_length, self.connector.max_chars)
+        chunk_budget = effective_max
+        if reply_prefix:
+            reserved = len(reply_prefix.encode("utf-8"))
+            if reserved < effective_max:
+                chunk_budget = effective_max - reserved
+
         # Chunk the response with sentence awareness
         messages, remaining = chunk_response(
             response,
-            max_chars=min(self.config.response.max_length, self.connector.max_chars),
+            max_chars=chunk_budget,
             max_messages=self.config.response.max_messages,
         )
 
@@ -1270,12 +1595,70 @@ class MessageRouter:
         # Broadcast/notification chunking is NOT affected by this cap.
         messages = cap_reply_chunks(messages, MAX_REPLY_PACKETS, self.connector.max_chars)
 
+        if reply_prefix and messages:
+            messages[0] = reply_prefix + messages[0]
+
         # Store remaining content for continuation
         if remaining:
-            logger.debug(f"Storing continuation for {message.sender_id}: {len(remaining)} chars remaining")
-            self.continuations.store(message.sender_id, remaining)
+            logger.debug(f"Storing continuation for {history_key}: {len(remaining)} chars remaining")
+            self.continuations.store(history_key, remaining)
 
         return messages
+
+    async def _await_llm_with_thinking_notice(
+        self, llm_task: "asyncio.Task", message: MeshMessage
+    ):
+        """Await the in-flight LLM call, sending one "still thinking" notice
+        if it runs longer than config.response.thinking_notice_seconds.
+
+        The notice is sent directly through the connector using the exact
+        same destination/channel/transport the final reply will use (see
+        main.py's `_on_message`): for a DM, `destination=message.sender_id,
+        channel=message.channel, transport=<originating transport>`; for a
+        channel-mention reply, a broadcast back to the same channel
+        (`destination=None`, `channel`/`meshcore_channel` per transport),
+        prefixed the same "@<asker name> " way the real answer will be (see
+        _channel_reply_prefix). This is a courtesy ping only: it is never
+        stored in conversation history, never counted against the reply
+        chunk cap, and its own send failure must never take down the real
+        answer. The LLM task itself is never cancelled -- a slow answer
+        still arrives (or still times out/errors) exactly as before; this
+        only adds one heads-up message in front of it.
+
+        Args:
+            llm_task: The in-flight asyncio Task wrapping self.llm.generate().
+            message: Original inbound message (for destination/channel/transport).
+
+        Returns:
+            The LLM's response string (or raises whatever self.llm.generate()
+            raised, e.g. asyncio.TimeoutError or LLMTruncatedError).
+        """
+        seconds = self.config.response.thinking_notice_seconds
+        if seconds and seconds > 0:
+            done, _pending = await asyncio.wait({llm_task}, timeout=seconds)
+            if llm_task not in done:
+                notice_text = self.config.response.thinking_notice_text
+                transport = getattr(message, "transport", None)
+                if message.is_dm:
+                    send_kwargs = dict(
+                        destination=message.sender_id,
+                        channel=message.channel,
+                        transport=transport,
+                    )
+                else:
+                    notice_text = self._channel_reply_prefix(message) + notice_text
+                    send_kwargs = dict(
+                        destination=None,
+                        channel=message.channel,
+                        transport=transport,
+                        meshcore_channel=message.channel_name if transport == "meshcore" else None,
+                    )
+                try:
+                    await self.connector.send_message_async(text=notice_text, **send_kwargs)
+                except Exception:
+                    logger.exception("Failed to send thinking notice")
+
+        return await llm_task
 
     async def _persist_summary(self, user_id: str) -> None:
         """Persist any cached summary to the database.

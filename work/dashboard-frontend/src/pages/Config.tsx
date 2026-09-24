@@ -21,6 +21,13 @@ interface BotConfig {
   contact_email?: string
   respond_to_dms: boolean
   filter_bbs_protocols: boolean
+  mt_mesh_name?: string
+  mt_node?: string
+  mc_mesh_name?: string
+  respond_to_channel_mentions: boolean
+  mention_channels: number[]
+  mention_names: string[]
+  channel_reply_cooldown_seconds: number
 }
 
 export interface ConnectionConfig {
@@ -44,6 +51,8 @@ interface ResponseConfig {
   delay_max: number
   max_length: number
   max_messages: number
+  thinking_notice_seconds: number
+  thinking_notice_text: string
 }
 
 interface HistoryConfig {
@@ -67,6 +76,14 @@ interface ContextConfig {
   ignore_nodes: string[]
   max_age: number
   max_context_items: number
+}
+
+interface MeshCoreContextConfig {
+  enable_passive_context: boolean
+  observe_channels: string[]
+  ignore_contacts: string[]
+  respond_to_dms: boolean
+  mention_channels: string[]
 }
 
 interface CommandsConfig {
@@ -222,6 +239,7 @@ interface FullConfig {
   history: HistoryConfig
   memory: MemoryConfig
   context: ContextConfig
+  meshcore_context: MeshCoreContextConfig
   commands: CommandsConfig
   llm: LLMConfig
   weather: WeatherConfig
@@ -243,6 +261,7 @@ const SECTIONS: { key: SectionKey; label: string; icon: typeof Settings }[] = [
   { key: 'history', label: 'History', icon: Database },
   { key: 'memory', label: 'Memory', icon: Brain },
   { key: 'context', label: 'Context', icon: Eye },
+  { key: 'meshcore_context', label: 'MeshCore Context', icon: Eye },
   { key: 'commands', label: 'Commands', icon: Terminal },
   { key: 'llm', label: 'LLM', icon: Cpu },
   { key: 'weather', label: 'Weather', icon: Cloud },
@@ -259,6 +278,7 @@ const SECTION_DESCRIPTIONS: Record<SectionKey, string> = {
   history: 'Conversation history storage and cleanup.',
   memory: 'Short-term conversation memory management. Controls how the bot maintains context within a conversation.',
   context: 'Passive channel monitoring. The bot listens to mesh channels and uses recent messages as context when responding.',
+  meshcore_context: 'Passive channel monitoring and @-mention behavior on the MeshCore side of the bot. MeshCore addresses channels by name, separate from Meshtastic channel indexes.',
   commands: 'Mesh commands available via the configured prefix. Toggle individual commands on or off.',
   llm: 'AI model configuration. MeshAI uses an LLM to understand questions and generate responses.',
   weather: 'Weather data for the !weather command. This is separate from NWS environmental alerts.',
@@ -720,6 +740,60 @@ function BotSection({ data, onChange }: { data: BotConfig; onChange: (d: BotConf
         helper="Ignore BBS bulletin board traffic"
         info="Filters out automated BBS protocol messages (advBBS, MAIL*, BOARD*) so the bot doesn't try to respond to machine-to-machine traffic."
       />
+      <div className="grid grid-cols-3 gap-4">
+        <TextInput
+          label="Meshtastic Mesh Name"
+          value={data.mt_mesh_name || ''}
+          onChange={(v) => onChange({ ...data, mt_mesh_name: v })}
+          placeholder="e.g. freq51 Meshtastic mesh"
+          helper="Identity framing used only in the Meshtastic-side LLM system prompt"
+        />
+        <TextInput
+          label="Meshtastic Node"
+          value={data.mt_node || ''}
+          onChange={(v) => onChange({ ...data, mt_node: v })}
+          placeholder="e.g. !a1daa1da (AIDA-N2)"
+          helper="The bot's own Meshtastic node id; also used to recognize @-mentions by node id"
+        />
+        <TextInput
+          label="MeshCore Mesh Name"
+          value={data.mc_mesh_name || ''}
+          onChange={(v) => onChange({ ...data, mc_mesh_name: v })}
+          placeholder="e.g. the MeshCore mesh"
+          helper="Identity framing used only in the MeshCore-side LLM system prompt"
+        />
+      </div>
+      <Toggle
+        label="Respond to Channel Mentions"
+        checked={data.respond_to_channel_mentions}
+        onChange={(v) => onChange({ ...data, respond_to_channel_mentions: v })}
+        helper="Also reply to a public channel message that @-mentions the bot"
+        info="Off by default so existing DM-only deployments are unaffected. When on, the bot answers a channel message that mentions one of the names below (or its own Meshtastic node id), on the channels listed in Mention Channels, in addition to the always-on DM path."
+      />
+      {data.respond_to_channel_mentions && (
+        <div className="grid grid-cols-2 gap-4">
+          <NumberListInput
+            label="Mention Channels (Meshtastic indexes)"
+            value={data.mention_channels}
+            onChange={(v) => onChange({ ...data, mention_channels: v })}
+            helper="Meshtastic channel indexes the bot watches for @-mentions"
+          />
+          <ListInput
+            label="Mention Names"
+            value={data.mention_names}
+            onChange={(v) => onChange({ ...data, mention_names: v })}
+            helper="Names that count as an @-mention (case-insensitive)"
+          />
+        </div>
+      )}
+      <NumberInput
+        label="Channel Reply Cooldown (sec)"
+        value={data.channel_reply_cooldown_seconds}
+        onChange={(v) => onChange({ ...data, channel_reply_cooldown_seconds: v })}
+        min={0}
+        helper="Minimum seconds between channel-mention replies to the same sender+channel"
+        info="Protects LoRa airtime from a chatty channel by rate-limiting how often the bot replies to mentions from the same sender on the same channel."
+      />
     </div>
   )
 }
@@ -821,6 +895,22 @@ function ResponseSection({ data, onChange }: { data: ResponseConfig; onChange: (
           max={10}
           helper="Maximum chunks per response"
           info="If a response is longer than Max Length, the bot splits it into this many chunks at most. Higher values = more complete answers but more airtime used."
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <NumberInput
+          label="Thinking Notice (sec)"
+          value={data.thinking_notice_seconds}
+          onChange={(v) => onChange({ ...data, thinking_notice_seconds: v })}
+          min={0}
+          helper="0 disables the notice"
+          info="If the LLM takes longer than this to respond, the bot sends a short 'still thinking' notice so the user knows it's working. Set to 0 to disable."
+        />
+        <TextInput
+          label="Thinking Notice Text"
+          value={data.thinking_notice_text}
+          onChange={(v) => onChange({ ...data, thinking_notice_text: v })}
+          helper="Message sent when the thinking notice fires"
         />
       </div>
     </div>
@@ -952,6 +1042,50 @@ function ContextSection({ data, onChange }: { data: ContextConfig; onChange: (d:
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+function MeshCoreContextSection({ data, onChange }: { data: MeshCoreContextConfig; onChange: (d: MeshCoreContextConfig) => void }) {
+  return (
+    <div className="space-y-4">
+      <SectionDescription text={SECTION_DESCRIPTIONS.meshcore_context} />
+      <Toggle
+        label="Enable Passive Context"
+        checked={data.enable_passive_context}
+        onChange={(v) => onChange({ ...data, enable_passive_context: v })}
+        helper="Listen to MeshCore channel traffic for context"
+        info="When enabled, the bot monitors the listed MeshCore channels and includes recent messages in its context."
+      />
+      {data.enable_passive_context && (
+        <div className="grid grid-cols-2 gap-4">
+          <ListInput
+            label="Observe Channels"
+            value={data.observe_channels}
+            onChange={(v) => onChange({ ...data, observe_channels: v })}
+            helper="MeshCore channel names to watch for context (empty = none — opt-in)"
+          />
+          <ListInput
+            label="Ignore Contacts"
+            value={data.ignore_contacts}
+            onChange={(v) => onChange({ ...data, ignore_contacts: v })}
+            helper="Contact names or pubkey prefixes to ignore"
+          />
+        </div>
+      )}
+      <Toggle
+        label="Respond to DMs"
+        checked={data.respond_to_dms}
+        onChange={(v) => onChange({ ...data, respond_to_dms: v })}
+        helper="Reply when someone sends a MeshCore direct message"
+      />
+      <ListInput
+        label="Mention Channels"
+        value={data.mention_channels}
+        onChange={(v) => onChange({ ...data, mention_channels: v })}
+        helper="MeshCore channel names the bot watches for @-mentions when Bot &rarr; Respond to Channel Mentions is on"
+        info="Opt-in like Observe Channels. Only used when bot.respond_to_channel_mentions is enabled on the Bot page."
+      />
     </div>
   )
 }
@@ -2096,6 +2230,7 @@ export default function Config() {
       case 'history': return <HistorySection data={config.history} onChange={(d) => updateSection('history', d)} />
       case 'memory': return <MemorySection data={config.memory} onChange={(d) => updateSection('memory', d)} />
       case 'context': return <ContextSection data={config.context} onChange={(d) => updateSection('context', d)} />
+      case 'meshcore_context': return <MeshCoreContextSection data={config.meshcore_context} onChange={(d) => updateSection('meshcore_context', d)} />
       case 'commands': return <CommandsSection data={config.commands} onChange={(d) => updateSection('commands', d)} />
       case 'llm': return <LLMSection data={config.llm} onChange={(d) => updateSection('llm', d)} />
       case 'weather': return <WeatherSection data={config.weather} onChange={(d) => updateSection('weather', d)} />

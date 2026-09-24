@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -9,6 +10,40 @@ from typing import Optional
 import yaml
 
 _config_logger = logging.getLogger(__name__)
+
+
+# Matches the "!<hex>" node-id token embedded in a BotConfig.mt_node string
+# such as "!a1daa1da (AIDA-N2)". Used by parse_mt_node_id() below so every
+# consumer that needs AIDA's own Meshtastic node id (router.py, mesh_reporter.py)
+# derives it from config instead of a hardcoded node number.
+_MT_NODE_ID_RE = re.compile(r"(![0-9a-fA-F]+)")
+
+
+def parse_mt_node_id(mt_node: str) -> Optional[str]:
+    """Extract the "!<hex>" node-id token from a BotConfig.mt_node string.
+
+    ``mt_node`` is a free-form identity string like "!a1daa1da (AIDA-N2)" --
+    this pulls out just the "!a1daa1da" node-id portion. Returns None if
+    ``mt_node`` is empty or contains no "!<hex>" token.
+    """
+    if not mt_node:
+        return None
+    match = _MT_NODE_ID_RE.search(mt_node)
+    return match.group(1) if match else None
+
+
+def parse_mt_node_num(mt_node: str) -> Optional[int]:
+    """Extract the integer node number from a BotConfig.mt_node string.
+
+    Returns None if ``mt_node`` is empty or contains no "!<hex>" token.
+    """
+    node_id = parse_mt_node_id(mt_node)
+    if node_id is None:
+        return None
+    try:
+        return int(node_id[1:], 16)
+    except ValueError:
+        return None
 
 
 @dataclass
@@ -29,6 +64,23 @@ class BotConfig:
     mt_mesh_name: str = ""   # e.g. "freq51 Meshtastic mesh" -- Meshtastic-only identity framing
     mt_node: str = ""        # e.g. "!27780c47 (AIDA-N2)" -- Meshtastic-only physical node id
     mc_mesh_name: str = ""   # e.g. "the MeshCore mesh" -- MeshCore-only identity framing
+
+    # --- Channel-mention reply (opt-in; OFF by default so existing DM-only
+    # deployments are unaffected until this is explicitly turned on) ---
+    # When True, should_respond() also answers a public/channel message that
+    # @-mentions the bot on a channel listed in mention_channels, in addition
+    # to the always-on DM path.
+    respond_to_channel_mentions: bool = False
+    # Meshtastic channel INDEXES the bot will watch for mentions.
+    mention_channels: list[int] = field(default_factory=lambda: [1])
+    # Names that count as an @-mention of the bot (case-insensitive). The
+    # bot's own Meshtastic node id (parsed from mt_node) is ALWAYS also
+    # accepted as a mention target, in addition to these names -- see
+    # router._mention_tokens().
+    mention_names: list[str] = field(default_factory=lambda: ["AIDA"])
+    # Minimum seconds between channel-mention replies to the same
+    # (sender, channel) pair -- protects LoRa airtime from a chatty channel.
+    channel_reply_cooldown_seconds: int = 30
 
 
 @dataclass
@@ -107,6 +159,8 @@ class ResponseConfig:
     delay_max: float = 2.5
     max_length: int = 200
     max_messages: int = 3
+    thinking_notice_seconds: int = 15  # 0 disables the "still thinking" notice
+    thinking_notice_text: str = "Thinking - one moment."
 
 
 @dataclass
@@ -147,6 +201,9 @@ class MeshCoreContextConfig:
     observe_channels: list[str] = field(default_factory=list)  # channel NAMES, empty = none (opt-in): only listed channels feed context
     ignore_contacts: list[str] = field(default_factory=list)   # contact names or pubkey prefixes
     respond_to_dms: bool = True
+    # MeshCore channel NAMES the bot will watch for @-mentions when
+    # bot.respond_to_channel_mentions is True. Opt-in like observe_channels.
+    mention_channels: list[str] = field(default_factory=lambda: ["#aida"])
 
 
 @dataclass

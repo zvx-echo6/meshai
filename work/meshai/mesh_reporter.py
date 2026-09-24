@@ -196,17 +196,29 @@ def _format_distance(km: float) -> str:
 class MeshReporter:
     """Builds text blocks for mesh health prompt injection."""
 
-    def __init__(self, health_engine: "MeshHealthEngine", data_store: "MeshDataStore", region_configs=None):
+    def __init__(
+        self,
+        health_engine: "MeshHealthEngine",
+        data_store: "MeshDataStore",
+        region_configs=None,
+        bot_node_num: Optional[int] = None,
+    ):
         """Initialize reporter.
 
         Args:
             health_engine: MeshHealthEngine instance
             data_store: MeshDataStore instance
             region_configs: Optional list of RegionAnchor configs for local names
+            bot_node_num: AIDA's own Meshtastic node number, derived from
+                config (bot.mt_node via config.parse_mt_node_num) by the
+                caller. None if not configured/parseable -- callers below
+                degrade gracefully (no AIDA-relative distance/exclusion)
+                rather than falling back to a hardcoded node number.
         """
         self.health_engine = health_engine
         self.data_store = data_store
         self._region_configs = {r.name: r for r in (region_configs or [])}
+        self._bot_node_num = bot_node_num
 
     def _region_context(self, region_name: str) -> str:
         """Get display context for a region from config."""
@@ -306,8 +318,9 @@ class MeshReporter:
 
         score = health.score
 
-        # Get AIDA's position for distance calculations
-        aida_node = health.nodes.get(0x27780c47)  # AIDA-N2
+        # Get AIDA's position for distance calculations. Node number comes
+        # from config (bot.mt_node), never hardcoded -- see __init__.
+        aida_node = health.nodes.get(self._bot_node_num) if self._bot_node_num is not None else None
         aida_lat = aida_node.latitude if aida_node else None
         aida_lon = aida_node.longitude if aida_node else None
 
@@ -373,7 +386,7 @@ class MeshReporter:
                     if node.uplink_enabled:
                         parts.append("MQTT")
 
-                    if aida_lat and aida_lon and node.latitude and node.longitude and node.node_num != 0x27780c47:
+                    if aida_lat and aida_lon and node.latitude and node.longitude and node.node_num != self._bot_node_num:
                         km = _haversine_km(node.latitude, node.longitude, aida_lat, aida_lon)
                         parts.append(f"{_format_distance(km)} from AIDA")
 

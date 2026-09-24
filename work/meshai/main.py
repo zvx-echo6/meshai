@@ -580,8 +580,13 @@ class MeshAI:
         # Mesh reporter (for LLM prompt injection and commands)
         if self.health_engine and self.data_store:
             from .mesh_reporter import MeshReporter
+            from .config import parse_mt_node_num
             mi_regions = self.config.mesh_intelligence.regions if self.config.mesh_intelligence else []
-            self.mesh_reporter = MeshReporter(self.health_engine, self.data_store, region_configs=mi_regions)
+            bot_node_num = parse_mt_node_num(self.config.bot.mt_node)
+            self.mesh_reporter = MeshReporter(
+                self.health_engine, self.data_store, region_configs=mi_regions,
+                bot_node_num=bot_node_num,
+            )
             logger.info("Mesh reporter enabled")
         else:
             self.mesh_reporter = None
@@ -807,12 +812,7 @@ class MeshAI:
             # Check for continuation request first
             continuation_messages = self.router.check_continuation(message)
             if continuation_messages:
-                await self.responder.send_response(
-                    continuation_messages,
-                    destination=message.sender_id,
-                    channel=message.channel,
-                    transport=originating_transport,
-                )
+                await self._send_reply(message, continuation_messages, originating_transport)
                 return
 
             result = await self.router.route(message)
@@ -834,7 +834,7 @@ class MeshAI:
                         max_messages=self.config.response.max_messages,
                     )
                     if remaining:
-                        self.router.continuations.store(message.sender_id, remaining)
+                        self.router.continuations.store(self.router.history_key(message), remaining)
             elif result.route_type == RouteType.LLM:
                 messages = await self.router.generate_llm_response(message, result.query)
             else:
@@ -843,17 +843,57 @@ class MeshAI:
             if not messages:
                 return
 
-            # Send DM response — thread the originating transport hint so
-            # CompositeTransport routes the reply back over the correct mesh.
+            await self._send_reply(message, messages, originating_transport)
+
+        except Exception as e:
+            logger.error(f"Error handling message: {e}", exc_info=True)
+
+    async def _send_reply(
+        self,
+        message: MeshMessage,
+        messages: list[str],
+        originating_transport: Optional[str],
+    ) -> None:
+        """Deliver a reply back to wherever *message* came from.
+
+        DM (message.is_dm): unchanged — a direct reply to the sender,
+        threaded over the originating transport hint so CompositeTransport
+        routes it back over the correct mesh.
+
+        Channel-mention reply (message.is_dm is False — only reachable when
+        should_respond() allowed a channel-@mention through; see router.py):
+        broadcast back to the SAME channel it arrived on instead of DMing
+        the asker. Meshtastic replies additionally thread every chunk as a
+        reply to the asker's incoming packet id (sendText(replyId=...)) so
+        the whole multi-chunk answer threads to the question; MeshCore has
+        no reply-threading concept and only gets the channel-name route.
+        """
+        if message.is_dm:
             await self.responder.send_response(
                 messages,
                 destination=message.sender_id,
                 channel=message.channel,
                 transport=originating_transport,
             )
+            return
 
-        except Exception as e:
-            logger.error(f"Error handling message: {e}", exc_info=True)
+        reply_id = None
+        if originating_transport == "meshtastic":
+            packet = getattr(message, "packet", None) or {}
+            reply_id = packet.get("id")
+
+        meshcore_channel = (
+            message.channel_name if originating_transport == "meshcore" else None
+        )
+
+        await self.responder.send_response(
+            messages,
+            destination=None,
+            channel=message.channel,
+            transport=originating_transport,
+            meshcore_channel=meshcore_channel,
+            reply_id=reply_id,
+        )
 
     async def _load_summaries(self) -> None:
         """Load persisted summaries from database into memory cache."""

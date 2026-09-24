@@ -246,8 +246,16 @@ class ContinuationState:
         elif user_id in self._state:
             del self._state[user_id]
 
-    def get_continuation(self, user_id: str) -> tuple[list[str], str] | None:
+    def get_continuation(
+        self, user_id: str, max_chars: int = 200, max_messages: int = 3
+    ) -> tuple[list[str], str] | None:
         """Get the next batch of messages for a continuation request.
+
+        max_chars/max_messages default to chunk_response()'s own defaults so
+        existing callers (DM continuations) are byte-for-byte unchanged; a
+        channel-mention continuation passes its prefix-reserved budget so no
+        chunk exceeds the per-packet limit once the "@Name " prefix is
+        prepended to the first one.
 
         Returns None if no pending content or max continuations reached.
         """
@@ -264,7 +272,9 @@ class ContinuationState:
             del self._state[user_id]
             return None
 
-        messages, new_remaining = chunk_response(remaining)
+        messages, new_remaining = chunk_response(
+            remaining, max_chars=max_chars, max_messages=max_messages
+        )
         state["count"] += 1
         state["remaining"] = new_remaining
 

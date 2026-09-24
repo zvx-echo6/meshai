@@ -2282,30 +2282,94 @@ class MeshCoreTransport(MeshTransport):
             logger.error("MeshCoreTransport: error normalizing DM event: %s", exc)
             return None
 
+    def _resolve_sender_id_by_name(self, name: str) -> Optional[str]:
+        """Resolve a channel message's parsed sender NAME to a stable pubkey-
+        prefix id via the device's known contact list, so a channel turn from
+        a known contact keys history/observations the same way a DM from
+        that same person would.
+
+        Returns None if the name matches no known contact (caller falls back
+        to a namespaced ``mcname:<name>`` id — see _normalize_channel_event).
+        Uses the same 12-hex-char pubkey-prefix convention as the rest of
+        this module (e.g. get_contacts()'s "prefix" field, _on_new_contact).
+        """
+        if not name or self._mc is None:
+            return None
+        try:
+            contacts = getattr(self._mc, "contacts", None) or {}
+        except Exception:
+            return None
+        name_lower = name.strip().lower()
+        if not name_lower:
+            return None
+        for pubkey_hex, contact in contacts.items():
+            if not isinstance(contact, dict):
+                continue
+            adv_name = (contact.get("adv_name") or "").strip().lower()
+            if adv_name and adv_name == name_lower:
+                pubkey = contact.get("public_key") or pubkey_hex
+                return (pubkey or "")[:12] or None
+        return None
+
     def _normalize_channel_event(self, event) -> Optional[MeshMessage]:
         """Map a CHANNEL_MSG_RECV event payload → MeshMessage.
+
+        MeshCore channel text carries the sender's display name as a
+        "Name: message" prefix (clients @-mention with "@[Name]"). This
+        parses that prefix so channel replies/history/mentions can identify
+        WHO sent a channel message, instead of collapsing every sender on a
+        channel into one shared "chan:N" identity.
+
+        Parsing: split on the FIRST ": " only (a message body may itself
+        contain a later ": " — e.g. "Bob: check this: really" must parse as
+        sender "Bob", text "check this: really", not split at the second
+        colon). A prefix is only accepted when both the name and the
+        remainder are non-empty; text with no such prefix (or emoji/unicode
+        names, which parse the same as any other name) falls back to the
+        legacy chan:N marker identity — MeshCore gives us no per-sender
+        pubkey on channel messages, so the "Name: " prefix, when present, is
+        the only sender signal available.
 
         Separated from the subscription handler so tests can call it directly
         without spinning up the loop thread.
         """
         try:
             payload = event.payload or {}
-            text = payload.get("text", "")
-            if not text:
+            raw_text = payload.get("text", "")
+            if not raw_text:
                 return None
             channel_idx: int = payload.get("channel_idx", 0)
 
-            # Channel messages carry no per-sender pubkey in the meshcore API.
+            # Channel messages carry no per-sender pubkey in the meshcore API
+            # by default — this is the fallback identity when no "Name: "
+            # prefix is present.
             channel_marker = f"chan:{channel_idx}"
 
+            sender_name = channel_marker
+            sender_id = channel_marker
+            text = raw_text
+            name, sep, rest = raw_text.partition(": ")
+            if sep and name.strip() and rest.strip():
+                sender_name = name
+                resolved = self._resolve_sender_id_by_name(name)
+                sender_id = resolved or f"mcname:{name}"
+                text = rest
+
+            channel_name = None
+            for cname, cidx in self._chan_name_to_idx.items():
+                if cidx == channel_idx:
+                    channel_name = cname
+                    break
+
             return MeshMessage(
-                sender_id=channel_marker,
-                sender_name=channel_marker,
+                sender_id=sender_id,
+                sender_name=sender_name,
                 text=text,
                 channel=channel_idx,
                 is_dm=False,
                 packet=None,
                 transport="meshcore",
+                channel_name=channel_name,
             )
         except Exception as exc:
             logger.error("MeshCoreTransport: error normalizing channel event: %s", exc)
