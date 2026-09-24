@@ -41,6 +41,13 @@ class MeshMessage:
     # index only, carried in `channel` above). Set by
     # MeshCoreTransport._normalize_channel_event.
     channel_name: Optional[str] = None
+    # MeshCore's sender_timestamp (the sending firmware's own clock,
+    # embedded in the wire packet) -- identical across that firmware's own
+    # automatic resends of the SAME message, so it doubles as a stable
+    # replay-proof id for inbound de-duplication (see meshai/dedupe.py).
+    # None for Meshtastic (which has no equivalent field on MeshMessage;
+    # its own replay-proof id is the packet id, carried in `packet["id"]`).
+    sender_timestamp: Optional[int] = None
     _position: Optional[tuple[float, float]] = field(default=None, repr=False, init=False)
 
     @property

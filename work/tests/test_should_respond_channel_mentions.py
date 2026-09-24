@@ -74,6 +74,7 @@ if _NEEDS_SDK_STUBS:
 
 from meshai.config import Config
 from meshai.connector import MeshMessage
+from meshai.dedupe import InboundDedupeCache
 from meshai.router import MessageRouter
 
 
@@ -160,7 +161,10 @@ def _mt_message(text="@AIDA status?", channel=1, sender_id="!bob00001", packet=N
     )
 
 
-def _mc_message(text="@AIDA status?", channel=3, channel_name="#aida", sender_id="mcname:Bob") -> MeshMessage:
+def _mc_message(
+    text="@AIDA status?", channel=3, channel_name="#aida", sender_id="mcname:Bob",
+    sender_timestamp=None,
+) -> MeshMessage:
     return MeshMessage(
         sender_id=sender_id,
         sender_name="Bob",
@@ -169,10 +173,13 @@ def _mc_message(text="@AIDA status?", channel=3, channel_name="#aida", sender_id
         is_dm=False,
         transport="meshcore",
         channel_name=channel_name,
+        sender_timestamp=sender_timestamp,
     )
 
 
-def _dm_message(text="hello", sender_id="!bob00001", transport="meshtastic") -> MeshMessage:
+def _dm_message(
+    text="hello", sender_id="!bob00001", transport="meshtastic", sender_timestamp=None,
+) -> MeshMessage:
     return MeshMessage(
         sender_id=sender_id,
         sender_name="Bob",
@@ -180,6 +187,7 @@ def _dm_message(text="hello", sender_id="!bob00001", transport="meshtastic") -> 
         channel=0,
         is_dm=True,
         transport=transport,
+        sender_timestamp=sender_timestamp,
     )
 
 
@@ -335,8 +343,14 @@ def test_cooldown_blocks_second_reply_then_allows_after_clear():
     # Same sender+channel, still within the 30s cooldown window.
     assert router.should_respond(msg) is False
 
-    # Simulate cooldown expiry without sleeping in the test.
+    # Simulate cooldown expiry without sleeping in the test. This fixture's
+    # `msg` has no packet id (packet=None), so the inbound de-dupe gate
+    # falls back to its own short text+sender window (see
+    # test_dm_fallback_dedupe_expires_after_window) -- reset it too so this
+    # test simulates a later, independent occurrence of the mention rather
+    # than the SAME wire resend arriving after the cooldown clears.
     router._channel_cooldowns.clear()
+    router._inbound_dedupe = InboundDedupeCache()
     assert router.should_respond(msg) is True
 
 
@@ -398,3 +412,180 @@ def test_dm_meshcore_ignores_bot_respond_to_dms():
     channel-mention restructuring of should_respond()."""
     router = _make_router(FakeConnector(), respond_to_dms=False)
     assert router.should_respond(_dm_message(text="hello", transport="meshcore")) is True
+
+
+# ---------------------------------------------------------------------------
+# Effective mention names: AIDA's own live MeshCore self-name (and
+# bot.mc_mesh_name / bot.mt_mesh_name) are recognized as mentions in
+# addition to bot.mention_names -- see MessageRouter._effective_mention_names().
+# ---------------------------------------------------------------------------
+
+
+def test_live_meshcore_self_name_is_recognized_as_mention():
+    """MeshCore apps insert "@[AIDA-MC]" (bracket form of the device's own
+    advertised name) when tap-mentioning it, even though only "AIDA" is
+    configured in bot.mention_names -- self_info() sources the live name."""
+    connector = FakeCompositeConnector(mc_self_name="AIDA-MC")
+    router = _make_router(connector, respond_to_channel_mentions=True)
+    router.config.meshcore_context.mention_channels = ["#aida"]
+
+    for text in ("@[AIDA-MC] status?", "@AIDA-MC status?", "@[AIDA] status?", "@AIDA status?"):
+        router._channel_cooldowns.clear()
+        msg = _mc_message(text=text, channel=3, channel_name="#aida")
+        assert router.should_respond(msg) is True, text
+
+
+def test_live_meshcore_self_name_hyphen_suffix_does_not_match():
+    connector = FakeCompositeConnector(mc_self_name="AIDA-MC")
+    router = _make_router(connector, respond_to_channel_mentions=True)
+    router.config.meshcore_context.mention_channels = ["#aida"]
+
+    msg = _mc_message(text="@AIDA-MCX status?", channel=3, channel_name="#aida")
+    assert router.should_respond(msg) is False
+
+
+def test_mc_mesh_name_recognized_as_mention():
+    connector = FakeCompositeConnector(mc_self_name="AIDA")
+    router = _make_router(
+        connector, respond_to_channel_mentions=True, mc_mesh_name="the MeshCore mesh",
+    )
+    router.config.meshcore_context.mention_channels = ["#aida"]
+
+    msg = _mc_message(text="@the MeshCore mesh status?", channel=3, channel_name="#aida")
+    assert router.should_respond(msg) is True
+
+
+def test_mt_mesh_name_recognized_as_mention_on_meshtastic():
+    router = _make_router(
+        FakeConnector(), respond_to_channel_mentions=True, mention_channels=[1],
+        mt_mesh_name="freq51 Meshtastic mesh",
+    )
+    msg = _mt_message(text="@freq51 Meshtastic mesh status?", channel=1)
+    assert router.should_respond(msg) is True
+
+
+def test_mt_mesh_name_not_used_on_meshcore():
+    """mt_mesh_name is Meshtastic-only identity framing; it must not leak
+    into MeshCore mention matching."""
+    connector = FakeCompositeConnector(mc_self_name="AIDA")
+    router = _make_router(
+        connector, respond_to_channel_mentions=True, mt_mesh_name="freq51 Meshtastic mesh",
+    )
+    router.config.meshcore_context.mention_channels = ["#aida"]
+    msg = _mc_message(text="@freq51 Meshtastic mesh status?", channel=3, channel_name="#aida")
+    assert router.should_respond(msg) is False
+
+
+# ---------------------------------------------------------------------------
+# Inbound de-dupe (see meshai/dedupe.py): a client's automatic resend of the
+# SAME message (same sender/text/sender_timestamp, or same Meshtastic packet
+# id) is dropped before the LLM/history sees it a second time; a genuinely
+# new message (new timestamp, or the same text well outside the fallback
+# window) still gets answered.
+# ---------------------------------------------------------------------------
+
+
+def test_dm_duplicate_resend_dropped_same_response_once():
+    """Same DM 3x (same sender_timestamp) within the window -> only the
+    first is answered."""
+    router = _make_router(FakeConnector())
+    msg = _dm_message(text="Thanks hows it going?", sender_id="!bob00001", sender_timestamp=1000)
+
+    assert router.should_respond(msg) is True
+    assert router.should_respond(msg) is False
+    assert router.should_respond(msg) is False
+
+
+def test_dm_duplicate_dropped_logs_at_info(caplog):
+    import logging
+    router = _make_router(FakeConnector())
+    msg = _dm_message(sender_timestamp=1000)
+    router.should_respond(msg)
+
+    with caplog.at_level(logging.INFO):
+        router.should_respond(msg)
+
+    assert any("duplicate inbound DM dropped" in r.getMessage() for r in caplog.records)
+
+
+def test_dm_same_text_new_timestamp_is_answered():
+    """A genuine repeat with a NEW sender_timestamp (a new message, not a
+    resend) must still be answered."""
+    router = _make_router(FakeConnector())
+    first = _dm_message(text="ping", sender_id="!bob00001", sender_timestamp=1000)
+    second = _dm_message(text="ping", sender_id="!bob00001", sender_timestamp=2000)
+
+    assert router.should_respond(first) is True
+    assert router.should_respond(second) is True
+
+
+def test_dm_fallback_dedupe_no_timestamp_within_window():
+    """No sender_timestamp available -> falls back to a short text+sender
+    window (still catches a fast resend)."""
+    router = _make_router(FakeConnector())
+    msg = _dm_message(text="hello there", sender_id="!bob00001")
+
+    assert router.should_respond(msg) is True
+    assert router.should_respond(msg) is False
+
+
+def test_dm_fallback_dedupe_expires_after_window():
+    """After the fallback window, the same text from the same sender is a
+    genuinely new message and is answered again."""
+    router = _make_router(FakeConnector())
+    router._inbound_dedupe.fallback_window_seconds = 0.05
+    msg = _dm_message(text="hello there", sender_id="!bob00001")
+
+    assert router.should_respond(msg) is True
+    import time as _time
+    _time.sleep(0.1)
+    assert router.should_respond(msg) is True
+
+
+def test_dm_dedupe_expires_after_ttl():
+    """An id-keyed (sender_timestamp) duplicate is answered again once the
+    TTL has elapsed."""
+    router = _make_router(FakeConnector())
+    router._inbound_dedupe.ttl_seconds = 0.05
+    msg = _dm_message(sender_timestamp=1000)
+
+    assert router.should_respond(msg) is True
+    import time as _time
+    _time.sleep(0.1)
+    assert router.should_respond(msg) is True
+
+
+def test_meshtastic_packet_id_dedupe_for_dm():
+    """Meshtastic DM de-dupe keys on the packet id when available."""
+    router = _make_router(FakeConnector())
+    msg1 = MeshMessage(
+        sender_id="!bob00001", sender_name="Bob", text="hi", channel=0,
+        is_dm=True, transport="meshtastic", packet={"id": 42},
+    )
+    msg2 = MeshMessage(
+        sender_id="!bob00001", sender_name="Bob", text="hi", channel=0,
+        is_dm=True, transport="meshtastic", packet={"id": 42},
+    )
+    msg3 = MeshMessage(
+        sender_id="!bob00001", sender_name="Bob", text="hi", channel=0,
+        is_dm=True, transport="meshtastic", packet={"id": 43},
+    )
+
+    assert router.should_respond(msg1) is True
+    assert router.should_respond(msg2) is False  # same packet id -> resend
+    assert router.should_respond(msg3) is True   # new packet id -> new message
+
+
+def test_channel_mention_flood_repeat_triggers_one_reply():
+    """A flood-repeated identical channel-mention message (same
+    sender_timestamp) triggers only one reply."""
+    router = _make_router(
+        FakeCompositeConnector(), respond_to_channel_mentions=True,
+        channel_reply_cooldown_seconds=0,
+    )
+    router.config.meshcore_context.mention_channels = ["#aida"]
+    msg = _mc_message(text="@AIDA status?", channel=3, channel_name="#aida", sender_timestamp=500)
+
+    assert router.should_respond(msg) is True
+    assert router.should_respond(msg) is False
+    assert router.should_respond(msg) is False

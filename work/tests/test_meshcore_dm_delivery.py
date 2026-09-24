@@ -131,8 +131,11 @@ from meshai.transport.meshcore_transport import MeshCoreTransport    # noqa: E40
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _mc_config():
-    return ConnectionConfig(meshcore_host="127.0.0.1", meshcore_port=5050)
+def _mc_config(client_retry: bool = False):
+    return ConnectionConfig(
+        meshcore_host="127.0.0.1", meshcore_port=5050,
+        meshcore_client_retry=client_retry,
+    )
 
 
 def _ok_event(route_type: int = 0):
@@ -157,7 +160,7 @@ def _path_event():
     return ev
 
 
-def _transport_with_mc_mock(contact=_CONTACT_DICT):
+def _transport_with_mc_mock(contact=_CONTACT_DICT, client_retry: bool = False):
     """Return a MeshCoreTransport with _mc as a MagicMock (no loop thread).
 
     _run_coro is patched on the instance to run the coroutine synchronously via
@@ -171,8 +174,14 @@ def _transport_with_mc_mock(contact=_CONTACT_DICT):
       - mc.commands.send_msg: AsyncMock → _ok_event()
       - mc.commands.get_advert_path: AsyncMock → _err_event() (not found by default)
       - mc.commands.update_contact: AsyncMock → _ok_event()
+
+    ``client_retry`` mirrors ``ConnectionConfig.meshcore_client_retry``
+    (default False == single-send: no local path-discovery/resend on a
+    missing ACK — see test_meshcore_single_send.py). Tests below that
+    exercise the discovery-then-resend leg explicitly opt into
+    ``client_retry=True``.
     """
-    cfg = _mc_config()
+    cfg = _mc_config(client_retry=client_retry)
     t = MeshCoreTransport(cfg)
     mc = MagicMock()
     mc.get_contact_by_key_prefix.return_value = contact
@@ -216,10 +225,11 @@ class TestMeshCoreDMDelivery:
         runs on the no-ACK fallback (i.e. AFTER the first send), never before it.
 
         (This mock has no dispatcher ACK, so _wait_for_ack returns False and the
-        no-ACK fallback always fires — which is exactly what exercises the
-        discovery-then-resend leg here.)
+        no-ACK fallback always fires. Requires client_retry=True: the default
+        single-send mode never runs discovery at all — see
+        test_meshcore_single_send.py.)
         """
-        t, mc = _transport_with_mc_mock()
+        t, mc = _transport_with_mc_mock(client_retry=True)
         call_order = []
 
         async def fake_pds(dst, timeout=0, min_timeout=0):
@@ -312,8 +322,9 @@ class TestMeshCoreDMDelivery:
         assert any("cannot reply" in r.getMessage() for r in caplog.records)
 
     def test_path_discovery_failure_does_not_prevent_send(self):
-        """If path discovery raises, send_msg is still attempted (best-effort)."""
-        t, mc = _transport_with_mc_mock()
+        """If path discovery raises (client_retry=True), send_msg is still
+        attempted (best-effort)."""
+        t, mc = _transport_with_mc_mock(client_retry=True)
         mc.commands.send_path_discovery_sync = AsyncMock(
             side_effect=RuntimeError("discovery timed out")
         )
@@ -324,8 +335,9 @@ class TestMeshCoreDMDelivery:
         assert result is True
 
     def test_advert_path_fallback_invoked_when_still_flood(self):
-        """When contact is still flood after path discovery, get_advert_path + update_contact are called."""
-        t, mc = _transport_with_mc_mock()
+        """When contact is still flood after path discovery (client_retry=True),
+        get_advert_path + update_contact are called."""
+        t, mc = _transport_with_mc_mock(client_retry=True)
         # Path discovery returns None (no PATH_RESPONSE) — contact stays flood.
         mc.commands.send_path_discovery_sync = AsyncMock(return_value=None)
         # Advert path returns a real direct path.

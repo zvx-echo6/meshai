@@ -115,8 +115,28 @@ class ConnectionConfig:
     # incremental contact fetch to the companion per advert (local chatter, never a
     # mesh send); false = lib default (connect-time snapshot + explicit resync only).
     meshcore_auto_update_contacts: bool = True
-    meshcore_ack_wait_seconds: float = 6.0       # wait for delivery ACK before falling back to path discovery
+    # How long to wait for the delivery ACK before giving up on a DM send.
+    # Default raised 6 -> 30s (2026-09-24 AIDA triple-DM incident): the live
+    # deployment's MeshCore link is MeshMonitor's virtual node, which runs
+    # its OWN ACK tracker (~10s timeout) and its OWN RF-level retries
+    # (samePathLeft/floodLeft). meshai's old 6s wait fired its no-ACK
+    # fallback (see meshcore_client_retry below) BEFORE MeshMonitor's own
+    # retry had a chance to land the original send's ACK, stacking a
+    # second, independent resend on top of it -- two retry state machines
+    # both "fixing" the same slow ACK, three transmissions on air for one
+    # question. 30s comfortably clears MeshMonitor's own retry window.
+    meshcore_ack_wait_seconds: float = 30.0
     meshcore_discovery_wait_seconds: float = 8.0  # path-discovery timeout on the no-ACK fallback (was hardcoded 25s)
+    # Whether meshai itself may retry a DM send (path discovery + resend) on
+    # a missing ACK. Default False: on the live topology the companion at
+    # the other end of meshai's MeshCore link is MeshMonitor's virtual node,
+    # which already owns RF-level retry -- a second, independent resend from
+    # meshai on top of that is a byte-identical duplicate transmission (see
+    # meshcore_ack_wait_seconds above). With this off, meshai sends a DM (or
+    # the "still thinking" notice, which shares the same send path) exactly
+    # ONCE and only logs whether the ACK arrived; it never resends. Set True
+    # only for a bare MeshCore link with no external retry layer of its own.
+    meshcore_client_retry: bool = False
 
     # --- Send-queue pacing (per-radio serialization) ---
     # Randomized jitter between consecutive outbound sends on each radio:

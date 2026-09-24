@@ -261,6 +261,8 @@ async def update_config_section(section: str, request: Request):
                 pass
             if section == "context":
                 _refresh_mesh_context(request.app, new_value)
+            elif section == "meshcore_context":
+                _refresh_meshcore_context(request.app, new_value)
             elif section == "environmental":
                 adapter_results = _refresh_environmental(request.app, new_value)
             elif section == "generic_sources":
@@ -387,6 +389,44 @@ def _refresh_environmental(app, new_env_cfg, generic_sources=None):
     except Exception:
         logger.exception("environmental store refresh failed")
         return None
+
+
+def _refresh_meshcore_context(app, new_mc_ctx_cfg) -> bool:
+    """Best-effort live refresh of the running MeshCoreTransport's passive-
+    context / bot-behavior filter after a "meshcore_context" config PUT.
+
+    Known stale-reference bug: MeshCoreTransport.__init__ captures its
+    ``_mc_context`` as a direct reference to the MeshCoreContextConfig
+    instance handed to it at construction time. This PUT handler (see
+    above) replaces ``config.meshcore_context`` with a brand-new instance
+    on every save (``setattr(..., new_value)`` -- never mutates the old one
+    in place), so the transport's cached reference goes stale immediately:
+    respond_to_dms, ignore_contacts, enable_passive_context, observe_
+    channels, and every addme_* setting would keep enforcing whatever was
+    live at boot until a restart. ``set_context_config()`` exists on
+    MeshCoreTransport specifically for this (see meshcore_transport.py) but
+    nothing was ever calling it -- this is that call.
+
+    Returns True when the refresh actually reached a live MeshCoreTransport,
+    False if there isn't one yet (MeshCore not configured, or early
+    startup/tests). Never raises.
+    """
+    try:
+        connector = getattr(app.state, "connector", None)
+        if connector is None:
+            return False
+        meshcore_child = getattr(connector, "meshcore_child", None)
+        transport = meshcore_child() if callable(meshcore_child) else None
+        if transport is None:
+            return False
+        set_context_config = getattr(transport, "set_context_config", None)
+        if not callable(set_context_config):
+            return False
+        set_context_config(new_mc_ctx_cfg)
+        return True
+    except Exception:
+        logger.exception("meshcore_context refresh failed")
+        return False
 
 
 def _refresh_mesh_context(app, new_ctx_cfg) -> bool:

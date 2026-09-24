@@ -151,6 +151,41 @@ def test_no_names_or_node_id_never_matches():
 
 
 # ---------------------------------------------------------------------------
+# Hyphenated name matching (e.g. a MeshCore device self-named "AIDA-MC",
+# added to the effective mention-name list alongside "AIDA" -- see
+# MessageRouter._effective_mention_names() in router.py). Full matrix from
+# the fix spec: "@[AIDA-MC]", "@AIDA-MC", "@[AIDA]", "@AIDA" all match;
+# "@AIDA-MCX" must NOT (the hyphenated name must match IN FULL).
+# ---------------------------------------------------------------------------
+
+NAMES_WITH_HYPHENATED = ["AIDA", "AIDA-MC"]
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("@[AIDA-MC] status?", True),
+        ("@AIDA-MC status?", True),
+        ("@[AIDA] status?", True),
+        ("@AIDA status?", True),
+        ("@AIDA-MCX status?", False),  # must NOT match -- not a full name
+        ("@AIDAN status?", False),
+        ("@[AIDA-MCX] status?", False),
+    ],
+)
+def test_meshcore_hyphenated_name_matrix(text, expected):
+    assert mention_present(text, NAMES_WITH_HYPHENATED, "meshcore") is expected
+
+
+def test_hyphenated_name_alone_still_requires_full_match():
+    """Even with ONLY the hyphenated name configured (no bare "AIDA"), a
+    suffixed token must not match."""
+    assert mention_present("@AIDA-MC hi", ["AIDA-MC"], "meshcore") is True
+    assert mention_present("@AIDA-MCX hi", ["AIDA-MC"], "meshcore") is False
+    assert mention_present("@AIDA hi", ["AIDA-MC"], "meshcore") is False
+
+
+# ---------------------------------------------------------------------------
 # strip_mention
 # ---------------------------------------------------------------------------
 

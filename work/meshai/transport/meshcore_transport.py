@@ -274,8 +274,11 @@ class MeshCoreTransport(MeshTransport):
         # time by the factory; can also be (re)set via set_context_config().
         self._mc_context = meshcore_context
         # DM reply tuning (config knobs; getattr defaults keep old test configs valid).
-        self._ack_wait = float(getattr(config, "meshcore_ack_wait_seconds", 6.0))
+        self._ack_wait = float(getattr(config, "meshcore_ack_wait_seconds", 30.0))
         self._discovery_wait = float(getattr(config, "meshcore_discovery_wait_seconds", 8.0))
+        # False (default): single-send only -- no local path-discovery/resend
+        # on a missing ACK. See ConnectionConfig.meshcore_client_retry.
+        self._client_retry = bool(getattr(config, "meshcore_client_retry", False))
         self._mc = None                          # meshcore.MeshCore instance
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread: Optional[threading.Thread] = None
@@ -731,7 +734,7 @@ class MeshCoreTransport(MeshTransport):
             return False
         label = contact.get("adv_name") or destination
 
-        # Fast path: send and wait for ACK.
+        # Send ONCE and wait for the delivery ACK.
         result = await self._send_dm_once_async(contact, text, destination)
         if result is None:
             return False
@@ -740,7 +743,19 @@ class MeshCoreTransport(MeshTransport):
             logger.info("MC: DM to %s ACKed (direct)", label)
             return True
 
-        # No ACK: path discovery + retry.
+        if not self._client_retry:
+            # Single-send mode (default): whatever sits between us and RF
+            # (MeshMonitor's virtual node, on the live deployment) already
+            # owns retry -- a second local resend here would be a
+            # byte-identical duplicate transmission. Log the honest
+            # no-ACK outcome and stop; never resend or run path discovery.
+            logger.info(
+                "MC: no ACK from %s in %.1fs; single-send mode, not resending",
+                label, self._ack_wait,
+            )
+            return not result.is_error()
+
+        # meshcore_client_retry=True (legacy/bare-link mode): path discovery + retry.
         logger.info("MC: no ACK from %s in %.1fs; running path discovery", label, self._ack_wait)
         await self._establish_direct_path_async(contact, destination)
         contact = await self._resolve_contact_async(destination) or contact
@@ -2404,8 +2419,18 @@ class MeshCoreTransport(MeshTransport):
                 if self._wait_for_ack(exp_ack, self._ack_wait):
                     logger.info("MeshCore: DM to %s ACKed (direct)", label)
                     return True
-                # No ACK -> route is stale/unknown. NOW run path discovery to
-                # learn a direct route, resend, and re-confirm by ACK.
+                if not self._client_retry:
+                    # Single-send mode (default): see _do_mc_dm_send_async for
+                    # why -- whatever sits between us and RF already owns
+                    # retry; never resend on top of it.
+                    logger.info(
+                        "MeshCore: no ACK from %s in %.1fs; single-send mode, not resending",
+                        label, self._ack_wait,
+                    )
+                    return not result.is_error()
+                # meshcore_client_retry=True: route is stale/unknown. NOW run
+                # path discovery to learn a direct route, resend, and
+                # re-confirm by ACK.
                 logger.info(
                     "MeshCore: no ACK from %s in %.1fs; running path discovery and retrying",
                     label, self._ack_wait,
@@ -2490,6 +2515,11 @@ class MeshCoreTransport(MeshTransport):
             if not text:
                 return None
             pubkey_prefix: str = payload.get("pubkey_prefix", "")
+            # The sending device's own clock, embedded in the wire packet --
+            # identical across that device's automatic resends of this SAME
+            # message (see meshai/dedupe.py). None if the lib/firmware didn't
+            # supply one.
+            sender_timestamp = payload.get("sender_timestamp")
 
             # Best-effort contact name resolution.
             sender_name = pubkey_prefix
@@ -2509,6 +2539,7 @@ class MeshCoreTransport(MeshTransport):
                 is_dm=True,
                 packet=None,
                 transport="meshcore",
+                sender_timestamp=sender_timestamp,
             )
         except Exception as exc:
             logger.error("MeshCoreTransport: error normalizing DM event: %s", exc)
@@ -2571,6 +2602,9 @@ class MeshCoreTransport(MeshTransport):
             if not raw_text:
                 return None
             channel_idx: int = payload.get("channel_idx", 0)
+            # See _normalize_dm_event -- same replay-proof id, used for
+            # channel-message de-dupe too.
+            sender_timestamp = payload.get("sender_timestamp")
 
             # Channel messages carry no per-sender pubkey in the meshcore API
             # by default — this is the fallback identity when no "Name: "
@@ -2602,6 +2636,7 @@ class MeshCoreTransport(MeshTransport):
                 packet=None,
                 transport="meshcore",
                 channel_name=channel_name,
+                sender_timestamp=sender_timestamp,
             )
         except Exception as exc:
             logger.error("MeshCoreTransport: error normalizing channel event: %s", exc)

@@ -13,6 +13,7 @@ from .commands import CommandContext, CommandDispatcher
 from .config import Config, parse_mt_node_id, parse_mt_node_num
 from .connector import MeshConnector, MeshMessage
 from .context import MeshContext
+from .dedupe import InboundDedupeCache
 from .history import ConversationHistory
 from .chunker import chunk_response, cap_reply_chunks, MAX_REPLY_PACKETS, ContinuationState
 
@@ -261,10 +262,21 @@ def _strip_sources_line(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+# End-of-token boundary for a mention match: the next character (if any)
+# must not continue an identifier-like token. A plain regex \b treats '-'
+# as a boundary all by itself, which would let a hyphenated name's own
+# PREFIX match — "@AIDA-MCX" would match plain "AIDA" at the "-" boundary
+# even though the actual mention token is "AIDA-MCX", not "AIDA". Folding
+# '-' (and '_') into the disallowed set forces a hyphenated configured name
+# (e.g. "AIDA-MC") to match FULLY: "@AIDA-MC" matches, "@AIDA-MCX" does not,
+# and plain "@AIDA " / "@AIDA!" etc. are unaffected.
+_MENTION_BOUNDARY = r"(?![A-Za-z0-9_-])"
+
+
 def _build_mention_pattern(
     names: list[str], transport: str, node_id: Optional[str] = None
 ) -> Optional[re.Pattern]:
-    """Build the case-insensitive, word-boundary-aware @-mention regex.
+    """Build the case-insensitive, identifier-boundary-aware @-mention regex.
 
     Meshtastic: "@AIDA" (any configured name) or "@!a1daa1da" / "@a1daa1da"
     (the bot's own node id, parsed from bot.mt_node — always accepted in
@@ -272,9 +284,8 @@ def _build_mention_pattern(
     MeshCore: "@AIDA" or the bracket form "@[AIDA]". No node-id form (MeshCore
     identity is name-based, not a Meshtastic node id).
 
-    Word-boundary (\\b) after the matched token means "@AIDAN" does NOT match
-    a mention of "AIDA" — the boundary check fails because both 'A' and 'N'
-    are word characters.
+    See _MENTION_BOUNDARY for the end-of-token boundary rule (hyphenated
+    names must match in full; "@AIDAN"/"@AIDA-MCX" do not match "AIDA").
 
     Returns None if there is nothing to match against (no names/node id
     configured for this transport).
@@ -285,7 +296,9 @@ def _build_mention_pattern(
         if not name_alts:
             return None
         alt = "|".join(name_alts)
-        return re.compile(rf"@\[(?:{alt})\]|@(?:{alt})\b", re.IGNORECASE)
+        return re.compile(
+            rf"@\[(?:{alt})\]|@(?:{alt}){_MENTION_BOUNDARY}", re.IGNORECASE
+        )
 
     node_alts = []
     if node_id:
@@ -298,7 +311,7 @@ def _build_mention_pattern(
     if not all_alts:
         return None
     alt = "|".join(all_alts)
-    return re.compile(rf"@(?:{alt})\b", re.IGNORECASE)
+    return re.compile(rf"@(?:{alt}){_MENTION_BOUNDARY}", re.IGNORECASE)
 
 
 def mention_present(
@@ -651,6 +664,13 @@ class MessageRouter:
         self.env_store = env_store
         self.continuations = ContinuationState(max_continuations=3)
 
+        # Inbound de-dupe: drops a client's automatic resend of a DM (no
+        # ACK seen on its end) or a flood-repeated channel-mention message
+        # before it reaches the LLM/history a second time. See
+        # meshai/dedupe.py and should_respond() / _should_respond_to_channel_
+        # mention() below for where it's consulted.
+        self._inbound_dedupe = InboundDedupeCache()
+
         # Per-user mesh context tracking for follow-up handling
         # Maps user_id -> {"last_was_mesh": bool, "last_scope": (type, value), "non_mesh_count": int}
         self._user_mesh_context: dict[str, dict] = {}
@@ -716,6 +736,16 @@ class MessageRouter:
         if message.transport != "meshcore" and not self.config.bot.respond_to_dms:
             return False
 
+        # Drop a client's automatic resend of a DM it never saw an ACK for
+        # (same sender/text/sender_timestamp) BEFORE it reaches the LLM or
+        # conversation history a second time. See meshai/dedupe.py.
+        if self._is_duplicate_inbound(message):
+            logger.info(
+                "duplicate inbound DM dropped from %s (%s): %r",
+                message.sender_name, message.sender_id, message.text[:60],
+            )
+            return False
+
         # Ignore advBBS protocol and notification messages
         if self.config.bot.filter_bbs_protocols:
             if any(message.text.startswith(p) for p in ADVBBS_PREFIXES):
@@ -767,7 +797,9 @@ class MessageRouter:
             return False
 
         node_id = parse_mt_node_id(self.config.bot.mt_node)
-        mentioned = mention_present(message.text, self.config.bot.mention_names, transport, node_id)
+        mentioned = mention_present(
+            message.text, self._effective_mention_names(transport), transport, node_id
+        )
 
         replied_to_self = False
         if not mentioned and transport != "meshcore":
@@ -778,6 +810,16 @@ class MessageRouter:
         if not (mentioned or replied_to_self):
             return False
 
+        # Same de-dupe gate as DMs (see should_respond()), scoped to this
+        # (sender, channel) so a flood-repeated mention can't trigger a
+        # second reply -- checked before the broader cooldown below.
+        if self._is_duplicate_inbound(message):
+            logger.info(
+                "duplicate inbound channel message dropped from %s (%s): %r",
+                message.sender_name, message.sender_id, message.text[:60],
+            )
+            return False
+
         cooldown_key = (transport, message.sender_id, message.channel)
         if not self._check_and_mark_channel_cooldown(cooldown_key):
             logger.debug(
@@ -786,6 +828,92 @@ class MessageRouter:
             return False
 
         return True
+
+    def _is_duplicate_inbound(self, message: MeshMessage) -> bool:
+        """True (and records the sighting) if *message* looks like a resend
+        of one already seen -- see meshai/dedupe.py. Consulted from
+        should_respond() / _should_respond_to_channel_mention() BEFORE any
+        of their other gates, so a resend never reaches route()/the LLM/
+        history a second time.
+
+        scope disambiguates a DM (by sender) from a channel message (by
+        sender + channel, since the same sender mentioning the bot on two
+        different channels is not a duplicate of itself). msg_key is the
+        strongest available replay-proof identifier -- MeshCore's
+        sender_timestamp (identical across that firmware's own resends of
+        the SAME message) or a Meshtastic packet id -- falling back to a
+        short text+time window when neither is available.
+        """
+        if message.is_dm:
+            scope = message.sender_id
+        else:
+            chan = message.channel_name if message.channel_name is not None else message.channel
+            scope = f"{message.sender_id}#{chan}"
+
+        msg_key = None
+        if message.sender_timestamp is not None:
+            msg_key = ("ts", message.sender_timestamp)
+        elif isinstance(message.packet, dict) and message.packet.get("id") is not None:
+            msg_key = ("pkt", message.packet.get("id"))
+
+        # Defensive lazy-init: a few tests build a MessageRouter via
+        # __new__() (bypassing __init__) and set only the attributes they
+        # need -- never fail should_respond() over a missing cache.
+        dedupe = getattr(self, "_inbound_dedupe", None)
+        if dedupe is None:
+            dedupe = InboundDedupeCache()
+            self._inbound_dedupe = dedupe
+
+        return dedupe.is_duplicate(
+            message.transport, scope, message.text, msg_key
+        )
+
+    def _own_meshcore_self_name(self) -> Optional[str]:
+        """AIDA's own live MeshCore device name (e.g. "AIDA-MC"), read fresh
+        from the transport's self_info() on every call -- never cached --
+        so a device rename or reconnect takes effect without a restart.
+        None if unavailable (not connected, bare Meshtastic connector,
+        etc)."""
+        try:
+            info = self.connector.self_info()
+            info_name = info.get("name") if isinstance(info, dict) else None
+            return str(info_name).strip() if info_name else None
+        except Exception:
+            return None
+
+    def _effective_mention_names(self, transport: str) -> list[str]:
+        """bot.mention_names plus AIDA's own live self-name and configured
+        mesh-name framing for *transport*, so a tap-mention on the bot's
+        own advertised name (e.g. MeshCore apps insert "@[AIDA-MC]" when
+        the device's own name is "AIDA-MC", even though only "AIDA" is
+        configured in bot.mention_names) is still recognized. See
+        mention_present / _build_mention_pattern for the actual matching
+        (word/identifier-boundary logic unaffected by this).
+
+        MeshCore: adds the live self_info() name and bot.mc_mesh_name (if
+        set). Other transports: adds bot.mt_mesh_name (if set) -- self_info()
+        is a MeshCore-only passthrough, so it is not consulted here.
+        """
+        names = list(self.config.bot.mention_names or [])
+        if transport == "meshcore":
+            self_name = self._own_meshcore_self_name()
+            if self_name:
+                names.append(self_name)
+            if self.config.bot.mc_mesh_name:
+                names.append(self.config.bot.mc_mesh_name)
+        elif self.config.bot.mt_mesh_name:
+            names.append(self.config.bot.mt_mesh_name)
+
+        # De-dupe case-insensitively, preserving first-seen order/casing.
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for n in names:
+            n = (n or "").strip()
+            key = n.lower()
+            if n and key not in seen:
+                seen.add(key)
+                deduped.append(n)
+        return deduped
 
     def _is_own_meshcore_name(self, message: MeshMessage) -> bool:
         """True when a MeshCore channel message's parsed sender name is the
@@ -798,13 +926,9 @@ class MessageRouter:
         if not name:
             return False
         own_names = {n.strip().lower() for n in (self.config.bot.mention_names or []) if n}
-        try:
-            info = self.connector.self_info()
-            info_name = info.get("name") if isinstance(info, dict) else None
-            if info_name:
-                own_names.add(str(info_name).strip().lower())
-        except Exception:
-            pass
+        self_name = self._own_meshcore_self_name()
+        if self_name:
+            own_names.add(self_name.lower())
         return name in own_names
 
     def _mt_owns_packet(self, packet_id) -> bool:
@@ -939,7 +1063,10 @@ class MessageRouter:
         if not message.is_dm:
             node_id = parse_mt_node_id(self.config.bot.mt_node)
             query = strip_mention(
-                query, self.config.bot.mention_names, message.transport, node_id
+                query,
+                self._effective_mention_names(message.transport),
+                message.transport,
+                node_id,
             )
 
         if not query:

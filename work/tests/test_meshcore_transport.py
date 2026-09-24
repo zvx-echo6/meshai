@@ -378,8 +378,14 @@ class TestSendMessageDM:
             _cleanup(t)
 
     def test_no_ack_falls_back_to_discovery_then_acks(self):
-        """No ACK on the direct send → discovery + resend; 2nd ACK → success."""
+        """No ACK on the direct send → discovery + resend; 2nd ACK → success.
+
+        Requires meshcore_client_retry=True: the default single-send mode
+        (2026-09-24 AIDA triple-DM fix) never runs discovery/resend on a
+        missing ACK — see test_meshcore_single_send.py for that behavior.
+        """
         t, mc, _ = _transport_with_mock_mc()
+        t._client_retry = True
         try:
             mc.get_contact_by_key_prefix.return_value = _DM_CONTACT
             mc.ensure_contacts = AsyncMock(return_value=True)
