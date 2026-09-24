@@ -168,6 +168,24 @@ class OpenAIBackend(LLMBackend):
             content = _strip_rag_citations(content)
             content = content.strip()
 
+            # Some Open WebUI configurations don't propagate the underlying
+            # model's finish_reason=="length" through to us (see the
+            # 13:22 UTC incident: a reply truncated mid-sentence at the
+            # 1024-token cap came back with a finish_reason that wasn't
+            # "length"). usage.completion_tokens is a second, independent
+            # signal of the same thing -- if the model generated at or near
+            # the requested cap, treat it as truncated even when
+            # finish_reason claims otherwise.
+            usage = getattr(response, "usage", None)
+            completion_tokens = (
+                getattr(usage, "completion_tokens", None) if usage is not None else None
+            )
+            at_token_cap = (
+                completion_tokens is not None
+                and max_tokens
+                and completion_tokens >= max_tokens * 0.98
+            )
+
             # Open WebUI's `aida-mesh` model has a hard output-token cap as a
             # runaway guard. When it's hit mid-answer, finish_reason comes
             # back "length" -- the content may be cut off mid-sentence, or
@@ -175,15 +193,26 @@ class OpenAIBackend(LLMBackend):
             # way this is not a usable answer: never relay a partial/cut-off
             # reply to the mesh (Matt's rule -- "I don't have that
             # information" beats confidently wrong).
-            if finish_reason == "length" or not content:
+            if finish_reason == "length" or not content or at_token_cap:
+                if finish_reason == "length":
+                    signal = "finish_reason=length"
+                elif not content:
+                    signal = "empty_content"
+                else:
+                    signal = "completion_tokens_at_cap"
                 logger.warning(
-                    "LLM generation truncated: finish_reason=%r content_length=%d",
+                    "LLM generation truncated (signal=%s): finish_reason=%r "
+                    "content_length=%d completion_tokens=%r max_tokens=%r",
+                    signal,
                     finish_reason,
                     len(content),
+                    completion_tokens,
+                    max_tokens,
                 )
                 raise LLMTruncatedError(
-                    f"LLM generation truncated or empty "
-                    f"(finish_reason={finish_reason!r}, content_length={len(content)})"
+                    f"LLM generation truncated or empty (signal={signal}, "
+                    f"finish_reason={finish_reason!r}, content_length={len(content)}, "
+                    f"completion_tokens={completion_tokens!r}, max_tokens={max_tokens!r})"
                 )
 
             return content

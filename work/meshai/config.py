@@ -292,6 +292,15 @@ class LLMConfig:
     web_search: bool = False  # Enable web search (Open WebUI feature)
     google_grounding: bool = False  # Enable Google Search grounding (Gemini only)
 
+    # aida-mesh (the Open WebUI-backed assistant) is contracted to always end
+    # its replies with a trailing "Sources: ..." line (see router._strip_
+    # sources_line). When True, a reply missing that trailing line is treated
+    # as a truncated/cut-off generation (router.LLMTruncatedError path) rather
+    # than relayed as-is -- it means the model's output-token cap was hit
+    # before it could finish. Default False in code; enabled live via config
+    # for backends under that contract.
+    require_sources_line: bool = False
+
 
 @dataclass
 class OpenMeteoConfig:

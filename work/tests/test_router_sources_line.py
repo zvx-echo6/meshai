@@ -99,7 +99,13 @@ if _NEEDS_SDK_STUBS:
 
 from meshai.config import Config
 from meshai.connector import MeshMessage
-from meshai.router import MessageRouter, _strip_sources_line
+from meshai.router import (
+    LLM_TRUNCATED_TEXT,
+    MessageRouter,
+    _extract_sources_as_answer,
+    _has_sources_line,
+    _strip_sources_line,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -257,3 +263,99 @@ async def test_generate_llm_response_no_sources_line_unchanged():
     args, _kwargs = history.add_message.await_args_list[-1]
     stored_content = args[2]
     assert stored_content == raw
+
+
+# ---------------------------------------------------------------------------
+# _has_sources_line / _extract_sources_as_answer unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_has_sources_line_true_when_present():
+    assert _has_sources_line("Answer here.\nSources: doc-a; doc-b") is True
+
+
+def test_has_sources_line_false_when_absent():
+    assert _has_sources_line("Just a normal reply.") is False
+
+
+def test_has_sources_line_false_for_empty_string():
+    assert _has_sources_line("") is False
+
+
+def test_extract_sources_as_answer_rewrites_label():
+    text = "Sources: litime.com; acebattery.com"
+    assert _extract_sources_as_answer(text) == "Source: litime.com; acebattery.com"
+
+
+def test_extract_sources_as_answer_uses_only_last_line():
+    text = "Some earlier text.\nSources: doc-a; doc-b"
+    assert _extract_sources_as_answer(text) == "Source: doc-a; doc-b"
+
+
+def test_extract_sources_as_answer_none_when_no_sources_line():
+    assert _extract_sources_as_answer("Just a normal reply.") is None
+
+
+def test_extract_sources_as_answer_none_for_sources_none():
+    assert _extract_sources_as_answer("Sources: none") is None
+
+
+def test_extract_sources_as_answer_none_for_bare_label():
+    assert _extract_sources_as_answer("Sources:") is None
+
+
+def test_extract_sources_as_answer_none_for_empty_string():
+    assert _extract_sources_as_answer("") is None
+
+
+# ---------------------------------------------------------------------------
+# generate_llm_response(): sources-only reply -> sources become the answer
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sources_only_reply_sends_source_line_not_blank():
+    """13:10 UTC incident: the model's whole reply was just the Sources
+    line. After _strip_sources_line the body is empty -- the citations must
+    become the visible answer instead of an empty/blank send."""
+    raw = "Sources: LiFePO4 Temperature Range...(litime.com); ...(acebattery.com)"
+    router, llm_backend, history = _make_router(raw)
+
+    chunks = await router.generate_llm_response(_make_message(), "what temp range?")
+
+    assert chunks, "must send something, never an empty list of chunks"
+    sent_text = " ".join(chunks)
+    assert sent_text.strip() != ""
+    assert sent_text.startswith("Source:")
+    assert "litime.com" in sent_text
+    assert "acebattery.com" in sent_text
+    # The label itself was singularized; the original plural "Sources:"
+    # label is not part of what's sent.
+    assert "Sources:" not in sent_text
+
+
+@pytest.mark.asyncio
+async def test_sources_only_reply_keeps_original_in_history():
+    raw = "Sources: LiFePO4 Temperature Range...(litime.com); ...(acebattery.com)"
+    router, llm_backend, history = _make_router(raw)
+
+    await router.generate_llm_response(_make_message(), "what temp range?")
+
+    args, _kwargs = history.add_message.await_args_list[-1]
+    assert args[1] == "assistant"
+    assert args[2] == raw
+
+
+@pytest.mark.asyncio
+async def test_empty_body_no_sources_falls_back_never_blank():
+    """Body empty after stripping and no real citation content available ->
+    treated like a failed generation, never an empty/blank send."""
+    raw = "Sources: none"
+    router, llm_backend, history = _make_router(raw)
+
+    chunks = await router.generate_llm_response(_make_message(), "secret handshake?")
+
+    assert chunks
+    sent_text = " ".join(chunks)
+    assert sent_text.strip() != ""
+    assert sent_text == LLM_TRUNCATED_TEXT

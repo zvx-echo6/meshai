@@ -256,6 +256,49 @@ def _strip_sources_line(text: str) -> str:
     return text
 
 
+def _has_sources_line(text: str) -> bool:
+    """True if *text* ends with a trailing "Sources: ..." line.
+
+    Used to enforce the aida-mesh reply contract (LLMConfig.require_sources_
+    line): a reply missing this trailing line was very likely cut off by the
+    output-token cap before the model could emit it.
+    """
+    if not text:
+        return False
+    lines = text.splitlines()
+    if not lines:
+        return False
+    return bool(_SOURCES_LINE_RE.match(lines[-1]))
+
+
+def _extract_sources_as_answer(text: str) -> Optional[str]:
+    """If *text* ends with a "Sources: ..." line, return that line rewritten
+    as a standalone answer ("Sources: X; Y" -> "Source: X; Y").
+
+    Used when the LLM's actual answer body is empty after _strip_sources_
+    line() removes the trailing citation line -- rather than transmit
+    nothing (see 13:10 UTC incident: an all-citations reply silently sent an
+    empty DM), the citations themselves become the visible answer.
+
+    Returns None if *text* has no trailing Sources line, or the line has no
+    citation content after the "Sources:" label (e.g. a bare "Sources:" with
+    nothing following it) -- callers should fall back to the standard
+    failed-generation text in that case.
+    """
+    if not text:
+        return None
+    lines = text.splitlines()
+    if not lines:
+        return None
+    last = lines[-1]
+    if not _SOURCES_LINE_RE.match(last):
+        return None
+    content = re.sub(r"^\s*sources:\s*", "", last, count=1, flags=re.IGNORECASE).strip()
+    if not content or content.lower() == "none":
+        return None
+    return f"Source: {content}"
+
+
 # ---------------------------------------------------------------------------
 # Channel-@mention detection (opt-in channel-reply feature; see
 # BotConfig.respond_to_channel_mentions / MeshCoreContextConfig.mention_channels)
@@ -1667,6 +1710,21 @@ class MessageRouter:
                 )
             )
             response = await self._await_llm_with_thinking_notice(llm_task, message)
+
+            # aida-mesh reply contract: every complete reply ends with a
+            # trailing "Sources:" line. When enforced (config.llm.require_
+            # sources_line), a reply missing it slipped past the backend's
+            # own finish_reason/completion_tokens checks (see openai_backend.
+            # generate()) but is still very likely a mid-answer cut-off --
+            # treat it the same as any other truncated generation.
+            if self.config.llm.require_sources_line and not _has_sources_line(response):
+                logger.warning(
+                    "LLM reply missing required trailing Sources line "
+                    "(require_sources_line=True); treating as truncated"
+                )
+                raise LLMTruncatedError(
+                    "missing required trailing Sources line"
+                )
         except asyncio.TimeoutError:
             logger.error("LLM request timed out")
             response = "Sorry, request timed out. Try again."
@@ -1679,11 +1737,20 @@ class MessageRouter:
 
         # Store the full response -- including any trailing "Sources:" line
         # -- in conversation history so a later "where did you get that?"
-        # follow-up can be answered from what was actually cited.
+        # follow-up can be answered from what was actually cited. (When
+        # require_sources_line rejected the reply above, `response` is
+        # already the fixed LLM_TRUNCATED_TEXT fallback -- no partial model
+        # output is ever stored.)
         await self.history.add_message(history_key, "assistant", response)
 
         # Persist summary if one was created/updated
         await self._persist_summary(history_key)
+
+        # The raw response (Sources line intact) is what generation_llm_task
+        # produced -- keep it around so an all-citations reply can still
+        # surface its sources as the visible answer below, even after the
+        # Sources line itself is stripped from what gets sent.
+        raw_response = response
 
         # The Sources line is for history only -- never relay it to the mesh.
         response = _strip_sources_line(response)
@@ -1691,6 +1758,17 @@ class MessageRouter:
         # Strip any markdown the LLM ignored instructions about
         from .chunker import strip_markdown
         response = strip_markdown(response)
+
+        if not response.strip():
+            # The reply's entire content was the Sources line (e.g. "Sources:
+            # litime.com; acebattery.com" with no actual answer text) -- or
+            # was already blank/whitespace. Never transmit an empty message
+            # (see 13:10 UTC incident: this previously sent a header-only,
+            # zero-length DM). If real citation content is available, surface
+            # it as the answer; otherwise this is a failed generation like
+            # any other.
+            sources_answer = _extract_sources_as_answer(raw_response)
+            response = sources_answer if sources_answer else LLM_TRUNCATED_TEXT
 
         # Channel-mention replies are prefixed "@<asker name> " (MeshCore:
         # bracket form "@[<name>] "; see _channel_reply_prefix) so the reply

@@ -111,6 +111,7 @@ _SLOW_DELAY = 0.2  # comfortably past _NOTICE_SECONDS
 def _make_router(
     llm_generate,
     thinking_notice_seconds: float = 0,
+    require_sources_line: bool = False,
 ) -> tuple[MessageRouter, AsyncMock, AsyncMock, MagicMock]:
     """Build a MessageRouter with the minimum mocked collaborators needed to
     exercise generate_llm_response()'s error-handling path.
@@ -120,6 +121,7 @@ def _make_router(
     """
     config = Config()
     config.response.thinking_notice_seconds = thinking_notice_seconds
+    config.llm.require_sources_line = require_sources_line
 
     connector = MagicMock()
     connector.max_chars = 200
@@ -251,3 +253,64 @@ async def test_truncated_failure_stores_fallback_text_not_partial_content():
     args, _kwargs = history.add_message.await_args_list[-1]
     assert args[1] == "assistant"
     assert args[2] == LLM_TRUNCATED_TEXT
+
+
+# ---------------------------------------------------------------------------
+# require_sources_line: missing trailing Sources line -> truncated path
+# ---------------------------------------------------------------------------
+
+
+async def _missing_sources_reply(*_args, **_kwargs) -> str:
+    # Looks like a normal, complete reply -- but has no trailing "Sources:"
+    # line, which the aida-mesh contract requires. finish_reason/content
+    # checks in openai_backend.py already passed (this is what's returned
+    # from LLMBackend.generate()); require_sources_line is the router-level
+    # second line of defense against a signal the backend didn't catch.
+    return "LiFePO4 batteries have a lower self-discharge rate than lead-acid."
+
+
+async def _with_sources_reply(*_args, **_kwargs) -> str:
+    return "LiFePO4 batteries have a lower self-discharge rate.\nSources: litime.com"
+
+
+@pytest.mark.asyncio
+async def test_require_sources_line_true_missing_line_is_truncated():
+    router, llm_backend, history, connector = _make_router(
+        _missing_sources_reply, require_sources_line=True
+    )
+
+    chunks = await router.generate_llm_response(_make_message(), "tell me about lifepo4")
+
+    assert " ".join(chunks) == LLM_TRUNCATED_TEXT
+    args, _kwargs = history.add_message.await_args_list[-1]
+    assert args[2] == LLM_TRUNCATED_TEXT
+
+
+@pytest.mark.asyncio
+async def test_require_sources_line_true_with_line_is_normal():
+    router, llm_backend, history, connector = _make_router(
+        _with_sources_reply, require_sources_line=True
+    )
+
+    chunks = await router.generate_llm_response(_make_message(), "tell me about lifepo4")
+
+    sent_text = " ".join(chunks)
+    assert sent_text == "LiFePO4 batteries have a lower self-discharge rate."
+    assert "Sources:" not in sent_text
+
+    args, _kwargs = history.add_message.await_args_list[-1]
+    assert args[2] == "LiFePO4 batteries have a lower self-discharge rate.\nSources: litime.com"
+
+
+@pytest.mark.asyncio
+async def test_require_sources_line_false_missing_line_is_unaffected():
+    """Default (False) behavior: a reply with no Sources line is sent
+    exactly as before -- require_sources_line off means no enforcement."""
+    router, llm_backend, history, connector = _make_router(
+        _missing_sources_reply, require_sources_line=False
+    )
+
+    chunks = await router.generate_llm_response(_make_message(), "tell me about lifepo4")
+
+    sent_text = " ".join(chunks)
+    assert sent_text == "LiFePO4 batteries have a lower self-discharge rate than lead-acid."

@@ -55,6 +55,24 @@ class Responder:
         if not messages:
             return True
 
+        # Never transmit an empty/whitespace-only chunk -- an all-citations
+        # reply whose Sources line got stripped down to nothing (or any
+        # other chunker edge case) must never turn into a header-only,
+        # zero-length send over the mesh. Drop them here as a last-resort
+        # guard on the send path itself, on top of the caller-side handling
+        # in router.generate_llm_response().
+        non_empty = [m for m in messages if m and m.strip()]
+        if len(non_empty) != len(messages):
+            logger.warning(
+                "send_response: dropped %d empty/whitespace-only chunk(s) "
+                "out of %d",
+                len(messages) - len(non_empty),
+                len(messages),
+            )
+        if not non_empty:
+            return True
+        messages = non_empty
+
         success = True
 
         for i, msg in enumerate(messages):

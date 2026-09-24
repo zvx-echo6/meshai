@@ -79,8 +79,10 @@ def _make_backend() -> OpenAIBackend:
     return OpenAIBackend(config=LLMConfig(), api_key="test-key")
 
 
-def _mock_response(content: str, finish_reason: str = "stop") -> SimpleNamespace:
-    return SimpleNamespace(
+def _mock_response(
+    content: str, finish_reason: str = "stop", completion_tokens: int | None = None
+) -> SimpleNamespace:
+    resp = SimpleNamespace(
         choices=[
             SimpleNamespace(
                 message=SimpleNamespace(content=content),
@@ -88,6 +90,9 @@ def _mock_response(content: str, finish_reason: str = "stop") -> SimpleNamespace
             )
         ]
     )
+    if completion_tokens is not None:
+        resp.usage = SimpleNamespace(completion_tokens=completion_tokens)
+    return resp
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +266,95 @@ async def test_generate_normal_stop_is_unaffected() -> None:
     )
 
     result = await backend.generate(messages=[{"role": "user", "content": "status?"}], system_prompt="sys")
+
+    assert result == "The mesh is healthy."
+    await backend.close()
+
+
+# ---------------------------------------------------------------------------
+# usage.completion_tokens at/near the cap -> truncated even when
+# finish_reason isn't "length" (13:22 UTC incident: Open WebUI didn't
+# propagate finish_reason=="length" through, so a mid-sentence cut-off
+# reply passed the finish_reason/content checks and was sent).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_generate_raises_truncated_when_completion_tokens_at_cap() -> None:
+    backend = _make_backend()
+    backend._client.chat.completions.create = AsyncMock(
+        return_value=_mock_response(
+            "LiFePO4 batteries have a lower",
+            finish_reason="stop",  # not propagated as "length" by Open WebUI
+            completion_tokens=300,
+        )
+    )
+
+    with pytest.raises(LLMTruncatedError):
+        await backend.generate(
+            messages=[{"role": "user", "content": "tell me about lifepo4"}],
+            system_prompt="sys",
+            max_tokens=300,
+        )
+    await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_generate_raises_truncated_when_completion_tokens_at_98_percent() -> None:
+    backend = _make_backend()
+    backend._client.chat.completions.create = AsyncMock(
+        return_value=_mock_response(
+            "LiFePO4 batteries have a lower self-discharge rate",
+            finish_reason="stop",
+            completion_tokens=294,  # exactly 98% of 300
+        )
+    )
+
+    with pytest.raises(LLMTruncatedError):
+        await backend.generate(
+            messages=[{"role": "user", "content": "tell me about lifepo4"}],
+            system_prompt="sys",
+            max_tokens=300,
+        )
+    await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_generate_completion_tokens_below_cap_is_unaffected() -> None:
+    backend = _make_backend()
+    backend._client.chat.completions.create = AsyncMock(
+        return_value=_mock_response(
+            "The mesh is healthy.\nSources: none",
+            finish_reason="stop",
+            completion_tokens=100,
+        )
+    )
+
+    result = await backend.generate(
+        messages=[{"role": "user", "content": "status?"}],
+        system_prompt="sys",
+        max_tokens=300,
+    )
+
+    assert result == "The mesh is healthy.\nSources: none"
+    await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_generate_no_usage_field_is_unaffected() -> None:
+    """Responses with no `usage` at all (as from _mock_response() without
+    completion_tokens, matching every pre-existing test above) must not be
+    treated as truncated -- the new check is additive, not required."""
+    backend = _make_backend()
+    backend._client.chat.completions.create = AsyncMock(
+        return_value=_mock_response("The mesh is healthy.", finish_reason="stop")
+    )
+
+    result = await backend.generate(
+        messages=[{"role": "user", "content": "status?"}],
+        system_prompt="sys",
+        max_tokens=300,
+    )
 
     assert result == "The mesh is healthy."
     await backend.close()
