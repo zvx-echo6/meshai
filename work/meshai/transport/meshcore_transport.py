@@ -37,6 +37,144 @@ _TELEMETRY_MIN_INTERVAL_SECONDS = 300
 # dropped from the auto-poll rotation (a manual "Poll now" un-sticks it).
 _TELEMETRY_MAX_FAILURES = 3
 
+# --- MeshCore companion frame size guard ----------------------------------
+# openhop's companion frame_server (openhop_core/companion/constants.py:
+# MAX_FRAME_SIZE = 176, matching firmware's writeFrame()/BLE MTU cap since
+# MeshCore PR #2022) hard-rejects ("Frame too long: N") and DISCONNECTS the
+# client for any inbound payload longer than this many bytes -- disconnect
+# drops meshai's entire MeshCore link for ~2.5 min, not just the one send.
+# The check (frame_server/transport.py) is on the payload only -- the 3-byte
+# wire prefix (b"<" + 2-byte length, added by the meshcore lib's tcp_cx.py/
+# serial_cx.py .send()) is read separately and does NOT count toward it.
+_MESHCORE_MAX_FRAME_PAYLOAD_BYTES = 176
+
+# Payload header bytes the meshcore lib prepends ahead of the message text,
+# per commands/messaging.py (read from the meshcore lib shipped in the
+# work-meshai image):
+#   send_msg()      (DM / room, CMD_SEND_TXT_MSG=0x02):
+#       cmd(1) + txt_type(1) + attempt(1) + timestamp(4) + dst_prefix(6,
+#       the _validate_destination() default prefix_length) = 13 bytes
+#   send_chan_msg() (channel broadcast, CMD_SEND_CHANNEL_TXT_MSG=0x03):
+#       cmd(1) + txt_type(1) + chan(1) + timestamp(4) = 7 bytes
+_MESHCORE_DM_HEADER_BYTES = 13
+_MESHCORE_CHANNEL_HEADER_BYTES = 7
+
+# Margin below the exact computed ceiling, for any header field we did not
+# account for (e.g. a future meshcore lib bump) and so a text landing exactly
+# on the line still clears it.
+_MESHCORE_FRAME_SAFETY_MARGIN_BYTES = 10
+
+# Max message-TEXT bytes (UTF-8) that fit in one frame, per send kind.
+MESHCORE_DM_MAX_TEXT_BYTES = (
+    _MESHCORE_MAX_FRAME_PAYLOAD_BYTES
+    - _MESHCORE_DM_HEADER_BYTES
+    - _MESHCORE_FRAME_SAFETY_MARGIN_BYTES
+)  # 176 - 13 - 10 = 153
+MESHCORE_CHANNEL_MAX_TEXT_BYTES = (
+    _MESHCORE_MAX_FRAME_PAYLOAD_BYTES
+    - _MESHCORE_CHANNEL_HEADER_BYTES
+    - _MESHCORE_FRAME_SAFETY_MARGIN_BYTES
+)  # 176 - 7 - 10 = 159
+
+
+def _utf8_len(s: str) -> int:
+    return len(s.encode("utf-8"))
+
+
+def split_text_to_frame_limit(text: str, max_bytes: int) -> list[str]:
+    """Split *text* into chunks that each fit in *max_bytes* UTF-8 bytes.
+
+    Splits at sentence boundaries first, then word boundaries, and only
+    hard-cuts (never mid-codepoint -- Python string slicing is by code
+    point, so this can't sever a multibyte UTF-8 character) as a last
+    resort for a single "word" that alone exceeds the budget (e.g. a run
+    of emoji with no spaces). Always returns at least one chunk, and every
+    returned chunk's UTF-8 byte length is <= max_bytes (given max_bytes
+    covers at least one code point).
+
+    Used as the last-resort safety net ahead of the openhop companion's
+    hard frame-size cap -- normal-length text returns ``[text]`` unchanged.
+    """
+    if _utf8_len(text) <= max_bytes:
+        return [text]
+
+    logger.warning(
+        "MC: text (%d bytes) exceeds %d-byte frame limit; splitting",
+        _utf8_len(text), max_bytes,
+    )
+
+    # Reuse the chunker's sentence splitter for a natural first pass.
+    from ..chunker import split_sentences  # noqa: PLC0415
+
+    sentences = split_sentences(text) or [text]
+    chunks: list[str] = []
+    current: list[str] = []
+    current_bytes = 0
+
+    def _flush() -> None:
+        if current:
+            chunks.append(" ".join(current))
+            current.clear()
+
+    for sentence in sentences:
+        sentence_bytes = _utf8_len(sentence)
+        if sentence_bytes <= max_bytes:
+            added = sentence_bytes + (1 if current else 0)
+            if current_bytes + added <= max_bytes:
+                current.append(sentence)
+                current_bytes += added
+                continue
+            _flush()
+            current_bytes = 0
+            current.append(sentence)
+            current_bytes = sentence_bytes
+            continue
+
+        # Single sentence too long even alone -- fall back to word boundaries.
+        _flush()
+        current_bytes = 0
+        words = sentence.split(" ")
+        word_buf: list[str] = []
+        word_buf_bytes = 0
+        for word in words:
+            word_bytes = _utf8_len(word)
+            if word_bytes <= max_bytes:
+                added = word_bytes + (1 if word_buf else 0)
+                if word_buf_bytes + added <= max_bytes:
+                    word_buf.append(word)
+                    word_buf_bytes += added
+                    continue
+                if word_buf:
+                    chunks.append(" ".join(word_buf))
+                word_buf = [word]
+                word_buf_bytes = word_bytes
+                continue
+
+            # A single "word" alone exceeds the budget (e.g. glued emoji) --
+            # hard-cut it code point by code point, never mid-character.
+            if word_buf:
+                chunks.append(" ".join(word_buf))
+                word_buf = []
+                word_buf_bytes = 0
+            remainder = word
+            while remainder:
+                piece = remainder
+                while _utf8_len(piece) > max_bytes:
+                    piece = piece[:-1]
+                if not piece:
+                    # A single code point alone exceeds max_bytes (should not
+                    # happen for any realistic max_bytes >= 4); emit it alone
+                    # rather than looping forever.
+                    piece = remainder[0]
+                chunks.append(piece)
+                remainder = remainder[len(piece):]
+        if word_buf:
+            chunks.append(" ".join(word_buf))
+
+    _flush()
+    return chunks or [text]
+
+
 # --- Companion-link keepalive tuning --------------------------------------
 # MeshMonitor's MeshCore vnode (the shared companion-link server meshai
 # attaches to) reaps any client idle >5 min, where "idle" means no bytes seen
@@ -456,7 +594,11 @@ class MeshCoreTransport(MeshTransport):
                 self._mc.commands.send_msg(contact, text), timeout=15
             )
         except Exception as exc:
-            logger.warning("MC: _send_dm_once_async to %s failed: %s", destination, exc)
+            # repr(), not str()/"%s" on the exception -- asyncio.TimeoutError's
+            # str() is "" (empty), which used to log this as a blank, useless
+            # "failed: " line indistinguishable from a healthy path. repr()
+            # always names the exception type even when it carries no message.
+            logger.warning("MC: _send_dm_once_async to %s failed: %r", destination, exc)
             return None
         if result is None:
             logger.warning("MC: _send_dm_once_async to %s — no send result", destination)
@@ -657,7 +799,9 @@ class MeshCoreTransport(MeshTransport):
                 logger.warning("MC: broadcast returned error event")
             return success
         except Exception as exc:
-            logger.error("MC: _do_mc_broadcast_async failed: %s", exc)
+            # repr(), not str() -- see _send_dm_once_async for why (a bare
+            # asyncio.TimeoutError logs as an empty, useless message with %s).
+            logger.error("MC: _do_mc_broadcast_async failed: %r", exc)
             return False
 
     async def _do_mc_advert_async(self) -> bool:
@@ -779,7 +923,57 @@ class MeshCoreTransport(MeshTransport):
         ``meshcore_room`` (a room-server pubkey) routes to send_to_room_async
         (login-if-password + addressed send) INSTEAD of a channel broadcast;
         it shares the same queue so room sends are paced like every other send.
+
+        Every text (DM, room, or channel) is measured in UTF-8 bytes and
+        split at the companion's hard per-frame limit BEFORE it reaches the
+        wire (see ``split_text_to_frame_limit`` / ``MESHCORE_DM_MAX_TEXT_BYTES``
+        / ``MESHCORE_CHANNEL_MAX_TEXT_BYTES`` above) -- an oversized frame
+        gets no partial send, it drops meshai's whole MeshCore link for
+        ~2.5 min when openhop's companion disconnects the client.
         """
+        if self._mc is None or not self._connected:
+            return False
+        if not meshcore_room and not destination and meshcore_channel is None:
+            logger.debug("MC: send_message_async meshcore_channel=None, skipping broadcast")
+            return False  # nothing sent — do not report success
+
+        is_channel_send = not meshcore_room and not destination
+        max_text_bytes = (
+            MESHCORE_CHANNEL_MAX_TEXT_BYTES if is_channel_send else MESHCORE_DM_MAX_TEXT_BYTES
+        )
+        parts = split_text_to_frame_limit(text, max_text_bytes)
+
+        if len(parts) == 1:
+            return await self._send_message_part_async(
+                parts[0], destination, channel, transport, meshcore_channel,
+                meshcore_room, meshcore_room_password,
+            )
+
+        logger.warning(
+            "MC: text split into %d frames for send (dest=%s meshcore_channel=%s room=%s)",
+            len(parts), destination, meshcore_channel, meshcore_room,
+        )
+        ok = True
+        for part in parts:
+            sent = await self._send_message_part_async(
+                part, destination, channel, transport, meshcore_channel,
+                meshcore_room, meshcore_room_password,
+            )
+            ok = ok and sent
+        return ok
+
+    async def _send_message_part_async(
+        self,
+        text: str,
+        destination: Optional[str] = None,
+        channel: int = 0,
+        transport: Optional[str] = None,
+        meshcore_channel: Optional[str] = None,
+        meshcore_room: Optional[str] = None,
+        meshcore_room_password: Optional[str] = None,
+    ) -> bool:
+        """Send exactly ONE already frame-sized part. See ``send_message_async``,
+        which is the public entry point and applies the byte-length guard."""
         if self._mc is None or not self._connected:
             return False
         if self._mc_send_queue is None or self._loop is None or not self._loop.is_running():

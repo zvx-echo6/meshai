@@ -40,10 +40,15 @@ _CORESCOPE_TIMEOUT_SECONDS = 8.0
 # or similar must NOT match -- requires a word boundary or end-of-string).
 _ADDME_TRIGGER_RE = re.compile(r"(?i)^!addme(?:\s.*)?$")
 
+# Kept short enough that a typical formatted message clears the MeshCore DM
+# frame budget (MESHCORE_DM_MAX_TEXT_BYTES, meshcore_transport.py) in ONE
+# frame without the byte-length guard needing to split it -- even with a
+# long, multibyte {name} (e.g. a 20-char name plus an emoji: 134 UTF-8 bytes,
+# still under the ~153-byte budget). The prior wording ran 181-185 bytes
+# formatted, over the companion's 176-byte hard cap on its own.
 DEFAULT_ADDME_DM_TEXT = (
-    "Hi {name}, this is AIDA. You're in my contacts now, so you can DM me "
-    "any question. If you have an older AIDA contact whose key starts "
-    "a655, delete it and keep the one starting 4b54."
+    "Hi {name}, AIDA here. You're in my contacts, so DM me anytime. "
+    "Delete any old AIDA contact starting a655; keep 4b54."
 )
 
 
@@ -278,9 +283,24 @@ def _schedule_delayed_dm(transport, pubkey: str, name: str, delay_seconds: float
         await asyncio.sleep(delay_seconds)
         try:
             ok = await transport.send_message_async(dm_text, destination=pubkey)
-            logger.info("MeshCore: !addme DM to %s %s", name, "ACKed" if ok else "sent, no ACK")
         except Exception as exc:
-            logger.warning("MeshCore: !addme DM to %s failed: %s", name, exc)
+            # repr(), not str() -- a bare asyncio.TimeoutError's str() is ""
+            # (empty), which used to log a hard failure as a blank, silent
+            # "failed: " line that read no differently from success in the
+            # logs. This is a genuine SEND failure (exception raised) --
+            # distinct from the no-exception "sent, no ACK" case below,
+            # which means the frame reached the queue but no delivery
+            # confirmation came back.
+            logger.warning("MeshCore: !addme DM to %s send failed (%r)", name, exc)
+            return
+        if ok:
+            logger.info("MeshCore: !addme DM to %s ACKed", name)
+        else:
+            # send_message_async returned False without raising: best-effort
+            # send with no ACK (could also mean nothing was ever transmitted,
+            # e.g. contact resolution failure -- see the "MC: ..." warning
+            # logged at the actual send site, just above this line).
+            logger.info("MeshCore: !addme DM to %s sent, no ACK", name)
 
     asyncio.get_event_loop().create_task(_delayed_dm())
 

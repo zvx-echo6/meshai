@@ -220,10 +220,16 @@ class MeshCoreContextConfig:
     # Per-asker floor so repeated !addme from the same name is ignored
     # silently (no reply) rather than re-processed every time.
     addme_per_user_cooldown_seconds: int = 300
+    # Kept in sync with meshcore_addme.DEFAULT_ADDME_DM_TEXT (the actual
+    # fallback used by getattr(cfg, "addme_dm_text", DEFAULT_ADDME_DM_TEXT)
+    # in handle_addme_trigger) -- THIS field default is what's actually live
+    # for any config without an explicit override, so it must stay short
+    # enough to clear the MeshCore DM frame budget (MESHCORE_DM_MAX_TEXT_BYTES
+    # in transport/meshcore_transport.py) in one frame. See meshcore_addme.py
+    # for the byte-budget math.
     addme_dm_text: str = (
-        "Hi {name}, this is AIDA. You're in my contacts now, so you can DM "
-        "me any question. If you have an older AIDA contact whose key "
-        "starts a655, delete it and keep the one starting 4b54."
+        "Hi {name}, AIDA here. You're in my contacts, so DM me anytime. "
+        "Delete any old AIDA contact starting a655; keep 4b54."
     )
 
 

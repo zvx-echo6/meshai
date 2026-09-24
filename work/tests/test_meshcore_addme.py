@@ -320,7 +320,7 @@ def test_handle_addme_trigger_success_sends_advert_add_and_dm():
     dm_msgs = [m for m in t.sent if m["destination"] == "aa" * 32]
     assert len(dm_msgs) == 1
     assert "Bob" in dm_msgs[0]["text"]
-    assert dm_msgs[0]["text"].startswith("Hi Bob, this is AIDA.")
+    assert dm_msgs[0]["text"].startswith("Hi Bob, AIDA here.")
 
 
 def test_handle_addme_trigger_no_match_sends_no_advert_no_dm(monkeypatch):
