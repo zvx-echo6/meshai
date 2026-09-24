@@ -39,6 +39,7 @@ class MeshTransport(abc.ABC):
         channel: int = 0,
         transport: Optional[str] = None,
         meshcore_channel: Optional[str] = None,
+        reply_id: Optional[int] = None,
     ) -> bool:
         """Send a text message.
 
@@ -55,6 +56,10 @@ class MeshTransport(abc.ABC):
                        resolves the name to a companion slot at send time.
                        CompositeTransport uses it to route each child correctly.
                        None = do not broadcast on MeshCore for this family.
+            reply_id: Optional incoming packet id to thread this send as a
+                       reply to. Meshtastic-only (sendText(replyId=...));
+                       MeshCoreTransport has no reply-threading concept and
+                       ignores it.
 
         Returns:
             True if send was initiated successfully.
@@ -67,6 +72,7 @@ class MeshTransport(abc.ABC):
         channel: int = 0,
         transport: Optional[str] = None,
         meshcore_channel: Optional[str] = None,
+        reply_id: Optional[int] = None,
     ) -> bool:
         """Async send through the per-radio serialized queue.
 
@@ -81,7 +87,9 @@ class MeshTransport(abc.ABC):
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
             None,
-            lambda: self.send_message(text, destination, channel, transport, meshcore_channel),
+            lambda: self.send_message(
+                text, destination, channel, transport, meshcore_channel, reply_id
+            ),
         )
 
     @abc.abstractmethod

@@ -5,6 +5,7 @@ import logging
 import socket
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -35,6 +36,18 @@ class MeshMessage:
     packet: Optional[dict] = None
     # Transport tag so consumers can branch on origin if needed.
     transport: str = "meshtastic"
+    # Resolved MeshCore channel NAME (e.g. "#aida") for a MeshCore channel
+    # message; None for DMs and for Meshtastic (which addresses channels by
+    # index only, carried in `channel` above). Set by
+    # MeshCoreTransport._normalize_channel_event.
+    channel_name: Optional[str] = None
+    # MeshCore's sender_timestamp (the sending firmware's own clock,
+    # embedded in the wire packet) -- identical across that firmware's own
+    # automatic resends of the SAME message, so it doubles as a stable
+    # replay-proof id for inbound de-duplication (see meshai/dedupe.py).
+    # None for Meshtastic (which has no equivalent field on MeshMessage;
+    # its own replay-proof id is the packet id, carried in `packet["id"]`).
+    sender_timestamp: Optional[int] = None
     _position: Optional[tuple[float, float]] = field(default=None, repr=False, init=False)
 
     @property
@@ -74,6 +87,11 @@ class MeshtasticTransport(MeshTransport):
         self._reconnect_lock = threading.Lock()
         # --- per-radio send queue (serialized + paced) ---
         self._mt_queue: Optional[RadioSendQueue] = None
+        # --- outgoing packet ids for broadcasts (channel replies/alerts) ---
+        # Bounded so an incoming packet's decoded.replyId can be checked
+        # against "did AIDA send this" (see should_respond's channel-mention
+        # reply-thread gate in router.py) without unbounded memory growth.
+        self._own_packet_ids: "deque[int]" = deque(maxlen=200)
 
     @property
     def connected(self) -> bool:
@@ -304,6 +322,16 @@ class MeshtasticTransport(MeshTransport):
         except Exception as e:
             logger.warning(f"Failed to write link status: {e}")
 
+    def owns_packet_id(self, packet_id: Optional[int]) -> bool:
+        """True if *packet_id* is one of our own recent outgoing broadcast
+        packet ids (last 200 channel replies/alerts). Used to detect an
+        incoming message's decoded.replyId pointing back at something AIDA
+        sent, so a mesh client's threaded reply counts as addressing AIDA
+        even without an explicit @mention."""
+        if packet_id is None:
+            return False
+        return packet_id in self._own_packet_ids
+
     @property
     def link_up(self) -> bool:
         """True when the connection supervisor last declared the Meshtastic
@@ -398,6 +426,7 @@ class MeshtasticTransport(MeshTransport):
         channel: int = 0,
         transport: Optional[str] = None,
         meshcore_channel: Optional[str] = None,
+        reply_id: Optional[int] = None,
     ) -> bool:
         """Async send through the Meshtastic per-radio queue.
 
@@ -405,17 +434,24 @@ class MeshtasticTransport(MeshTransport):
         the caller (e.g. channel.deliver) gets the real success bool.  Falls
         back to a direct executor call if the queue has not been started yet
         (e.g. during tests or before set_message_callback is called).
+
+        reply_id: When set, threaded to meshtastic's sendText(replyId=...) so
+                  the outgoing packet is a threaded reply to the given
+                  incoming packet id (channel-mention replies; see
+                  router.py's should_respond/generate_llm_response).
         """
         if self._mt_queue is None or not self._mt_queue.running:
             # Queue not started: run in executor to avoid blocking the loop.
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(
                 None,
-                lambda: self.send_message(text, destination, channel, transport, meshcore_channel),
+                lambda: self.send_message(
+                    text, destination, channel, transport, meshcore_channel, reply_id=reply_id
+                ),
             )
 
         def _job() -> bool:
-            return self._blocking_mt_send(text, destination, channel)
+            return self._blocking_mt_send(text, destination, channel, reply_id=reply_id)
 
         async def _async_job() -> bool:
             loop = asyncio.get_event_loop()
@@ -428,6 +464,7 @@ class MeshtasticTransport(MeshTransport):
         text: str,
         destination: Optional[str],
         channel: int,
+        reply_id: Optional[int] = None,
     ) -> bool:
         """Synchronous Meshtastic send — called from the thread executor by the drain."""
         if not self._interface:
@@ -443,10 +480,21 @@ class MeshtasticTransport(MeshTransport):
                     dest_num = int(destination)
                 else:
                     dest_num = int(destination, 16)
-                self._interface.sendText(text=text, destinationId=dest_num, channelIndex=channel)
+                sent = self._interface.sendText(
+                    text=text, destinationId=dest_num, channelIndex=channel, replyId=reply_id
+                )
             else:
                 from meshtastic import BROADCAST_NUM
-                self._interface.sendText(text=text, destinationId=BROADCAST_NUM, channelIndex=channel)
+                sent = self._interface.sendText(
+                    text=text, destinationId=BROADCAST_NUM, channelIndex=channel, replyId=reply_id
+                )
+                # Record our own outgoing broadcast packet id (channel
+                # replies/alerts only — DMs are never checked against
+                # owns_packet_id) so a later incoming decoded.replyId can be
+                # matched against it. Bounded deque; see owns_packet_id().
+                sent_id = getattr(sent, "id", None)
+                if sent_id is not None:
+                    self._own_packet_ids.append(sent_id)
             logger.debug("MT send to %s: %s…", destination or "broadcast", text[:50])
             return True
         except Exception as exc:
@@ -460,6 +508,7 @@ class MeshtasticTransport(MeshTransport):
         channel: int = 0,
         transport: Optional[str] = None,  # routing hint — accepted and IGNORED by single-transport impl
         meshcore_channel: Optional[str] = None,  # per-family MeshCore channel — accepted and IGNORED here
+        reply_id: Optional[int] = None,
     ) -> bool:
         """Send a text message.
 
@@ -469,6 +518,9 @@ class MeshtasticTransport(MeshTransport):
             channel: Channel index to send on
             transport: Optional routing hint (for CompositeTransport); ignored here.
             meshcore_channel: Per-family MeshCore channel name; ignored by Meshtastic.
+            reply_id: Optional incoming packet id to thread this send as a
+                reply to (meshtastic sendText(replyId=...)); see
+                router.py's channel-mention reply path.
 
         Returns:
             True if send was initiated successfully
@@ -493,14 +545,21 @@ class MeshtasticTransport(MeshTransport):
                     text=text,
                     destinationId=dest_num,
                     channelIndex=channel,
+                    replyId=reply_id,
                 )
             else:
                 # Broadcast
-                self._interface.sendText(
+                sent = self._interface.sendText(
                     text=text,
                     destinationId=BROADCAST_NUM,
                     channelIndex=channel,
+                    replyId=reply_id,
                 )
+                # Record our own outgoing broadcast packet id — see
+                # _blocking_mt_send's identical comment and owns_packet_id().
+                sent_id = getattr(sent, "id", None)
+                if sent_id is not None:
+                    self._own_packet_ids.append(sent_id)
 
             logger.debug(f"Sent message to {destination or 'broadcast'}: {text[:50]}...")
             return True

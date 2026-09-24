@@ -58,6 +58,7 @@ llm:
     Only give longer answers if the user explicitly asks for detail or explanation.
     Be concise but friendly. No markdown formatting.
   google_grounding: false        # Enable Google Search grounding (Gemini only, $35/1k queries)
+  require_sources_line: false    # aida-mesh contract: treat a reply missing its trailing "Sources:" line as truncated
 
 # === WEATHER ===
 weather:

@@ -63,6 +63,7 @@ class HelpCommand(CommandHandler):
             "region": "region", "reg": "region",
             "neighbors": "neighbors", "nbr": "neighbors", "nb": "neighbors",
             "clear": "clear", "reset": "clear",
+            "addme": "addme",
         }
         resolved = aliases.get(cmd_name, cmd_name)
 
@@ -88,6 +89,11 @@ class HelpCommand(CommandHandler):
                 "  !nb T2T        - alias"
             ),
             "clear": "!clear or !reset - clears conversation history",
+            "addme": (
+                "!addme - MeshCore only, use in #aida\n\n"
+                "Adds you as an AIDA contact and sends you a DM. "
+                "Does nothing on Meshtastic."
+            ),
             "ping": "!ping - connectivity test, responds with pong",
             "status": "!status - shows version, uptime, message count",
             "weather": "!weather [location] - weather lookup",

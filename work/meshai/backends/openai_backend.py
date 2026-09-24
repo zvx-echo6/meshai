@@ -2,13 +2,14 @@
 
 import asyncio
 import logging
+import re
 from typing import Optional
 
 from openai import AsyncOpenAI
 
 from ..config import LLMConfig
 from ..memory import RollingSummaryMemory
-from .base import LLMBackend
+from .base import LLMBackend, LLMTruncatedError
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,26 @@ Conversation:
 {conversation}
 
 Summary (2-3 sentences):"""
+
+# Open WebUI's RAG filter has the model cite sources inline, e.g.
+# "[DOMAIN_KNOWLEDGE:1]" or "[LOCAL_WIKI:1, 4]". These are an artifact of the
+# filter, not something we want relayed to mesh users, so strip them before
+# returning. Ordinary bracketed text like "[see note]" or "[1]" is left alone.
+_CITATION_TAG_RE = re.compile(r"\[[A-Z][A-Z_ ]*:\s*\d+(?:\s*,\s*\d+)*\]")
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
+
+
+def _strip_rag_citations(text: str) -> str:
+    """Remove RAG filter citation tags and tidy up the whitespace left behind."""
+    text = _CITATION_TAG_RE.sub("", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"[ \t]+([.,!?;:])", r"\1", text)
+    return text
+
+
+def _strip_think_blocks(text: str) -> str:
+    """Remove <think>...</think> reasoning blocks some models emit in content."""
+    return _THINK_BLOCK_RE.sub("", text)
 
 
 class OpenAIBackend(LLMBackend):
@@ -140,11 +161,69 @@ class OpenAIBackend(LLMBackend):
                 timeout=self.config.timeout,
             )
 
-            content = response.choices[0].message.content
-            return content.strip() if content else ""
+            choice = response.choices[0]
+            finish_reason = getattr(choice, "finish_reason", None)
+            content = choice.message.content or ""
+            content = _strip_think_blocks(content)
+            content = _strip_rag_citations(content)
+            content = content.strip()
+
+            # Some Open WebUI configurations don't propagate the underlying
+            # model's finish_reason=="length" through to us (see the
+            # 13:22 UTC incident: a reply truncated mid-sentence at the
+            # 1024-token cap came back with a finish_reason that wasn't
+            # "length"). usage.completion_tokens is a second, independent
+            # signal of the same thing -- if the model generated at or near
+            # the requested cap, treat it as truncated even when
+            # finish_reason claims otherwise.
+            usage = getattr(response, "usage", None)
+            completion_tokens = (
+                getattr(usage, "completion_tokens", None) if usage is not None else None
+            )
+            at_token_cap = (
+                completion_tokens is not None
+                and max_tokens
+                and completion_tokens >= max_tokens * 0.98
+            )
+
+            # Open WebUI's `aida-mesh` model has a hard output-token cap as a
+            # runaway guard. When it's hit mid-answer, finish_reason comes
+            # back "length" -- the content may be cut off mid-sentence, or
+            # empty if every token went to a stripped <think> block. Either
+            # way this is not a usable answer: never relay a partial/cut-off
+            # reply to the mesh (Matt's rule -- "I don't have that
+            # information" beats confidently wrong).
+            if finish_reason == "length" or not content or at_token_cap:
+                if finish_reason == "length":
+                    signal = "finish_reason=length"
+                elif not content:
+                    signal = "empty_content"
+                else:
+                    signal = "completion_tokens_at_cap"
+                logger.warning(
+                    "LLM generation truncated (signal=%s): finish_reason=%r "
+                    "content_length=%d completion_tokens=%r max_tokens=%r",
+                    signal,
+                    finish_reason,
+                    len(content),
+                    completion_tokens,
+                    max_tokens,
+                )
+                raise LLMTruncatedError(
+                    f"LLM generation truncated or empty (signal={signal}, "
+                    f"finish_reason={finish_reason!r}, content_length={len(content)}, "
+                    f"completion_tokens={completion_tokens!r}, max_tokens={max_tokens!r})"
+                )
+
+            return content
 
         except asyncio.TimeoutError:
             logger.error(f"OpenAI API timed out after {self.config.timeout}s")
+            raise
+        except LLMTruncatedError:
+            # Already logged (with finish_reason/content_length) above --
+            # just propagate so router.py's error handling can react to it
+            # specifically, without also logging it as a generic API error.
             raise
         except Exception as e:
             logger.error(f"OpenAI API error: {e}")

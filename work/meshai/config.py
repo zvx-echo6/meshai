@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -9,6 +10,40 @@ from typing import Optional
 import yaml
 
 _config_logger = logging.getLogger(__name__)
+
+
+# Matches the "!<hex>" node-id token embedded in a BotConfig.mt_node string
+# such as "!a1daa1da (AIDA-N2)". Used by parse_mt_node_id() below so every
+# consumer that needs AIDA's own Meshtastic node id (router.py, mesh_reporter.py)
+# derives it from config instead of a hardcoded node number.
+_MT_NODE_ID_RE = re.compile(r"(![0-9a-fA-F]+)")
+
+
+def parse_mt_node_id(mt_node: str) -> Optional[str]:
+    """Extract the "!<hex>" node-id token from a BotConfig.mt_node string.
+
+    ``mt_node`` is a free-form identity string like "!a1daa1da (AIDA-N2)" --
+    this pulls out just the "!a1daa1da" node-id portion. Returns None if
+    ``mt_node`` is empty or contains no "!<hex>" token.
+    """
+    if not mt_node:
+        return None
+    match = _MT_NODE_ID_RE.search(mt_node)
+    return match.group(1) if match else None
+
+
+def parse_mt_node_num(mt_node: str) -> Optional[int]:
+    """Extract the integer node number from a BotConfig.mt_node string.
+
+    Returns None if ``mt_node`` is empty or contains no "!<hex>" token.
+    """
+    node_id = parse_mt_node_id(mt_node)
+    if node_id is None:
+        return None
+    try:
+        return int(node_id[1:], 16)
+    except ValueError:
+        return None
 
 
 @dataclass
@@ -29,6 +64,23 @@ class BotConfig:
     mt_mesh_name: str = ""   # e.g. "freq51 Meshtastic mesh" -- Meshtastic-only identity framing
     mt_node: str = ""        # e.g. "!27780c47 (AIDA-N2)" -- Meshtastic-only physical node id
     mc_mesh_name: str = ""   # e.g. "the MeshCore mesh" -- MeshCore-only identity framing
+
+    # --- Channel-mention reply (opt-in; OFF by default so existing DM-only
+    # deployments are unaffected until this is explicitly turned on) ---
+    # When True, should_respond() also answers a public/channel message that
+    # @-mentions the bot on a channel listed in mention_channels, in addition
+    # to the always-on DM path.
+    respond_to_channel_mentions: bool = False
+    # Meshtastic channel INDEXES the bot will watch for mentions.
+    mention_channels: list[int] = field(default_factory=lambda: [1])
+    # Names that count as an @-mention of the bot (case-insensitive). The
+    # bot's own Meshtastic node id (parsed from mt_node) is ALWAYS also
+    # accepted as a mention target, in addition to these names -- see
+    # router._mention_tokens().
+    mention_names: list[str] = field(default_factory=lambda: ["AIDA"])
+    # Minimum seconds between channel-mention replies to the same
+    # (sender, channel) pair -- protects LoRa airtime from a chatty channel.
+    channel_reply_cooldown_seconds: int = 30
 
 
 @dataclass
@@ -63,8 +115,28 @@ class ConnectionConfig:
     # incremental contact fetch to the companion per advert (local chatter, never a
     # mesh send); false = lib default (connect-time snapshot + explicit resync only).
     meshcore_auto_update_contacts: bool = True
-    meshcore_ack_wait_seconds: float = 6.0       # wait for delivery ACK before falling back to path discovery
+    # How long to wait for the delivery ACK before giving up on a DM send.
+    # Default raised 6 -> 30s (2026-09-24 AIDA triple-DM incident): the live
+    # deployment's MeshCore link is MeshMonitor's virtual node, which runs
+    # its OWN ACK tracker (~10s timeout) and its OWN RF-level retries
+    # (samePathLeft/floodLeft). meshai's old 6s wait fired its no-ACK
+    # fallback (see meshcore_client_retry below) BEFORE MeshMonitor's own
+    # retry had a chance to land the original send's ACK, stacking a
+    # second, independent resend on top of it -- two retry state machines
+    # both "fixing" the same slow ACK, three transmissions on air for one
+    # question. 30s comfortably clears MeshMonitor's own retry window.
+    meshcore_ack_wait_seconds: float = 30.0
     meshcore_discovery_wait_seconds: float = 8.0  # path-discovery timeout on the no-ACK fallback (was hardcoded 25s)
+    # Whether meshai itself may retry a DM send (path discovery + resend) on
+    # a missing ACK. Default False: on the live topology the companion at
+    # the other end of meshai's MeshCore link is MeshMonitor's virtual node,
+    # which already owns RF-level retry -- a second, independent resend from
+    # meshai on top of that is a byte-identical duplicate transmission (see
+    # meshcore_ack_wait_seconds above). With this off, meshai sends a DM (or
+    # the "still thinking" notice, which shares the same send path) exactly
+    # ONCE and only logs whether the ACK arrived; it never resends. Set True
+    # only for a bare MeshCore link with no external retry layer of its own.
+    meshcore_client_retry: bool = False
 
     # --- Send-queue pacing (per-radio serialization) ---
     # Randomized jitter between consecutive outbound sends on each radio:
@@ -107,6 +179,8 @@ class ResponseConfig:
     delay_max: float = 2.5
     max_length: int = 200
     max_messages: int = 3
+    thinking_notice_seconds: int = 30  # 0 disables the "still thinking" notice
+    thinking_notice_text: str = "Thinking - one moment."
 
 
 @dataclass
@@ -147,6 +221,36 @@ class MeshCoreContextConfig:
     observe_channels: list[str] = field(default_factory=list)  # channel NAMES, empty = none (opt-in): only listed channels feed context
     ignore_contacts: list[str] = field(default_factory=list)   # contact names or pubkey prefixes
     respond_to_dms: bool = True
+    # MeshCore channel NAMES the bot will watch for @-mentions when
+    # bot.respond_to_channel_mentions is True. Opt-in like observe_channels.
+    mention_channels: list[str] = field(default_factory=lambda: ["#aida"])
+
+    # --- !addme (MeshCore self-service contact add) ---
+    # Detected directly in the MeshCore channel ingest path, independent of
+    # respond_to_channel_mentions/observe_channels, so it works even when
+    # those are off. See meshai/meshcore_addme.py.
+    addme_enabled: bool = True
+    addme_channels: list[str] = field(default_factory=lambda: ["#aida"])
+    # Global floor between AIDA-initiated flood self-adverts triggered by
+    # !addme (at most one per cooldown, no matter who asks).
+    addme_advert_cooldown_seconds: int = 3600
+    # Wait after the advert before DMing, so it has time to propagate and
+    # the asker's app can auto-add AIDA as a contact first.
+    addme_dm_delay_seconds: int = 20
+    # Per-asker floor so repeated !addme from the same name is ignored
+    # silently (no reply) rather than re-processed every time.
+    addme_per_user_cooldown_seconds: int = 300
+    # Kept in sync with meshcore_addme.DEFAULT_ADDME_DM_TEXT (the actual
+    # fallback used by getattr(cfg, "addme_dm_text", DEFAULT_ADDME_DM_TEXT)
+    # in handle_addme_trigger) -- THIS field default is what's actually live
+    # for any config without an explicit override, so it must stay short
+    # enough to clear the MeshCore DM frame budget (MESHCORE_DM_MAX_TEXT_BYTES
+    # in transport/meshcore_transport.py) in one frame. See meshcore_addme.py
+    # for the byte-budget math.
+    addme_dm_text: str = (
+        "Hi {name}, AIDA here. You're in my contacts, so DM me anytime. "
+        "Delete any old AIDA contact starting a655; keep 4b54."
+    )
 
 
 @dataclass
@@ -187,6 +291,15 @@ class LLMConfig:
     use_system_prompt: bool = True  # Toggle to disable sending system prompt
     web_search: bool = False  # Enable web search (Open WebUI feature)
     google_grounding: bool = False  # Enable Google Search grounding (Gemini only)
+
+    # aida-mesh (the Open WebUI-backed assistant) is contracted to always end
+    # its replies with a trailing "Sources: ..." line (see router._strip_
+    # sources_line). When True, a reply missing that trailing line is treated
+    # as a truncated/cut-off generation (router.LLMTruncatedError path) rather
+    # than relayed as-is -- it means the model's output-token cap was hit
+    # before it could finish. Default False in code; enabled live via config
+    # for backends under that contract.
+    require_sources_line: bool = False
 
 
 @dataclass

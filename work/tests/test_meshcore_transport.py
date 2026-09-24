@@ -102,7 +102,12 @@ from meshai.config import ConnectionConfig          # noqa: E402
 from meshai.connector import MeshMessage            # noqa: E402
 from meshai.transport.base import MeshTransport     # noqa: E402
 from meshai.transport.factory import build_transport  # noqa: E402
-from meshai.transport.meshcore_transport import MeshCoreTransport  # noqa: E402
+from meshai.transport.meshcore_transport import (  # noqa: E402
+    MeshCoreTransport,
+    MESHCORE_DM_MAX_TEXT_BYTES,
+    MESHCORE_CHANNEL_MAX_TEXT_BYTES,
+    split_text_to_frame_limit,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -373,8 +378,14 @@ class TestSendMessageDM:
             _cleanup(t)
 
     def test_no_ack_falls_back_to_discovery_then_acks(self):
-        """No ACK on the direct send → discovery + resend; 2nd ACK → success."""
+        """No ACK on the direct send → discovery + resend; 2nd ACK → success.
+
+        Requires meshcore_client_retry=True: the default single-send mode
+        (2026-09-24 AIDA triple-DM fix) never runs discovery/resend on a
+        missing ACK — see test_meshcore_single_send.py for that behavior.
+        """
         t, mc, _ = _transport_with_mock_mc()
+        t._client_retry = True
         try:
             mc.get_contact_by_key_prefix.return_value = _DM_CONTACT
             mc.ensure_contacts = AsyncMock(return_value=True)
@@ -415,6 +426,148 @@ class TestSendMessageDM:
             t._establish_direct_path = MagicMock()
             assert t.send_message("hi", destination="deadbeef") is False
             t._establish_direct_path.assert_not_called()
+        finally:
+            _cleanup(t)
+
+
+# ---------------------------------------------------------------------------
+# 3b. Frame-size guard — split_text_to_frame_limit() and send_message_async()
+# ---------------------------------------------------------------------------
+
+def _byte_len(s: str) -> int:
+    return len(s.encode("utf-8"))
+
+
+class TestSplitTextToFrameLimit:
+    def test_short_ascii_text_returned_unsplit(self):
+        assert split_text_to_frame_limit("hello world", 100) == ["hello world"]
+
+    def test_exact_boundary_ascii_unsplit(self):
+        text = "a" * 50
+        assert split_text_to_frame_limit(text, 50) == [text]
+
+    def test_empty_text_returns_single_empty_chunk(self):
+        assert split_text_to_frame_limit("", 50) == [""]
+
+    def test_over_limit_ascii_splits_into_multiple_chunks_within_budget(self):
+        text = " ".join(f"sentence number {i}." for i in range(40))
+        assert _byte_len(text) > 50
+        parts = split_text_to_frame_limit(text, 50)
+        assert len(parts) > 1
+        for p in parts:
+            assert _byte_len(p) <= 50
+
+    def test_very_long_text_all_frames_within_limit(self):
+        text = ("The quick brown fox jumps over the lazy dog. " * 30).strip()
+        max_bytes = MESHCORE_DM_MAX_TEXT_BYTES
+        parts = split_text_to_frame_limit(text, max_bytes)
+        assert len(parts) > 1
+        assert all(_byte_len(p) <= max_bytes for p in parts)
+        # No content lost: every word from the source appears somewhere.
+        rejoined_words = " ".join(parts).split()
+        assert rejoined_words == text.split()
+
+    def test_multibyte_text_near_limit_never_splits_mid_character(self):
+        """Emoji/multibyte run with no spaces — hard-cut path. Every returned
+        chunk must itself be a valid Python str slice (i.e. whole code
+        points only — string slicing cannot sever a UTF-8 sequence) and fit
+        the byte budget, and the pieces must reassemble the original text
+        exactly (no characters dropped or duplicated)."""
+        text = "🎉" * 80  # each 'e' is a 4-byte UTF-8 code point
+        max_bytes = 50
+        parts = split_text_to_frame_limit(text, max_bytes)
+        assert len(parts) > 1
+        for p in parts:
+            assert _byte_len(p) <= max_bytes
+            # Round-trips cleanly — proves no character was cut in half.
+            assert p.encode("utf-8").decode("utf-8") == p
+        assert "".join(parts) == text
+
+    def test_single_glued_word_over_limit_hard_cut_preserves_content(self):
+        text = "x" * 300  # one long "word", no spaces to split on
+        max_bytes = MESHCORE_CHANNEL_MAX_TEXT_BYTES
+        parts = split_text_to_frame_limit(text, max_bytes)
+        assert len(parts) > 1
+        assert all(_byte_len(p) <= max_bytes for p in parts)
+        assert "".join(parts) == text
+
+    def test_addme_default_text_fits_one_frame_with_long_emoji_name(self):
+        from meshai.meshcore_addme import DEFAULT_ADDME_DM_TEXT
+        name = "A" * 20 + "\U0001f389"  # 20 chars + one emoji
+        formatted = DEFAULT_ADDME_DM_TEXT.format(name=name)
+        parts = split_text_to_frame_limit(formatted, MESHCORE_DM_MAX_TEXT_BYTES)
+        assert len(parts) == 1
+        assert _byte_len(formatted) <= MESHCORE_DM_MAX_TEXT_BYTES
+
+    def test_warns_when_split_occurs(self, caplog):
+        import logging
+        with caplog.at_level(logging.WARNING):
+            split_text_to_frame_limit("x " * 200, 50)
+        assert any("exceeds" in r.getMessage() for r in caplog.records)
+
+
+class TestSendMessageAsyncFrameGuard:
+    """send_message_async() is the single choke point ALL MeshCore text (DM,
+    room, channel broadcast, and — via the chunker/responder — LLM replies)
+    goes through, so the byte-length guard lives there. These tests exercise
+    it through the real (mocked-companion) send path, not just the pure
+    splitter, to prove the guard is actually wired in."""
+
+    def test_dm_oversized_text_is_split_into_multiple_frames(self):
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            mc.get_contact_by_key_prefix.return_value = _DM_CONTACT
+            mc.ensure_contacts = AsyncMock(return_value=True)
+            mc.commands.send_msg = AsyncMock(return_value=_msg_sent())
+            mc.dispatcher.wait_for_event = AsyncMock(return_value=MagicMock())
+
+            long_text = ("The quick brown fox jumps over the lazy dog. " * 10).strip()
+            assert _byte_len(long_text) > MESHCORE_DM_MAX_TEXT_BYTES
+
+            result = asyncio.run(
+                t.send_message_async(long_text, destination="aabbcc")
+            )
+
+            assert result is True
+            assert mc.commands.send_msg.await_count > 1
+            for call in mc.commands.send_msg.await_args_list:
+                sent_text = call.args[1]
+                assert _byte_len(sent_text) <= MESHCORE_DM_MAX_TEXT_BYTES
+        finally:
+            _cleanup(t)
+
+    def test_dm_short_text_sent_as_single_frame(self):
+        t, mc, _ = _transport_with_mock_mc()
+        try:
+            mc.get_contact_by_key_prefix.return_value = _DM_CONTACT
+            mc.ensure_contacts = AsyncMock(return_value=True)
+            mc.commands.send_msg = AsyncMock(return_value=_msg_sent())
+            mc.dispatcher.wait_for_event = AsyncMock(return_value=MagicMock())
+
+            result = asyncio.run(
+                t.send_message_async("short hi", destination="aabbcc")
+            )
+
+            assert result is True
+            mc.commands.send_msg.assert_awaited_once()
+        finally:
+            _cleanup(t)
+
+    def test_channel_oversized_text_is_split_using_channel_budget(self):
+        t, mc = TestSendMessageChannel()._transport_with_mock_send_chan_msg()
+        try:
+            long_text = ("The quick brown fox jumps over the lazy dog. " * 10).strip()
+            assert _byte_len(long_text) > MESHCORE_CHANNEL_MAX_TEXT_BYTES
+
+            result = asyncio.run(
+                t.send_message_async(long_text, meshcore_channel="AIDA")
+            )
+
+            assert result is True
+            assert mc.commands.send_chan_msg.await_count > 1
+            for call in mc.commands.send_chan_msg.await_args_list:
+                sent_text = call.args[1]
+                assert _byte_len(sent_text) <= MESHCORE_CHANNEL_MAX_TEXT_BYTES
         finally:
             _cleanup(t)
 

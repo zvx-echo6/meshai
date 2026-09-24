@@ -604,7 +604,7 @@ def test_matrix_cell_channel_reaches_connector_send():
 
     sent_channels: list = []
 
-    def _fake_blocking_send(text, destination, channel):
+    def _fake_blocking_send(text, destination, channel, reply_id=None):
         sent_channels.append(channel)
         return True
 

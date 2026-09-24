@@ -267,6 +267,7 @@ class CompositeTransport(MeshTransport):
         meshcore_channel: Optional[str] = None,
         meshcore_room: Optional[str] = None,
         meshcore_room_password: Optional[str] = None,
+        reply_id: Optional[int] = None,
     ) -> bool:
         """Async send through per-child queues, with the same routing logic as send_message().
 
@@ -277,6 +278,10 @@ class CompositeTransport(MeshTransport):
         ``meshcore_room`` (a room-server pubkey) routes ONLY to the MeshCore
         child's room send (login-if-password + addressed send). It never
         touches Meshtastic and is mutually exclusive with a channel broadcast.
+
+        ``reply_id`` only applies to a broadcast (destination=None) delivered
+        to the Meshtastic child (sendText(replyId=...)); it is ignored for
+        DMs and for the MeshCore child, which has no reply-threading concept.
         """
         if meshcore_room:
             child = self.meshcore_child()
@@ -294,7 +299,7 @@ class CompositeTransport(MeshTransport):
                 return False
         if destination is None:
             return await self._broadcast_async(text, channel, meshcore_channel=meshcore_channel,
-                                               transport=transport)
+                                               transport=transport, reply_id=reply_id)
         if transport is not None:
             return await self._send_hinted_async(text, destination, channel, transport)
         return await self._send_unhinted_async(text, destination, channel)
@@ -303,6 +308,7 @@ class CompositeTransport(MeshTransport):
         self, text: str, channel: int,
         meshcore_channel: Optional[str] = None,
         transport: Optional[str] = None,
+        reply_id: Optional[int] = None,
     ) -> bool:
         if transport is not None:
             child = self._by_name.get(transport)
@@ -317,7 +323,9 @@ class CompositeTransport(MeshTransport):
                         text, destination=None, meshcore_channel=meshcore_channel
                     )
                 else:
-                    return await child.send_message_async(text, destination=None, channel=channel)
+                    return await child.send_message_async(
+                        text, destination=None, channel=channel, reply_id=reply_id
+                    )
             except Exception as exc:
                 logger.error("CompositeTransport: async hinted broadcast via %r raised: %s", name, exc)
                 return False
@@ -336,7 +344,9 @@ class CompositeTransport(MeshTransport):
                         text, destination=None, meshcore_channel=child_channel
                     )
                 else:
-                    ok = await child.send_message_async(text, destination=None, channel=child_channel)
+                    ok = await child.send_message_async(
+                        text, destination=None, channel=child_channel, reply_id=reply_id
+                    )
                 if ok:
                     any_ok = True
                 else:

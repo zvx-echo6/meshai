@@ -21,6 +21,7 @@ from typing import Callable, Optional
 from .base import MeshTransport
 from .send_queue import RadioSendQueue
 from ..connector import MeshMessage
+from ..meshcore_addme import handle_addme_trigger, is_addme_trigger
 from ..meshcore_roster import reconcile_contacts
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,144 @@ _TELEMETRY_MIN_INTERVAL_SECONDS = 300
 # Consecutive-timeout threshold before a contact is marked unavailable and
 # dropped from the auto-poll rotation (a manual "Poll now" un-sticks it).
 _TELEMETRY_MAX_FAILURES = 3
+
+# --- MeshCore companion frame size guard ----------------------------------
+# openhop's companion frame_server (openhop_core/companion/constants.py:
+# MAX_FRAME_SIZE = 176, matching firmware's writeFrame()/BLE MTU cap since
+# MeshCore PR #2022) hard-rejects ("Frame too long: N") and DISCONNECTS the
+# client for any inbound payload longer than this many bytes -- disconnect
+# drops meshai's entire MeshCore link for ~2.5 min, not just the one send.
+# The check (frame_server/transport.py) is on the payload only -- the 3-byte
+# wire prefix (b"<" + 2-byte length, added by the meshcore lib's tcp_cx.py/
+# serial_cx.py .send()) is read separately and does NOT count toward it.
+_MESHCORE_MAX_FRAME_PAYLOAD_BYTES = 176
+
+# Payload header bytes the meshcore lib prepends ahead of the message text,
+# per commands/messaging.py (read from the meshcore lib shipped in the
+# work-meshai image):
+#   send_msg()      (DM / room, CMD_SEND_TXT_MSG=0x02):
+#       cmd(1) + txt_type(1) + attempt(1) + timestamp(4) + dst_prefix(6,
+#       the _validate_destination() default prefix_length) = 13 bytes
+#   send_chan_msg() (channel broadcast, CMD_SEND_CHANNEL_TXT_MSG=0x03):
+#       cmd(1) + txt_type(1) + chan(1) + timestamp(4) = 7 bytes
+_MESHCORE_DM_HEADER_BYTES = 13
+_MESHCORE_CHANNEL_HEADER_BYTES = 7
+
+# Margin below the exact computed ceiling, for any header field we did not
+# account for (e.g. a future meshcore lib bump) and so a text landing exactly
+# on the line still clears it.
+_MESHCORE_FRAME_SAFETY_MARGIN_BYTES = 10
+
+# Max message-TEXT bytes (UTF-8) that fit in one frame, per send kind.
+MESHCORE_DM_MAX_TEXT_BYTES = (
+    _MESHCORE_MAX_FRAME_PAYLOAD_BYTES
+    - _MESHCORE_DM_HEADER_BYTES
+    - _MESHCORE_FRAME_SAFETY_MARGIN_BYTES
+)  # 176 - 13 - 10 = 153
+MESHCORE_CHANNEL_MAX_TEXT_BYTES = (
+    _MESHCORE_MAX_FRAME_PAYLOAD_BYTES
+    - _MESHCORE_CHANNEL_HEADER_BYTES
+    - _MESHCORE_FRAME_SAFETY_MARGIN_BYTES
+)  # 176 - 7 - 10 = 159
+
+
+def _utf8_len(s: str) -> int:
+    return len(s.encode("utf-8"))
+
+
+def split_text_to_frame_limit(text: str, max_bytes: int) -> list[str]:
+    """Split *text* into chunks that each fit in *max_bytes* UTF-8 bytes.
+
+    Splits at sentence boundaries first, then word boundaries, and only
+    hard-cuts (never mid-codepoint -- Python string slicing is by code
+    point, so this can't sever a multibyte UTF-8 character) as a last
+    resort for a single "word" that alone exceeds the budget (e.g. a run
+    of emoji with no spaces). Always returns at least one chunk, and every
+    returned chunk's UTF-8 byte length is <= max_bytes (given max_bytes
+    covers at least one code point).
+
+    Used as the last-resort safety net ahead of the openhop companion's
+    hard frame-size cap -- normal-length text returns ``[text]`` unchanged.
+    """
+    if _utf8_len(text) <= max_bytes:
+        return [text]
+
+    logger.warning(
+        "MC: text (%d bytes) exceeds %d-byte frame limit; splitting",
+        _utf8_len(text), max_bytes,
+    )
+
+    # Reuse the chunker's sentence splitter for a natural first pass.
+    from ..chunker import split_sentences  # noqa: PLC0415
+
+    sentences = split_sentences(text) or [text]
+    chunks: list[str] = []
+    current: list[str] = []
+    current_bytes = 0
+
+    def _flush() -> None:
+        if current:
+            chunks.append(" ".join(current))
+            current.clear()
+
+    for sentence in sentences:
+        sentence_bytes = _utf8_len(sentence)
+        if sentence_bytes <= max_bytes:
+            added = sentence_bytes + (1 if current else 0)
+            if current_bytes + added <= max_bytes:
+                current.append(sentence)
+                current_bytes += added
+                continue
+            _flush()
+            current_bytes = 0
+            current.append(sentence)
+            current_bytes = sentence_bytes
+            continue
+
+        # Single sentence too long even alone -- fall back to word boundaries.
+        _flush()
+        current_bytes = 0
+        words = sentence.split(" ")
+        word_buf: list[str] = []
+        word_buf_bytes = 0
+        for word in words:
+            word_bytes = _utf8_len(word)
+            if word_bytes <= max_bytes:
+                added = word_bytes + (1 if word_buf else 0)
+                if word_buf_bytes + added <= max_bytes:
+                    word_buf.append(word)
+                    word_buf_bytes += added
+                    continue
+                if word_buf:
+                    chunks.append(" ".join(word_buf))
+                word_buf = [word]
+                word_buf_bytes = word_bytes
+                continue
+
+            # A single "word" alone exceeds the budget (e.g. glued emoji) --
+            # hard-cut it code point by code point, never mid-character.
+            if word_buf:
+                chunks.append(" ".join(word_buf))
+                word_buf = []
+                word_buf_bytes = 0
+            remainder = word
+            while remainder:
+                piece = remainder
+                while _utf8_len(piece) > max_bytes:
+                    piece = piece[:-1]
+                if not piece:
+                    # A single code point alone exceeds max_bytes (should not
+                    # happen for any realistic max_bytes >= 4); emit it alone
+                    # rather than looping forever.
+                    piece = remainder[0]
+                chunks.append(piece)
+                remainder = remainder[len(piece):]
+        if word_buf:
+            chunks.append(" ".join(word_buf))
+
+    _flush()
+    return chunks or [text]
+
 
 # --- Companion-link keepalive tuning --------------------------------------
 # MeshMonitor's MeshCore vnode (the shared companion-link server meshai
@@ -135,8 +274,11 @@ class MeshCoreTransport(MeshTransport):
         # time by the factory; can also be (re)set via set_context_config().
         self._mc_context = meshcore_context
         # DM reply tuning (config knobs; getattr defaults keep old test configs valid).
-        self._ack_wait = float(getattr(config, "meshcore_ack_wait_seconds", 6.0))
+        self._ack_wait = float(getattr(config, "meshcore_ack_wait_seconds", 30.0))
         self._discovery_wait = float(getattr(config, "meshcore_discovery_wait_seconds", 8.0))
+        # False (default): single-send only -- no local path-discovery/resend
+        # on a missing ACK. See ConnectionConfig.meshcore_client_retry.
+        self._client_retry = bool(getattr(config, "meshcore_client_retry", False))
         self._mc = None                          # meshcore.MeshCore instance
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread: Optional[threading.Thread] = None
@@ -154,6 +296,10 @@ class MeshCoreTransport(MeshTransport):
         self._chan_details: list[dict] = []
         # Self-advertisement tracking.
         self._last_advert_sent: Optional[float] = None   # epoch seconds or None
+        # !addme state (see meshai/meshcore_addme.py): global flood-advert
+        # cooldown timestamp, and per-sender-name cooldown timestamps.
+        self._addme_last_advert: Optional[float] = None
+        self._addme_user_cooldowns: dict[str, float] = {}
         # When the contact roster was last synced from the companion (epoch
         # seconds): set at connect and on every refresh_contacts(). Lets the
         # dashboard show roster freshness rather than implying "live".
@@ -451,7 +597,11 @@ class MeshCoreTransport(MeshTransport):
                 self._mc.commands.send_msg(contact, text), timeout=15
             )
         except Exception as exc:
-            logger.warning("MC: _send_dm_once_async to %s failed: %s", destination, exc)
+            # repr(), not str()/"%s" on the exception -- asyncio.TimeoutError's
+            # str() is "" (empty), which used to log this as a blank, useless
+            # "failed: " line indistinguishable from a healthy path. repr()
+            # always names the exception type even when it carries no message.
+            logger.warning("MC: _send_dm_once_async to %s failed: %r", destination, exc)
             return None
         if result is None:
             logger.warning("MC: _send_dm_once_async to %s — no send result", destination)
@@ -584,7 +734,7 @@ class MeshCoreTransport(MeshTransport):
             return False
         label = contact.get("adv_name") or destination
 
-        # Fast path: send and wait for ACK.
+        # Send ONCE and wait for the delivery ACK.
         result = await self._send_dm_once_async(contact, text, destination)
         if result is None:
             return False
@@ -593,7 +743,19 @@ class MeshCoreTransport(MeshTransport):
             logger.info("MC: DM to %s ACKed (direct)", label)
             return True
 
-        # No ACK: path discovery + retry.
+        if not self._client_retry:
+            # Single-send mode (default): whatever sits between us and RF
+            # (MeshMonitor's virtual node, on the live deployment) already
+            # owns retry -- a second local resend here would be a
+            # byte-identical duplicate transmission. Log the honest
+            # no-ACK outcome and stop; never resend or run path discovery.
+            logger.info(
+                "MC: no ACK from %s in %.1fs; single-send mode, not resending",
+                label, self._ack_wait,
+            )
+            return not result.is_error()
+
+        # meshcore_client_retry=True (legacy/bare-link mode): path discovery + retry.
         logger.info("MC: no ACK from %s in %.1fs; running path discovery", label, self._ack_wait)
         await self._establish_direct_path_async(contact, destination)
         contact = await self._resolve_contact_async(destination) or contact
@@ -652,7 +814,9 @@ class MeshCoreTransport(MeshTransport):
                 logger.warning("MC: broadcast returned error event")
             return success
         except Exception as exc:
-            logger.error("MC: _do_mc_broadcast_async failed: %s", exc)
+            # repr(), not str() -- see _send_dm_once_async for why (a bare
+            # asyncio.TimeoutError logs as an empty, useless message with %s).
+            logger.error("MC: _do_mc_broadcast_async failed: %r", exc)
             return False
 
     async def _do_mc_advert_async(self) -> bool:
@@ -774,7 +938,57 @@ class MeshCoreTransport(MeshTransport):
         ``meshcore_room`` (a room-server pubkey) routes to send_to_room_async
         (login-if-password + addressed send) INSTEAD of a channel broadcast;
         it shares the same queue so room sends are paced like every other send.
+
+        Every text (DM, room, or channel) is measured in UTF-8 bytes and
+        split at the companion's hard per-frame limit BEFORE it reaches the
+        wire (see ``split_text_to_frame_limit`` / ``MESHCORE_DM_MAX_TEXT_BYTES``
+        / ``MESHCORE_CHANNEL_MAX_TEXT_BYTES`` above) -- an oversized frame
+        gets no partial send, it drops meshai's whole MeshCore link for
+        ~2.5 min when openhop's companion disconnects the client.
         """
+        if self._mc is None or not self._connected:
+            return False
+        if not meshcore_room and not destination and meshcore_channel is None:
+            logger.debug("MC: send_message_async meshcore_channel=None, skipping broadcast")
+            return False  # nothing sent — do not report success
+
+        is_channel_send = not meshcore_room and not destination
+        max_text_bytes = (
+            MESHCORE_CHANNEL_MAX_TEXT_BYTES if is_channel_send else MESHCORE_DM_MAX_TEXT_BYTES
+        )
+        parts = split_text_to_frame_limit(text, max_text_bytes)
+
+        if len(parts) == 1:
+            return await self._send_message_part_async(
+                parts[0], destination, channel, transport, meshcore_channel,
+                meshcore_room, meshcore_room_password,
+            )
+
+        logger.warning(
+            "MC: text split into %d frames for send (dest=%s meshcore_channel=%s room=%s)",
+            len(parts), destination, meshcore_channel, meshcore_room,
+        )
+        ok = True
+        for part in parts:
+            sent = await self._send_message_part_async(
+                part, destination, channel, transport, meshcore_channel,
+                meshcore_room, meshcore_room_password,
+            )
+            ok = ok and sent
+        return ok
+
+    async def _send_message_part_async(
+        self,
+        text: str,
+        destination: Optional[str] = None,
+        channel: int = 0,
+        transport: Optional[str] = None,
+        meshcore_channel: Optional[str] = None,
+        meshcore_room: Optional[str] = None,
+        meshcore_room_password: Optional[str] = None,
+    ) -> bool:
+        """Send exactly ONE already frame-sized part. See ``send_message_async``,
+        which is the public entry point and applies the byte-length guard."""
         if self._mc is None or not self._connected:
             return False
         if self._mc_send_queue is None or self._loop is None or not self._loop.is_running():
@@ -1323,6 +1537,39 @@ class MeshCoreTransport(MeshTransport):
         if getattr(result, "type", None) == EventType.ERROR:
             reason = (getattr(result, "payload", None) or {}).get("reason", "unknown")
             raise RuntimeError(f"import_contact failed: {reason}")
+
+    def import_contact_signed_advert(self, card_data: bytes) -> bool:
+        """Add/update a contact from a raw signed advert/contact-card blob
+        (CMD 0x12, ``commands.import_contact`` in the underlying lib).
+
+        Distinct from ``import_contact()`` above (which upserts an unsigned
+        record via CMD 0x09) -- this path preserves the sender's own signed
+        advert rather than reconstructing an unsigned record meshai itself
+        assembled. *card_data* is expected to be a signature-valid advert
+        packet (e.g. from CoreScope's ``/api/packets?type=ADVERT``).
+
+        Best-effort and NEVER raises: returns False on any failure (not
+        connected, lib rejects the payload, unexpected error) so callers
+        can fall back to ``import_contact()``. The lib's card-data framing
+        may not exactly match a raw over-the-air advert packet -- this is
+        why a fallback path always exists.
+        """
+        if self._mc is None or not self._connected:
+            return False
+        try:
+            from meshcore import EventType  # noqa: PLC0415 (lazy import intentional)
+
+            result = self._run_coro(
+                self._mc.commands.import_contact(card_data), timeout=15.0
+            )
+            if result is None:
+                return False
+            if getattr(result, "type", None) == EventType.ERROR:
+                return False
+            return True
+        except Exception as exc:
+            logger.warning("MeshCore: import_contact_signed_advert failed: %s", exc)
+            return False
 
     # A MeshCore ROOM SERVER is a contact whose ``type`` is ROOM (3) in the
     # firmware CONTACT_TYPENAMES table [NONE, CLI, REP, ROOM, SENS]. We route
@@ -2172,8 +2419,18 @@ class MeshCoreTransport(MeshTransport):
                 if self._wait_for_ack(exp_ack, self._ack_wait):
                     logger.info("MeshCore: DM to %s ACKed (direct)", label)
                     return True
-                # No ACK -> route is stale/unknown. NOW run path discovery to
-                # learn a direct route, resend, and re-confirm by ACK.
+                if not self._client_retry:
+                    # Single-send mode (default): see _do_mc_dm_send_async for
+                    # why -- whatever sits between us and RF already owns
+                    # retry; never resend on top of it.
+                    logger.info(
+                        "MeshCore: no ACK from %s in %.1fs; single-send mode, not resending",
+                        label, self._ack_wait,
+                    )
+                    return not result.is_error()
+                # meshcore_client_retry=True: route is stale/unknown. NOW run
+                # path discovery to learn a direct route, resend, and
+                # re-confirm by ACK.
                 logger.info(
                     "MeshCore: no ACK from %s in %.1fs; running path discovery and retrying",
                     label, self._ack_wait,
@@ -2258,6 +2515,11 @@ class MeshCoreTransport(MeshTransport):
             if not text:
                 return None
             pubkey_prefix: str = payload.get("pubkey_prefix", "")
+            # The sending device's own clock, embedded in the wire packet --
+            # identical across that device's automatic resends of this SAME
+            # message (see meshai/dedupe.py). None if the lib/firmware didn't
+            # supply one.
+            sender_timestamp = payload.get("sender_timestamp")
 
             # Best-effort contact name resolution.
             sender_name = pubkey_prefix
@@ -2277,35 +2539,104 @@ class MeshCoreTransport(MeshTransport):
                 is_dm=True,
                 packet=None,
                 transport="meshcore",
+                sender_timestamp=sender_timestamp,
             )
         except Exception as exc:
             logger.error("MeshCoreTransport: error normalizing DM event: %s", exc)
             return None
 
+    def _resolve_sender_id_by_name(self, name: str) -> Optional[str]:
+        """Resolve a channel message's parsed sender NAME to a stable pubkey-
+        prefix id via the device's known contact list, so a channel turn from
+        a known contact keys history/observations the same way a DM from
+        that same person would.
+
+        Returns None if the name matches no known contact (caller falls back
+        to a namespaced ``mcname:<name>`` id — see _normalize_channel_event).
+        Uses the same 12-hex-char pubkey-prefix convention as the rest of
+        this module (e.g. get_contacts()'s "prefix" field, _on_new_contact).
+        """
+        if not name or self._mc is None:
+            return None
+        try:
+            contacts = getattr(self._mc, "contacts", None) or {}
+        except Exception:
+            return None
+        name_lower = name.strip().lower()
+        if not name_lower:
+            return None
+        for pubkey_hex, contact in contacts.items():
+            if not isinstance(contact, dict):
+                continue
+            adv_name = (contact.get("adv_name") or "").strip().lower()
+            if adv_name and adv_name == name_lower:
+                pubkey = contact.get("public_key") or pubkey_hex
+                return (pubkey or "")[:12] or None
+        return None
+
     def _normalize_channel_event(self, event) -> Optional[MeshMessage]:
         """Map a CHANNEL_MSG_RECV event payload → MeshMessage.
+
+        MeshCore channel text carries the sender's display name as a
+        "Name: message" prefix (clients @-mention with "@[Name]"). This
+        parses that prefix so channel replies/history/mentions can identify
+        WHO sent a channel message, instead of collapsing every sender on a
+        channel into one shared "chan:N" identity.
+
+        Parsing: split on the FIRST ": " only (a message body may itself
+        contain a later ": " — e.g. "Bob: check this: really" must parse as
+        sender "Bob", text "check this: really", not split at the second
+        colon). A prefix is only accepted when both the name and the
+        remainder are non-empty; text with no such prefix (or emoji/unicode
+        names, which parse the same as any other name) falls back to the
+        legacy chan:N marker identity — MeshCore gives us no per-sender
+        pubkey on channel messages, so the "Name: " prefix, when present, is
+        the only sender signal available.
 
         Separated from the subscription handler so tests can call it directly
         without spinning up the loop thread.
         """
         try:
             payload = event.payload or {}
-            text = payload.get("text", "")
-            if not text:
+            raw_text = payload.get("text", "")
+            if not raw_text:
                 return None
             channel_idx: int = payload.get("channel_idx", 0)
+            # See _normalize_dm_event -- same replay-proof id, used for
+            # channel-message de-dupe too.
+            sender_timestamp = payload.get("sender_timestamp")
 
-            # Channel messages carry no per-sender pubkey in the meshcore API.
+            # Channel messages carry no per-sender pubkey in the meshcore API
+            # by default — this is the fallback identity when no "Name: "
+            # prefix is present.
             channel_marker = f"chan:{channel_idx}"
 
+            sender_name = channel_marker
+            sender_id = channel_marker
+            text = raw_text
+            name, sep, rest = raw_text.partition(": ")
+            if sep and name.strip() and rest.strip():
+                sender_name = name
+                resolved = self._resolve_sender_id_by_name(name)
+                sender_id = resolved or f"mcname:{name}"
+                text = rest
+
+            channel_name = None
+            for cname, cidx in self._chan_name_to_idx.items():
+                if cidx == channel_idx:
+                    channel_name = cname
+                    break
+
             return MeshMessage(
-                sender_id=channel_marker,
-                sender_name=channel_marker,
+                sender_id=sender_id,
+                sender_name=sender_name,
                 text=text,
                 channel=channel_idx,
                 is_dm=False,
                 packet=None,
                 transport="meshcore",
+                channel_name=channel_name,
+                sender_timestamp=sender_timestamp,
             )
         except Exception as exc:
             logger.error("MeshCoreTransport: error normalizing channel event: %s", exc)
@@ -2339,11 +2670,45 @@ class MeshCoreTransport(MeshTransport):
     def _on_channel_event(self, event) -> None:
         """Handle CHANNEL_MSG_RECV: normalize, filter, and dispatch to meshai."""
         msg = self._normalize_channel_event(event)
-        if msg is None or not mc_context_allows(
+        if msg is None:
+            return
+        if self._is_addme_trigger(msg):
+            # Own gate, independent of mc_context_allows/respond_to_channel_
+            # mentions -- handled entirely here, never reaches the router.
+            asyncio.get_event_loop().create_task(handle_addme_trigger(self, msg))
+            return
+        if not mc_context_allows(
             self._mc_context, msg, {v: k for k, v in self._chan_name_to_idx.items()}
         ):
             return
         self._dispatch_message(msg)
+
+    def _is_addme_trigger(self, msg: MeshMessage) -> bool:
+        """True when *msg* is a !addme invocation this transport should act on.
+
+        Independent of respond_to_channel_mentions / observe_channels by
+        design (see meshai/meshcore_addme.py module docstring).
+        """
+        cfg = self._mc_context
+        if cfg is None or not getattr(cfg, "addme_enabled", False):
+            return False
+        if msg.is_dm or not is_addme_trigger(msg.text):
+            return False
+        channels = getattr(cfg, "addme_channels", None) or []
+        if msg.channel_name not in channels:
+            return False
+        if self._is_own_meshcore_name(msg.sender_name):
+            return False
+        return True
+
+    def _is_own_meshcore_name(self, name: Optional[str]) -> bool:
+        """True when *name* matches this device's own advertised name
+        (anti-loop: MeshCore channel senders are identified by name, not by
+        a pubkey, so AIDA's own channel messages must be filtered by name)."""
+        own_name = (self._self_info or {}).get("name")
+        if not own_name or not name:
+            return False
+        return name.strip().lower() == str(own_name).strip().lower()
 
     def _dispatch_message(self, msg: Optional[MeshMessage]) -> None:
         """Marshal a MeshMessage onto the meshai event loop (thread-safe).

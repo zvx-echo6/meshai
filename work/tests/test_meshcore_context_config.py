@@ -22,6 +22,12 @@ def test_meshcore_context_round_trip(tmp_path):
         observe_channels=["#aida", "#general"],
         ignore_contacts=["a1b2", "SpamNode"],
         respond_to_dms=False,
+        addme_enabled=False,
+        addme_channels=["#aida", "#other"],
+        addme_advert_cooldown_seconds=1800,
+        addme_dm_delay_seconds=10,
+        addme_per_user_cooldown_seconds=60,
+        addme_dm_text="Custom {name} text",
     )
 
     path = tmp_path / "config.yaml"
@@ -34,6 +40,12 @@ def test_meshcore_context_round_trip(tmp_path):
     assert mc.observe_channels == ["#aida", "#general"]
     assert mc.ignore_contacts == ["a1b2", "SpamNode"]
     assert mc.respond_to_dms is False
+    assert mc.addme_enabled is False
+    assert mc.addme_channels == ["#aida", "#other"]
+    assert mc.addme_advert_cooldown_seconds == 1800
+    assert mc.addme_dm_delay_seconds == 10
+    assert mc.addme_per_user_cooldown_seconds == 60
+    assert mc.addme_dm_text == "Custom {name} text"
 
 
 def test_meshcore_context_defaults_when_absent(tmp_path):
@@ -48,3 +60,9 @@ def test_meshcore_context_defaults_when_absent(tmp_path):
     assert mc.observe_channels == []
     assert mc.ignore_contacts == []
     assert mc.respond_to_dms is True
+    assert mc.addme_enabled is True
+    assert mc.addme_channels == ["#aida"]
+    assert mc.addme_advert_cooldown_seconds == 3600
+    assert mc.addme_dm_delay_seconds == 20
+    assert mc.addme_per_user_cooldown_seconds == 300
+    assert "{name}" in mc.addme_dm_text

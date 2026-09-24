@@ -4,6 +4,14 @@ from abc import ABC, abstractmethod
 from typing import Optional
 
 
+class LLMTruncatedError(Exception):
+    """Raised when a backend's generate() call produced an unusable result:
+    the model hit the output-token cap mid-answer (finish_reason == "length")
+    or returned no real content at all (e.g. every token went to a stripped
+    <think> block). Callers must treat this like any other failed
+    generation -- never relay partial/cut-off text to the user."""
+
+
 class LLMBackend(ABC):
     """Abstract base class for LLM backends."""
 
