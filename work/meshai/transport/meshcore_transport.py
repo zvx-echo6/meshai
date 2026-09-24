@@ -21,6 +21,7 @@ from typing import Callable, Optional
 from .base import MeshTransport
 from .send_queue import RadioSendQueue
 from ..connector import MeshMessage
+from ..meshcore_addme import handle_addme_trigger, is_addme_trigger
 from ..meshcore_roster import reconcile_contacts
 
 logger = logging.getLogger(__name__)
@@ -154,6 +155,10 @@ class MeshCoreTransport(MeshTransport):
         self._chan_details: list[dict] = []
         # Self-advertisement tracking.
         self._last_advert_sent: Optional[float] = None   # epoch seconds or None
+        # !addme state (see meshai/meshcore_addme.py): global flood-advert
+        # cooldown timestamp, and per-sender-name cooldown timestamps.
+        self._addme_last_advert: Optional[float] = None
+        self._addme_user_cooldowns: dict[str, float] = {}
         # When the contact roster was last synced from the companion (epoch
         # seconds): set at connect and on every refresh_contacts(). Lets the
         # dashboard show roster freshness rather than implying "live".
@@ -1324,6 +1329,39 @@ class MeshCoreTransport(MeshTransport):
             reason = (getattr(result, "payload", None) or {}).get("reason", "unknown")
             raise RuntimeError(f"import_contact failed: {reason}")
 
+    def import_contact_signed_advert(self, card_data: bytes) -> bool:
+        """Add/update a contact from a raw signed advert/contact-card blob
+        (CMD 0x12, ``commands.import_contact`` in the underlying lib).
+
+        Distinct from ``import_contact()`` above (which upserts an unsigned
+        record via CMD 0x09) -- this path preserves the sender's own signed
+        advert rather than reconstructing an unsigned record meshai itself
+        assembled. *card_data* is expected to be a signature-valid advert
+        packet (e.g. from CoreScope's ``/api/packets?type=ADVERT``).
+
+        Best-effort and NEVER raises: returns False on any failure (not
+        connected, lib rejects the payload, unexpected error) so callers
+        can fall back to ``import_contact()``. The lib's card-data framing
+        may not exactly match a raw over-the-air advert packet -- this is
+        why a fallback path always exists.
+        """
+        if self._mc is None or not self._connected:
+            return False
+        try:
+            from meshcore import EventType  # noqa: PLC0415 (lazy import intentional)
+
+            result = self._run_coro(
+                self._mc.commands.import_contact(card_data), timeout=15.0
+            )
+            if result is None:
+                return False
+            if getattr(result, "type", None) == EventType.ERROR:
+                return False
+            return True
+        except Exception as exc:
+            logger.warning("MeshCore: import_contact_signed_advert failed: %s", exc)
+            return False
+
     # A MeshCore ROOM SERVER is a contact whose ``type`` is ROOM (3) in the
     # firmware CONTACT_TYPENAMES table [NONE, CLI, REP, ROOM, SENS]. We route
     # to a room via the DM primitive (send_msg to its pubkey), so a room is
@@ -2403,11 +2441,45 @@ class MeshCoreTransport(MeshTransport):
     def _on_channel_event(self, event) -> None:
         """Handle CHANNEL_MSG_RECV: normalize, filter, and dispatch to meshai."""
         msg = self._normalize_channel_event(event)
-        if msg is None or not mc_context_allows(
+        if msg is None:
+            return
+        if self._is_addme_trigger(msg):
+            # Own gate, independent of mc_context_allows/respond_to_channel_
+            # mentions -- handled entirely here, never reaches the router.
+            asyncio.get_event_loop().create_task(handle_addme_trigger(self, msg))
+            return
+        if not mc_context_allows(
             self._mc_context, msg, {v: k for k, v in self._chan_name_to_idx.items()}
         ):
             return
         self._dispatch_message(msg)
+
+    def _is_addme_trigger(self, msg: MeshMessage) -> bool:
+        """True when *msg* is a !addme invocation this transport should act on.
+
+        Independent of respond_to_channel_mentions / observe_channels by
+        design (see meshai/meshcore_addme.py module docstring).
+        """
+        cfg = self._mc_context
+        if cfg is None or not getattr(cfg, "addme_enabled", False):
+            return False
+        if msg.is_dm or not is_addme_trigger(msg.text):
+            return False
+        channels = getattr(cfg, "addme_channels", None) or []
+        if msg.channel_name not in channels:
+            return False
+        if self._is_own_meshcore_name(msg.sender_name):
+            return False
+        return True
+
+    def _is_own_meshcore_name(self, name: Optional[str]) -> bool:
+        """True when *name* matches this device's own advertised name
+        (anti-loop: MeshCore channel senders are identified by name, not by
+        a pubkey, so AIDA's own channel messages must be filtered by name)."""
+        own_name = (self._self_info or {}).get("name")
+        if not own_name or not name:
+            return False
+        return name.strip().lower() == str(own_name).strip().lower()
 
     def _dispatch_message(self, msg: Optional[MeshMessage]) -> None:
         """Marshal a MeshMessage onto the meshai event loop (thread-safe).

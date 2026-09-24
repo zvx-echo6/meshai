@@ -176,6 +176,7 @@ def create_dispatcher(
     Returns:
         Configured CommandDispatcher
     """
+    from .addme import AddMeCommand
     from .clear import ClearCommand
     from .help import HelpCommand
     from .ping import PingCommand
@@ -187,6 +188,7 @@ def create_dispatcher(
     dispatcher = CommandDispatcher(prefix=prefix, disabled_commands=disabled_commands)
 
     # Register all built-in commands
+    dispatcher.register(AddMeCommand())
     dispatcher.register(ClearCommand())
     dispatcher.register(HelpCommand(dispatcher))
     dispatcher.register(PingCommand())

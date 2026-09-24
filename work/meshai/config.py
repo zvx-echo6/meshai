@@ -205,6 +205,27 @@ class MeshCoreContextConfig:
     # bot.respond_to_channel_mentions is True. Opt-in like observe_channels.
     mention_channels: list[str] = field(default_factory=lambda: ["#aida"])
 
+    # --- !addme (MeshCore self-service contact add) ---
+    # Detected directly in the MeshCore channel ingest path, independent of
+    # respond_to_channel_mentions/observe_channels, so it works even when
+    # those are off. See meshai/meshcore_addme.py.
+    addme_enabled: bool = True
+    addme_channels: list[str] = field(default_factory=lambda: ["#aida"])
+    # Global floor between AIDA-initiated flood self-adverts triggered by
+    # !addme (at most one per cooldown, no matter who asks).
+    addme_advert_cooldown_seconds: int = 3600
+    # Wait after the advert before DMing, so it has time to propagate and
+    # the asker's app can auto-add AIDA as a contact first.
+    addme_dm_delay_seconds: int = 20
+    # Per-asker floor so repeated !addme from the same name is ignored
+    # silently (no reply) rather than re-processed every time.
+    addme_per_user_cooldown_seconds: int = 300
+    addme_dm_text: str = (
+        "Hi {name}, this is AIDA. You're in my contacts now, so you can DM "
+        "me any question. If you have an older AIDA contact whose key "
+        "starts a655, delete it and keep the one starting 4b54."
+    )
+
 
 @dataclass
 class CommandsConfig:

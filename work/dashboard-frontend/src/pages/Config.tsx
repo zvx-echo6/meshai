@@ -84,6 +84,12 @@ interface MeshCoreContextConfig {
   ignore_contacts: string[]
   respond_to_dms: boolean
   mention_channels: string[]
+  addme_enabled: boolean
+  addme_channels: string[]
+  addme_advert_cooldown_seconds: number
+  addme_dm_delay_seconds: number
+  addme_per_user_cooldown_seconds: number
+  addme_dm_text: string
 }
 
 interface CommandsConfig {
@@ -1086,6 +1092,50 @@ function MeshCoreContextSection({ data, onChange }: { data: MeshCoreContextConfi
         helper="MeshCore channel names the bot watches for @-mentions when Bot &rarr; Respond to Channel Mentions is on"
         info="Opt-in like Observe Channels. Only used when bot.respond_to_channel_mentions is enabled on the Bot page."
       />
+      <Toggle
+        label="Enable !addme"
+        checked={data.addme_enabled}
+        onChange={(v) => onChange({ ...data, addme_enabled: v })}
+        helper="Let anyone in the listed channels self-add as a contact with !addme"
+        info="Independent of Respond to Channel Mentions — !addme is detected directly in the MeshCore channel path, so it works even when that toggle is off."
+      />
+      {data.addme_enabled && (
+        <>
+          <ListInput
+            label="!addme Channels"
+            value={data.addme_channels}
+            onChange={(v) => onChange({ ...data, addme_channels: v })}
+            helper="MeshCore channel names where !addme is accepted"
+          />
+          <div className="grid grid-cols-3 gap-4">
+            <NumberInput
+              label="Advert Cooldown (sec)"
+              value={data.addme_advert_cooldown_seconds}
+              onChange={(v) => onChange({ ...data, addme_advert_cooldown_seconds: v })}
+              helper="Min gap between !addme-triggered flood adverts (global)"
+            />
+            <NumberInput
+              label="DM Delay (sec)"
+              value={data.addme_dm_delay_seconds}
+              onChange={(v) => onChange({ ...data, addme_dm_delay_seconds: v })}
+              helper="Wait after the advert before DMing"
+            />
+            <NumberInput
+              label="Per-User Cooldown (sec)"
+              value={data.addme_per_user_cooldown_seconds}
+              onChange={(v) => onChange({ ...data, addme_per_user_cooldown_seconds: v })}
+              helper="Min gap between !addme replies to the same name"
+            />
+          </div>
+          <TextArea
+            label="!addme DM Text"
+            value={data.addme_dm_text}
+            onChange={(v) => onChange({ ...data, addme_dm_text: v })}
+            rows={3}
+            helper="Sent as the delayed DM. Use {name} for the sender's name."
+          />
+        </>
+      )}
     </div>
   )
 }
